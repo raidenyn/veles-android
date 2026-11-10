@@ -1186,6 +1186,21 @@ class MacosKeychainSearchListTests(unittest.TestCase):
         self.assertEqual([c for c in runner.calls if c[:5] == ("security", "list-keychains", "-d", "user", "-s")], [])
         self.assertFalse([c for c in runner.calls if Path(c[0]).stem == "codesign" and "--sign" in c])
 
+    def test_a_search_list_path_that_contains_a_quote_is_kept_verbatim(self) -> None:
+        # Apple's display_name does not escape an interior quote; the path between the outer pair
+        # is preserved rather than refused, and the restore puts the same bytes back.
+        previous = ('/Users/fake/"quoted"/Library/Keychains/login.keychain-db', '/Library/Keychains/System.keychain')
+        case = Case(self, "macos", "nested")
+        runner, outcome = case.run(case.runner(keychain_list=previous))
+        self.assertTrue(outcome.ok, outcome.detail)
+        adds = [i for i, c in enumerate(runner.calls) if c[:5] == ("security", "list-keychains", "-d", "user", "-s") and "veles-signing" in c[5]]
+        self.assertEqual(len(adds), 1)
+        self.assertEqual(runner.calls[adds[0]][6:], previous)
+        restores = self.sets(runner, previous[0])
+        self.assertEqual(len(restores), 1)
+        self.assertEqual(runner.calls[restores[0]][5:], previous)
+        self.assertEqual(runner.keychain_list, list(previous))
+
     def test_an_empty_user_search_list_refuses_the_stage_instead_of_fabricating_an_entry(self) -> None:
         # ``security list-keychains -d user -s`` with no filenames is not a reliable way to restore an
         # empty list, and inventing a default path would change the user's state. An empty list is a
@@ -1232,6 +1247,18 @@ class StageFailureDiagnosticsTests(unittest.TestCase):
         _, outcome = case.run(runner)
         self.assertLessEqual(len(outcome.detail), 600)
         self.assertLessEqual(len(outcome.detail.split("; output: ", 1)[-1]), 300, "only the bounded tail is appended")
+
+    def test_the_tail_is_the_last_three_lines_not_every_line_merged(self) -> None:
+        case = Case(self, "macos", "nested")
+        runner = Failing(
+            case.env,
+            match=lambda text: text.startswith("codesign --force"),
+            output="old one\nold two\nold three\nnew one\nnew two\nnew three\n",
+        )
+        _, outcome = case.run(runner)
+        self.assertEqual((outcome.ok, outcome.code), (False, "sign-failed"))
+        tail = outcome.detail.split("; output: ", 1)[-1]
+        self.assertEqual(tail, "new one | new two | new three")
 
     def test_terminal_control_characters_in_the_tail_are_neutralised(self) -> None:
         case = Case(self, "macos", "nested")

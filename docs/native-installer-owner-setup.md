@@ -96,17 +96,22 @@ In `native-release` set:
 
 | Kind | Name | Value |
 |---|---|---|
-| secret | `VELES_MAC_P12_BASE64` | base64 of the leaf+root PKCS#12 |
+| secret | `VELES_MAC_P12_BASE64` | base64 of the single self-signed PKCS#12 (the leaf is its own anchor) |
 | secret | `VELES_MAC_P12_PASSWORD` | that PKCS#12's password |
 | variable | `VELES_MAC_IDENTITY` | `Veles Self-Signed Acceptance (not a release signer)` |
-| variable | `VELES_MAC_PUBLISHER` | `sha256:b525031772b4ff0b78972ed17063dca651045584d6efd6d4a04578f8b2d822dc` |
+| variable | `VELES_MAC_PUBLISHER` | `sha256:9d0d1948de28df32ef23091fab0805894d531863ca0b42c44f9ed1b4eb042cc6` |
 | variable | `VELES_MAC_TRUST_SELF_SIGNED` | `1` |
 
-`VELES_MAC_TEAM_ID` and `VELES_NOTARY_*` stay unset in this mode. The acceptance
-Mac must trust the root certificate once before opening the disk image:
+`VELES_MAC_TEAM_ID` and `VELES_NOTARY_*` stay unset in this mode. The identity is a
+**single** self-signed code-signing certificate, not a separate root plus leaf: the
+hosted `macos-26` runners (macOS 26.7) refuse to sign with a certificate whose chain
+does not validate (`errSecInternalComponent` after `unable to build chain to
+self-signed root`), and a headless `security add-trusted-cert` needs interactive
+authorization. A single self-signed certificate signs without any trust change. The
+acceptance Mac may trust that certificate once before opening the disk image:
 
 ```sh
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain root.pem
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain leaf.pem
 ```
 
 Clearing `VELES_MAC_TRUST_SELF_SIGNED` and setting a real team, notary key and

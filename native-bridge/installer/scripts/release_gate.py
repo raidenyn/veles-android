@@ -872,11 +872,14 @@ _DETAIL_OUTPUT_LIMIT = 300
 def _output_tail(output: str) -> str:
     """The last non-empty, whitespace-collapsed lines of a tool's output, bounded for a record.
 
-    Non-printing controls are replaced with spaces: this text can reach a terminal, and a tool's
-    output must not be able to forge or erase the surrounding record (ANSI escapes, NUL, backspace).
+    Lines are selected first, then non-printing controls inside each line are replaced with spaces:
+    this text can reach a terminal, and a tool's output must not be able to forge or erase the
+    surrounding record (ANSI escapes, NUL, backspace).
     """
-    printable = "".join(character if character.isprintable() else " " for character in output)
-    lines = [" ".join(line.split()) for line in printable.splitlines()]
+    lines = [
+        " ".join("".join(character if character.isprintable() else " " for character in line).split())
+        for line in output.splitlines()
+    ]
     tail = " | ".join([line for line in lines if line][-_DETAIL_OUTPUT_LINES:])
     return tail[-_DETAIL_OUTPUT_LIMIT:]
 
@@ -1308,10 +1311,12 @@ def _windows_outer(stage: Stage, policy: dict) -> dict:
 def _keychain_search_list(stage: Stage) -> list[str]:
     """The user keychain search list, in order, as ``security list-keychains -d user`` prints it.
 
-    The tool prints exactly one double-quoted path per line, indented. Only that one surrounding
-    quote pair is removed; the path itself is kept verbatim (it may contain spaces or quotes). Any
-    other shape is refused rather than guessed: the list is put back exactly, so an entry the parse
-    invented would be a change to the user's state.
+    The tool prints exactly one double-quoted path per line, indented. Only the first and last
+    characters (the quote pair) are removed; everything between them is the path verbatim. Apple's
+    ``display_name`` does not escape an interior quote, so a path that contains one stays intact
+    rather than being refused (the format is ambiguous for such a path, and guessing is worse).
+    Any other shape is refused rather than guessed at: the list is put back exactly, so an entry
+    the parse invented would be a change to the user's state.
     """
     output = stage.run(["security", "list-keychains", "-d", "user"], what="credential-import-failed").output
     entries = []
@@ -1319,7 +1324,7 @@ def _keychain_search_list(stage: Stage) -> list[str]:
         entry = line.strip()
         if not entry:
             continue
-        if len(entry) < 3 or not entry.startswith('"') or not entry.endswith('"') or '"' in entry[1:-1]:
+        if len(entry) < 3 or not entry.startswith('"') or not entry.endswith('"'):
             raise StageFailure(
                 "credential-import-failed",
                 "security list-keychains printed a line that is not one quoted keychain path",
