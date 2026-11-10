@@ -67,13 +67,13 @@
 
 ## 3. Android phone-role session engine (design D1–D3; spec reconnect-authentication engine requirements, protected-record-session session requirements)
 
-- [ ] 3.1 Build the pure state machine (bytes in → effects out), with injected clock,
+- [x] 3.1 Build the pure state machine (bytes in → effects out), with injected clock,
   randomness, Keystore signer and trust lookup, following the §11.3 phone rows.
-- [ ] 3.2 Implement trust lookup:
+- [x] 3.2 Implement trust lookup:
   - a record in state `active`, `pending` or `committed_waiting_ack` gets a reply
   - an unknown or deleted id gets a byte-identical `preauth_reject` and a disconnect, with
     no hello or signature
-- [ ] 3.3 Implement:
+- [x] 3.3 Implement:
   - the signature order (phone first)
   - the authentication gate: both signatures verified, own confirm sent, peer confirm
     verified
@@ -91,7 +91,7 @@
   - the 30 s handshake deadlines, as a named constant anchored to §11.3
   - terminal `app_error`
   - teardown erasure
-- [ ] 3.6 Update `lastSeen` only after `session_open`, for the current generation.
+- [x] 3.6 Update `lastSeen` only after `session_open`, for the current generation.
 - [ ] 3.7 Engine unit tests:
   - table-driven class selection, including `full_pending_peer`
   - the authentication-gate scenario where only the peer's confirm has arrived
