@@ -1,9 +1,13 @@
 package me.nagaev.veles.debugprobe
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import me.nagaev.veles.session.ApplicationHandler
 import me.nagaev.veles.session.FakeClock
 import me.nagaev.veles.session.LocalRecordState
 import me.nagaev.veles.session.PhoneSessionEngine
@@ -253,15 +257,43 @@ class SyntheticProbeHandlerTest {
     }
 
     @Test
-    fun endedSessionIsNotAProbeDestination() = runTest {
+    fun shutdownHidesEndedSessionFromProbeDestinations() = runTest {
         val client = TestClient()
-        val host = host(RecordingTrust()) { engine(client) }
+        val gate = CompletableDeferred<Unit>()
+        val blockingHandler = object : ApplicationHandler {
+            override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
+
+            override suspend fun handle(
+                type: Int,
+                body: ByteArray,
+                reply: suspend (type: Int, body: ByteArray) -> Unit,
+            ) {
+                // Hold the generation mutex so shutdown cannot run teardown.
+                gate.await()
+            }
+        }
+        val host = host(RecordingTrust()) {
+            TestPeers.engine(
+                TestIdentity.generate().signer,
+                TestPeers.lookup(TestPeers.record(client)),
+                clock,
+                blockingHandler,
+            )
+        }
         val gen = connectFull(host, "aa", 1, client)
         val commands = commands(SessionProbeSessions(host))
         val before = transport.sent.size
 
-        // The generation is ended but its teardown step is still queued.
-        host.onDisconnected(gen)
+        // Suspend an engine call while it holds the generation mutex.
+        host.onRecord(gen, client.record(RecordType.PULL_REQUEST.wire, 1uL), admission())
+        runCurrent()
+
+        // Shutdown marks the generation ended, then blocks on that mutex: the generation is
+        // ended but still registered, which is the window the probe query must exclude.
+        val shuttingDown = backgroundScope.launch { host.shutdown() }
+        runCurrent()
+
+        // Without the `!live.ended` filter this list still contains the stale destination.
         assertTrue(
             "an ended generation is never offered as a destination",
             host.authenticatedSessions().isEmpty(),
@@ -271,7 +303,10 @@ class SyntheticProbeHandlerTest {
 
         assertEquals("no event is generated for an ended destination", before, transport.sent.size)
         assertTrue("no event is logged for an ended destination", transport.log.isEmpty())
-        runCurrent()
+
+        gate.complete(Unit)
+        advanceUntilIdle()
+        shuttingDown.join()
     }
 
     @Test
