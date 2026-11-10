@@ -220,7 +220,7 @@
 
 ## 9. Release guards, conformance, loopback (design D5, D6; spec "Release artifacts exclude test hooks", "Vector and scenario conformance", "Cross-endpoint loopback in CI")
 
-- [ ] 9.1 Add the Gradle guard task `releaseHookGuard`:
+- [x] 9.1 Add the Gradle guard task `releaseHookGuard`:
   - it depends on `:app:assembleRelease`
   - it inspects the minified APK's DEX, manifest and resources (not just ZIP entry names)
     for hook classes, receivers and probe strings
@@ -229,7 +229,7 @@
   - no signing or upload
   - the header comment in `check-android.yml` ("nothing here builds … a release APK") is
     updated to say an unsigned, non-uploaded release build runs only for this guard
-- [ ] 9.2 Make `test:bundle` produce its own guard artifact, in the same commit as the new
+- [x] 9.2 Make `test:bundle` produce its own guard artifact, in the same commit as the new
   checks.
   - The npm script builds the guard-only production build from 8.3 first, then runs the
     bundle tests. Every existing caller therefore stays valid with no workflow edits:
@@ -237,26 +237,26 @@
     `verify/test/workflow-contracts.test.mjs` pins.
   - The production exclusion checks point at the guard artifact.
   - The existing `dist/` inventory checks keep running against the ordinary build.
-- [ ] 9.3 Create the scenario inventory: a checked-in list mapping every
+- [x] 9.3 Create the scenario inventory: a checked-in list mapping every
   `records.json`/`reconnect.json` id to one of executed, engine-effect-of-trace-negative,
   or deferred with its owning task (OTP-10/11/13/14/15), following design D6. A test fails
   if any fixture id is missing from the list.
-- [ ] 9.4 Kotlin scenario runner that executes the inventory's in-scope ids against the
+- [x] 9.4 Kotlin scenario runner that executes the inventory's in-scope ids against the
   phone engine.
-- [ ] 9.5 TypeScript scenario runner that executes the inventory's in-scope ids against the
+- [x] 9.5 TypeScript scenario runner that executes the inventory's in-scope ids against the
   client engine. Register it in the `"test"` script.
-- [ ] 9.6 Loopback endpoint drivers:
+- [x] 9.6 Loopback endpoint drivers:
   - a JVM phone-engine driver and a Vitest client-engine driver
   - each can produce or consume the exchange for the handshake, pull/pull_events/ack,
     push, heartbeat, `app_error`, and two reconnects
   - recorded transcript vs live pipe is the builder's call
-- [ ] 9.7 Loopback orchestration: an aggregate `./gradlew sessionLoopbackCheck` that runs
+- [x] 9.7 Loopback orchestration: an aggregate `./gradlew sessionLoopbackCheck` that runs
   both drivers and asserts that the two reconnects have distinct session ids and keys.
   - `protocolCheck` (`build.gradle.kts`, currently an aggregate of explicit dependencies)
     gains a dependency on `sessionLoopbackCheck`, so `check-protocol.yml` runs it unchanged.
   - It reuses the existing `protocolWebInstall` and JVM compilation prerequisites, adding no
     second install and creating no dependency cycle.
-- [ ] 9.8 Cross-platform signature tests: Android-signed verified by Chrome and the
+- [x] 9.8 Cross-platform signature tests: Android-signed verified by Chrome and the
   reverse, both 64 bytes with low-S. Run them as part of the loopback drivers.
 
 ## 10. Physical verification (homepc, adb; spec "Physical round-trip evidence")
