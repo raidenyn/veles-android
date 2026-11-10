@@ -8,7 +8,9 @@ import {
     PEER_STATE_ACTIVE,
     PhoneHarness,
     appErrorBody,
+    patchSubtle,
     sendBytes,
+    takeSubtle,
     terminatedReason,
 } from './client-harness';
 
@@ -357,6 +359,101 @@ describe('client protected records and timing', () => {
         expect(error.body).toEqual(appErrorBody(AppErrorCode.PROTOCOL_VIOLATION));
         expect(terminatedReason(effects.slice(1))).toBe('app_error');
         expect(effects.some((effect) => effect.kind === 'deliver')).toBe(false);
+        expect(harness.engine.isOpen).toBe(false);
+    });
+
+    it('detached reply encryption is drained with distinct sequences', async () => {
+        const handler: ApplicationHandler = {
+            handles: (type) => type === RecordType.PULL_EVENTS,
+            handle: (
+                _type: number,
+                _body: Uint8Array,
+                reply: (type: number, body: Uint8Array) => Promise<void>,
+            ): Promise<void> => {
+                // Deliberately not awaited: the engine must still drain it.
+                void reply(RecordType.EVENT_ACK, Uint8Array.of(0x01));
+                return Promise.resolve();
+            },
+        };
+        const harness = await PhoneHarness.create({ handler });
+        await harness.openSession();
+        const inbound = await harness.phoneRecord(RecordType.PULL_EVENTS, 1n);
+
+        let entered = (): void => undefined;
+        const encrypting = new Promise<void>((resolve) => {
+            entered = resolve;
+        });
+        let release = (): void => undefined;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const original = takeSubtle('encrypt');
+        const restore = patchSubtle('encrypt', async (...args) => {
+            const algorithm = args[0] as { additionalData?: Uint8Array };
+            const aad = algorithm.additionalData;
+            if (aad !== undefined && aad[3] === 0x02 && aad[4] === 0x04) {
+                entered();
+                await gate;
+            }
+            return original(...args);
+        });
+        try {
+            const pending = harness.engine.onInbound(inbound);
+            await encrypting;
+
+            // Two serialized application sends run while the detached reply's
+            // encryption is still pending; every sequence must stay distinct.
+            const first = await harness.engine.sendApplication(RecordType.PULL_REQUEST, EMPTY);
+            const second = await harness.engine.sendApplication(RecordType.PULL_REQUEST, EMPTY);
+            expect(await harness.openClientApplication(sendBytes(first), 2n)).toMatchObject({
+                type: RecordType.PULL_REQUEST,
+            });
+            expect(await harness.openClientApplication(sendBytes(second), 3n)).toMatchObject({
+                type: RecordType.PULL_REQUEST,
+            });
+
+            release();
+            const effects = await pending;
+
+            expect(effects).toHaveLength(2);
+            expect(effects[0]).toMatchObject({ kind: 'deliver', type: RecordType.PULL_EVENTS });
+            expect(await harness.openClientApplication(sendBytes(effects, 1), 1n)).toMatchObject({
+                type: RecordType.EVENT_ACK,
+            });
+            await expect(
+                harness.openClientApplication(sendBytes(effects, 1), 2n),
+            ).rejects.toBeInstanceOf(SessionReject);
+            expect(effects.filter((effect) => effect.kind === 'send')).toHaveLength(1);
+            expect(harness.engine.isOpen).toBe(true);
+        } finally {
+            restore();
+        }
+    });
+
+    it('handler reply after the idle deadline does not deliver or stay open', async () => {
+        let harness: PhoneHarness | null = null;
+        const handler: ApplicationHandler = {
+            handles: (type) => type === RecordType.PULL_EVENTS,
+            async handle(
+                _type: number,
+                _body: Uint8Array,
+                reply: (type: number, body: Uint8Array) => Promise<void>,
+            ): Promise<void> {
+                harness?.clock.advance(180_000);
+                await reply(RecordType.EVENT_ACK, Uint8Array.of(0x01));
+            },
+        };
+        harness = await PhoneHarness.create({ handler });
+        await harness.openSession();
+
+        const effects = await harness.engine.onInbound(
+            await harness.phoneRecord(RecordType.PULL_EVENTS, 1n),
+        );
+
+        expect(terminatedReason(effects)).toBe('idle');
+        expect(effects.some((effect) => effect.kind === 'deliver' || effect.kind === 'send')).toBe(
+            false,
+        );
         expect(harness.engine.isOpen).toBe(false);
     });
 

@@ -53,6 +53,24 @@ export function hexOf(value: Uint8Array): string {
     return Array.from(value, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+type SubtleMethod = (...args: unknown[]) => Promise<unknown>;
+
+/** Captures a bound `crypto.subtle` method so a test can delegate to it. */
+export function takeSubtle(name: 'encrypt' | 'decrypt' | 'importKey'): SubtleMethod {
+    return (crypto.subtle[name] as unknown as SubtleMethod).bind(crypto.subtle);
+}
+
+/** Replaces one `crypto.subtle` method; the returned function restores it. */
+export function patchSubtle(
+    name: 'encrypt' | 'decrypt' | 'importKey',
+    replacement: SubtleMethod,
+): () => void {
+    Object.defineProperty(crypto.subtle, name, { value: replacement, configurable: true });
+    return () => {
+        Reflect.deleteProperty(crypto.subtle, name);
+    };
+}
+
 export function concat(...parts: Uint8Array[]): Uint8Array {
     let length = 0;
     for (const part of parts) length += part.length;

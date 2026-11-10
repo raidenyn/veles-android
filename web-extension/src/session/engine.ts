@@ -20,6 +20,7 @@ import {
     deriveKeyMaterial,
     importKeys,
     rbase as reconnectRbase,
+    type ReconnectKeyMaterial,
     type ReconnectKeys,
 } from './schedule';
 import {
@@ -216,6 +217,32 @@ function concat(...parts: Uint8Array[]): Uint8Array {
         offset += part.length;
     }
     return joined;
+}
+
+/**
+ * Zeros raw key material that never became a `ReconnectKeys`. Once
+ * `importKeys` succeeds the caller must stop using this: the returned keys own
+ * the non-AES arrays.
+ */
+function eraseKeyMaterial(material: ReconnectKeyMaterial | null): void {
+    if (material === null) return;
+    material.c2pKey.fill(0);
+    material.c2pPrefix.fill(0);
+    material.clientConfirmKey.fill(0);
+    material.p2cKey.fill(0);
+    material.p2cPrefix.fill(0);
+    material.phoneConfirmKey.fill(0);
+    material.sessionId.fill(0);
+}
+
+/** Zeros every engine-owned key array. The AES `CryptoKey`s are not zeroable. */
+function eraseReconnectKeys(keys: ReconnectKeys | null): void {
+    if (keys === null) return;
+    keys.c2pPrefix.fill(0);
+    keys.clientConfirmKey.fill(0);
+    keys.p2cPrefix.fill(0);
+    keys.phoneConfirmKey.fill(0);
+    keys.sessionId.fill(0);
 }
 
 function equalConstantTime(left: Uint8Array, right: Uint8Array): boolean {
@@ -515,16 +542,20 @@ export class ClientSessionEngine {
         const expired = this.#expiryFailure(this.#deps.now());
         if (expired !== null) return this.#terminate(expired);
 
-        let keys: ReconnectKeys;
+        let keys: ReconnectKeys | null = null;
         let input: Uint8Array;
         let confirmRecord: Uint8Array;
+        let material: ReconnectKeyMaterial | null = null;
         try {
             const shared = await deriveSharedSecret(ephemeral.privateKey, hello.ephemeralPublicKey);
             try {
-                const material = await deriveKeyMaterial(shared, hello.nonce, localNonce);
+                material = await deriveKeyMaterial(shared, hello.nonce, localNonce);
                 keys = await importKeys(material);
+                // The AES keys are inside non-extractable CryptoKeys now; the
+                // other arrays are owned by `keys` and must not be wiped here.
                 material.c2pKey.fill(0);
                 material.p2cKey.fill(0);
+                material = null;
             } finally {
                 shared.fill(0);
             }
@@ -546,15 +577,28 @@ export class ClientSessionEngine {
                 body,
             );
         } catch {
+            // Every failure path owns whatever has not been transferred.
+            eraseKeyMaterial(material);
+            material = null;
+            eraseReconnectKeys(keys);
+            keys = null;
             if (this.#state !== state) return [];
             return this.#rejectPreAuth();
         }
-        if (this.#state !== state) return [];
+        const installed = keys;
+        if (this.#state !== state) {
+            eraseReconnectKeys(installed);
+            return [];
+        }
         const late = this.#expiryFailure(this.#deps.now());
-        if (late !== null) return this.#terminate(late);
-        const prefix = keys.sessionId.slice(0, SESSION_PREFIX_BYTES);
+        if (late !== null) {
+            eraseReconnectKeys(installed);
+            return this.#terminate(late);
+        }
+        if (installed === null) return this.#rejectPreAuth();
+        const prefix = installed.sessionId.slice(0, SESSION_PREFIX_BYTES);
         const token = state.nextToken;
-        state.keys = keys;
+        state.keys = installed;
         state.sessionIdPrefix = prefix;
         state.confirmInput = input;
         state.phoneSignature = signature.slice();
@@ -590,6 +634,9 @@ export class ClientSessionEngine {
             return this.#terminate(STAGE_RECORD_INVALID);
         }
         if (this.#state !== state) return [];
+        // Expiry first: decryption is asynchronous and may outlive the wait.
+        const openedAt = this.#expiryFailure(this.#deps.now());
+        if (openedAt !== null) return this.#terminate(openedAt);
         state.lastActivityAt = this.#deps.now();
         if (opened.type !== RecordType.RECONNECT_CONFIRM) {
             return this.#terminate(STAGE_CONFIRM_REQUIRED);
@@ -601,6 +648,8 @@ export class ClientSessionEngine {
             return this.#terminate(STAGE_CONFIRM_INVALID);
         }
         if (this.#state !== state) return [];
+        const verifiedAt = this.#expiryFailure(this.#deps.now());
+        if (verifiedAt !== null) return this.#terminate(verifiedAt);
         if (confirmed === null) return this.#terminate(STAGE_CONFIRM_INVALID);
 
         state.peerState = confirmed;
@@ -622,6 +671,10 @@ export class ClientSessionEngine {
                 return this.#terminate(STAGE_DEPENDENCY);
             }
             if (this.#state !== state) return [];
+            // The mirror upgrade is a legitimate phone-proof write and stands;
+            // an expired handshake must still not open the session.
+            const upgradedAt = this.#expiryFailure(this.#deps.now());
+            if (upgradedAt !== null) return this.#terminate(upgradedAt);
             if (state.peerRecord !== null) {
                 state.peerRecord = { ...state.peerRecord, state: 'active' };
             }
@@ -642,6 +695,10 @@ export class ClientSessionEngine {
             return this.#terminate(STAGE_RECORD_INVALID);
         }
         if (this.#state !== state) return [];
+        // Expiry first: decryption is asynchronous and must not revive a
+        // session that has already been idle for 180 s.
+        const openedAt = this.#expiryFailure(this.#deps.now());
+        if (openedAt !== null) return this.#terminate(openedAt);
         state.lastActivityAt = this.#deps.now();
         if (opened.seq === SEQUENCE_MAX) {
             state.inboundExhausted = true;
@@ -664,6 +721,8 @@ export class ClientSessionEngine {
             );
         } catch {
             if (this.#state !== state) return [];
+            const expired = this.#expiryFailure(this.#deps.now());
+            if (expired !== null) return this.#terminate(expired);
             return this.#terminate(STAGE_HEARTBEAT);
         }
         if (this.#state !== state) return [];
@@ -694,44 +753,82 @@ export class ClientSessionEngine {
 
         const replies: SessionEffect[] = [];
         let terminalError = false;
-        // Replies are chained so a handler that does not await one still
-        // seals in order, with each sequence reserved inside its own step.
+        // Replies are chained so a handler that does not await one still seals
+        // in order, with each sequence reserved inside its own step. The chain
+        // is drained before this event returns, so no encryption outlives it.
+        let replyFailed = false;
+        let replyFailure: unknown;
+        let acceptingReplies = true;
         let replyChain: Promise<void> = Promise.resolve();
+        const rejectLateReply = (): Promise<void> => {
+            const rejected = Promise.reject(new SessionReject());
+            // An ignored late call must not surface as an unhandled rejection;
+            // an awaiting caller still observes it.
+            void rejected.catch(() => undefined);
+            return rejected;
+        };
         const reply = (replyType: number, replyBody: Uint8Array): Promise<void> => {
-            const next = replyChain.then(async () => {
+            if (!acceptingReplies) return rejectLateReply();
+            const task = replyChain.then(async () => {
                 if (terminalError) return;
                 const record = await this.#sealApplication(state, replyType, replyBody);
                 if (record === null) return;
                 replies.push({ kind: 'send', bytes: record });
                 if (replyType === RecordType.APP_ERROR) terminalError = true;
             });
-            replyChain = next.catch(() => undefined);
-            return next;
+            const observed = task.catch((error: unknown) => {
+                if (!replyFailed) {
+                    replyFailed = true;
+                    replyFailure = error;
+                }
+                throw error;
+            });
+            void observed.catch(() => undefined);
+            replyChain = observed.catch(() => undefined);
+            return observed;
         };
+
+        let handlerFailed = false;
+        let handlerFailure: unknown;
         try {
             await handler.handle(opened.type, opened.body, reply);
         } catch (error) {
-            if (this.#state !== state) return [];
-            if (!terminalError) {
-                return this.#terminate(
-                    error instanceof SessionReject ? STAGE_AUTHORIZATION : STAGE_DEPENDENCY,
-                );
-            }
-            this.#teardownInternal();
-            return [...replies, { kind: 'terminated', reason: STAGE_APP_ERROR }, { kind: 'close' }];
+            handlerFailed = true;
+            handlerFailure = error;
         }
+        // Invalidate the callback, then drain every reply the handler issued,
+        // awaited or not, so no encryption can commit after this event.
+        acceptingReplies = false;
+        await replyChain;
         if (this.#state !== state) return [];
+        const expired = this.#expiryFailure(this.#deps.now());
+        if (expired !== null) return this.#terminate(expired);
+        if (replyFailed || handlerFailed) {
+            if (terminalError) {
+                this.#teardownInternal();
+                return [
+                    ...replies,
+                    { kind: 'terminated', reason: STAGE_APP_ERROR },
+                    { kind: 'close' },
+                ];
+            }
+            const failure = replyFailed ? replyFailure : handlerFailure;
+            return this.#terminate(
+                failure instanceof SessionReject ? STAGE_AUTHORIZATION : STAGE_DEPENDENCY,
+            );
+        }
         if (terminalError) {
             this.#teardownInternal();
             return [...replies, { kind: 'terminated', reason: STAGE_APP_ERROR }, { kind: 'close' }];
         }
-        const expired = this.#expiryFailure(this.#deps.now());
-        if (expired !== null) return this.#terminate(expired);
         return [{ kind: 'deliver', type: opened.type, body: opened.body }, ...replies];
     }
 
     /** §11.4 unhandled authorized record: a sealed `app_error`, then close. */
     async #terminateUnhandled(state: EngineState): Promise<SessionEffect[]> {
+        if (this.#state !== state) return [];
+        const expired = this.#expiryFailure(this.#deps.now());
+        if (expired !== null) return this.#terminate(expired);
         let error: Uint8Array | null;
         try {
             error = await this.#sealApplication(
@@ -786,7 +883,7 @@ export class ClientSessionEngine {
             body,
         );
         if (this.#state !== state) reject();
-        this.#commitSeal(state, type, plan.sequence, plan.now);
+        this.#commitSeal(state, plan.now);
         return record;
     }
 
@@ -800,30 +897,42 @@ export class ClientSessionEngine {
         now: number;
     } | null {
         if (this.#state !== state || state.phase === 'closed') reject();
+        const now = this.#deps.now();
+        // Expiry first: a reply that arrives after the deadline must not revive
+        // the session by refreshing its activity.
+        if (this.#expiryFailure(now) !== null) reject();
         if (state.outboundExhausted) reject();
         if (type === RecordType.RECONNECT_CONFIRM) reject();
         const sessionClass = state.sessionClass;
         if (sessionClass === null) reject();
         if (!authorized(type, Direction.CLIENT_TO_PHONE, sessionClass)) reject();
-        const now = this.#deps.now();
         if (type === RecordType.APP_HEARTBEAT && this.#heartbeatSendTooEarly(state, now)) {
             return null;
         }
         const keys = state.keys;
         const prefix = state.sessionIdPrefix;
         if (keys === null || prefix === null) reject();
-        return { keys, prefix, sequence: state.outboundSequence, now };
-    }
-
-    #commitSeal(state: EngineState, type: number, sequence: bigint, now: number): void {
+        // Reserve the sequence — and so the nonce — before the asynchronous
+        // sealing step. Concurrent work can never share or rewind a sequence.
+        const sequence = state.outboundSequence;
         if (sequence === SEQUENCE_MAX) {
             state.outboundExhausted = true;
         } else {
             state.outboundSequence = sequence + 1n;
         }
-        state.lastOutboundAt = now;
         if (type === RecordType.APP_HEARTBEAT) state.lastHeartbeatSentAt = now;
-        if (state.phase === 'open') state.lastActivityAt = now;
+        return { keys, prefix, sequence, now };
+    }
+
+    /**
+     * Records the timing of a completed seal. `Math.max` keeps a late
+     * completion from rewinding a clock that later seals already advanced.
+     */
+    #commitSeal(state: EngineState, now: number): void {
+        state.lastOutboundAt = Math.max(state.lastOutboundAt, now);
+        if (state.phase === 'open') {
+            state.lastActivityAt = Math.max(state.lastActivityAt, now);
+        }
     }
 
     #heartbeatSendTooEarly(state: EngineState, now: number): boolean {
@@ -845,6 +954,8 @@ export class ClientSessionEngine {
 
     #authenticate(state: EngineState): SessionEffect[] {
         if (this.#state !== state || state.phase === 'closed') return [];
+        const expired = this.#expiryFailure(this.#deps.now());
+        if (expired !== null) return this.#terminate(expired);
         if (state.authenticated) return [];
         const record = state.peerRecord;
         const peerId = state.peerId;
@@ -931,14 +1042,7 @@ function appErrorBody(code: AppErrorCode): Uint8Array {
 
 /** OTP2-STA-015: zero every engine-owned byte array, then drop every reference. */
 function eraseState(state: EngineState): void {
-    const keys = state.keys;
-    if (keys !== null) {
-        keys.c2pPrefix.fill(0);
-        keys.clientConfirmKey.fill(0);
-        keys.p2cPrefix.fill(0);
-        keys.phoneConfirmKey.fill(0);
-        keys.sessionId.fill(0);
-    }
+    eraseReconnectKeys(state.keys);
     // A `CryptoKey` exposes no zeroable scalar; dropping the reference is the
     // erasure the platform allows. Every engine-owned byte array is zeroed.
     state.ephemeral = null;

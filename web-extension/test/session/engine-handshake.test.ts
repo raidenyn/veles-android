@@ -8,7 +8,9 @@ import {
     PhoneHarness,
     TestPhone,
     hexOf,
+    patchSubtle,
     sendBytes,
+    takeSubtle,
     terminatedReason,
     type PhoneRecord,
 } from './client-harness';
@@ -150,6 +152,81 @@ describe('client reconnect handshake', () => {
         expect(store.get(selectedId)?.state).toBe('active');
         expect(store.get(answeringId)?.state).toBe('active');
         expect(harness.engine.isOpen).toBe(false);
+    });
+
+    it('confirm decryption crossing the handshake deadline does not upgrade or authenticate', async () => {
+        const harness = await PhoneHarness.create({ state: 'active_activation_pending' });
+        const drive = await harness.drive();
+        expect(await harness.engine.onSendComplete(drive.token, true)).toEqual([]);
+        const confirm = await harness.confirmRecord(PEER_STATE_ACTIVE);
+
+        let entered = (): void => undefined;
+        const decrypting = new Promise<void>((resolve) => {
+            entered = resolve;
+        });
+        let release = (): void => undefined;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const original = takeSubtle('decrypt');
+        const restore = patchSubtle('decrypt', async (...args) => {
+            const algorithm = args[0] as { additionalData?: Uint8Array };
+            const aad = algorithm.additionalData;
+            if (aad !== undefined && aad[3] === 0x00 && aad[4] === 0x01) {
+                entered();
+                await gate;
+            }
+            return original(...args);
+        });
+        try {
+            const pending = harness.engine.onInbound(confirm);
+            await decrypting;
+            harness.clock.advance(30_000);
+            release();
+
+            const effects = await pending;
+
+            expect(terminatedReason(effects)).toBe('handshake_timeout');
+            expect(harness.calls.upgrade).toHaveLength(0);
+            expect(harness.store.get(harness.peerId)?.state).toBe('active_activation_pending');
+            expect(effects.some((effect) => effect.kind === 'authenticated')).toBe(false);
+            expect(harness.engine.isOpen).toBe(false);
+        } finally {
+            restore();
+        }
+    });
+
+    it('AES import failure closes the session and wipes the raw key material', async () => {
+        const harness = await PhoneHarness.create();
+        const started = await harness.start();
+        const phoneHello = harness.phone.helloPayload();
+        expect(await harness.deliverPhoneHello(phoneHello)).toEqual([]);
+        const transcript = reconnectRbase(phoneHello, started.clientHelloPayload);
+        const signature = await harness.phone.sign(transcript);
+
+        const captured: Uint8Array[] = [];
+        const original = takeSubtle('importKey');
+        const restore = patchSubtle('importKey', async (...args) => {
+            const algorithm = args[2] as { name?: string } | undefined;
+            if (args[0] === 'raw' && algorithm?.name === 'AES-GCM') {
+                captured.push(args[1] as Uint8Array);
+                throw new Error('AES import failed');
+            }
+            return original(...args);
+        });
+        try {
+            const effects = await harness.deliverPhoneSignature(transcript, signature);
+
+            expect(sendBytes(effects)).toEqual(GENERIC_REJECT);
+            expect(effects[1]).toEqual({ kind: 'close' });
+            expect(harness.engine.isOpen).toBe(false);
+            expect(captured).toHaveLength(2);
+            for (const buffer of captured) {
+                expect(buffer.every((byte) => byte === 0)).toBe(true);
+            }
+        } finally {
+            restore();
+        }
     });
 
     it('heartbeat sent only while processing inbound after 60 s outbound silence', async () => {
