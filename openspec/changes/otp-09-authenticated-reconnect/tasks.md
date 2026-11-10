@@ -166,19 +166,19 @@
 
 ## 7. Chrome connector wiring (design D4; spec "Chrome serialized session execution", "Chrome recovery succeeds only after authentication", "Successful-authentication metadata")
 
-- [ ] 7.1 Add a bounded, serialized per-session queue for inbound records and outbound
+- [x] 7.1 Add a bounded, serialized per-session queue for inbound records and outbound
   requests:
   - each sequence and nonce is reserved inside the sealing step
   - overflow ends the session with `resource_exhausted`
   - completions with a stale handle or port generation are dropped
-- [ ] 7.2 Wire `connector/controller.ts`/`connector.ts` to create one engine per phone
+- [x] 7.2 Wire `connector/controller.ts`/`connector.ts` to create one engine per phone
   handle, route `record_base64` to it, and close only that phone's link when it terminates.
-- [ ] 7.3 Change recovery (`connector.ts`, `connector/reconnect.ts`) so an attempt succeeds,
+- [x] 7.3 Change recovery (`connector.ts`, `connector/reconnect.ts`) so an attempt succeeds,
   and renews the allowance, only after the authentication gate opens and the class is
   fixed. An authentication failure consumes the attempt.
-- [ ] 7.4 Gate `ChromeTrustRepository.authenticated` (`lastSeen` and hint replacement) on
+- [x] 7.4 Gate `ChromeTrustRepository.authenticated` (`lastSeen` and hint replacement) on
   `session_open` for the current generation.
-- [ ] 7.5 Tests:
+- [x] 7.5 Tests:
   - delayed crypto with adjacent handshake frames
   - a simultaneous ack and heartbeat getting distinct sequences
   - port replacement while crypto is pending
