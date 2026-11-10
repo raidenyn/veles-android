@@ -2,10 +2,14 @@ package me.nagaev.veles.session
 
 import kotlinx.serialization.json.JsonObject
 import java.math.BigInteger
+import java.nio.ByteBuffer
 import java.security.KeyPair
 import java.security.PrivateKey
 import java.security.Signature
 import java.security.interfaces.ECPublicKey
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 /** Injected monotonic clock for the engine's deadline and liveness tests. */
 internal class FakeClock(var now: Long = 1_000L) {
@@ -139,6 +143,56 @@ internal class TestClient(
         )
     }
 
+    /** A client-to-phone protected record at [sequence] with the session's traffic keys. */
+    fun record(type: Int, sequence: ULong, body: ByteArray = ByteArray(0)): ByteArray = RecordCodec.seal(
+        keys.c2pKey,
+        keys.c2pPrefix,
+        sessionPrefix(),
+        Direction.CLIENT_TO_PHONE,
+        type,
+        sequence,
+        body,
+    )
+
+    /** A phone-to-client protected record, used for direction-authorization negatives. */
+    fun phoneRecord(type: Int, sequence: ULong, body: ByteArray = ByteArray(0)): ByteArray = RecordCodec.seal(
+        keys.p2cKey,
+        keys.p2cPrefix,
+        sessionPrefix(),
+        Direction.PHONE_TO_CLIENT,
+        type,
+        sequence,
+        body,
+    )
+
+    /**
+     * A well-formed GCM record whose type is outside §7.3, built without [RecordCodec.seal]'s
+     * type check so the engine's own authorization can be exercised.
+     */
+    fun uncheckedRecord(type: Int, sequence: ULong, body: ByteArray = ByteArray(0)): ByteArray {
+        val header = ByteArray(RecordCodec.HEADER)
+        header[0] = PROTOCOL_VERSION.toByte()
+        header[1] = SCHEMA_VERSION.toByte()
+        header[2] = Direction.CLIENT_TO_PHONE.wire.toByte()
+        header[3] = (type ushr BITS_PER_BYTE).toByte()
+        header[4] = type.toByte()
+        ByteBuffer.wrap(header).putLong(SEQUENCE_OFFSET, sequence.toLong())
+        header[LENGTH_OFFSET] = (body.size ushr BITS_PER_BYTE).toByte()
+        header[LENGTH_OFFSET + 1] = body.size.toByte()
+        sessionPrefix().copyInto(header, SESSION_OFFSET)
+        val nonce = keys.c2pPrefix + ByteBuffer.allocate(LONG_BYTES).putLong(sequence.toLong()).array()
+        val cipher = Cipher.getInstance(AES_TRANSFORMATION)
+        cipher.init(
+            Cipher.ENCRYPT_MODE,
+            SecretKeySpec(keys.c2pKey, AES_ALGORITHM),
+            GCMParameterSpec(GCM_TAG_BITS, nonce),
+        )
+        cipher.updateAAD(header)
+        return header + cipher.doFinal(body)
+    }
+
+    private fun sessionPrefix(): ByteArray = keys.sessionId.copyOfRange(0, TestPeers.SESSION_PREFIX_BYTES)
+
     fun signatureFrame(): ByteArray {
         val frame = SignatureFrame(Role.CLIENT, signature)
         return PreAuthCodec.encode(FrameType.RECONNECT_SIGNATURE.wire, frame.encode())
@@ -170,8 +224,53 @@ internal class TestClient(
     companion object {
         const val PEER_STATE_ACTIVE = 0x01
         const val PEER_STATE_BELOW_ACTIVE = 0x02
+        private const val PROTOCOL_VERSION = 1
+        private const val SCHEMA_VERSION = 1
+        private const val BITS_PER_BYTE = 8
+        private const val SEQUENCE_OFFSET = 5
+        private const val LENGTH_OFFSET = 13
+        private const val SESSION_OFFSET = 15
+        private const val LONG_BYTES = 8
+        private const val GCM_TAG_BITS = 128
+        private const val AES_TRANSFORMATION = "AES/GCM/NoPadding"
+        private const val AES_ALGORITHM = "AES"
     }
 }
+
+/** OTP2-ENC-021 `app_error` body: code u8 || reason_len u16be || reason UTF-8. */
+internal fun appErrorBody(code: AppErrorCode, reason: ByteArray = ByteArray(0)): ByteArray {
+    require(reason.size <= APP_ERROR_REASON_MAX) { "app_error reason is bounded to 64 bytes" }
+    return byteArrayOf(code.wire.toByte(), (reason.size ushr 8).toByte(), reason.size.toByte()) + reason
+}
+
+/** Opens a phone-sealed record with the client half of the session keys. */
+internal fun TestClient.openPhoneRecord(record: ByteArray, sequence: ULong): OpenedRecord = RecordCodec.open(
+    keys.p2cKey,
+    keys.p2cPrefix,
+    keys.sessionId.copyOfRange(0, TestPeers.SESSION_PREFIX_BYTES),
+    Direction.PHONE_TO_CLIENT,
+    sequence,
+    record,
+)
+
+/** Asserts the canonical `[Terminated, Close]` terminal pair. */
+internal fun assertTerminated(effects: List<SessionEffect>) {
+    org.junit.Assert.assertEquals("terminal effects", 2, effects.size)
+    org.junit.Assert.assertTrue("first effect is Terminated", effects[0] is SessionEffect.Terminated)
+    org.junit.Assert.assertTrue("reason is non-empty", (effects[0] as SessionEffect.Terminated).reason.isNotEmpty())
+    org.junit.Assert.assertEquals(SessionEffect.Close, effects[1])
+    org.junit.Assert.assertTrue("nothing delivered", effects.none { it is SessionEffect.Deliver })
+}
+
+/** Asserts the canonical `[preauth_reject, Close]` pre-auth pair. */
+internal fun assertPreAuthReject(effects: List<SessionEffect>) {
+    org.junit.Assert.assertEquals("pre-auth terminal effects", 2, effects.size)
+    val send = effects[0] as SessionEffect.Send
+    org.junit.Assert.assertArrayEquals(byteArrayOf(0x0F, 0, 0), send.bytes)
+    org.junit.Assert.assertEquals(SessionEffect.Close, effects[1])
+}
+
+private const val APP_ERROR_REASON_MAX = 64
 
 /** The result of driving a phone engine up to (but not including) the peer's confirm. */
 internal class HandshakeProgress(

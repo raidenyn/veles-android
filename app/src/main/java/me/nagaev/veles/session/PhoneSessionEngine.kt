@@ -1,5 +1,7 @@
 package me.nagaev.veles.session
 
+import androidx.annotation.VisibleForTesting
+import kotlinx.coroutines.CancellationException
 import java.math.BigInteger
 import java.security.KeyPair
 import java.security.MessageDigest
@@ -51,9 +53,16 @@ class PhoneSessionEngine(
     private var nextToken = 0L
     private var outboundSequence: ULong = 0uL
     private var inboundSequence: ULong = 0uL
+    private var outboundExhausted = false
+    private var inboundExhausted = false
     private var lastActivityAt = 0L
     private var lastOutboundAt = 0L
-    private var handshakeDeadlineAt = 0L
+    private var lastHeartbeatSentAt: Long? = null
+    private val receivedHeartbeats: MutableMap<Direction, ArrayDeque<Long>> = mutableMapOf(
+        Direction.CLIENT_TO_PHONE to ArrayDeque(),
+        Direction.PHONE_TO_CLIENT to ArrayDeque(),
+    )
+    private var handshakeDeadlineAt = clock() + SessionLimits.HANDSHAKE_TIMEOUT_MS
 
     val isOpen: Boolean get() = state == State.OPEN
 
@@ -62,17 +71,35 @@ class PhoneSessionEngine(
 
     val peerId: ByteArray? get() = peerInstallationId
 
-    suspend fun onInbound(bytes: ByteArray): List<SessionEffect> = when (state) {
-        State.AWAITING_CLIENT_HELLO -> onClientHello(bytes)
-        State.AWAITING_CLIENT_SIGNATURE -> onClientSignature(bytes)
-        State.AWAITING_PEER_CONFIRM -> onPeerConfirm(bytes)
-        State.OPEN -> onProtectedRecord(bytes)
-        State.CLOSED -> emptyList()
+    @Suppress("ReturnCount", "TooGenericExceptionCaught") // Expiry first; a dependency failure fails closed.
+    suspend fun onInbound(bytes: ByteArray): List<SessionEffect> {
+        expiryFailure()?.let { return terminate(it) }
+        if (state == State.CLOSED) return emptyList()
+        if (exhausted()) return terminate(STAGE_SEQUENCE)
+        if (state != State.AWAITING_CLIENT_HELLO && isHelloFrame(bytes)) return rejectPreAuth()
+        return try {
+            when (state) {
+                State.AWAITING_CLIENT_HELLO -> onClientHello(bytes)
+                State.AWAITING_CLIENT_SIGNATURE -> onClientSignature(bytes)
+                State.AWAITING_PEER_CONFIRM -> onPeerConfirm(bytes)
+                State.OPEN -> onProtectedRecord(bytes)
+                State.CLOSED -> emptyList()
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: SessionReject) {
+            terminate(STAGE_DEPENDENCY)
+        } catch (_: Exception) {
+            terminate(STAGE_DEPENDENCY)
+        }
     }
 
-    @Suppress("ReturnCount") // Input after teardown, a foreign token and a failed send all fail closed.
+    @Suppress("ReturnCount") // Expiry first, then a foreign token and a failed send both fail closed.
     suspend fun onSendComplete(token: Long, ok: Boolean): List<SessionEffect> {
-        if (state == State.CLOSED || authenticated) return emptyList()
+        if (state == State.CLOSED) return emptyList()
+        expiryFailure()?.let { return terminate(it) }
+        if (exhausted()) return terminate(STAGE_SEQUENCE)
+        if (authenticated) return emptyList()
         if (token != confirmToken) return emptyList()
         if (!ok) return terminate(STAGE_SEND_FAILED)
         confirmSendComplete = true
@@ -82,21 +109,42 @@ class PhoneSessionEngine(
 
     suspend fun sendApplication(type: Int, body: ByteArray): List<SessionEffect> {
         if (state != State.OPEN) throw SessionReject()
+        expiryFailure()?.let { return terminate(it) }
+        if (exhausted()) return terminate(STAGE_SEQUENCE)
+        if (type == RecordType.APP_HEARTBEAT.wire && heartbeatSendTooEarly(clock())) return emptyList()
         return listOf(SessionEffect.Send(sealApplication(type, body)))
     }
 
     /** Deadlines first, then the 60 s outbound-silence heartbeat (plan heartbeat driver). */
     suspend fun onTick(): List<SessionEffect> {
         val now = clock()
+        if (state == State.CLOSED) return emptyList()
+        expiryFailure(now)?.let { return terminate(it) }
+        if (exhausted()) return terminate(STAGE_SEQUENCE)
         return when (state) {
-            State.CLOSED, State.AWAITING_CLIENT_HELLO -> emptyList()
-            State.AWAITING_CLIENT_SIGNATURE, State.AWAITING_PEER_CONFIRM -> handshakeTick(now)
+            State.CLOSED -> emptyList()
+            State.AWAITING_CLIENT_HELLO,
+            State.AWAITING_CLIENT_SIGNATURE,
+            State.AWAITING_PEER_CONFIRM,
+            -> handshakeTick(now)
             State.OPEN -> openTick(now)
         }
     }
 
     fun teardown() {
         teardownInternal()
+    }
+
+    /**
+     * Test-only counter seam (plan Task 10 conformance runner): positions the next expected
+     * inbound sequence and the next outbound sequence without advancing the handshake.
+     */
+    @VisibleForTesting
+    fun seekSequences(rx: ULong, tx: ULong) {
+        inboundSequence = rx
+        outboundSequence = tx
+        inboundExhausted = false
+        outboundExhausted = false
     }
 
     @Suppress("ReturnCount") // Each validation failure rejects before any state is applied.
@@ -129,7 +177,7 @@ class PhoneSessionEngine(
         peerPublicKey = record.identityPublicKey.copyOf()
         localRecord = record
         ephemeralKeyPair = keyPair
-        localNonce = localNonceValue
+        localNonce = localNonceValue.copyOf()
         clientHello = hello
         rbase = transcript
         phoneSignature = signature
@@ -216,20 +264,28 @@ class PhoneSessionEngine(
         } catch (_: SessionReject) {
             return terminate(STAGE_RECORD_INVALID)
         }
-        inboundSequence += 1uL
         lastActivityAt = clock()
+        if (opened.sequence == SessionLimits.SEQUENCE_MAX) {
+            inboundExhausted = true
+        } else {
+            inboundSequence = opened.sequence + 1uL
+        }
         return deliver(opened)
     }
 
     @Suppress("ReturnCount") // Framework records and unhandled authorized records fail closed or end.
     private suspend fun deliver(opened: OpenedRecord): List<SessionEffect> {
         if (opened.type == RecordType.APP_ERROR.wire) return terminate(STAGE_APP_ERROR)
-        if (opened.type == RecordType.APP_HEARTBEAT.wire) return emptyList()
-        val type = RecordType.fromWire(opened.type) ?: return terminate(STAGE_AUTHORIZATION)
+        if (opened.type == RecordType.APP_HEARTBEAT.wire) {
+            return heartbeatReceived(Direction.CLIENT_TO_PHONE, clock())
+        }
+        if (opened.type == RecordType.RECONNECT_CONFIRM.wire) return terminate(STAGE_AUTHORIZATION)
         val cls = fixedClass ?: return terminate(STAGE_AUTHORIZATION)
-        if (!authorizes(type, cls)) return terminate(STAGE_AUTHORIZATION)
-        val applicationHandler = handler ?: return terminate(STAGE_UNHANDLED)
-        if (!applicationHandler.handles(opened.type)) return terminate(STAGE_UNHANDLED)
+        if (!RecordPolicy.authorized(opened.type, Direction.CLIENT_TO_PHONE, cls)) {
+            return terminate(STAGE_AUTHORIZATION)
+        }
+        val applicationHandler = handler ?: return terminateUnhandled()
+        if (!applicationHandler.handles(opened.type)) return terminateUnhandled()
         val replies = mutableListOf<SessionEffect>()
         try {
             applicationHandler.handle(opened.type, opened.body) { replyType, replyBody ->
@@ -241,10 +297,38 @@ class PhoneSessionEngine(
         return listOf(SessionEffect.Deliver(opened.type, opened.body)) + replies
     }
 
+    /** §11.4 unhandled authorized record: a sealed `app_error` `protocol_violation`, then close. */
+    private fun terminateUnhandled(): List<SessionEffect> {
+        val error = try {
+            SessionEffect.Send(
+                sealApplication(
+                    RecordType.APP_ERROR.wire,
+                    appErrorBody(AppErrorCode.PROTOCOL_VIOLATION),
+                ),
+            )
+        } catch (_: SessionReject) {
+            return terminate(STAGE_UNHANDLED)
+        }
+        teardownInternal()
+        return listOf(error, SessionEffect.Terminated(STAGE_UNHANDLED), SessionEffect.Close)
+    }
+
+    /** OTP2-REC-034: the fifth heartbeat in a rolling 60 s window in one direction ends it. */
+    private fun heartbeatReceived(direction: Direction, now: Long): List<SessionEffect> {
+        val times = receivedHeartbeats.getValue(direction)
+        while (times.isNotEmpty() && now - times.first() >= SessionLimits.HEARTBEAT_WINDOW_MS) {
+            times.removeFirst()
+        }
+        if (times.size >= SessionLimits.HEARTBEAT_TERMINATE_THRESHOLD) return terminate(STAGE_HEARTBEAT)
+        times.addLast(now)
+        return emptyList()
+    }
+
     @Suppress("ReturnCount") // Expiry is checked before generating a heartbeat.
     private fun openTick(now: Long): List<SessionEffect> {
         if (now - lastActivityAt >= SessionLimits.IDLE_TIMEOUT_MS) return terminate(STAGE_IDLE)
         if (now - lastOutboundAt < HEARTBEAT_SILENCE_MS) return emptyList()
+        if (heartbeatSendTooEarly(now)) return emptyList()
         val record = try {
             sealApplication(RecordType.APP_HEARTBEAT.wire, ByteArray(0))
         } catch (_: SessionReject) {
@@ -268,45 +352,43 @@ class PhoneSessionEngine(
         body,
     )
 
+    @Suppress("ThrowsCount") // One generic rejection for every §7.3/§11.4 authorization failure.
     private fun sealApplication(type: Int, body: ByteArray): ByteArray {
-        requireAuthorized(type)
+        if (outboundExhausted) throw SessionReject()
+        if (type == RecordType.RECONNECT_CONFIRM.wire) throw SessionReject()
+        val cls = fixedClass ?: throw SessionReject()
+        if (!RecordPolicy.authorized(type, Direction.PHONE_TO_CLIENT, cls)) throw SessionReject()
         val open = keys ?: throw SessionReject()
         val prefix = sessionIdPrefix ?: throw SessionReject()
+        val sequence = outboundSequence
         val record = RecordCodec.seal(
             open.p2cKey,
             open.p2cPrefix,
             prefix,
             Direction.PHONE_TO_CLIENT,
             type,
-            outboundSequence,
+            sequence,
             body,
         )
-        outboundSequence += 1uL
-        lastOutboundAt = clock()
-        if (state == State.OPEN) lastActivityAt = lastOutboundAt
+        if (sequence == SessionLimits.SEQUENCE_MAX) {
+            outboundExhausted = true
+        } else {
+            outboundSequence = sequence + 1uL
+        }
+        val now = clock()
+        lastOutboundAt = now
+        if (type == RecordType.APP_HEARTBEAT.wire) lastHeartbeatSentAt = now
+        if (state == State.OPEN) lastActivityAt = now
         return record
     }
 
-    @Suppress("ThrowsCount") // One generic rejection for every §7.3/§11.4 authorization failure.
-    private fun requireAuthorized(type: Int) {
-        val recordType = RecordType.fromWire(type) ?: throw SessionReject()
-        if (!recordType.allows(Direction.PHONE_TO_CLIENT)) throw SessionReject()
-        val cls = fixedClass ?: throw SessionReject()
-        if (!authorizes(recordType, cls)) throw SessionReject()
+    private fun heartbeatSendTooEarly(now: Long): Boolean {
+        val last = lastHeartbeatSentAt ?: return false
+        return now - last < SessionLimits.HEARTBEAT_MIN_INTERVAL_MS
     }
 
-    /** §11.4 classes plus the class-independent framework records. */
-    private fun authorizes(type: RecordType, cls: SessionClass): Boolean = when (type) {
-        RecordType.RECONNECT_CONFIRM, RecordType.APP_HEARTBEAT, RecordType.APP_ERROR -> true
-        RecordType.ENROLLMENT_PREPARE, RecordType.ACTIVATION_COMMIT,
-        RecordType.ACTIVATION_COMPLETE, RecordType.ACTIVATION_ACK,
-        -> cls != SessionClass.FULL
-        RecordType.PULL_REQUEST, RecordType.PULL_EVENTS, RecordType.PUSH_EVENT, RecordType.EVENT_ACK,
-        RecordType.REMOVAL_REQUEST, RecordType.REMOVAL_RESPONSE, RecordType.PHONE_POLICY_STATE,
-        ->
-            cls == SessionClass.FULL
-        RecordType.ENROLL_IDENTITY -> false
-    }
+    private fun appErrorBody(code: AppErrorCode): ByteArray =
+        byteArrayOf(code.wire.toByte(), 0, 0)
 
     @Suppress("ReturnCount") // Both gate halves must be present before the class is fixed.
     private fun authenticate(): List<SessionEffect> {
@@ -383,6 +465,21 @@ class PhoneSessionEngine(
 
     private fun isPreAuthFrame(bytes: ByteArray): Boolean = bytes.isNotEmpty() && FrameType.fromWire(bytes[0].toInt() and U8_MASK) != null
 
+    private fun isHelloFrame(bytes: ByteArray): Boolean =
+        bytes.isNotEmpty() && (bytes[0].toInt() and U8_MASK) == FrameType.RECONNECT_HELLO.wire
+
+    /** Plan "expiry first": evaluated before any inbound event or send completion is processed. */
+    private fun expiryFailure(now: Long = clock()): String? = when (state) {
+        State.AWAITING_CLIENT_HELLO,
+        State.AWAITING_CLIENT_SIGNATURE,
+        State.AWAITING_PEER_CONFIRM,
+        -> STAGE_HANDSHAKE_TIMEOUT.takeIf { now >= handshakeDeadlineAt }
+        State.OPEN -> STAGE_IDLE.takeIf { now - lastActivityAt >= SessionLimits.IDLE_TIMEOUT_MS }
+        State.CLOSED -> null
+    }
+
+    private fun exhausted(): Boolean = inboundExhausted || outboundExhausted
+
     private fun point(keyPair: KeyPair): ByteArray {
         val publicKey = keyPair.public as? ECPublicKey ?: throw SessionReject()
         val point = ByteArray(POINT_BYTES)
@@ -416,6 +513,7 @@ class PhoneSessionEngine(
         keys?.erase()
         keys = null
         ephemeralKeyPair = null
+        localNonce?.fill(0)
         localNonce = null
         clientHello = null
         rbase?.fill(0)
@@ -440,8 +538,12 @@ class PhoneSessionEngine(
         nextToken = 0L
         outboundSequence = 0uL
         inboundSequence = 0uL
+        outboundExhausted = false
+        inboundExhausted = false
         lastActivityAt = 0L
         lastOutboundAt = 0L
+        lastHeartbeatSentAt = null
+        receivedHeartbeats.values.forEach { it.clear() }
         handshakeDeadlineAt = 0L
         state = State.CLOSED
     }
@@ -473,5 +575,7 @@ class PhoneSessionEngine(
         const val STAGE_APP_ERROR = "app_error"
         const val STAGE_AUTHORIZATION = "authorization"
         const val STAGE_UNHANDLED = "unhandled"
+        const val STAGE_SEQUENCE = "sequence"
+        const val STAGE_DEPENDENCY = "dependency"
     }
 }
