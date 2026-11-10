@@ -106,15 +106,15 @@
 
 ## 4. Android transport wiring and echo isolation (design D4; spec "Android transport adapter", "No plaintext path")
 
-- [ ] 4.1 Extend `SharingGattServer` with a per-connection-generation adapter: connect and
+- [x] 4.1 Extend `SharingGattServer` with a per-connection-generation adapter: connect and
   disconnect callbacks, multiple outbound sends, an ordered send-then-close, and handling of
   send failures. Update the existing `SharingGattServerTest`/`GattTransportBudgetTest`.
-- [ ] 4.2 Wire `SharingService` to create one engine per admitted connection generation,
+- [x] 4.2 Wire `SharingService` to create one engine per admitted connection generation,
   serialize its work, and discard async results from generations that have ended.
-- [ ] 4.3 Move `SyntheticTransportFixture.reply` behind an explicit, instrumentation-only
+- [x] 4.3 Move `SyntheticTransportFixture.reply` behind an explicit, instrumentation-only
   transport mode that cannot run alongside the engine, and update the OTP-06
   instrumentation to enable it.
-- [ ] 4.4 Tests:
+- [x] 4.4 Tests:
   - link loss during Keystore signing or trust lookup, then reconnect from the same
     address
   - terminal frame ordering
