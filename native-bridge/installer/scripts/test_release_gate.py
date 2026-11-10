@@ -1553,8 +1553,11 @@ class MacosSelfSignedTests(unittest.TestCase):
                 self.scratch = scratch
 
             def run(self, argv, what=None):
-                if "--extract-certificates" in argv:
-                    prefix = Path(argv[argv.index("--extract-certificates") + 1])
+                # Real codesign takes the prefix only as ``--extract-certificates=<prefix>``; a
+                # detached argument is parsed as a path to display, so the fake must not accept it.
+                attached = [a for a in argv if str(a).startswith("--extract-certificates=")]
+                if attached:
+                    prefix = Path(str(attached[0]).split("=", 1)[1])
                     Path(f"{prefix}0").write_bytes(der)
                 if "-dvv" in argv:
                     return RunResult(0, "CodeDirectory v=20500 flags=0x10000(runtime)\nAuthority=Self Signed\nTeamIdentifier=not set\n")

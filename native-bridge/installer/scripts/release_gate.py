@@ -1385,7 +1385,8 @@ def parse_codesign_display(output: str) -> dict:
 def _leaf_certificate_sha256(stage: Stage, target: Path, scratch: Path) -> str:
     """SHA-256 of the leaf certificate DER, exactly what a macOS publisher pin names."""
     prefix = scratch / "leaf"
-    stage.run(["codesign", "-d", "--extract-certificates", prefix, target], what="signature-unverified")
+    # The prefix must be attached with ``=``: a detached argument is parsed as a path to display.
+    stage.run(["codesign", "-d", f"--extract-certificates={prefix}", target], what="signature-unverified")
     leaf = Path(f"{prefix}0")
     if not leaf.is_file():
         raise StageFailure("signature-unverified", f"{target.name}: codesign did not extract a leaf certificate")

@@ -218,7 +218,10 @@ jobs:
         run: |
           set -euo pipefail
           apk="$RUNNER_TEMP/signed/app-release.apk"
-          report="$("$APKSIGNER" verify --verbose --print-certs "$apk")"
+          # apksigner derives the minimum SDK from the manifest (33), where v3 alone suffices, and then
+          # reports v2 as unverified even though it was signed. Verify from API 24 so the v2 block is
+          # checked as well (v2 covers 24-27, v3 covers 28+).
+          report="$("$APKSIGNER" verify --verbose --print-certs --min-sdk-version 24 "$apk")"
           printf '%s\n' "$report"
           printf '%s\n' "$report" | grep -qx 'Verified using v1 scheme (JAR signing): false' || { echo "::error::v1 signing must be off"; exit 1; }
           printf '%s\n' "$report" | grep -qx 'Verified using v2 scheme (APK Signature Scheme v2): true' || { echo "::error::v2 signature missing"; exit 1; }

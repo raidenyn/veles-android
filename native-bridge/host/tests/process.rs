@@ -830,12 +830,13 @@ fn frozen_stdout_duplicate_request_id_rejected_bounded() {
 
 #[test]
 fn delayed_release_and_frozen_writer_share_one_deadline() {
-    // Delayed real release (3.5 s, inside the 5 s deadline) with a frozen writer: the
-    // release observation and the drain share the one terminal deadline, so the drain's
-    // remaining budget can never push the exit past five seconds. The protocol exit
-    // stands and nothing is delivered through the frozen writer.
+    // Delayed real release (3 s, leaving 2 s of slack inside the 5 s deadline so a loaded runner
+    // cannot push it past the deadline) with a frozen writer: the release observation and the
+    // drain share the one terminal deadline, so the drain's remaining budget can never push the
+    // exit past five seconds. The protocol exit stands and nothing is delivered through the
+    // frozen writer.
     let mut run = spawn_driver(
-        &["--test-freeze-stdout", "--test-delayed-release=3500"],
+        &["--test-freeze-stdout", "--test-delayed-release=3000"],
         &[DEVELOPMENT_ORIGIN],
     );
     let terminal = Instant::now();

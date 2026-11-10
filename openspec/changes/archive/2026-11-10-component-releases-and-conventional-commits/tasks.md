@@ -60,12 +60,12 @@
 ## 11. Verification and owner setup
 
 - [x] 11.1 CLAUDE.md lint gate, all three contract suites, `scriptsTest`, host/installer/extension/Android unit tests
-- [ ] 11.2 Owner checklist in the PR: squash settings, `android-release` (keystore secrets moved, `VELES_ANDROID_CERT_SHA256`), `release-publish`, labels, then the `master` ruleset
+- [x] 11.2 Owner checklist in the PR: squash settings, `android-release` (keystore secrets moved, `VELES_ANDROID_CERT_SHA256`), `release-publish`, labels, then the `master` ruleset
   - [x] 11.2.1 Squash settings: merge commits and rebase merges are off, `squash_merge_commit_title = PR_TITLE` (verified 2026-11-10 via `gh api`)
-  - [ ] 11.2.1a Squash message is still `BLANK`; the design needs `PR_BODY` so a `BREAKING CHANGE:` footer in the PR body reaches the commit (owner action)
+  - [x] 11.2.1a Squash message set to `PR_BODY`, so a `BREAKING CHANGE:` footer in the PR body reaches the commit (verified 2026-11-10)
   - [x] 11.2.2 Environment `android-release`: required reviewer `raidenyn`, master-only, the four keystore secrets present, no repository-level or organization copies
-  - [ ] 11.2.2a Variable `VELES_ANDROID_CERT_SHA256` is not set on `android-release` (or the repository); `sign-android` would fail closed until it is (owner action)
+  - [x] 11.2.2a Variable `VELES_ANDROID_CERT_SHA256` set on `android-release` (verified 2026-11-10)
   - [x] 11.2.3 Environment `release-publish`: required reviewer `raidenyn`, deployment branch policy `master` only, no secrets
   - [x] 11.2.4 Labels `build-android`, `build-web-extension`, `build-windows-installer`, `build-macos-installer` exist
-  - [ ] 11.2.5 `master` ruleset requiring `pr-title` and `ci-ok`, after merge (owner action; the rulesets API shows none yet)
+  - [x] 11.2.5 `master` ruleset active: requires `pr-title` and `ci-ok`, squash only, linear history, one approving review, no force pushes or deletion (verified 2026-11-10)
 - [ ] 11.3 After merge: bootstrap publish of all three components at 0.1.0
