@@ -6,7 +6,7 @@
 
 **Change**: `otp-09-authenticated-reconnect`
 **Iteration**: `1`
-**Applied at**: `2026-11-11 02:23`
+**Applied at**: `2026-11-11 03:45`
 **Executor**: `subagent-driven-development`
 
 ---
@@ -21,8 +21,8 @@
 
 ## Commits
 
-- **Range**: `b6169e7..01661eb`
-- **Count**: `39`
+- **Range**: `b6169e7..daf6910`
+- **Count**: `44`
 - **D0 commit (first implementation commit)**: `f27ec2e` `fix(protocol): hello carries ephemeral key in reconnect vectors (OTP2-REC-020)`
 
 ---

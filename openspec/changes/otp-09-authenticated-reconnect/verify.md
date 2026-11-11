@@ -5,7 +5,7 @@
 > Failed checks must be fixed in the corresponding artifact, then re-run verify.
 
 **Change**: `otp-09-authenticated-reconnect`
-**Verified at**: `2026-11-11 02:30`
+**Verified at**: `2026-11-11 03:45`
 **Iteration**: `1`
 **Verifier**: OpenCode agent (openspec-verify-change), branch `feat/implement-otp-09`
 
@@ -85,6 +85,12 @@ Scenarios in `specs/*.md`:
 - `st-rec-heartbeat-rate-terminates` is classified in the inventory as a receive-side
   `engine-effect` because OTP2-REC-034's terminating rule is receive-side; the runner
   observes real emissions and no longer reports `heartbeat_sent` from an input flag.
+- The final whole-branch review (Kimi K3.1 Pro) found one Critical (GATT quarantine
+  cardinality), two Important (the `phone_active` verifier's active-state requirement and
+  per-type body rules) and several Minor issues. They were fixed in `a1d3d6c`, a follow-up
+  adb-result defect was fixed in `6a1faa1`, the scoped re-review approved the wave, and the
+  physical run was repeated on both platforms against the fixed builds. `docs/otp-09-physical-2026-11-11.md`
+  records the repeat; the heartbeat step is marked as indirect evidence.
 
 ---
 
