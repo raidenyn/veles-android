@@ -3,20 +3,22 @@
 Authenticated reconnect and protected-record round trip over BLE, exercised from a real
 Android phone against Chrome on Windows 11 and macOS. This is a development-channel run:
 the extension and the Native Messaging host are local builds, not production artifacts.
+The run was repeated after the final-review fix wave; the values below are from that repeat.
 
 ## What was under test
 
 | Item | Value |
 | --- | --- |
 | Branch | `feat/implement-otp-09` |
-| Commit under test | `6a3720bc8985bcfc09da241e848dff993fd51682` |
+| Commit under test (Android APK) | `6a1faa1` (includes the final-review fix `a1d3d6c`) |
+| Commit under test (extension) | `a1d3d6c` |
 | Android APK | `app-debug.apk`, package `me.nagaev.veles.otp23` (OTP-23 fixture build) |
-| APK SHA-256 | `c80f4723aef4404aab820b58239230f03184933ffad9806fed7d3858152ea25d` |
+| APK SHA-256 | `681312321984c3472a1c661ca40a636a621730fcb09fab9bcd0c8bd8cfda301b` |
 | APK signing certificate SHA-256 | `9ef3104b934a37b111726ff91c7cb5ec5affc0e8b6a90742ed0bc55501969df9` |
 | Installed APK certificate SHA-256 (before reinstall) | `9ef3104b934a37b111726ff91c7cb5ec5affc0e8b6a90742ed0bc55501969df9` |
-| Reinstall performed | Yes — `adb install -r -d` (fixture build `versionCode=1` replaced `3`); authorized 2026-11-10 |
+| Reinstall performed | Yes — `adb install -r` (same fixture `versionCode=1`); authorized 2026-11-10 |
 | Extension | development channel, `web-extension/dist` |
-| Extension `manifest.json` SHA-256 | `0a7a91aef289a720a6207e0dfbc148426a87f328b3cdbea4ad2e9e28cba01839` |
+| Extension `manifest.json` SHA-256 | `e5be1e3fdb6415b3cb2de8d469ad15f5d0ee7cf075df679c9c6ce0423feb72a8` |
 | Windows extension id | `icoiadkjakfgpipmocdbheockdcbleni` |
 | macOS extension id | `mhpehgcgnfejmeaocnpaihfaklopeabm` |
 | Native host | `veles-native-host/0.1.0`, built locally from `native-bridge/host` on each machine with that machine's development extension id in `VELES_ALLOWED_ORIGINS`; unsigned, not the production host |
@@ -25,6 +27,10 @@ The Android package is the repository's OTP-23 fixture build (`applicationIdSuff
 = ".otp23"` via `config/android_keys/fixture-signing.gradle`), not `me.nagaev.veles.debug`;
 the probe component is
 `me.nagaev.veles.otp23/me.nagaev.veles.debugprobe.ProbeReceiver`.
+
+`EXPORT_IDENTITY` returns the full installation id and public key only through the
+ordered-broadcast result (`Broadcast completed: result=0, data="identity=… pub=…"`); logcat
+carries eight-character prefixes only.
 
 ## Environment
 
@@ -46,25 +52,25 @@ Commands used the explicit probe component with the actions
 
 | Step | Result | Observation |
 | --- | --- | --- |
-| 1. Inject trust both ways | PASS | `INJECT_PEER` logged `injected peer=1598d2a7…`; `velesDebug.injectPeer(phone)` resolved |
-| 2. Authenticate | PASS | connection row `connected`; class `full` implied by the probe working |
-| 3. Pull and ack | PASS | marker `VCR4JS`, event `a8b2e40d6c6a28b69acfe482145a56a1`, sid `5650dbfec4f12396`; logcat `VelesProbe marker=` matched the readout |
-| 4. adb push and ack | PASS | marker `V1V0DA`, event `d29a286c4aa396cbec360a6592be2b12`, same sid; shown in the readout |
-| 5. Idle heartbeat | PASS | 185 s with no application traffic, then a pull succeeded; an idle timeout would have closed the session at 180 s |
-| 6. Disconnect and reconnect | PASS | new sid prefix `af49aa16833b60c9`, distinct from step 3 |
-| 7. Revoke and reconnect | PASS | `revoked peer=1598d2a7…`; reconnect showed "Could not authenticate — re-pair required." and delivered no event |
+| 1. Inject trust both ways | PASS | `INJECT_PEER` for the Windows client; `velesDebug.injectPeer(phone)` resolved |
+| 2. Authenticate | PASS | connection row `connected`; the probe worked, so the class was `full` |
+| 3. Pull and ack | PASS | marker `V36RON`, event `afd9b5437f6d344586f0a4a56327e847`, sid `f611c8bfb1c973f5`; logcat `VelesProbe marker=` matched the readout |
+| 4. adb push and ack | PASS | marker `VY06L5`, event `823fba81a36d68abdee806c679ac42bd`, same sid; shown in the readout |
+| 5. Idle heartbeat | PASS (indirect) | 185 s with no application traffic, then a pull returned `VFDHB6` on the same sid; the session outlived the 180 s idle timeout, which is consistent with the heartbeat keeping it open, but the heartbeat frame itself was not observed directly |
+| 6. Disconnect and reconnect | PASS | new sid prefix `4d751c738110e866`, distinct from step 3 |
+| 7. Revoke and reconnect | PASS | revoked the Windows client; reconnect showed "Could not authenticate — re-pair required." and delivered no event |
 
 ### macOS 26.5.2 + Chrome
 
 | Step | Result | Observation |
 | --- | --- | --- |
-| 1. Inject trust both ways | PASS | `INJECT_PEER` logged `injected peer=0e3fb6ac…`; `velesDebug.injectPeer(phone)` resolved |
-| 2. Authenticate | PASS | connection row `connected`; probe worked |
-| 3. Pull and ack | PASS | marker `V29UEG`, event `d9a7be186e6d7513f2876aa366387b4a`, sid `957db55cbc7ab46f`; logcat matched |
-| 4. adb push and ack | PASS | marker `VHO4M9`, event `11c36eb6708b11f6d03a989a3ce01ba4`, same sid; shown in the readout |
-| 5. Idle heartbeat | PASS | 185 s idle, then a pull succeeded |
-| 6. Disconnect and reconnect | PASS | new sid prefix `ab7735f95ac878c1`, distinct from step 3 |
-| 7. Revoke and reconnect | PASS | `revoked peer=0e3fb6ac…`; reconnect showed "Could not authenticate — re-pair required." and delivered no event |
+| 1. Inject trust both ways | PASS | `INJECT_PEER` for the macOS client; `velesDebug.injectPeer(phone)` resolved |
+| 2. Authenticate | PASS | connection row `connected`; the probe worked |
+| 3. Pull and ack | PASS | marker `VRKLH8`, event `5b506aa5c14f96335942fdcf2a9a637a`, sid `eb77ff99869fa69f`; logcat matched |
+| 4. adb push and ack | PASS | marker `VS62WZ`, event `874ece06dc0155d7916b9054b0fc3cce`, same sid; shown in the readout |
+| 5. Idle heartbeat | PASS (indirect) | 185 s idle, then a pull returned `V5MDIG` on the same sid; see the Windows note on direct observation |
+| 6. Disconnect and reconnect | PASS | new sid prefix `d40bdde82a03f62f`, distinct from step 3 |
+| 7. Revoke and reconnect | PASS | revoked the macOS client; reconnect showed "Could not authenticate — re-pair required." and delivered no event |
 
 Note on step 7: the development readout keeps the last event it displayed, so after the
 failed reconnect it still showed the marker from the preceding authenticated session. No new
@@ -78,6 +84,8 @@ observed as "no new data", not as a blank panel.
 - One phone model, one Chrome version, one Windows build and one macOS build.
 - Step 7 is a trust-record removal while disconnected, not the OTP-11 live revocation of a
   connected peer.
+- The heartbeat observation is indirect: survival past the 180 s idle timeout plus a
+  successful pull afterwards, not a captured heartbeat record.
 - No keys, nonces or full installation identifiers are recorded here beyond the probe's own
-  marker/session-prefix output; installation-id prefixes appear only in command output
-  transcribed above as short prefixes.
+  marker/session-prefix output; installation ids appear only as the short prefixes from the
+  logcat lines quoted above.
