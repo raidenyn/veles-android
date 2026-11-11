@@ -153,7 +153,10 @@ class ProbeReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                dispatch(application, action, id, pub, ::setResultData)
+                // `goAsync()` detaches the pending result from this receiver; the result
+                // callback must go through the PendingResult (the receiver's own
+                // `setResultData` throws "Call while result is not pending").
+                dispatch(application, action, id, pub, pending::setResultData)
             } finally {
                 pending.finish()
             }
