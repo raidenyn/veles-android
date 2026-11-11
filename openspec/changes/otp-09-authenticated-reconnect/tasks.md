@@ -296,5 +296,5 @@
   - `scripts/commitlint.py` on every commit message and on the PR title and body
   - `node --test verify/test/workflow-contracts.test.mjs`, because the workflows change
   - `openspec validate otp-09-authenticated-reconnect --strict`
-- [ ] 11.4 Open one PR with a Conventional Commit title. The D0 commit stays first, and the
+- [x] 11.4 Open one PR with a Conventional Commit title. The D0 commit stays first, and the
   description lists the vector correction, the deferred scenario ids and the evidence note.
