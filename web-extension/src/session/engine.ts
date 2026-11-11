@@ -52,7 +52,7 @@ import {
 export type PhoneRecordState = 'pending' | 'active_activation_pending' | 'active';
 
 /** The phone's verified `peer_state` byte. */
-const PEER_STATE_ACTIVE = 0x01;
+export const PEER_STATE_ACTIVE = 0x01;
 const PEER_STATE_BELOW_ACTIVE = 0x02;
 
 const CONFIRM_SEQUENCE = 0n;
@@ -388,6 +388,15 @@ export class ClientSessionEngine {
         return this.#state.phoneConfirmFinalizing;
     }
 
+    /**
+     * The `peer_state` byte of the accepted phone confirm, or `null` before a
+     * verification and after teardown. The `phone_active` verifier additionally
+     * requires {@link PEER_STATE_ACTIVE}: only an active proof may upgrade a mirror.
+     */
+    get verifiedPeerState(): number | null {
+        return this.#state.peerConfirmVerified ? this.#state.peerState : null;
+    }
+
     /** Sends the client hello. Called once per connection generation. */
     async start(): Promise<SessionEffect[]> {
         const state = this.#state;
@@ -429,7 +438,7 @@ export class ClientSessionEngine {
         if (state.phase === 'closed' || state.phase === 'idle') return [];
         if (this.#exhausted(state)) return this.#terminate(STAGE_SEQUENCE);
         if (state.phase !== 'awaiting_phone_hello' && this.#isHelloFrame(bytes)) {
-            return this.#rejectPreAuth();
+            return this.#failPreAuth();
         }
         try {
             switch (state.phase) {
@@ -553,17 +562,17 @@ export class ClientSessionEngine {
     async #onPhoneHello(state: EngineState, bytes: Uint8Array): Promise<SessionEffect[]> {
         const frame = this.#decodeFrame(bytes);
         if (frame === null || frame.type !== FrameType.RECONNECT_HELLO) {
-            return this.#rejectPreAuth();
+            return this.#failPreAuth();
         }
         let hello: ReconnectHello;
         try {
             hello = decodeHello(frame.payload, Role.PHONE);
         } catch {
-            return this.#rejectPreAuth();
+            return this.#failPreAuth();
         }
         // The selected peer, not any trusted peer: reject before signing.
         if (hexOf(hello.installationId) !== this.#deps.expectedPeerId) {
-            return this.#rejectPreAuth();
+            return this.#failPreAuth();
         }
         let record: { publicKey: Uint8Array; state: PhoneRecordState } | undefined;
         try {
@@ -575,7 +584,7 @@ export class ClientSessionEngine {
         if (this.#state !== state) return [];
         const expired = this.#expiryFailure(this.#deps.now());
         if (expired !== null) return this.#terminate(expired);
-        if (record === undefined) return this.#rejectPreAuth();
+        if (record === undefined) return this.#failPreAuth();
         if (state.phase !== 'awaiting_phone_hello' || state.clientHello === null) {
             return this.#terminate(STAGE_UNEXPECTED_FRAME);
         }
@@ -591,13 +600,13 @@ export class ClientSessionEngine {
     async #onPhoneSignature(state: EngineState, bytes: Uint8Array): Promise<SessionEffect[]> {
         const frame = this.#decodeFrame(bytes);
         if (frame === null || frame.type !== FrameType.RECONNECT_SIGNATURE) {
-            return this.#rejectPreAuth();
+            return this.#failPreAuth();
         }
         let signature: Uint8Array;
         try {
             signature = decodeSignatureFrame(frame.payload, Role.PHONE).signature;
         } catch {
-            return this.#rejectPreAuth();
+            return this.#failPreAuth();
         }
         const peerKey = state.peerRecord?.publicKey;
         const transcript = state.transcript;
@@ -611,7 +620,7 @@ export class ClientSessionEngine {
             ephemeral === null ||
             localNonce === null
         ) {
-            return this.#rejectPreAuth();
+            return this.#failPreAuth();
         }
         let valid = false;
         try {
@@ -620,18 +629,18 @@ export class ClientSessionEngine {
             valid = false;
         }
         if (this.#state !== state) return [];
-        if (!valid) return this.#rejectPreAuth();
+        if (!valid) return this.#failPreAuth();
 
         let clientSignature: Uint8Array;
         try {
             clientSignature = await this.#deps.sign(transcript);
         } catch (error) {
             if (this.#state !== state) return [];
-            if (error instanceof SessionReject) return this.#rejectPreAuth();
+            if (error instanceof SessionReject) return this.#failPreAuth();
             throw error;
         }
         if (this.#state !== state) return [];
-        if (clientSignature.length !== SIGNATURE_BYTES) return this.#rejectPreAuth();
+        if (clientSignature.length !== SIGNATURE_BYTES) return this.#failPreAuth();
         const expired = this.#expiryFailure(this.#deps.now());
         if (expired !== null) return this.#terminate(expired);
 
@@ -676,7 +685,7 @@ export class ClientSessionEngine {
             eraseReconnectKeys(keys);
             keys = null;
             if (this.#state !== state) return [];
-            return this.#rejectPreAuth();
+            return this.#failPreAuth();
         }
         const installed = keys;
         if (this.#state !== state) {
@@ -688,7 +697,7 @@ export class ClientSessionEngine {
             eraseReconnectKeys(installed);
             return this.#terminate(late);
         }
-        if (installed === null) return this.#rejectPreAuth();
+        if (installed === null) return this.#failPreAuth();
         const prefix = installed.sessionId.slice(0, SESSION_PREFIX_BYTES);
         const token = state.nextToken;
         state.keys = installed;
@@ -1131,10 +1140,14 @@ export class ClientSessionEngine {
         return bytes.length > 0 && frameTypeFromWire(bytes[0]) !== null;
     }
 
-    #rejectPreAuth(): SessionEffect[] {
-        const frame = encodeFrame(FrameType.PREAUTH_REJECT, new Uint8Array(0));
+    /**
+     * The one generic pre-auth client failure (OTP2-REV-001). `preauth_reject` is
+     * phone→client only (OTP2-ENC-010, §4), so the client sends no frame: it closes
+     * with the same reason-free failure it would show for any rejected input.
+     */
+    #failPreAuth(): SessionEffect[] {
         this.#teardownInternal();
-        return [{ kind: 'send', bytes: frame }, { kind: 'close' }];
+        return [{ kind: 'close' }];
     }
 
     #terminate(reason: string): SessionEffect[] {

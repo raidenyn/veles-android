@@ -27,6 +27,7 @@ import {
 } from './fixtures';
 
 const DIRECTION_OFFSET = 2;
+const TYPE_OFFSET = 3;
 const SEQUENCE_OFFSET = 5;
 const LENGTH_OFFSET = 13;
 const SESSION_OFFSET = 15;
@@ -94,6 +95,39 @@ function open(v: Vector, record: Uint8Array, expected: bigint = v.sequence) {
     return openRecord(v.key, v.prefix, v.sid, v.direction, expected, record);
 }
 
+/** A valid AEAD record whose plaintext body bypasses the §7.3 body rules. */
+async function sealRaw(
+    v: Vector,
+    type: number,
+    body: Uint8Array,
+    sequence = 0n,
+): Promise<Uint8Array> {
+    const aad = new Uint8Array(RECORD_HEADER_BYTES);
+    aad[0] = 1;
+    aad[1] = 1;
+    aad[DIRECTION_OFFSET] = v.direction;
+    aad[TYPE_OFFSET] = (type >>> 8) & 0xff;
+    aad[TYPE_OFFSET + 1] = type & 0xff;
+    aad.set(u64be(sequence), SEQUENCE_OFFSET);
+    aad[LENGTH_OFFSET] = (body.length >>> 8) & 0xff;
+    aad[LENGTH_OFFSET + 1] = body.length & 0xff;
+    aad.set(v.sid, SESSION_OFFSET);
+    const iv = new Uint8Array(12);
+    iv.set(v.prefix, 0);
+    iv.set(u64be(sequence), 4);
+    const ciphertext = new Uint8Array(
+        await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv, additionalData: aad, tagLength: 128 },
+            v.key,
+            body,
+        ),
+    );
+    const record = new Uint8Array(aad.length + ciphertext.length);
+    record.set(aad, 0);
+    record.set(ciphertext, aad.length);
+    return record;
+}
+
 describe('protected records', () => {
     it('seals the fixture records', async () => {
         for (const id of [RECORD_CONFIRM, RECORD_PUSH]) {
@@ -116,6 +150,145 @@ describe('protected records', () => {
             expect(opened.type).toBe(v.type);
             expect(opened.seq).toBe(v.sequence);
             expect(opened.body).toEqual(v.body);
+        }
+    });
+
+    it('enforces the fixed §7.3 body rules on seal', async () => {
+        const clientVector = await vector(RECORD_CONFIRM);
+        const phoneVector = await vector(RECORD_PUSH);
+
+        // Empty-body framework and request records.
+        for (const type of [
+            RecordType.APP_HEARTBEAT,
+            RecordType.PULL_REQUEST,
+            RecordType.REMOVAL_REQUEST,
+            RecordType.REMOVAL_RESPONSE,
+        ]) {
+            await expect(
+                sealRecord(
+                    clientVector.key,
+                    clientVector.prefix,
+                    clientVector.sid,
+                    clientVector.direction,
+                    type,
+                    0n,
+                    Uint8Array.of(1),
+                ),
+            ).rejects.toBeInstanceOf(SessionReject);
+        }
+
+        // Fixed widths: the confirm is 33 bytes, each MAC and ack is 32.
+        await expect(
+            sealRecord(
+                clientVector.key,
+                clientVector.prefix,
+                clientVector.sid,
+                clientVector.direction,
+                RecordType.RECONNECT_CONFIRM,
+                0n,
+                new Uint8Array(32),
+            ),
+        ).rejects.toBeInstanceOf(SessionReject);
+        for (const type of [
+            RecordType.ACTIVATION_COMMIT,
+            RecordType.ACTIVATION_ACK,
+            RecordType.EVENT_ACK,
+        ]) {
+            await expect(sealRaw(clientVector, type, new Uint8Array(31))).resolves.toBeTruthy();
+            await expect(
+                sealRecord(
+                    clientVector.key,
+                    clientVector.prefix,
+                    clientVector.sid,
+                    clientVector.direction,
+                    type,
+                    0n,
+                    new Uint8Array(31),
+                ),
+            ).rejects.toBeInstanceOf(SessionReject);
+        }
+        for (const type of [RecordType.ACTIVATION_COMPLETE, RecordType.ENROLLMENT_PREPARE]) {
+            await expect(
+                sealRecord(
+                    phoneVector.key,
+                    phoneVector.prefix,
+                    phoneVector.sid,
+                    phoneVector.direction,
+                    type,
+                    0n,
+                    new Uint8Array(31),
+                ),
+            ).rejects.toBeInstanceOf(SessionReject);
+        }
+
+        // `phone_policy_state` is exactly two bytes with a known policy and no reserved bits.
+        for (const body of [Uint8Array.of(0), Uint8Array.of(3, 0), Uint8Array.of(0, 0x10)]) {
+            await expect(
+                sealRecord(
+                    phoneVector.key,
+                    phoneVector.prefix,
+                    phoneVector.sid,
+                    phoneVector.direction,
+                    RecordType.PHONE_POLICY_STATE,
+                    0n,
+                    body,
+                ),
+            ).rejects.toBeInstanceOf(SessionReject);
+        }
+    });
+
+    it('enforces the fixed §7.3 body rules on open', async () => {
+        const v = await vector(RECORD_CONFIRM);
+
+        // A peer can place any plaintext inside a valid AEAD record.
+        for (const [type, body] of [
+            [RecordType.APP_HEARTBEAT, Uint8Array.of(1)],
+            [RecordType.PULL_REQUEST, Uint8Array.of(1, 2)],
+            [RecordType.EVENT_ACK, new Uint8Array(31)],
+            [RecordType.APP_ERROR, Uint8Array.of(AppErrorCode.PROTOCOL_VIOLATION, 0, 2, 0x41)],
+        ] as const) {
+            const record = await sealRaw(v, type, body);
+            await expect(
+                openRecord(v.key, v.prefix, v.sid, v.direction, 0n, record),
+            ).rejects.toBeInstanceOf(SessionReject);
+        }
+
+        // Boundary: 64 bytes of printable text is accepted on both seal and open.
+        const longest = new Uint8Array(64).fill(0x61);
+        const validBody = Uint8Array.of(
+            AppErrorCode.PROTOCOL_VIOLATION,
+            0,
+            longest.length,
+            ...longest,
+        );
+        const sealed = await sealRecord(
+            v.key,
+            v.prefix,
+            v.sid,
+            v.direction,
+            RecordType.APP_ERROR,
+            0n,
+            validBody,
+        );
+        expect((await openRecord(v.key, v.prefix, v.sid, v.direction, 0n, sealed)).body).toEqual(
+            validBody,
+        );
+
+        // 65 bytes and every control code are prohibited by OTP2-ENC-003.
+        for (const reason of [new Uint8Array(65).fill(0x61), Uint8Array.of(0x41, 0x00, 0x42)]) {
+            const body = Uint8Array.of(
+                AppErrorCode.PROTOCOL_VIOLATION,
+                (reason.length >>> 8) & 0xff,
+                reason.length & 0xff,
+                ...reason,
+            );
+            await expect(
+                sealRecord(v.key, v.prefix, v.sid, v.direction, RecordType.APP_ERROR, 0n, body),
+            ).rejects.toBeInstanceOf(SessionReject);
+            const record = await sealRaw(v, RecordType.APP_ERROR, body);
+            await expect(
+                openRecord(v.key, v.prefix, v.sid, v.direction, 0n, record),
+            ).rejects.toBeInstanceOf(SessionReject);
         }
     });
 
@@ -177,15 +350,8 @@ describe('protected records', () => {
     it('rejects an unknown app error code', async () => {
         const v = await vector(RECORD_CONFIRM);
         const unknownCode = Uint8Array.of(0x06, 0x00, 0x00);
-        const unknownRecord = await sealRecord(
-            v.key,
-            v.prefix,
-            v.sid,
-            v.direction,
-            RecordType.APP_ERROR,
-            0n,
-            unknownCode,
-        );
+        // Sealed without the codec's body rules so the open path's own check is exercised.
+        const unknownRecord = await sealRaw(v, RecordType.APP_ERROR, unknownCode);
         await expect(
             openRecord(v.key, v.prefix, v.sid, v.direction, 0n, unknownRecord),
         ).rejects.toBeInstanceOf(SessionReject);

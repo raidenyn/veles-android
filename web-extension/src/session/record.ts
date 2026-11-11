@@ -32,6 +32,13 @@ const SESSION_OFFSET = 15;
 
 const APP_ERROR_HEADER_BYTES = 3;
 const APP_ERROR_MAX_REASON = 64;
+const CONFIRM_BODY_BYTES = 33;
+const MAC_BODY_BYTES = 32;
+const ENROLL_IDENTITY_MIN = 132;
+const ENROLL_IDENTITY_MAX = 164;
+const POLICY_STATE_BYTES = 2;
+const POLICY_ALWAYS = 2;
+const POLICY_RESERVED_MASK = 0xf0;
 
 const utf8Decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
@@ -111,17 +118,64 @@ function nonce(prefix: Uint8Array, sequence: bigint): Uint8Array {
     return value;
 }
 
-function validateBody(type: number, body: Uint8Array): void {
-    if (type !== RecordType.APP_ERROR) return;
-    if (body.length < APP_ERROR_HEADER_BYTES) reject();
-    if (appErrorCodeFromWire(u8(body, 0)) === null) reject();
-    const reasonLength = u16(body, 1);
-    if (reasonLength > APP_ERROR_MAX_REASON) reject();
-    if (body.length !== APP_ERROR_HEADER_BYTES + reasonLength) reject();
-    try {
-        utf8Decoder.decode(body.subarray(APP_ERROR_HEADER_BYTES));
-    } catch {
-        reject();
+/**
+ * The fixed body rules of the §7.3 table, applied to every seal and every successful open:
+ * empty bodies, fixed widths, `enroll_identity` bounds, the `phone_policy_state` reserved bits,
+ * and OTP2-ENC-003 bounded safe text for the `app_error` reason. Variable-length application
+ * payloads (`pull_events`, `push_event`) stay with their handlers, which own semantic event
+ * parsing.
+ */
+export function requireBody(type: number, body: Uint8Array): void {
+    switch (type) {
+        case RecordType.APP_HEARTBEAT:
+        case RecordType.PULL_REQUEST:
+        case RecordType.REMOVAL_REQUEST:
+        case RecordType.REMOVAL_RESPONSE:
+            if (body.length !== 0) reject();
+            return;
+        case RecordType.RECONNECT_CONFIRM:
+            if (body.length !== CONFIRM_BODY_BYTES) reject();
+            return;
+        case RecordType.ACTIVATION_COMMIT:
+        case RecordType.ACTIVATION_COMPLETE:
+        case RecordType.ACTIVATION_ACK:
+        case RecordType.ENROLLMENT_PREPARE:
+        case RecordType.EVENT_ACK:
+            if (body.length !== MAC_BODY_BYTES) reject();
+            return;
+        case RecordType.ENROLL_IDENTITY:
+            if (body.length < ENROLL_IDENTITY_MIN || body.length > ENROLL_IDENTITY_MAX) reject();
+            return;
+        case RecordType.APP_ERROR: {
+            if (body.length < APP_ERROR_HEADER_BYTES) reject();
+            if (appErrorCodeFromWire(u8(body, 0)) === null) reject();
+            const reasonLength = u16(body, 1);
+            if (reasonLength > APP_ERROR_MAX_REASON) reject();
+            if (body.length !== APP_ERROR_HEADER_BYTES + reasonLength) reject();
+            let reason: string;
+            try {
+                reason = utf8Decoder.decode(body.subarray(APP_ERROR_HEADER_BYTES));
+            } catch {
+                reject();
+            }
+            // OTP2-ENC-003: no U+0000..U+001F and no U+007F in any Veles string.
+            if (
+                Array.from(reason).some(
+                    (char) => char.charCodeAt(0) < 0x20 || char.charCodeAt(0) === 0x7f,
+                )
+            ) {
+                reject();
+            }
+            return;
+        }
+        case RecordType.PHONE_POLICY_STATE:
+            if (body.length !== POLICY_STATE_BYTES) reject();
+            if (u8(body, 0) > POLICY_ALWAYS) reject();
+            if ((u8(body, 1) & POLICY_RESERVED_MASK) !== 0) reject();
+            return;
+        default:
+            // `pull_events` and `push_event` payloads are parsed by their handlers.
+            return;
     }
 }
 
@@ -136,6 +190,7 @@ export async function sealRecord(
 ): Promise<Uint8Array> {
     requireKeyMaterial(prefix, sessionIdPrefix);
     requireType(type, direction);
+    requireBody(type, body);
     if (body.length > RECORD_MAX_CIPHERTEXT_BYTES) reject();
 
     const aad = header(direction, type, sequence, body.length, sessionIdPrefix);
@@ -213,6 +268,6 @@ export async function openRecord(
         return reject();
     }
 
-    validateBody(type, body);
+    requireBody(type, body);
     return { type, seq: sequence, body };
 }

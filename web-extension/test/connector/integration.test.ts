@@ -1133,9 +1133,6 @@ describe('OTP-09 integration — serialized authenticated sessions', () => {
             await impostorSide.acceptClientHello(decodeFrame(hello.bytes).payload),
         );
         await flush();
-        const reject = await nextSend(fixture.currentPort());
-        expect(reject.bytes[0]).toBe(FrameType.PREAUTH_REJECT);
-        await ackSend(fixture.currentPort(), reject);
         await failed;
         await ackDisconnect(fixture.currentPort(), HANDLE_CONNECTION);
         await flush();

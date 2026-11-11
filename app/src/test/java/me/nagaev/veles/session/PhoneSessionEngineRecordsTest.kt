@@ -205,6 +205,53 @@ class PhoneSessionEngineRecordsTest {
     }
 
     @Test
+    fun nonEmptyHeartbeatIsNotAProtectedRecord() = runTest {
+        val client = TestClient()
+        val engine = engine(lookupFor(client))
+        open(engine, client)
+
+        // OTP2-REC-034: `app_heartbeat` has an empty body. A nonempty one is rejected by the
+        // codec before the heartbeat rules ever see it.
+        assertTerminated(
+            engine.onInbound(client.uncheckedRecord(RecordType.APP_HEARTBEAT.wire, 1uL, byteArrayOf(0))),
+        )
+        assertClosed(engine)
+    }
+
+    @Test
+    fun outboundBodiesAreValidatedBeforeASequenceIsReserved() = runTest {
+        val client = TestClient()
+        val engine = engine(lookupFor(client))
+        open(engine, client)
+
+        // Both the empty-body rule and the app_error reason rule gate the seal path too.
+        for (type in listOf(RecordType.APP_HEARTBEAT.wire, RecordType.PULL_REQUEST.wire)) {
+            try {
+                engine.sendApplication(type, byteArrayOf(1))
+                fail("a nonempty body for type $type must be refused")
+            } catch (_: SessionReject) {
+                // Expected: nothing was sealed or reserved.
+            }
+        }
+        try {
+            engine.sendApplication(
+                RecordType.APP_ERROR.wire,
+                byteArrayOf(AppErrorCode.PROTOCOL_VIOLATION.wire.toByte(), 0, 2, 0x41),
+            )
+            fail("an app_error body with trailing bytes must be refused")
+        } catch (_: SessionReject) {
+            // Expected.
+        }
+        assertTrue(engine.isOpen)
+
+        // The rejected sends consumed no sequence: the first valid record is sequence 1.
+        val heartbeat = engine.sendApplication(RecordType.APP_HEARTBEAT.wire, ByteArray(0)).single()
+        val opened = client.openPhoneRecord((heartbeat as SessionEffect.Send).bytes, 1uL)
+        assertEquals(RecordType.APP_HEARTBEAT.wire, opened.type)
+        assertTrue(engine.isOpen)
+    }
+
+    @Test
     fun appErrorReceivedIsTerminal() = runTest {
         val client = TestClient()
         val engine = engine(lookupFor(client))
@@ -227,7 +274,7 @@ class PhoneSessionEngineRecordsTest {
         open(engine, client)
 
         val unknownCode = byteArrayOf(0x09, 0x00, 0x00)
-        val effects = engine.onInbound(client.record(RecordType.APP_ERROR.wire, 1uL, unknownCode))
+        val effects = engine.onInbound(client.uncheckedRecord(RecordType.APP_ERROR.wire, 1uL, unknownCode))
         assertTerminated(effects)
         assertClosed(engine)
     }

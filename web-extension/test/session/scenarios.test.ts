@@ -357,7 +357,8 @@ interface StepOutcome {
     closed: boolean;
     sentTypes: number[];
     deliveredTypes: number[];
-    preAuthReject: boolean;
+    /** Closed with the generic client failure and sent no frame (OTP2-REV-001). */
+    genericAbort: boolean;
     unauthorized: boolean;
     unknownType: boolean;
     oversize: boolean;
@@ -412,11 +413,10 @@ function classify(effects: SessionEffect[]): {
     closed: boolean;
     sentTypes: number[];
     deliveredTypes: number[];
-    preAuthReject: boolean;
+    genericAbort: boolean;
 } {
     let terminated: string | null = null;
     let closed = false;
-    let preAuthReject = false;
     const sentTypes: number[] = [];
     const deliveredTypes: number[] = [];
     for (const effect of effects) {
@@ -425,11 +425,12 @@ function classify(effects: SessionEffect[]): {
         if (effect.kind === 'send') {
             const type = wireType(effect.bytes);
             if (type !== null) sentTypes.push(type);
-            if (type === 0x0f) preAuthReject = true;
         }
         if (effect.kind === 'deliver') deliveredTypes.push(effect.type);
     }
-    return { terminated, closed, sentTypes, deliveredTypes, preAuthReject };
+    // `preauth_reject` is phone→client only: the client's abort is a bare close with no send.
+    const genericAbort = closed && terminated === null && sentTypes.length === 0;
+    return { terminated, closed, sentTypes, deliveredTypes, genericAbort };
 }
 
 type PersistedState = 'active' | 'active_activation_pending' | 'pending' | 'deleted';
@@ -868,7 +869,7 @@ class ClientScenario {
             closed: classified.closed,
             sentTypes: classified.sentTypes,
             deliveredTypes: classified.deliveredTypes,
-            preAuthReject: classified.preAuthReject,
+            genericAbort: classified.genericAbort,
             unauthorized,
             unknownType,
             oversize: this.oversizeBuilt,
@@ -1267,12 +1268,14 @@ describe('client conformance scenarios', () => {
         const invalidHello = await new ClientScenario(
             fixtureWithSteps([hello, mutate(phoneHello, { hello_valid: false })]),
         ).run();
-        expect(invalidHello.steps[1].preAuthReject).toBe(true);
+        expect(invalidHello.steps[1].genericAbort).toBe(true);
+        expect(invalidHello.steps[1].sentTypes).toEqual([]);
 
         const invalidSignature = await new ClientScenario(
             fixtureWithSteps([hello, phoneHello, mutate(phoneSignature, { sig_ok: false })]),
         ).run();
-        expect(invalidSignature.steps[2].preAuthReject).toBe(true);
+        expect(invalidSignature.steps[2].genericAbort).toBe(true);
+        expect(invalidSignature.steps[2].sentTypes).toEqual([]);
 
         const invalidConfirm = await new ClientScenario(
             fixtureWithSteps([...handshake.slice(0, 4), mutate(phoneConfirm, { hmac_ok: false })]),

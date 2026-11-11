@@ -19,7 +19,12 @@
 
 import type { TrustedPeer } from '../trust/model';
 import type { AuthenticationVerifier, ChromeTrustRepository } from '../trust/repository';
-import { ClientSessionEngine, type ClientEngineDeps, type SessionEffect } from '../session/engine';
+import {
+    ClientSessionEngine,
+    PEER_STATE_ACTIVE,
+    type ClientEngineDeps,
+    type SessionEffect,
+} from '../session/engine';
 import { QueueOverflow, SESSION_QUEUE_LIMIT, SerialQueue } from '../session/queue';
 import { SessionReject } from '../session/reject';
 import type { SessionClass } from '../session/wire';
@@ -139,7 +144,11 @@ export class SessionManager {
                 if (
                     stage === 'phone_active' &&
                     session.phase === 'handshake' &&
-                    session.engine.phoneConfirmFinalizing
+                    session.engine.phoneConfirmFinalizing &&
+                    // OTP2-SID-001: only a proof that the phone reported itself active
+                    // (`peer_state = 0x01`) may upgrade a durable mirror; a below-active
+                    // confirm still opens the session but proves nothing to the mirror.
+                    session.engine.verifiedPeerState === PEER_STATE_ACTIVE
                 ) {
                     return true;
                 }

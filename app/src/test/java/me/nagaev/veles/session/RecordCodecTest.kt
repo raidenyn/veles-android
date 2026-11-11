@@ -107,28 +107,96 @@ class RecordCodecTest {
     @Test fun rejectsUnknownAppErrorCode() {
         val vector = vector(confirm)
         val unknownCode = byteArrayOf(0x06, 0x00, 0x00)
-        val unknownRecord = RecordCodec.seal(
-            vector.key,
-            vector.prefix,
-            vector.sid,
-            vector.direction,
-            RecordType.APP_ERROR.wire,
-            0UL,
-            unknownCode,
-        )
+        // Sealed without the codec's body rules so the open path's own check is exercised.
+        val unknownRecord = vector.rawSeal(RecordType.APP_ERROR.wire, 0UL, unknownCode)
         assertThrows(SessionReject::class.java) { vector.open(unknownRecord, 0UL) }
 
         val validBody = byteArrayOf(AppErrorCode.PROTOCOL_VIOLATION.wire.toByte(), 0x00, 0x00)
-        val validRecord = RecordCodec.seal(
-            vector.key,
-            vector.prefix,
-            vector.sid,
-            vector.direction,
-            RecordType.APP_ERROR.wire,
-            0UL,
-            validBody,
-        )
+        val validRecord = vector.sealWith(RecordType.APP_ERROR.wire, 0UL, validBody)
         assertArrayEquals(validBody, vector.open(validRecord, 0UL).body)
+    }
+
+    @Test fun fixedBodyRulesApplyToSeal() {
+        val vector = vector(confirm)
+        // §7.3: empty-body framework and request records.
+        for (type in listOf(
+            RecordType.APP_HEARTBEAT.wire,
+            RecordType.PULL_REQUEST.wire,
+            RecordType.REMOVAL_REQUEST.wire,
+            RecordType.REMOVAL_RESPONSE.wire,
+        )) {
+            assertThrows("$type must be empty", SessionReject::class.java) {
+                vector.sealWith(type, 0UL, byteArrayOf(1))
+            }
+        }
+        // Fixed-width records: the confirm is 33 bytes, every MAC and ack is 32.
+        assertThrows(SessionReject::class.java) {
+            vector.sealWith(RecordType.RECONNECT_CONFIRM.wire, 0UL, ByteArray(32))
+        }
+        for (type in listOf(
+            RecordType.ACTIVATION_COMMIT.wire,
+            RecordType.ACTIVATION_ACK.wire,
+            RecordType.EVENT_ACK.wire,
+        )) {
+            assertThrows("$type is fixed width", SessionReject::class.java) {
+                vector.sealWith(type, 0UL, ByteArray(31))
+            }
+        }
+        val phoneVector = vector(push)
+        for (type in listOf(
+            RecordType.ACTIVATION_COMPLETE.wire,
+            RecordType.ENROLLMENT_PREPARE.wire,
+        )) {
+            assertThrows("$type is fixed width", SessionReject::class.java) {
+                phoneVector.sealWith(type, 0UL, ByteArray(31))
+            }
+        }
+        assertThrows("reserved policy bits", SessionReject::class.java) {
+            phoneVector.sealWith(RecordType.PHONE_POLICY_STATE.wire, 0UL, byteArrayOf(0, 0x10))
+        }
+        assertThrows("unknown policy", SessionReject::class.java) {
+            phoneVector.sealWith(RecordType.PHONE_POLICY_STATE.wire, 0UL, byteArrayOf(3, 0))
+        }
+    }
+
+    @Test fun appErrorReasonIsBoundedSafeText() {
+        val vector = vector(confirm)
+        fun body(reason: ByteArray) = byteArrayOf(
+            AppErrorCode.PROTOCOL_VIOLATION.wire.toByte(),
+            (reason.size ushr 8).toByte(),
+            reason.size.toByte(),
+        ) + reason
+
+        // Boundary: 64 bytes of printable text is accepted on both seal and open.
+        val longest = ByteArray(64) { 'a'.code.toByte() }
+        val sealed = vector.sealWith(RecordType.APP_ERROR.wire, 0UL, body(longest))
+        assertArrayEquals(body(longest), vector.open(sealed, 0UL).body)
+
+        assertThrows("65 bytes exceeds the reason bound", SessionReject::class.java) {
+            vector.sealWith(RecordType.APP_ERROR.wire, 0UL, body(ByteArray(65) { 'a'.code.toByte() }))
+        }
+        for (control in listOf(0x00, 0x01, 0x1F, 0x7F)) {
+            assertThrows("U+%04X is prohibited".format(control), SessionReject::class.java) {
+                vector.sealWith(RecordType.APP_ERROR.wire, 0UL, body(byteArrayOf(0x41, control.toByte(), 0x42)))
+            }
+        }
+        // The same rules gate the open path, not just seal.
+        val rejected = vector.rawSeal(RecordType.APP_ERROR.wire, 0UL, body(byteArrayOf(0x41, 0x00, 0x42)))
+        assertThrows(SessionReject::class.java) { vector.open(rejected, 0UL) }
+    }
+
+    @Test fun openAppliesFixedBodyRules() {
+        val vector = vector(confirm)
+        // A peer can put any plaintext inside a valid AEAD record; the open path must apply the
+        // same §7.3 body rules. These records are sealed without the codec's body check.
+        val heartbeat = vector.rawSeal(RecordType.APP_HEARTBEAT.wire, 0UL, byteArrayOf(1))
+        assertThrows(SessionReject::class.java) { vector.open(heartbeat, 0UL) }
+
+        val pull = vector.rawSeal(RecordType.PULL_REQUEST.wire, 0UL, byteArrayOf(1, 2))
+        assertThrows(SessionReject::class.java) { vector.open(pull, 0UL) }
+
+        val ack = vector.rawSeal(RecordType.EVENT_ACK.wire, 0UL, ByteArray(31))
+        assertThrows(SessionReject::class.java) { vector.open(ack, 0UL) }
     }
 
     private data class Vector(
@@ -142,6 +210,34 @@ class RecordCodecTest {
         val record: ByteArray,
     ) {
         fun seal(): ByteArray = RecordCodec.seal(key, prefix, sid, direction, type, sequence, body)
+
+        @Suppress("MaxLineLength") // ktlint keeps this expression body on one line.
+        fun sealWith(type: Int, sequence: ULong, body: ByteArray): ByteArray = RecordCodec.seal(key, prefix, sid, direction, type, sequence, body)
+
+        /** A valid AEAD record whose plaintext body bypasses the §7.3 body rules. */
+        fun rawSeal(type: Int, sequence: ULong, body: ByteArray): ByteArray {
+            val header = ByteArray(RecordCodec.HEADER)
+            header[0] = 1
+            header[1] = 1
+            header[2] = direction.wire.toByte()
+            header[3] = (type ushr 8).toByte()
+            header[4] = type.toByte()
+            ByteBuffer.wrap(header).putLong(5, sequence.toLong())
+            header[13] = (body.size ushr 8).toByte()
+            header[14] = body.size.toByte()
+            sid.copyInto(header, 15)
+            val nonce = ByteArray(12)
+            prefix.copyInto(nonce, 0)
+            ByteBuffer.wrap(nonce).putLong(4, sequence.toLong())
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(
+                javax.crypto.Cipher.ENCRYPT_MODE,
+                javax.crypto.spec.SecretKeySpec(key, "AES"),
+                javax.crypto.spec.GCMParameterSpec(128, nonce),
+            )
+            cipher.updateAAD(header)
+            return header + cipher.doFinal(body)
+        }
 
         fun open(record: ByteArray, expected: ULong): OpenedRecord = RecordCodec.open(key, prefix, sid, direction, expected, record)
     }

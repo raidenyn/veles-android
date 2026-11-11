@@ -37,8 +37,9 @@ internal fun interface ProbeEventSource {
 }
 
 /**
- * Bounded memory of synthetic events this debug process issued. An acknowledgement settles
- * exactly one issued event; duplicates are idempotent and an unknown event fails closed.
+ * Bounded memory of synthetic events this debug process issued. An acknowledgement for an
+ * issued event settles exactly one event and duplicates are idempotent; an unknown event id is
+ * the OTP2-REC-032a semantic no-op (the caller ignores the result).
  */
 internal class SyntheticEventLedger {
     private val issued = LinkedHashSet<String>()
@@ -108,10 +109,12 @@ internal class SyntheticProbeHandler private constructor(
     ) {
         when (type) {
             // The handler owns the event; the copy is sealed into `pull_events` by the engine.
-            RecordType.PULL_REQUEST.wire -> reply(
-                RecordType.PULL_EVENTS.wire,
-                byteArrayOf(1) + next(sessionIdPrefix).body,
-            )
+            RecordType.PULL_REQUEST.wire -> {
+                // OTP2-REC-031: `pull_request` has an empty body; the codec already enforces it
+                // and the handler refuses to answer anything else.
+                if (body.isNotEmpty()) throw SessionReject()
+                reply(RecordType.PULL_EVENTS.wire, byteArrayOf(1) + next(sessionIdPrefix).body)
+            }
             RecordType.EVENT_ACK.wire -> acknowledge(body)
         }
     }
@@ -130,15 +133,17 @@ internal class SyntheticProbeHandler private constructor(
         return event
     }
 
-    /** §8.1/event_ack: `phone_installation_id || event_id`; unknown events fail closed. */
+    /**
+     * §8.1/event_ack: `phone_installation_id || event_id`. The shape and the installation id are
+     * validated; an unknown or already-settled event id is the OTP2-REC-032a semantic no-op
+     * (authenticated, well-formed, settles nothing, mutates nothing, not an error).
+     */
     private fun acknowledge(body: ByteArray) {
         if (body.size != EVENT_ACK_BYTES) throw SessionReject()
         if (!body.copyOfRange(0, INSTALLATION_ID_BYTES).contentEquals(localInstallationId)) {
             throw SessionReject()
         }
-        if (!ledger.acknowledge(body.copyOfRange(INSTALLATION_ID_BYTES, EVENT_ACK_BYTES))) {
-            throw SessionReject()
-        }
+        ledger.acknowledge(body.copyOfRange(INSTALLATION_ID_BYTES, EVENT_ACK_BYTES))
     }
 
     private companion object {

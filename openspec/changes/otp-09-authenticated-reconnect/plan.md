@@ -989,9 +989,10 @@ export class SessionManager { constructor(controller: ConnectorController, repos
   and run in order:
   1. `adb shell am broadcast -n me.nagaev.veles.debug/me.nagaev.veles.debugprobe.ProbeReceiver
      -a me.nagaev.veles.debug.EXPORT_IDENTITY`. The same `-n` component is used for every
-     action below. Then
-     `velesDebug.exportIdentity()`, then `INJECT_PEER` and `velesDebug.injectPeer()` to
-     cross-inject.
+     action below. The command prints an ordered-broadcast result line carrying
+     `data="identity=<id> pub=<key>"` with the full values; logcat shows only bounded
+     prefixes. Then `velesDebug.exportIdentity()`, then `INJECT_PEER` and
+     `velesDebug.injectPeer()` to cross-inject.
   2. Connect, and expect authentication with class full.
   3. `velesDebug.pull()`, and expect the readout marker to equal the logcat
      `VelesProbe marker=`.

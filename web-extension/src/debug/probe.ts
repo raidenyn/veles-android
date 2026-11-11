@@ -10,11 +10,13 @@ import { createDebugReadout, type DebugReadout } from './readout';
 export interface ProbeEvent {
     phoneInstallationId: string;
     eventId: string;
-    receiptEpochSeconds: number;
+    /** u64: kept as `bigint` so no precision is lost above 2^53. */
+    receiptEpochSeconds: bigint;
     remainingLifetime: number;
     code: string;
     merchant: string;
-    amountMagnitude: number;
+    /** u64 minor units: kept as `bigint`. */
+    amountMagnitude: bigint;
     amountScale: number;
     currency: string;
     sessionIdPrefix: string;
@@ -97,10 +99,10 @@ class Cursor {
         return result;
     }
 
-    u64(): number {
+    u64(): bigint {
         let result = 0n;
         for (let index = 0; index < 8; index += 1) result = (result << 8n) | BigInt(this.u8());
-        return Number(result);
+        return result;
     }
 
     take(size: number): Uint8Array {
@@ -240,11 +242,15 @@ export function createDevelopmentProbe(
                     throw error;
                 }
                 await reply(PROBE_TYPE.EVENT_ACK, ackBody(event));
-                readout.show({
-                    marker: event.code,
-                    eventId: event.eventId,
-                    sessionIdPrefix: event.sessionIdPrefix,
-                });
+                // OTP2-REC-030a: a remaining lifetime of 0 is already expired. It is fully
+                // acknowledged above but never displayed.
+                if (event.remainingLifetime > 0) {
+                    readout.show({
+                        marker: event.code,
+                        eventId: event.eventId,
+                        sessionIdPrefix: event.sessionIdPrefix,
+                    });
+                }
                 if (type === PROBE_TYPE.PULL_EVENTS) {
                     const waiter = pending.get(handle);
                     pending.delete(handle);

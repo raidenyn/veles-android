@@ -19,7 +19,13 @@ import {
     nextSend,
     postedSends,
 } from './session-harness';
-import { PEER_STATE_ACTIVE, TestPhone, patchSubtle, takeSubtle } from '../session/client-harness';
+import {
+    PEER_STATE_ACTIVE,
+    PEER_STATE_BELOW_ACTIVE,
+    TestPhone,
+    patchSubtle,
+    takeSubtle,
+} from '../session/client-harness';
 
 function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
     let resolve!: (value: T) => void;
@@ -125,7 +131,7 @@ describe('serialized connector sessions', () => {
         const ack = fixture.manager.sendApplication(
             HANDLE_CONNECTION,
             RecordType.EVENT_ACK,
-            Uint8Array.of(9),
+            new Uint8Array(32).fill(9),
         );
         const heartbeat = fixture.manager.sendApplication(
             HANDLE_CONNECTION,
@@ -201,14 +207,22 @@ describe('serialized connector sessions', () => {
         const pending: Promise<void>[] = [];
         pending.push(
             fixture.manager
-                .sendApplication(HANDLE_CONNECTION, RecordType.EVENT_ACK, Uint8Array.of(1))
+                .sendApplication(
+                    HANDLE_CONNECTION,
+                    RecordType.EVENT_ACK,
+                    new Uint8Array(32).fill(1),
+                )
                 .catch(() => undefined),
         );
         await nextSend(port);
         for (let index = 0; index < SESSION_QUEUE_LIMIT; index += 1) {
             pending.push(
                 fixture.manager
-                    .sendApplication(HANDLE_CONNECTION, RecordType.EVENT_ACK, Uint8Array.of(2))
+                    .sendApplication(
+                        HANDLE_CONNECTION,
+                        RecordType.EVENT_ACK,
+                        new Uint8Array(32).fill(2),
+                    )
                     .catch(() => undefined),
             );
         }
@@ -235,7 +249,7 @@ describe('serialized connector sessions', () => {
             fixture.manager.sendApplication(
                 HANDLE_CONNECTION,
                 RecordType.EVENT_ACK,
-                Uint8Array.of(3),
+                new Uint8Array(32).fill(3),
             ),
         ).rejects.toBeTruthy();
         expect(side.keys.sessionId.length).toBe(32);
@@ -259,8 +273,9 @@ describe('serialized connector sessions', () => {
             peerId: fixture.peerId,
         });
 
-        // A second link fails with the generic pre-auth rejection while the
-        // first session is open and untouched.
+        // A second link fails with the same generic pre-auth failure while the
+        // first session is open and untouched. The client sends no frame: the
+        // phone-only `preauth_reject` is not a client record (OTP2-ENC-010).
         await connectForSession(fixture, HANDLE_CONNECTION, HANDLE_DEVICE);
         const failed = fixture.manager.open(HANDLE_CONNECTION, fixture.peerId);
         const failedHello = await nextSend(port);
@@ -272,9 +287,6 @@ describe('serialized connector sessions', () => {
             await impostor.acceptClientHello(decodeFrame(failedHello.bytes).payload),
         );
         await flush();
-        const reject = await nextSend(port);
-        expect(reject.bytes[0]).toBe(FrameType.PREAUTH_REJECT);
-        await ackSend(port, reject);
         await expect(failed).resolves.toEqual({ result: 'failed' });
         await ackDisconnect(port, HANDLE_CONNECTION);
 
@@ -288,7 +300,7 @@ describe('serialized connector sessions', () => {
         const send = fixture.manager.sendApplication(
             HANDLE_CONNECTION_2,
             RecordType.EVENT_ACK,
-            Uint8Array.of(7),
+            new Uint8Array(32).fill(7),
         );
         const posted = await nextSend(port);
         await ackSend(port, posted);
@@ -311,8 +323,6 @@ describe('serialized connector sessions', () => {
             await impostor.acceptClientHello(decodeFrame(hello.bytes).payload),
         );
         await flush();
-        const reject = await nextSend(failing.currentPort());
-        await ackSend(failing.currentPort(), reject);
         await expect(opened).resolves.toEqual({ result: 'failed' });
         await ackDisconnect(failing.currentPort(), HANDLE_CONNECTION);
         const afterFailure = (await failing.trust.peers())[0];
@@ -363,7 +373,7 @@ describe('serialized connector sessions', () => {
         const ack = fixture.manager.sendApplication(
             HANDLE_CONNECTION,
             RecordType.EVENT_ACK,
-            Uint8Array.of(1, 2, 3),
+            new Uint8Array(32).fill(0x0a),
         );
         const postedAck = await nextSend(fixture.currentPort());
         await ackSend(fixture.currentPort(), postedAck);
@@ -374,11 +384,7 @@ describe('serialized connector sessions', () => {
         let sealed = 0;
         for (const send of sends) {
             const first = send.bytes[0];
-            if (
-                first === FrameType.RECONNECT_HELLO ||
-                first === FrameType.RECONNECT_SIGNATURE ||
-                first === FrameType.PREAUTH_REJECT
-            ) {
+            if (first === FrameType.RECONNECT_HELLO || first === FrameType.RECONNECT_SIGNATURE) {
                 expect(decodeFrame(send.bytes).type).toBe(first);
                 continue;
             }
@@ -530,7 +536,7 @@ describe('session deadlines, pipeline and verifier negatives', () => {
             fixture.manager.sendApplication(
                 HANDLE_CONNECTION_2,
                 RecordType.EVENT_ACK,
-                Uint8Array.of(1),
+                new Uint8Array(32).fill(1),
             ),
         ).rejects.toBeTruthy();
     });
@@ -618,6 +624,55 @@ describe('session deadlines, pipeline and verifier negatives', () => {
         await expect(
             repository.authenticated(fixture.peerId, 'winrt:leak', verifiedConfirm),
         ).rejects.toBeTruthy();
+    });
+
+    it('phone_active requires peer_state 0x01 while the local confirm is still pending', async () => {
+        const fixture = await createManagerFixture({ state: 'active_activation_pending' });
+        const manager = fixture.manager;
+        const repository = fixture.trust.repository;
+        await connectForSession(fixture);
+        const port = fixture.currentPort();
+        const opened = manager.open(HANDLE_CONNECTION, fixture.peerId);
+        const hello = await nextSend(port);
+        await ackSend(port, hello);
+        const side = new PhoneSide(fixture.phone);
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.acceptClientHello(decodeFrame(hello.bytes).payload),
+        );
+        await flush();
+        await emitRecord(port, HANDLE_CONNECTION, await side.signatureFrame());
+        await flush();
+        const signature = await nextSend(port);
+        await side.acceptClientSignature(decodeFrame(signature.bytes).payload);
+        await ackSend(port, signature);
+        const clientConfirm = await nextSend(port);
+        // Deliberately leave the client confirm send unacknowledged: the engine remains
+        // inside its verified-finalization window while the phone confirm arrives.
+        const belowActiveConfirm = await side.confirmFrame(PEER_STATE_BELOW_ACTIVE);
+        await emitRecord(port, HANDLE_CONNECTION, belowActiveConfirm);
+        await flush();
+
+        const peer = { installationId: fixture.peerId } as TrustedPeer;
+        // The confirm verified, and the class is not fixed yet, but a 0x02 proof may not
+        // upgrade the durable mirror (OTP2-SID-001).
+        expect(await manager.verifier(peer, 'phone_active', belowActiveConfirm)).toBe(false);
+        await expect(
+            repository.confirm(fixture.peerId, 'phone_active', belowActiveConfirm),
+        ).rejects.toBeTruthy();
+        expect((await fixture.trust.peers())[0]?.state).toBe('active_activation_pending');
+
+        // The local completion settles the handshake as `full_pending_peer`, without an upgrade.
+        await ackSend(port, clientConfirm);
+        await flush();
+        await expect(opened).resolves.toEqual({
+            result: 'authenticated',
+            peerId: fixture.peerId,
+        });
+        expect((await fixture.trust.peers())[0]?.state).toBe('active_activation_pending');
+        // The same proof now satisfies the authenticated stage of the open session.
+        expect(await manager.verifier(peer, 'authenticated', belowActiveConfirm)).toBe(true);
     });
 
     it('disconnection during post-verifier validation does not persist metadata', async () => {

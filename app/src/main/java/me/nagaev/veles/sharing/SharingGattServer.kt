@@ -63,20 +63,50 @@ internal class SharingGattServer(
     private val flightSerial = java.util.concurrent.atomic.AtomicLong()
 
     /**
-     * A disconnected link left one fragment in flight. The next callback for the address must
-     * be consumed as that stale acknowledgement before the replacement generation sends
-     * anything, so a delayed old callback can never advance a new fragment queue.
+     * One address's outstanding stale notification callbacks: every fragment that was passed to
+     * `notifyCharacteristicChanged` for a generation that ended before its callback arrived.
+     * Each entry is a callback still owed to this process, so cardinality is preserved: N ended
+     * generations with a fragment in flight require N callbacks before the replacement may send
+     * again. Entries older than [QUARANTINE_MILLIS] are counted as [late] and stay counted: that
+     * callback can no longer be matched to a generation, so it consumes its entry and fails the
+     * live link closed. The address never pumps while any entry remains, and an entry is only
+     * ever consumed by an arriving callback, never by a disconnect or a sweep.
      */
-    private data class Quarantine(val flight: Flight, val at: Long)
-    private val quarantine = mutableMapOf<String, Quarantine>()
+    internal class StaleCallbacks {
+        private val recent = ArrayDeque<Long>()
+        private var late = 0
 
-    /**
-     * A quarantine that expired without the stale acknowledgement. The next callback for the
-     * address is then ambiguous (it may be that delayed ack or the replacement's own ack), so
-     * it fails the current link closed instead of ever completing a record. Only a callback
-     * consumes the marker; it survives unrelated disconnects.
-     */
-    private val ambiguous = mutableSetOf<String>()
+        val outstanding: Boolean get() = recent.isNotEmpty() || late > 0
+
+        fun add(at: Long) {
+            // One fragment per address is in flight at a time, so this bound is defensive: an
+            // entry beyond it can never be matched and is counted as [late] from the start.
+            if (recent.size >= MAX_OUTSTANDING_STALE) late += 1 else recent.addLast(at)
+        }
+
+        fun expire(now: Long) {
+            while (recent.isNotEmpty() && now - recent.first() >= QUARANTINE_MILLIS) {
+                recent.removeFirst()
+                late += 1
+            }
+        }
+
+        /** Consumes one owed callback; true only while it is still inside its quarantine. */
+        fun consume(now: Long): Boolean? {
+            expire(now)
+            if (recent.isNotEmpty()) {
+                recent.removeFirst()
+                return true
+            }
+            if (late > 0) {
+                late -= 1
+                return false
+            }
+            return null
+        }
+    }
+
+    private val stale = mutableMapOf<String, StaleCallbacks>()
 
     /** Idempotent transfer of one GATT ingress slot from the callback to the record's owner. */
     private class BoundedAdmission(
@@ -337,38 +367,46 @@ internal class SharingGattServer(
         private fun onNotificationSentOnMain(device: BluetoothDevice, status: Int, flight: Flight?) = post {
             if (BuildConfig.DEBUG) SyntheticTransportFixture.telemetry?.callback(device.address, status)
             val id = device.address
-            // An expired quarantine makes this callback ambiguous: it may be the previous
-            // generation's delayed ack, so it must never acknowledge a record. Fail closed.
-            if (synchronized(stateLock) { ambiguous.remove(id) }) {
-                // Keep this link's flight: remove() then quarantines its outstanding callback, so
-                // a delayed ack for the closed replacement can never acknowledge the next
-                // generation's fragment.
-                disconnect(id)
-                return@post
-            }
-            if (flight == null) {
-                // No fenced notification owns this address. If a generation just ended with a
-                // fragment in flight, this first callback is that stale acknowledgement: consume
-                // it and only then let the replacement generation send. Otherwise a success can
-                // acknowledge nothing, while a failure still fails the current link closed.
-                val stale = synchronized(stateLock) { quarantine.remove(id) != null }
-                if (status != BluetoothGatt.GATT_SUCCESS && !stale) disconnect(id)
-                if (stale) pump(id)
-                return@post
-            }
+            val now = SystemClock.elapsedRealtime()
+            var staleAck: Boolean? = null
             var completed: PendingSend? = null
-            val acknowledged = synchronized(stateLock) {
-                if (inflight[id] !== flight) return@post // a newer fragment owns the callback now
-                inflight.remove(id)
-                if (generations[id] != flight.gen) return@post // a stale generation's callback
-                if (status == BluetoothGatt.GATT_SUCCESS) {
-                    if (transport.notificationComplete(id, true)) completed = completedRecordLocked(id)
-                    true
-                } else {
-                    false
+            var ignored = false
+            var failed = false
+            synchronized(stateLock) {
+                // One owed callback per ended generation. While any is outstanding the pump stays
+                // fenced, so a callback arriving here can never be mistaken for the live
+                // fragment's acknowledgement: it consumes exactly one owed callback instead.
+                staleAck = stale[id]?.consume(now)
+                if (staleAck == null) {
+                    if (flight == null) {
+                        // No fenced notification owns this address: a success acknowledges
+                        // nothing, while a failure still fails the current link closed.
+                        failed = status != BluetoothGatt.GATT_SUCCESS
+                        ignored = !failed
+                    } else if (inflight[id] !== flight || generations[id] != flight.gen) {
+                        // A duplicate callback, or one bound to a superseded fragment.
+                        ignored = true
+                    } else {
+                        inflight.remove(id)
+                        if (status == BluetoothGatt.GATT_SUCCESS) {
+                            if (transport.notificationComplete(id, true)) completed = completedRecordLocked(id)
+                        } else {
+                            failed = true
+                        }
+                    }
                 }
             }
-            if (!acknowledged) {
+            val consumed = staleAck
+            if (consumed != null) {
+                // Keep this link's flight: remove() then counts its outstanding callback, so a
+                // delayed ack for the closed replacement can never acknowledge the next
+                // generation's fragment. A callback inside its quarantine releases the pump; one
+                // that arrived too late fails the link closed.
+                if (consumed) pump(id) else disconnect(id)
+                return@post
+            }
+            if (ignored) return@post
+            if (failed) {
                 disconnect(id)
                 return@post
             }
@@ -385,18 +423,14 @@ internal class SharingGattServer(
                     (id !in ready || id !in subscribed) && SystemClock.elapsedRealtime() - at >= 5000
                 }
                     .keys.toList().forEach(::disconnect)
-                // A stale acknowledgement that never arrived must not stall a replacement link,
-                // but its address must stay fail-closed: the next callback there is ambiguous.
-                val released = synchronized(stateLock) {
+                // An outstanding stale callback is never forgotten by the sweep: an entry that
+                // ages out is still owed and now also ambiguous, so the address keeps its pump
+                // fenced until callbacks actually arrive (fail closed, never complete).
+                synchronized(stateLock) {
                     val now = SystemClock.elapsedRealtime()
-                    quarantine.filterValues { now - it.at >= QUARANTINE_MILLIS }.keys.toList().also { ids ->
-                        ids.forEach {
-                            quarantine.remove(it)
-                            ambiguous.add(it)
-                        }
-                    }
+                    stale.values.forEach { it.expire(now) }
+                    stale.keys.filter { !stale.getValue(it).outstanding }.forEach(stale::remove)
                 }
-                released.forEach(::pump)
                 handler.postDelayed(this, 1000)
             }
         }
@@ -470,7 +504,7 @@ internal class SharingGattServer(
     private fun pump(id: String) {
         val device = devices[id] ?: return
         val request = synchronized(stateLock) {
-            if (id !in subscribed || id in quarantine) return
+            if (id !in subscribed || stale[id]?.outstanding == true) return
             val gen = generations[id]
             val fragment = gen?.let { transport.nextFragment(id) }
             if (gen == null || fragment == null) return
@@ -698,16 +732,16 @@ internal class SharingGattServer(
 
     private fun remove(id: String) {
         if (BuildConfig.DEBUG && id in admitted) SyntheticTransportFixture.telemetry?.disconnected(id)
-        val (gen, dropped, _) = synchronized(stateLock) {
+        val (gen, dropped) = synchronized(stateLock) {
             val removed = generations.remove(id)
             closing.remove(id)
-            val inFlight = inflight.remove(id)
-            if (inFlight != null) quarantine[id] = Quarantine(inFlight, SystemClock.elapsedRealtime())
+            // Every fragment in flight when its generation ends is one callback this process is
+            // still owed; count it before the transport forgets the queue.
+            inflight.remove(id)?.let { stale.getOrPut(id) { StaleCallbacks() }.add(SystemClock.elapsedRealtime()) }
             transport.disconnect(id)
-            Triple(removed, pending.remove(id)?.toList().orEmpty(), inFlight)
+            removed to pending.remove(id)?.toList().orEmpty()
         }
-        // `flight` is deliberately retained for the quarantine check above; pending tokens are
-        // reported below, after the transport state is gone.
+        // Pending tokens are reported below, after the transport state is gone.
         admitted.remove(id)
         overflowed.remove(id)
         devices.remove(id)
@@ -762,8 +796,7 @@ internal class SharingGattServer(
         synchronized(stateLock) {
             pending.clear()
             inflight.clear()
-            quarantine.clear()
-            ambiguous.clear()
+            stale.clear()
         }
         transport.clear()
         try {
@@ -787,5 +820,8 @@ internal class SharingGattServer(
 
         /** How long a disconnected link's last notification may keep the replacement fenced. */
         private const val QUARANTINE_MILLIS = 1_000L
+
+        /** Defensive cap on remembered unmatched callbacks per address; excess is immediately ambiguous. */
+        private const val MAX_OUTSTANDING_STALE = 8
     }
 }

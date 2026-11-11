@@ -78,11 +78,17 @@ internal class ProbeCommands(
     private val injector: DebugTrustInjector,
     private val handler: ProbeEventSource,
     private val log: (String) -> Unit,
+    /** Shell-only structured result channel (`am broadcast` prints the ordered result data). */
+    private val result: (String) -> Unit = {},
 ) {
     suspend fun exportIdentity() {
         try {
             val identity = repository.identity()
-            log("identity=${identity.installationId} pub=${identity.publicKey}")
+            // The full values travel only through the ordered-broadcast result that the adb
+            // shell prints; the log keeps bounded prefixes so plain logcat never carries an
+            // installation id or identity key in full.
+            result("identity=${identity.installationId} pub=${identity.publicKey}")
+            log("identity=${identity.installationId.take(LOG_PREFIX_CHARS)} pub=${identity.publicKey.take(LOG_PREFIX_CHARS)}")
         } catch (_: TrustException) {
             log("identity unavailable")
         }
@@ -93,9 +99,9 @@ internal class ProbeCommands(
             // Creates the durable identity when the sharing service has not started yet.
             repository.identity()
             injector.injectActive(id, pub)
-            log("injected peer=$id")
+            log("injected peer=${id.take(LOG_PREFIX_CHARS)}")
         } catch (_: TrustException) {
-            log("inject refused peer=$id")
+            log("inject refused peer=${id.take(LOG_PREFIX_CHARS)}")
         }
     }
 
@@ -114,15 +120,20 @@ internal class ProbeCommands(
     suspend fun revokePeer(id: String) {
         if (sessions.hasOpenSession(id)) {
             // Never the OTP-11 live revocation: refusal is the debug contract.
-            log("revoke refused peer=$id session_open=true")
+            log("revoke refused peer=${id.take(LOG_PREFIX_CHARS)} session_open=true")
             return
         }
         try {
             repository.revoke(id)
-            log("revoked peer=$id")
+            log("revoked peer=${id.take(LOG_PREFIX_CHARS)}")
         } catch (_: TrustException) {
-            log("revoke refused peer=$id")
+            log("revoke refused peer=${id.take(LOG_PREFIX_CHARS)}")
         }
+    }
+
+    private companion object {
+        /** Bounded log prefix: enough to correlate two log lines, never a full identifier. */
+        private const val LOG_PREFIX_CHARS = 8
     }
 }
 
@@ -142,14 +153,20 @@ class ProbeReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                dispatch(application, action, id, pub)
+                dispatch(application, action, id, pub, ::setResultData)
             } finally {
                 pending.finish()
             }
         }
     }
 
-    private suspend fun dispatch(context: Context, action: String, id: String?, pub: String?) {
+    private suspend fun dispatch(
+        context: Context,
+        action: String,
+        id: String?,
+        pub: String?,
+        result: (String) -> Unit,
+    ) {
         val logger = EntryPointAccessors.fromApplication(context, DebugProbeEntryPoint::class.java).velesLog()
         val log: (String) -> Unit = { logger.d(PROBE_TAG, it) }
         val repository = createAndroidTrustRepository(context, ActivationVerifier { _, _, _ -> false })
@@ -164,6 +181,7 @@ class ProbeReceiver : BroadcastReceiver() {
             injector = injector,
             handler = DebugProbeRuntime.eventSource ?: EMPTY_EVENT_SOURCE,
             log = log,
+            result = result,
         )
         when (action) {
             ACTION_EXPORT_IDENTITY -> commands.exportIdentity()

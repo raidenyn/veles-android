@@ -427,6 +427,97 @@ describe('development probe', () => {
         await ackSend(port, ack);
     });
 
+    it('keeps u64 event fields exact beyond 2^53', async () => {
+        const fixture = await createProbeFixture();
+        await debugHook().injectPeer(
+            hex(fixture.phone.installationId),
+            hex(fixture.phone.publicKey),
+        );
+        const side = await connectAndAuthenticate(fixture, hex(fixture.phone.installationId));
+        const port = fixture.currentPort();
+
+        const pulled = debugHook().pull();
+        const request = await nextSend(port);
+        await ackSend(port, request);
+
+        // 2^53 + 1 and u64 max: Number() would silently round both.
+        const receiptEpochSeconds = 9_007_199_254_740_993n;
+        const amountMagnitude = 18_446_744_073_709_551_615n;
+        const body = Uint8Array.from([
+            1,
+            ...encodeEvent({
+                phoneInstallationId: hex(fixture.phone.installationId),
+                eventId: EVENT_ID,
+                receiptEpochSeconds,
+                remainingLifetime: 600,
+                code: 'VAB12C',
+                merchant: 'Veles synthetic',
+                amountMagnitude,
+                amountScale: 2,
+                currency: 'XTS',
+            }),
+        ]);
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.applicationFrame(RecordType.PULL_EVENTS, 1n, body),
+        );
+
+        const event = await pulled;
+        expect(typeof event.receiptEpochSeconds).toBe('bigint');
+        expect(event.receiptEpochSeconds).toBe(receiptEpochSeconds);
+        expect(typeof event.amountMagnitude).toBe('bigint');
+        expect(event.amountMagnitude).toBe(amountMagnitude);
+        await ackSend(port, await nextSend(port));
+    });
+
+    it('acknowledges an expired event without displaying it', async () => {
+        const fixture = await createProbeFixture();
+        await debugHook().injectPeer(
+            hex(fixture.phone.installationId),
+            hex(fixture.phone.publicKey),
+        );
+        const side = await connectAndAuthenticate(fixture, hex(fixture.phone.installationId));
+        const port = fixture.currentPort();
+
+        const pulled = debugHook().pull();
+        const request = await nextSend(port);
+        await ackSend(port, request);
+
+        // OTP2-REC-030a: remaining_lifetime = 0 is already expired. The record is fully
+        // acknowledged, never displayed.
+        const body = Uint8Array.from([
+            1,
+            ...encodeEvent({
+                phoneInstallationId: hex(fixture.phone.installationId),
+                eventId: EVENT_ID,
+                receiptEpochSeconds: 1_700_000_000n,
+                remainingLifetime: 0,
+                code: 'VAB12C',
+                merchant: 'Veles synthetic',
+                amountMagnitude: 100n,
+                amountScale: 2,
+                currency: 'XTS',
+            }),
+        ]);
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.applicationFrame(RecordType.PULL_EVENTS, 1n, body),
+        );
+
+        const event = await pulled;
+        expect(event.remainingLifetime).toBe(0);
+        expect(readoutText(fixture)).toBe('');
+        expect(fixture.document.findReadout()?.hidden ?? true).toBe(true);
+
+        const ack = await nextSend(port);
+        const opened = await side.openClientRecord(ack.bytes, 2n);
+        expect(opened.type).toBe(RecordType.EVENT_ACK);
+        expect(hex(opened.body.slice(16))).toBe(hex(EVENT_ID));
+        await ackSend(port, ack);
+    });
+
     it('malformed event ends session and leaves readout empty', async () => {
         const fixture = await createProbeFixture();
         await debugHook().injectPeer(

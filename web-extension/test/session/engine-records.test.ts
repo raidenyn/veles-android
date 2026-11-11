@@ -15,6 +15,8 @@ import {
 } from './client-harness';
 
 const EMPTY = new Uint8Array(0);
+/** A valid fixed-width `event_ack`: phone installation id || event id. */
+const ACK_BODY = new Uint8Array(32).fill(0x11);
 
 function emptyHandler(): ApplicationHandler {
     return {
@@ -228,7 +230,7 @@ describe('client protected records and timing', () => {
         expect(
             terminatedReason(
                 await harness.engine.onInbound(
-                    await harness.phoneRecord(RecordType.APP_ERROR, 1n, unknownCode),
+                    await harness.phoneUncheckedRecord(RecordType.APP_ERROR, 1n, unknownCode),
                 ),
             ),
         ).toBe('record_invalid');
@@ -259,15 +261,13 @@ describe('client protected records and timing', () => {
         expect(await harness.deliverPhoneHello(phoneHello)).toEqual([]);
 
         const repeated = await harness.deliverPhoneHello(phoneHello);
-        expect(sendBytes(repeated)).toEqual(Uint8Array.of(0x0f, 0x00, 0x00));
-        expect(repeated[1]).toEqual({ kind: 'close' });
+        expect(repeated).toEqual([{ kind: 'close' }]);
         expect(harness.engine.isOpen).toBe(false);
 
         const open = await PhoneHarness.create();
         await open.openSession();
         const onOpen = await open.deliverPhoneHello(open.phone.helloPayload());
-        expect(sendBytes(onOpen)).toEqual(Uint8Array.of(0x0f, 0x00, 0x00));
-        expect(onOpen[1]).toEqual({ kind: 'close' });
+        expect(onOpen).toEqual([{ kind: 'close' }]);
     });
 
     it('record deleted mid handshake yields no protected data', async () => {
@@ -276,9 +276,7 @@ describe('client protected records and timing', () => {
 
         const effects = await harness.deliverPhoneHello(harness.phone.helloPayload());
 
-        expect(effects).toHaveLength(2);
-        expect(sendBytes(effects)).toEqual(Uint8Array.of(0x0f, 0x00, 0x00));
-        expect(effects[1]).toEqual({ kind: 'close' });
+        expect(effects).toEqual([{ kind: 'close' }]);
         expect(harness.calls.sign).toBe(0);
         expect(harness.engine.isOpen).toBe(false);
     });
@@ -371,7 +369,7 @@ describe('client protected records and timing', () => {
                 reply: (type: number, body: Uint8Array) => Promise<void>,
             ): Promise<void> => {
                 // Deliberately not awaited: the engine must still drain it.
-                void reply(RecordType.EVENT_ACK, Uint8Array.of(0x01));
+                void reply(RecordType.EVENT_ACK, ACK_BODY);
                 return Promise.resolve();
             },
         };
@@ -440,7 +438,7 @@ describe('client protected records and timing', () => {
                 reply: (type: number, body: Uint8Array) => Promise<void>,
             ): Promise<void> {
                 harness?.clock.advance(180_000);
-                await reply(RecordType.EVENT_ACK, Uint8Array.of(0x01));
+                await reply(RecordType.EVENT_ACK, ACK_BODY);
             },
         };
         harness = await PhoneHarness.create({ handler });
@@ -468,7 +466,7 @@ describe('client protected records and timing', () => {
             ): Promise<void> {
                 // Start the reply just before the 180 s idle deadline.
                 harness?.clock.advance(179_000);
-                await reply(RecordType.EVENT_ACK, Uint8Array.of(0x01));
+                await reply(RecordType.EVENT_ACK, ACK_BODY);
             },
         };
         harness = await PhoneHarness.create({ handler });

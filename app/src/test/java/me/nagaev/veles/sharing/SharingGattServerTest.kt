@@ -893,7 +893,7 @@ class SharingGattServerTest {
         assertEquals("the new generation completes its own record only", listOf(77L to false, 88L to true), completions)
     }
 
-    @Test fun staleCallbackAfterQuarantineTimeoutFailsTheNewLinkClosed() {
+    @Test fun staleCallbackAfterQuarantineTimeoutKeepsTheReplacementFenced() {
         val sent = mutableListOf<ByteArray>()
         every { platform.notifyCharacteristicChanged(any(), any(), any(), capture(sent)) } returns 0
         val a = device("a")
@@ -910,24 +910,24 @@ class SharingGattServerTest {
         assertEquals(listOf(77L to false), completions)
         assertTrue(subject.send(fresh, ByteArray(20) { 4 }, 88L))
         flush()
-        assertEquals("the quarantine holds the replacement", 1, sent.size)
+        assertEquals("the outstanding callback holds the replacement", 1, sent.size)
 
-        // No stale ack arrived within the quarantine: the sweep releases the pump but must
-        // leave the address ambiguous for the next callback.
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
-        assertEquals("the replacement may send again", 2, sent.size)
+        // No stale ack arrived within the quarantine. The callback is now ambiguous, but it is
+        // still owed: the address must never pump while it is unaccounted for.
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(4))
+        assertEquals("an expired quarantine never releases the pump", 1, sent.size)
 
         callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
         flush()
         assertEquals(
-            "an ambiguous callback never completes a record",
+            "the ambiguous callback closes the fenced link and completes nothing",
             listOf(77L to false, 88L to false),
             completions,
         )
         verify { platform.cancelConnection(a) }
     }
 
-    @Test fun secondReconnectKeepsFencingForTheDisconnectedReplacement() {
+    @Test fun secondReconnectKeepsFencingUntilEveryOwedCallbackArrives() {
         val sent = mutableListOf<ByteArray>()
         every { platform.notifyCharacteristicChanged(any(), any(), any(), capture(sent)) } returns 0
         val a = device("a")
@@ -939,36 +939,113 @@ class SharingGattServerTest {
         callback.captured.onConnectionStateChange(a, 0, BluetoothProfile.STATE_DISCONNECTED)
         flush()
 
-        // Second generation: blocked by the first generation's quarantine.
+        // Second generation: fenced by the first generation's owed callback, even after the
+        // quarantine window passes.
         subscribe(a, 517)
         val second = connections.last()
         assertTrue(subject.send(second, ByteArray(20) { 4 }, 88L))
         flush()
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
-        assertEquals("the expired quarantine releases the second generation once", 2, sent.size)
+        assertEquals("the owed callback keeps the second generation fenced", 1, sent.size)
 
         // The delayed first-generation ack is ambiguous: it closes the second generation without
-        // completing anything, but the second generation's own flight must stay fenced.
+        // completing anything. Its own pending record is reported failed with the link.
         callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
         flush()
         assertEquals(listOf(77L to false, 88L to false), completions)
+        assertEquals("nothing else was ever sent", 1, sent.size)
 
-        // Third generation: it may not send until the second generation's ack is consumed, and
-        // that ack must never complete the third generation's record.
+        // Third generation: nothing is owed any more, so its own callback is the only one that
+        // can complete its record.
         subscribe(a, 517)
         val third = connections.last()
         assertTrue(subject.send(third, ByteArray(20) { 6 }, 99L))
         flush()
-        assertEquals("the second generation's outstanding ack fences the third", 2, sent.size)
-
-        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
-        flush()
-        assertEquals("a delayed replacement ack completes nothing", listOf(77L to false, 88L to false), completions)
-        assertEquals("consuming it releases the third generation", 3, sent.size)
+        assertEquals("the third generation sends immediately", 2, sent.size)
 
         callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
         flush()
         assertEquals(listOf(77L to false, 88L to false, 99L to true), completions)
+    }
+
+    @Test fun successiveExpiredQuarantinesNeverCompleteACurrentToken() {
+        val sent = mutableListOf<ByteArray>()
+        every { platform.notifyCharacteristicChanged(any(), any(), any(), capture(sent)) } returns 0
+        val a = device("a")
+
+        // Generation 1: a token is in flight when the link dies, so one callback is owed.
+        subscribe(a, 517)
+        val first = connections.last()
+        assertTrue(subject.send(first, ByteArray(1016) { 1 }, 11L))
+        flush()
+        assertEquals(1, sent.size)
+        callback.captured.onConnectionStateChange(a, 0, BluetoothProfile.STATE_DISCONNECTED)
+        flush()
+        assertEquals(listOf(11L to false), completions)
+
+        // Generation 2: it may not send, and repeated expiry sweeps never change that. This is
+        // the regression: an expired quarantine used to release the pump, letting a second
+        // generation die with its own callback owed while only one ambiguity marker existed.
+        subscribe(a, 517)
+        val second = connections.last()
+        assertTrue(subject.send(second, ByteArray(20) { 2 }, 22L))
+        flush()
+        repeat(3) {
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+            assertEquals("expiry never releases the pump", 1, sent.size)
+        }
+
+        // The delayed first callback is ambiguous: it closes the second link and reports its
+        // unsent token failed. No record is completed.
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals(listOf(11L to false, 22L to false), completions)
+
+        // Two more delayed successes with no live generation cannot fabricate a completion.
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals(
+            "no delayed callback ever completes a token",
+            listOf(11L to false, 22L to false),
+            completions,
+        )
+
+        // Generation 3: every owed callback is accounted for, so its own ack completes it.
+        subscribe(a, 517)
+        val third = connections.last()
+        assertTrue(subject.send(third, ByteArray(20) { 3 }, 33L))
+        flush()
+        assertEquals(2, sent.size)
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals(listOf(11L to false, 22L to false, 33L to true), completions)
+    }
+
+    @Test fun staleCallbackCardinalitySurvivesExpiry() {
+        // The per-address tracker is the fix's core: N owed callbacks stay N, even after every
+        // one of them has expired. A set/Boolean could only ever represent one.
+        val callbacks = SharingGattServer.StaleCallbacks()
+        callbacks.add(0L)
+        callbacks.add(10L)
+        callbacks.add(20L)
+        assertTrue(callbacks.outstanding)
+
+        callbacks.expire(5_000L)
+        assertEquals("three expired callbacks are still owed", true, callbacks.outstanding)
+        assertEquals("the first expired callback is ambiguous", false, callbacks.consume(5_000L))
+        assertTrue("two remain", callbacks.outstanding)
+        assertEquals(false, callbacks.consume(5_000L))
+        assertTrue("one remains", callbacks.outstanding)
+        assertEquals(false, callbacks.consume(5_000L))
+        assertEquals("nothing is owed once all three arrived", false, callbacks.outstanding)
+        assertNull(callbacks.consume(5_000L))
+
+        // A callback inside its quarantine is still trustworthy and releases the pump.
+        callbacks.add(10_000L)
+        assertEquals(true, callbacks.consume(10_500L))
+        assertEquals(false, callbacks.outstanding)
     }
 
     @Test fun duplicateNotificationCallbackNeverAcknowledgesASecondRecord() {

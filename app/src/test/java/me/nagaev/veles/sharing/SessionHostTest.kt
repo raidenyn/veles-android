@@ -15,12 +15,14 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import me.nagaev.veles.session.ApplicationHandler
+import me.nagaev.veles.session.Direction
 import me.nagaev.veles.session.FakeClock
 import me.nagaev.veles.session.IdentitySigner
 import me.nagaev.veles.session.LocalRecordState
 import me.nagaev.veles.session.P256
 import me.nagaev.veles.session.PhoneSessionEngine
 import me.nagaev.veles.session.PreAuthCodec
+import me.nagaev.veles.session.RecordCodec
 import me.nagaev.veles.session.RecordType
 import me.nagaev.veles.session.Role
 import me.nagaev.veles.session.SessionLimits
@@ -35,6 +37,7 @@ import me.nagaev.veles.trust.InstallationTrustRepository
 import me.nagaev.veles.trust.PendingPeer
 import me.nagaev.veles.trust.TrustEncoding
 import me.nagaev.veles.trust.TrustedPeer
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -83,6 +86,9 @@ class SessionHostTest {
     private fun clientLike(client: TestClient) = TestClient(identity = client.identity, installationId = client.installationId, ephemeral = P256.generate())
 
     private fun admission(): RecordAdmission = RecordAdmission { }
+
+    /** A valid fixed-width `event_ack` body whose first byte carries an ordering marker. */
+    private fun ackBody(marker: Int): ByteArray = ByteArray(32).also { it[0] = marker.toByte() }
 
     private class RecordingAdmission : RecordAdmission {
         var releases = 0
@@ -241,11 +247,11 @@ class SessionHostTest {
     }
 
     @Test
-    fun maxSizeRecordThroughAdapterAccepted() = runTest {
+    fun maximumSizeBodyIsACodecBoundNotAnApplicationBody() = runTest {
         val client = TestClient()
         var delivered: ByteArray? = null
         val handler = object : ApplicationHandler {
-            override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
+            override fun handles(type: Int): Boolean = type == RecordType.EVENT_ACK.wire
 
             override suspend fun handle(type: Int, body: ByteArray, reply: suspend (Int, ByteArray) -> Unit) {
                 delivered = body.copyOf()
@@ -256,14 +262,65 @@ class SessionHostTest {
         connect(host, gen)
         authenticate(host, gen, client)
 
-        val body = ByteArray(4057) { (it and 0xff).toByte() }
-        val record = client.record(RecordType.PULL_REQUEST.wire, 1uL, body)
+        // Codec/transport size acceptance is a separate layer from application-body validity:
+        // the largest record opens at 4096 bytes for a handler-owned event payload.
+        val largest = ByteArray(RecordCodec.MAX_CIPHERTEXT) { (it and 0xff).toByte() }
+        val sealed = RecordCodec.seal(
+            client.keys.p2cKey,
+            client.keys.p2cPrefix,
+            client.keys.sessionId.copyOfRange(0, 8),
+            Direction.PHONE_TO_CLIENT,
+            RecordType.PUSH_EVENT.wire,
+            0uL,
+            largest,
+        )
+        assertEquals(4096, sealed.size)
+        assertArrayEquals(
+            largest,
+            RecordCodec.open(
+                client.keys.p2cKey,
+                client.keys.p2cPrefix,
+                client.keys.sessionId.copyOfRange(0, 8),
+                Direction.PHONE_TO_CLIENT,
+                0uL,
+                sealed,
+            ).body,
+        )
+
+        // A valid application body travels through the adapter intact and without teardown.
+        val ack = ByteArray(32) { (it + 1).toByte() }
+        host.onRecord(gen, client.record(RecordType.EVENT_ACK.wire, 1uL, ack), admission())
+        runCurrent()
+        assertTrue("the valid ack is delivered intact", delivered?.contentEquals(ack) == true)
+        assertTrue("no teardown for a valid record", wire.calls.none { it is Wire.Closed })
+    }
+
+    @Test
+    fun maximumSizePullRequestBodyIsNotAnApplicationBody() = runTest {
+        val client = TestClient()
+        var delivered = false
+        val handler = object : ApplicationHandler {
+            override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
+
+            override suspend fun handle(type: Int, body: ByteArray, reply: suspend (Int, ByteArray) -> Unit) {
+                delivered = true
+            }
+        }
+        val host = host { engine(client, handler = handler) }
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+        authenticate(host, gen, client)
+
+        // OTP2-REC-031: `pull_request` is empty. A 4057-byte body fits the record format but is
+        // not a valid application body, so it must never reach the handler.
+        val body = ByteArray(RecordCodec.MAX_CIPHERTEXT) { (it and 0xff).toByte() }
+        val record = client.uncheckedRecord(RecordType.PULL_REQUEST.wire, 1uL, body)
         assertEquals(4096, record.size)
         host.onRecord(gen, record.copyOf(), admission())
         runCurrent()
 
-        assertTrue("the maximum-size record is delivered intact", delivered?.contentEquals(body) == true)
-        assertTrue("no teardown for a valid record", wire.calls.none { it is Wire.Closed })
+        assertFalse("a semantically invalid pull body is never delivered", delivered)
+        assertTrue("the session is torn down", wire.calls.any { it is Wire.Closed })
     }
 
     @Test
@@ -405,7 +462,7 @@ class SessionHostTest {
         val entered = CompletableDeferred<Unit>()
         val gate = CompletableDeferred<Unit>()
         val handler = object : ApplicationHandler {
-            override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
+            override fun handles(type: Int): Boolean = type == RecordType.EVENT_ACK.wire
 
             override suspend fun handle(type: Int, body: ByteArray, reply: suspend (Int, ByteArray) -> Unit) {
                 entered.complete(Unit)
@@ -418,7 +475,7 @@ class SessionHostTest {
         authenticate(host, gen, client)
         val beforeTicks = wire.sent.size
 
-        host.onRecord(gen, client.record(RecordType.PULL_REQUEST.wire, 1uL, byteArrayOf(9)), admission())
+        host.onRecord(gen, client.record(RecordType.EVENT_ACK.wire, 1uL, ackBody(9)), admission())
         runCurrent()
         assertTrue("the handler holds the worker", entered.isCompleted)
 
@@ -441,7 +498,7 @@ class SessionHostTest {
         val entered = CompletableDeferred<Unit>()
         val gate = CompletableDeferred<Unit>()
         val handler = object : ApplicationHandler {
-            override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
+            override fun handles(type: Int): Boolean = type == RecordType.EVENT_ACK.wire
 
             override suspend fun handle(type: Int, body: ByteArray, reply: suspend (Int, ByteArray) -> Unit) {
                 entered.complete(Unit)
@@ -452,7 +509,7 @@ class SessionHostTest {
         val gen = ConnectionGeneration("aa", 1)
         connect(host, gen)
         authenticate(host, gen, client)
-        host.onRecord(gen, client.record(RecordType.PULL_REQUEST.wire, 1uL, byteArrayOf(9)), admission())
+        host.onRecord(gen, client.record(RecordType.EVENT_ACK.wire, 1uL, ackBody(9)), admission())
         runCurrent()
         assertTrue(entered.isCompleted)
 
@@ -476,7 +533,7 @@ class SessionHostTest {
         val entered = CompletableDeferred<Unit>()
         val gate = CompletableDeferred<Unit>()
         val handler = object : ApplicationHandler {
-            override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
+            override fun handles(type: Int): Boolean = type == RecordType.EVENT_ACK.wire
 
             override suspend fun handle(type: Int, body: ByteArray, reply: suspend (Int, ByteArray) -> Unit) {
                 entered.complete(Unit)
@@ -488,7 +545,7 @@ class SessionHostTest {
         connect(host, gen)
         authenticate(host, gen, client)
         // Occupy the worker so nothing drains the queue.
-        host.onRecord(gen, client.record(RecordType.PULL_REQUEST.wire, 1uL, byteArrayOf(9)), admission())
+        host.onRecord(gen, client.record(RecordType.EVENT_ACK.wire, 1uL, ackBody(9)), admission())
         runCurrent()
         assertTrue(entered.isCompleted)
 
@@ -520,7 +577,7 @@ class SessionHostTest {
         val seen = mutableListOf<Int>()
         val active = AtomicInteger()
         val handler = object : ApplicationHandler {
-            override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
+            override fun handles(type: Int): Boolean = type == RecordType.EVENT_ACK.wire
 
             override suspend fun handle(type: Int, body: ByteArray, reply: suspend (Int, ByteArray) -> Unit) {
                 check(active.incrementAndGet() == 1) { "engine calls must never overlap" }
@@ -556,12 +613,12 @@ class SessionHostTest {
 
             // Record 0 reaches the engine and suspends there; the rest arrive while it is in
             // flight, from a real multi-threaded dispatcher.
-            host.onRecord(gen, client.record(RecordType.PULL_REQUEST.wire, 1uL, byteArrayOf(0)), admission())
+            host.onRecord(gen, client.record(RecordType.EVENT_ACK.wire, 1uL, ackBody(0)), admission())
             withTimeout(5_000) { entered.await() }
             for (marker in 1..8) {
                 host.onRecord(
                     gen,
-                    client.record(RecordType.PULL_REQUEST.wire, (marker + 1).toULong(), byteArrayOf(marker.toByte())),
+                    client.record(RecordType.EVENT_ACK.wire, (marker + 1).toULong(), ackBody(marker)),
                     admission(),
                 )
             }

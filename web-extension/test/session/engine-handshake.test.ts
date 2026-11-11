@@ -15,8 +15,6 @@ import {
     type PhoneRecord,
 } from './client-harness';
 
-const GENERIC_REJECT = Uint8Array.of(0x0f, 0x00, 0x00);
-
 describe('client reconnect handshake', () => {
     it('sends hello first with a fresh ephemeral key', async () => {
         const ephemeral = await crypto.subtle.generateKey(
@@ -62,9 +60,9 @@ describe('client reconnect handshake', () => {
 
         const effects = await harness.deliverPhoneHello(foreign.helloPayload());
 
-        expect(effects).toHaveLength(2);
-        expect(sendBytes(effects)).toEqual(GENERIC_REJECT);
-        expect(effects[1]).toEqual({ kind: 'close' });
+        // `preauth_reject` is phone→client only (OTP2-ENC-010): the client aborts without
+        // sending a frame and closes with the same generic failure.
+        expect(effects).toEqual([{ kind: 'close' }]);
         expect(harness.calls.sign).toBe(0);
         expect(harness.engine.isOpen).toBe(false);
     });
@@ -88,8 +86,7 @@ describe('client reconnect handshake', () => {
         const badEffects = await bad.deliverPhoneSignature(badSignature);
 
         expect(badEffects).toEqual(rejectEffects);
-        expect(sendBytes(badEffects)).toEqual(GENERIC_REJECT);
-        expect(badEffects[1]).toEqual({ kind: 'close' });
+        expect(rejectEffects).toEqual([{ kind: 'close' }]);
         expect(badEffects.some((effect) => effect.kind === 'terminated')).toBe(false);
         expect(bad.calls.sign).toBe(0);
         expect(rejected.engine.isOpen).toBe(false);
@@ -144,8 +141,7 @@ describe('client reconnect handshake', () => {
 
         const effects = await harness.deliverPhoneHello(answering.helloPayload());
 
-        expect(sendBytes(effects)).toEqual(GENERIC_REJECT);
-        expect(effects[1]).toEqual({ kind: 'close' });
+        expect(effects).toEqual([{ kind: 'close' }]);
         expect(harness.calls.sign).toBe(0);
         expect(harness.calls.lookup).toBe(0);
         expect(harness.calls.upgrade).toHaveLength(0);
@@ -217,8 +213,7 @@ describe('client reconnect handshake', () => {
         try {
             const effects = await harness.deliverPhoneSignature(transcript, signature);
 
-            expect(sendBytes(effects)).toEqual(GENERIC_REJECT);
-            expect(effects[1]).toEqual({ kind: 'close' });
+            expect(effects).toEqual([{ kind: 'close' }]);
             expect(harness.engine.isOpen).toBe(false);
             expect(captured).toHaveLength(2);
             for (const buffer of captured) {

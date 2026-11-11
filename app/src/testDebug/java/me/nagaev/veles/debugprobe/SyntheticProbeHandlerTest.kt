@@ -217,7 +217,7 @@ class SyntheticProbeHandlerTest {
     }
 
     @Test
-    fun unknownAcknowledgementEndsSession() = runTest {
+    fun unknownAcknowledgementIsASemanticNoOp() = runTest {
         val client = TestClient()
         val handler = SyntheticProbeHandler(
             localInstallationId = TestPeers.phoneInstallationId,
@@ -234,6 +234,8 @@ class SyntheticProbeHandlerTest {
         engine.completeHandshake(client)
         engine.pull(client, requestSequence = 1uL, responseSequence = 1uL)
 
+        // OTP2-REC-032a: an authenticated, well-formed ack for an event this peer never
+        // received is a semantic no-op. It consumes its sequence slot and mutates nothing.
         val effects = engine.onInbound(
             client.record(
                 RecordType.EVENT_ACK.wire,
@@ -241,8 +243,72 @@ class SyntheticProbeHandlerTest {
                 TestPeers.phoneInstallationId.copyOf() + ByteArray(16) { 0x7F },
             ),
         )
-        assertFalse("an unknown synthetic event id fails closed", engine.isOpen)
+        assertTrue(
+            "an unknown synthetic event id is not an error",
+            effects.none { it is SessionEffect.Terminated || it is SessionEffect.Close },
+        )
+        assertTrue("the session stays open", engine.isOpen)
+
+        // The slot was consumed: the next record must use sequence 3.
+        assertTrue(
+            "the unknown ack advanced the inbound sequence",
+            engine.onInbound(client.record(RecordType.APP_HEARTBEAT.wire, 3uL)).isEmpty(),
+        )
+        assertTrue(engine.isOpen)
+    }
+
+    @Test
+    fun malformedAcknowledgementFailsClosed() = runTest {
+        val client = TestClient()
+        val handler = SyntheticProbeHandler(
+            localInstallationId = TestPeers.phoneInstallationId,
+            clock = { epochMillis },
+            random = random,
+            log = {},
+        )
+        val engine = TestPeers.engine(
+            TestIdentity.generate().signer,
+            TestPeers.lookup(TestPeers.record(client)),
+            clock,
+            handler,
+        )
+        engine.completeHandshake(client)
+
+        // 31 bytes is not the fixed §8.1 ack shape; only the shape is fatal, never an unknown id.
+        val effects = engine.onInbound(
+            client.uncheckedRecord(RecordType.EVENT_ACK.wire, 1uL, ByteArray(31) { 0x01 }),
+        )
+        assertFalse("a malformed ack is not a no-op", engine.isOpen)
         assertTrue(effects.any { it is SessionEffect.Terminated })
+    }
+
+    @Test
+    fun nonEmptyPullBodyNeverGetsAnswered() = runTest {
+        val client = TestClient()
+        val lines = mutableListOf<String>()
+        val handler = SyntheticProbeHandler(
+            localInstallationId = TestPeers.phoneInstallationId,
+            clock = { epochMillis },
+            random = random,
+            log = { lines += it },
+        )
+        val engine = TestPeers.engine(
+            TestIdentity.generate().signer,
+            TestPeers.lookup(TestPeers.record(client)),
+            clock,
+            handler,
+        )
+        engine.completeHandshake(client)
+
+        // OTP2-REC-031: `pull_request` has an empty body. A nonempty one is not an application
+        // body at all, so the codec rejects it before the handler can answer.
+        val effects = engine.onInbound(
+            client.uncheckedRecord(RecordType.PULL_REQUEST.wire, 1uL, byteArrayOf(1)),
+        )
+        assertFalse(engine.isOpen)
+        assertTrue(effects.any { it is SessionEffect.Terminated })
+        assertTrue("no pull_events reply", effects.none { it is SessionEffect.Send })
+        assertTrue("no synthetic event was issued", lines.isEmpty())
     }
 
     @Test

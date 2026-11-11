@@ -37,6 +37,13 @@ object RecordCodec {
     private const val GCM_TAG_BITS = 128
     private const val APP_ERROR_HEADER_BYTES = 3
     private const val APP_ERROR_MAX_REASON = 64
+    private const val CONFIRM_BODY_BYTES = 33
+    private const val MAC_BODY_BYTES = 32
+    private const val ENROLL_IDENTITY_MIN = 132
+    private const val ENROLL_IDENTITY_MAX = 164
+    private const val POLICY_STATE_BYTES = 2
+    private const val POLICY_ALWAYS = 2
+    private const val POLICY_RESERVED_MASK = 0xF0
     private const val AES_TRANSFORMATION = "AES/GCM/NoPadding"
 
     fun seal(
@@ -50,6 +57,7 @@ object RecordCodec {
     ): ByteArray {
         requireKeyMaterial(key, prefix, sessionIdPrefix)
         requireType(type, direction)
+        requireBody(type, body)
         if (body.size > MAX_CIPHERTEXT) reject()
         val header = header(direction, type, sequence, body.size, sessionIdPrefix)
         val record = header + encrypt(key, nonce(prefix, sequence), header, body)
@@ -79,7 +87,7 @@ object RecordCodec {
         if (!sessionIdPrefix.contentEquals(record.copyOfRange(SESSION_OFFSET, HEADER))) reject()
         val header = record.copyOfRange(0, HEADER)
         val body = decrypt(key, nonce(prefix, sequence), header, record.copyOfRange(HEADER, record.size))
-        validateBody(type, body)
+        requireBody(type, body)
         return OpenedRecord(type, sequence, body)
     }
 
@@ -122,8 +130,44 @@ object RecordCodec {
         return recordType
     }
 
-    private fun validateBody(type: Int, body: ByteArray) {
-        if (type != RecordType.APP_ERROR.wire) return
+    /**
+     * The fixed body rules of the §7.3 table, applied to every seal and every successful open:
+     * empty bodies, fixed widths, `enroll_identity` bounds, the `phone_policy_state` reserved
+     * bits, and OTP2-ENC-003 bounded safe text for the `app_error` reason. Variable-length
+     * application payloads (`pull_events`, `push_event`) stay with their handlers, which own
+     * semantic event parsing.
+     */
+    internal fun requireBody(type: Int, body: ByteArray) {
+        when (type) {
+            RecordType.APP_HEARTBEAT.wire,
+            RecordType.PULL_REQUEST.wire,
+            RecordType.REMOVAL_REQUEST.wire,
+            RecordType.REMOVAL_RESPONSE.wire,
+            -> if (body.isNotEmpty()) reject()
+
+            RecordType.RECONNECT_CONFIRM.wire -> if (body.size != CONFIRM_BODY_BYTES) reject()
+
+            RecordType.ACTIVATION_COMMIT.wire,
+            RecordType.ACTIVATION_COMPLETE.wire,
+            RecordType.ACTIVATION_ACK.wire,
+            RecordType.ENROLLMENT_PREPARE.wire,
+            RecordType.EVENT_ACK.wire,
+            -> if (body.size != MAC_BODY_BYTES) reject()
+
+            RecordType.ENROLL_IDENTITY.wire ->
+                if (body.size !in ENROLL_IDENTITY_MIN..ENROLL_IDENTITY_MAX) reject()
+
+            RecordType.APP_ERROR.wire -> requireAppErrorBody(body)
+
+            RecordType.PHONE_POLICY_STATE.wire -> {
+                if (body.size != POLICY_STATE_BYTES) reject()
+                if (u8(body, 0) > POLICY_ALWAYS) reject()
+                if (u8(body, 1) and POLICY_RESERVED_MASK != 0) reject()
+            }
+        }
+    }
+
+    private fun requireAppErrorBody(body: ByteArray) {
         if (body.size < APP_ERROR_HEADER_BYTES) reject()
         if (AppErrorCode.fromWire(u8(body, 0)) == null) reject()
         val reasonLength = u16(body, 1)
@@ -132,11 +176,13 @@ object RecordCodec {
         val decoder = Charsets.UTF_8.newDecoder()
             .onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT)
-        try {
-            decoder.decode(ByteBuffer.wrap(body, APP_ERROR_HEADER_BYTES, reasonLength))
+        val reason = try {
+            decoder.decode(ByteBuffer.wrap(body, APP_ERROR_HEADER_BYTES, reasonLength)).toString()
         } catch (_: CharacterCodingException) {
             reject()
         }
+        // OTP2-ENC-003: no U+0000..U+001F and no U+007F in any Veles string.
+        if (reason.any { it < ' ' || it == '\u007f' }) reject()
     }
 
     private fun encrypt(key: ByteArray, nonce: ByteArray, header: ByteArray, body: ByteArray): ByteArray = try {
