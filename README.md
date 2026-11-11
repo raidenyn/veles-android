@@ -1,196 +1,67 @@
-# Veles
+<p align="center">
+  <a href="https://veles.nagaev.me/">
+    <img src="site/veles-icon.png" alt="Veles Icon" width="112" height="112">
+  </a>
+</p>
 
-[![CI](https://github.com/raidenyn/veles-android/actions/workflows/ci.yml/badge.svg)](https://github.com/raidenyn/veles-android/actions/workflows/ci.yml)
-[![publish-release](https://github.com/raidenyn/veles-android/actions/workflows/publish-release.yml/badge.svg)](https://github.com/raidenyn/veles-android/actions/workflows/publish-release.yml)
+<h1 align="center">Veles</h1>
 
-Veles is an Android app that intercepts bank OTP (one-time password) notifications, extracts the OTP code along with the transaction amount and merchant name, and re-presents the OTP as a clean, concise notification with a one-tap **Copy** action.
+<p align="center">
+  <strong>Bank OTPs, made usable.</strong><br>
+  <em>Clean, copy-ready one-time codes on Android — free, open source, and strictly offline.</em>
+</p>
 
-When a bank pushes a verbose SMS notification, Veles catches it, parses out the useful parts, cancels the original, and posts a simplified notification containing just what you need: the code, the amount, and who charged you. One tap copies the OTP to the clipboard so you can paste it straight into the banking app or website you're authenticating into.
+<p align="center">
+  <a href="https://veles.nagaev.me/"><strong>Website</strong></a> ·
+  <a href="https://github.com/raidenyn/veles-android/releases/latest"><strong>Download APK</strong></a> ·
+  <a href="https://github.com/users/raidenyn/projects/3"><strong>Project Board (WIP)</strong></a> ·
+  <a href="#quick-start"><strong>Quick Start</strong></a>
+</p>
 
-## How it works
-
-```
-Incoming notification
-  → NotificationListener (NotificationListenerService)
-      → CompositeMessageHandler
-          → RegexMessageHandler (one per bank, configs loaded from a Room DB)
-              → UserNotifierOtpMessageHandler — posts a simplified notification
-                  → CopyDataReceiver (BroadcastReceiver) — copies the OTP on tap
-```
-
-Each bank is described by a row in a local Room database (`bank_handler_configs`) holding three regular expressions:
-
-- `otpRegex` — group 1 = OTP id/prefix, group 2 = OTP value
-- `moneyRegex` — group 1 = currency code, group 2 = amount
-- `merchantRegex` — group 1 = merchant name
-
-All three must match for a notification to be accepted. When a handler returns `ACCEPTED`, the original notification is cancelled and the chain stops; otherwise the next handler is tried. UOB Thailand is seeded on first install; additional banks can be added by inserting new rows — no Kotlin code changes required.
-
-Veles also ships with an in-app **Test Screen** that lets you type a notification body, post it as a test notification, and see whether the handler chain matches it — useful for validating regex configs without waiting for a real bank SMS.
-
-## Privacy
-
-Veles is a strictly on-device tool. There are **no backdoors, no advertisements, and no payments** (no in-app purchases, no paid tiers, no monetization of any kind).
-
-- No network access. The app never connects to the internet and never sends your notifications anywhere.
-- No telemetry, analytics, or crash reporting.
-- No account, no sign-up, no cloud sync.
-- Notification data is processed in memory and discarded; bank handler configs live in a local Room database on your device only.
-
-Everything Veles does happens locally, inside the Android NotificationListenerService it is granted access to. You can audit the entire source code in this repository.
-
-### Verify your download
-
-Each combined GitHub Release (tagged by date, `YYYY.MM.DD`) is built once by CI, attested, and
-published with a `release-manifest.json` and a `SHA256SUMS` manifest covering the APK, its
-mapping, the web extension and the native installers. You can verify what you downloaded
-in seconds:
-
-```
-gh attestation verify veles-android-X.Y.Z.apk --repo raidenyn/veles-android
-```
-
-## Requirements
-
-- Android device running **Android 13 (API 33)** or newer.
-- Android Studio (or a standalone Android SDK + JDK 21) to build.
-- A machine with `adb` available to install the APK and grant the sensitive-notification permission (see below).
-
-## Build
-
-From the repository root:
-
-```bash
-# Debug APK
-./gradlew assembleDebug
-
-# Run unit tests
-./gradlew testDebugUnitTest
-```
-
-The debug APK is output to `app/build/outputs/apk/debug/app-debug.apk`.
-
-For a release build:
-
-```bash
-./gradlew assembleRelease
-```
-
-## Commits and releases
-
-Commit messages and pull request titles follow [Conventional Commits](https://www.conventionalcommits.org/)
-(`feat:`, `fix:`, `feat!:` ...). Pull requests are squash-merged, so the PR title and body become the
-commit. Enable the local `commit-msg` hook with `./gradlew installGitHooks` (it also runs as part of
-`:app:preBuild`); CI enforces the same rules with the required `pr-title` check.
-
-The Android app, the web extension and the native installers are versioned independently (tags
-`android-v*`, `web-extension-v*`, `installer-v*`) from those commits. The repository owner publishes a
-combined GitHub Release tagged by date from the `publish-release` workflow. See
-[docs/ci.md](docs/ci.md) for the CI layout and [docs/releasing.md](docs/releasing.md) for versioning and
-the release runbook.
-
-## OTP external-device toolchains
-
-Veles is growing support for OTP delivery via external devices (OTP-01). The
-sub-project layout:
-
-- `web-extension/` — npm/Vite MV3 extension and deterministic package.
-- `rust/` — shared Rust core with Android JNI and browser WASM bindings.
-- `native-bridge/` — Tauri 2.x headless Native Messaging host (unsigned, Windows/macOS).
-- `verify/` — supply-chain policy checks (SBOM, license, install-script, remote-code).
-
-## Install
-
-Connect your device (USB or wireless debugging) and verify it's seen:
-
-```bash
-adb devices
-```
-
-Install the debug APK:
-
-```bash
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
-
-After installing, open **Veles** from your launcher and follow the in-app permission flow to grant:
-
-1. **Notification access** — Settings → Notifications → Notification access → Veles → allow.
-2. **Send notifications** — the POST_NOTIFICATIONS runtime prompt.
+<p align="center">
+  <a href="https://github.com/raidenyn/veles-android/actions/workflows/ci.yml"><img src="https://github.com/raidenyn/veles-android/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/raidenyn/veles-android/actions/workflows/publish-release.yml"><img src="https://github.com/raidenyn/veles-android/actions/workflows/publish-release.yml/badge.svg" alt="publish-release"></a>
+  <a href="https://github.com/raidenyn/veles-android/releases/latest"><img src="https://img.shields.io/github/v/release/raidenyn/veles-android?label=release&color=blue" alt="Latest Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="BUILD.md#prerequisites"><img src="https://img.shields.io/badge/Android-13%2B-3DDC84?logo=android&logoColor=white" alt="Android 13+"></a>
+</p>
 
 ---
 
-## Enable sensitive notifications
+## About
 
-On Android 15 and later (including OxygenOS 15/16 on OnePlus devices), the OS automatically redacts OTPs, 2FA tokens, and banking content inside notifications before handing them to any `NotificationListenerService`. Without an extra permission, Veles sees only `"Sensitive notification content hidden"` instead of the real text.
+Veles intercepts noisy bank OTP notifications, extracts the verification code, amount, and merchant name, and re-presents them as a clean, actionable notification with a one-tap **Copy** button. It runs strictly on-device with zero internet permissions, no telemetry, no tracking, and no monetization.
 
-### In-app (recommended)
-
-On Android 15+, the Home screen shows a sensitive-notifications status card when access is needed. Grant it from inside the app — no computer required:
-
-1. Open **Veles**. If access is missing, a card showing "Android hides OTP content from Veles" appears at the top of the Home screen.
-2. Tap **Enable (pair as companion)**. Android only shares sensitive notifications with companion-device apps, so Veles asks to be registered as one. The system dialog will ask you to pick a nearby Bluetooth device — **any** device works (headphones, your car, a real watch). Turn Bluetooth on first. This is why the dialog mentions a watch.
-3. After you pick a device, Veles posts a hidden verification probe through its own test-notification pipeline and checks whether the real text comes back. The card updates automatically: it disappears when access is confirmed, or shows guidance if the device still redacts.
-
-4. Veles waits while Android applies the permission, then reconnects its notification listener and verifies access automatically. If setup times out, the card opens App info so you can tap Force stop and reopen Veles.
-
-If the card says access is granted but content is still redacted, try the Enhanced-notifications fallback below.
-
-### Enhanced notifications fallback
-
-Turning off **Enhanced notifications** stops Android from hiding sensitive content, but it's a device-wide switch: it also disables smart replies and notification actions for **all** apps, not just Veles. Use this only if the companion-pairing flow doesn't stick.
-
-1. Open the card's **More options** → **Enhanced notifications settings**, or go to **Settings → Notifications → Enhanced notifications**.
-2. Turn the toggle **OFF**.
-3. Back in Veles, tap **Check now** on the card to verify.
-
-### If the in-app methods fail (adb)
-
-If neither in-app method works, you can grant the hidden `RECEIVE_SENSITIVE_NOTIFICATIONS` AppOp via ADB instead. This targets **only** Veles — it does not disable the protection globally.
-
-The steps below were validated on a **OnePlus 13 running OxygenOS 16.0.801** and should work on any Android 15+ device. On non-OnePlus devices you can skip Step 1.
-
-### Step 1 — Disable system optimization (OnePlus / OxygenOS only)
-
-OxygenOS blocks ADB from modifying granular app operations unless a developer override is enabled.
-
-1. Open **Settings → Additional Settings → Developer Options**.
-2. Use the search icon (or scroll to the very bottom) and find **"Disable system optimization"**. *(On older OxygenOS 16 builds this was named "Disable permission monitoring".)*
-3. Turn the toggle **ON**.
-4. **Reboot** the phone so the ADB daemon restarts with the override applied.
-
-> This switch can be turned back OFF after Step 2 — the permission you grant via ADB is persisted in Android's AppOps database and is not erased by re-enabling system optimization.
-
-### Step 2 — Grant the sensitive notification AppOp
-
-With ADB connected (wireless debugging works fine), run:
-
-```bash
-adb shell appops set me.nagaev.veles RECEIVE_SENSITIVE_NOTIFICATIONS allow
+```
+Incoming SMS: "Your OTP is 674902 for payment of THB 1,250.00 to COFFEE HOUSE. Ref: 8842..."
+       ↓
+Veles Notice: [ 674902 ] · THB 1,250.00 → COFFEE HOUSE   [ Copy ]
 ```
 
-If your terminal reports an error about user profiles, target the primary user explicitly:
+---
 
-```bash
-adb shell cmd appops set --user 0 me.nagaev.veles RECEIVE_SENSITIVE_NOTIFICATIONS allow
-```
+## 🚧 Active Work-in-Progress (WIP)
 
-Verify it was saved:
+We are actively building cross-device OTP relay support to automatically send verification codes to desktop browsers and host systems (via a shared Rust core, WebExtension MV3, and a Tauri native messaging host).
 
-```bash
-adb shell appops get me.nagaev.veles RECEIVE_SENSITIVE_NOTIFICATIONS
-# Expected: RECEIVE_SENSITIVE_NOTIFICATIONS: allow
-```
+👉 **Track progress and upcoming milestones on our [GitHub Project: Veles OTP External Devices](https://github.com/users/raidenyn/projects/3)**.
 
-### Step 3 — (Optional) Re-enable system optimization
+---
 
-Once the AppOp is granted you can turn **"Disable system optimization"** back OFF to restore default device security. The granted permission persists.
+## Quick Start
 
-### When you need to redo this
+1. **Download:** Get the latest release from the [Releases page](https://github.com/raidenyn/veles-android/releases/latest).
+2. **Install:** Run `adb install -r <apk>` or open the APK directly on your Android device (Android 13+).
+3. **Grant Access:** Follow the in-app prompts to enable **Notification access**.
+   *(On Android 15+, companion pairing or our [Sensitive Notifications Guide](docs/sensitive-notifications.md) ensures OTPs are not hidden by the OS).*
 
-- **Full uninstall + reinstall.** A clean install wipes the app's AppOps container, so you'll need to toggle system optimization back ON, repeat Step 2, then turn it off again. Incremental installs (`adb install -r` / Android Studio Run) preserve the permission.
-- **Major OxygenOS/OTA updates** can occasionally clear ADB-granted permissions. Keep the command handy.
+---
 
-## License
+## Project Links & Docs
 
-Veles is licensed under the [MIT License](LICENSE).
+- 🌐 **[Official Website](https://veles.nagaev.me/)** — Overview, visual demos, and FAQ.
+- 📦 **[Latest Releases](https://github.com/raidenyn/veles-android/releases/latest)** — Download pre-built APKs and verification attestations.
+- 🛠️ **[Build Guide (BUILD.md)](BUILD.md)** — Prerequisites, Gradle build commands, tests, and multi-component toolchains.
+- 🤝 **[Contributing (CONTRIBUTING.md)](CONTRIBUTING.md)** — Architecture overview, adding bank regex templates, and commit conventions.
+- 🔐 **[Sensitive Notifications](docs/sensitive-notifications.md)** — Android 15 companion pairing & ADB setup.
+- 📜 **[License](LICENSE)** — Licensed under the [MIT License](LICENSE).
