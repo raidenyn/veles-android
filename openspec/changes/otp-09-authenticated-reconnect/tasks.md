@@ -261,13 +261,13 @@
 
 ## 10. Physical verification (homepc, adb; spec "Physical round-trip evidence")
 
-- [ ] 10.1 Build the debug APK and the development extension.
+- [x] 10.1 Build the debug APK and the development extension.
   - Compare the APK's signing-certificate fingerprint with the one installed on the phone.
   - If they differ, the user has authorized a reinstall (2026-11-10) for the OTP-09
     physical run.
   - Record the fingerprints actually read, and whether a reinstall happened.
   - No production signing changes.
-- [ ] 10.2 On a real phone with Chrome on Windows, run in order:
+- [x] 10.2 On a real phone with Chrome on Windows, run in order:
   1. inject trust both ways
   2. authenticate
   3. pull and ack
@@ -279,19 +279,19 @@
      revocation of a connected peer (OTP-11).
 
   Record the observed result of each step.
-- [ ] 10.3 Repeat 10.2 with Chrome on macOS.
-- [ ] 10.4 Write the dated `docs/otp-09-*.md` evidence note with safe redaction: commit,
+- [x] 10.3 Repeat 10.2 with Chrome on macOS.
+- [x] 10.4 Write the dated `docs/otp-09-*.md` evidence note with safe redaction: commit,
   devices, OS builds, Chrome versions, fingerprints from 10.1, and per-step pass/fail for
   both platforms.
 
 ## 11. Gate and PR
 
-- [ ] 11.1 Run `./gradlew spotlessCheck detekt lintDebug`, the raw `android.util.Log` guard
+- [x] 11.1 Run `./gradlew spotlessCheck detekt lintDebug`, the raw `android.util.Log` guard
   from `check-android.yml`, `testDebugUnitTest`, `protocolCheck` (including
   `sessionLoopbackCheck`) and `releaseHookGuard`. All must pass.
-- [ ] 11.2 Run the web extension `format:check`, `lint`, `typecheck`, `test`, `build` and
+- [x] 11.2 Run the web extension `format:check`, `lint`, `typecheck`, `test`, `build` and
   `test:bundle` (which builds the guard artifact itself). All must pass.
-- [ ] 11.3 Run:
+- [x] 11.3 Run:
   - `python3 -I scripts/components.py check` with all new files staged
   - `scripts/commitlint.py` on every commit message and on the PR title and body
   - `node --test verify/test/workflow-contracts.test.mjs`, because the workflows change
