@@ -386,6 +386,15 @@ export class ConnectorController {
         return this.port.isOpen();
     }
 
+    /**
+     * Monotonic identity of the current native port generation. It advances on
+     * every open and every close, so async session work captured for an older
+     * generation can never deliver into a replacement port.
+     */
+    get portGeneration(): number {
+        return this.portEpoch;
+    }
+
     isIntentional(): boolean {
         return this.port.isIntentional();
     }

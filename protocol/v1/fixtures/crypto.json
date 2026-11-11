@@ -302,14 +302,14 @@
           "client_identity_pub": "0x040d0918a04198474605615b6df90fdcb34791fb3ecb822f4b26eb6e4fc4511b9d19b90c1b83c0c35cfbbb31ead32bb52ae33622f57e3cc1638097ce97f430baba",
           "phone_ephemeral_pub": "0x047d5c6b392211dac53c9f46961d99a705e224bc6bf22b937302df7f1ad79a90382e8dd865ef944d0452746b1b2da0d22cd3a7d8bc67ba77f461fcc19fcb70da6f",
           "client_ephemeral_pub": "0x04ad5df1774aeae379d1fa22e495347b8bdba94034c38e94553907b3b189e8a3121a3177a9afe2e9103957cc01a20fb31acf0e7ffcd872ce9e9f36e2b4f7d7aa24",
-          "phone_hello_payload": "0x70686f6e652d696e7374616c6c2d30310424eebc61af2f15cb5f9f87a067a2eb975da046957959c92d2c97adf1e516e5d511844429db6690479ba3f99a82404710572526d6fcb2e21f725e7aedd60f7da172636f6e6e2d6e6f6e63652d7068303101000100020102",
-          "client_hello_payload": "0x636c69656e742d696e7374616c6c2d31040d0918a04198474605615b6df90fdcb34791fb3ecb822f4b26eb6e4fc4511b9d19b90c1b83c0c35cfbbb31ead32bb52ae33622f57e3cc1638097ce97f430baba72636f6e6e2d6e6f6e63652d636c303102000100020103",
-          "rbase": "0x56656c6573207265636f6e6e656374207472616e73637269707420763170686f6e652d696e7374616c6c2d30310424eebc61af2f15cb5f9f87a067a2eb975da046957959c92d2c97adf1e516e5d511844429db6690479ba3f99a82404710572526d6fcb2e21f725e7aedd60f7da172636f6e6e2d6e6f6e63652d7068303101000100020102636c69656e742d696e7374616c6c2d31040d0918a04198474605615b6df90fdcb34791fb3ecb822f4b26eb6e4fc4511b9d19b90c1b83c0c35cfbbb31ead32bb52ae33622f57e3cc1638097ce97f430baba72636f6e6e2d6e6f6e63652d636c303102000100020103",
-          "rbase_digest": "0x07425a5bf662cfdd3bcdd6b0a7076b51e3284757b2081c883a329497b55d02ea",
-          "phone_sig": "0xd2fd812b56d0071bd89a04eee0cc5e5805636808353bb6ac7b3f00f0bb7eb8fb10f5441a0ce8d2c037ee9df1794f976d0d3ed0b02037017d3925e309c88ecf19",
-          "phone_sig_r": "0xd2fd812b56d0071bd89a04eee0cc5e5805636808353bb6ac7b3f00f0bb7eb8fb",
-          "phone_sig_s": "0x10f5441a0ce8d2c037ee9df1794f976d0d3ed0b02037017d3925e309c88ecf19",
-          "client_sig": "0xe2666d38840ad7e72548e716effd144c317aeb0af8e4ae6a3d4ee5037edd799278ff7e0bd234d4eee8a958b36a7f5076c8b8d27ce7a369ce368496fc4cfdf596",
+          "phone_hello_payload": "0x70686f6e652d696e7374616c6c2d3031047d5c6b392211dac53c9f46961d99a705e224bc6bf22b937302df7f1ad79a90382e8dd865ef944d0452746b1b2da0d22cd3a7d8bc67ba77f461fcc19fcb70da6f72636f6e6e2d6e6f6e63652d7068303101000100020102",
+          "client_hello_payload": "0x636c69656e742d696e7374616c6c2d3104ad5df1774aeae379d1fa22e495347b8bdba94034c38e94553907b3b189e8a3121a3177a9afe2e9103957cc01a20fb31acf0e7ffcd872ce9e9f36e2b4f7d7aa2472636f6e6e2d6e6f6e63652d636c303102000100020103",
+          "rbase": "0x56656c6573207265636f6e6e656374207472616e73637269707420763170686f6e652d696e7374616c6c2d3031047d5c6b392211dac53c9f46961d99a705e224bc6bf22b937302df7f1ad79a90382e8dd865ef944d0452746b1b2da0d22cd3a7d8bc67ba77f461fcc19fcb70da6f72636f6e6e2d6e6f6e63652d7068303101000100020102636c69656e742d696e7374616c6c2d3104ad5df1774aeae379d1fa22e495347b8bdba94034c38e94553907b3b189e8a3121a3177a9afe2e9103957cc01a20fb31acf0e7ffcd872ce9e9f36e2b4f7d7aa2472636f6e6e2d6e6f6e63652d636c303102000100020103",
+          "rbase_digest": "0xbd0355fa19940d5b54c26fb0644c2642c2222a2b49cbe74525184663962301a9",
+          "phone_sig": "0xcdaeaeb5c2be07fd84c61c988a4d926b13edfb1b0936a4443e29fbabc7e5c12d3f237e8e17280745d0202a486ac507bffde2fba61e86a606a3f9d7e03fe4c934",
+          "phone_sig_r": "0xcdaeaeb5c2be07fd84c61c988a4d926b13edfb1b0936a4443e29fbabc7e5c12d",
+          "phone_sig_s": "0x3f237e8e17280745d0202a486ac507bffde2fba61e86a606a3f9d7e03fe4c934",
+          "client_sig": "0x16845d5b042f5911699438eaa4e2a5dbc7eb3eb1976fdeac168ed2d80ff1c4012b5d75ce3169ca8ae986faaf45e24edbcca02a290e84f59c32d0ae20c29efa6a",
           "ss": "0xaaca38e89eb0df8fe9b15eb1e04a0446b41bbcaf391d5e4da90072d920a2fa2e",
           "reconnect_salt": "0x12f06110679d79dba5aaa342fc415f8e5e79e382f0077be99d64de2c027854e8",
           "reconnect_prk": "0x8d795aa4559166b9b23548bf538c2aa6a24faf6194da44387fd02508de348da0",
@@ -321,9 +321,9 @@
           "k_ab_confirmation": "0xd6958862c12c6bf919e798855894b2a6dea544a55fae90af178a688ecb523724",
           "session_id": "0xb238edc27e8234dd2374c1d72fb86e44380a7236becb2a1b28bcefd05c523788",
           "session_id_prefix": "0xb238edc27e8234dd",
-          "reconnect_confirm_input": "0xfd90c0895f5000c2fdf1a3a9ae99bfff5ee83a04a064a85de23dcd16260deb8e",
-          "conf_a": "0xcf64cdf517f8c6fac5dd64d8a2625c8693344b726571fc99ae24c5f3ee698fe0",
-          "conf_b": "0x7a05f054defe033b2a3683877cc5cce0d136f3197937ee8567ab476bb794100f",
+          "reconnect_confirm_input": "0xf7c1703af0b5fab17b25e2be048769ed8dd27cea2341c6051ab60703e8efc913",
+          "conf_a": "0x8a64d82844d48218107e8ff9b233879c29a8f333f56a29f50d356f0eca1e6f2e",
+          "conf_b": "0xd735a32ee1db857554b0d60c242104bbd3719dbb78ae5d14f6c29f50b97c4d59",
           "k_rec_client": "0x92f84eba245ae7bded1e3dab26507ddeb874a9bc6e5f1bcbf16c9bf323595c64",
           "k_rec_phone": "0xf98dba45a3b3e41efb59d8af5a822d1ae4c5895662a73bf106a747db5cf9fe7e"
         }
@@ -352,16 +352,16 @@
         "direction": "0x01",
         "record_type": "0x0001",
         "session_id_prefix": "0xb238edc27e8234dd",
-        "body": "0x7a05f054defe033b2a3683877cc5cce0d136f3197937ee8567ab476bb794100f01"
+        "body": "0xd735a32ee1db857554b0d60c242104bbd3719dbb78ae5d14f6c29f50b97c4d5901"
       },
       "expected": {
         "verified": true,
         "outputs": {
           "header": "0x010101000100000000000000000021b238edc27e8234dd",
           "nonce": "0x868e6c570000000000000000",
-          "ciphertext": "0xe577bc8ac09b4cbab23af284b541b9120386d0a20daee72ca44b5e4fd19342a5d0",
-          "tag": "0x4b580d062c745732706e6aa09deb1d6d",
-          "record": "0x010101000100000000000000000021b238edc27e8234dde577bc8ac09b4cbab23af284b541b9120386d0a20daee72ca44b5e4fd19342a5d04b580d062c745732706e6aa09deb1d6d"
+          "ciphertext": "0x4847eff0ffbecaf4ccbca70feda5714901c1be000c3754bd35228674df7b1ff3d0",
+          "tag": "0x9ea911387afd76dafe1c2cab830da2ba",
+          "record": "0x010101000100000000000000000021b238edc27e8234dd4847eff0ffbecaf4ccbca70feda5714901c1be000c3754bd35228674df7b1ff3d09ea911387afd76dafe1c2cab830da2ba"
         }
       }
     },
@@ -868,7 +868,7 @@
         "deviation": {
           "type": "high_s",
           "negates": "veles-reconnect-authentication",
-          "value": "0xd2fd812b56d0071bd89a04eee0cc5e5805636808353bb6ac7b3f00f0bb7eb8fbef0abbe4f3172d40c811620e86b06892afa829fd86e09d07ba93e7b933d45638"
+          "value": "0xcdaeaeb5c2be07fd84c61c988a4d926b13edfb1b0936a4443e29fbabc7e5c12dc0dc8170e8d7f8bb2fdfd5b7953af83fbf03ff078890f87e4fbff2e2bc7e5c1d"
         }
       },
       "expected": {
@@ -909,7 +909,7 @@
         "deviation": {
           "type": "der_encoding",
           "negates": "veles-reconnect-authentication",
-          "value": "0x3045022100d2fd812b56d0071bd89a04eee0cc5e5805636808353bb6ac7b3f00f0bb7eb8fb022010f5441a0ce8d2c037ee9df1794f976d0d3ed0b02037017d3925e309c88ecf19"
+          "value": "0x3045022100cdaeaeb5c2be07fd84c61c988a4d926b13edfb1b0936a4443e29fbabc7e5c12d02203f237e8e17280745d0202a486ac507bffde2fba61e86a606a3f9d7e03fe4c934"
         }
       },
       "expected": {
@@ -950,7 +950,7 @@
         "deviation": {
           "type": "truncated_sig",
           "negates": "veles-reconnect-authentication",
-          "value": "0xd2fd812b56d0071bd89a04eee0cc5e5805636808353bb6ac7b3f00f0bb7eb8fb10f5441a0ce8d2c037ee9df1794f976d0d3ed0b02037017d3925e309c88ecf"
+          "value": "0xcdaeaeb5c2be07fd84c61c988a4d926b13edfb1b0936a4443e29fbabc7e5c12d3f237e8e17280745d0202a486ac507bffde2fba61e86a606a3f9d7e03fe4c9"
         }
       },
       "expected": {
@@ -977,7 +977,7 @@
         "direction": "0x01",
         "record_type": "0x0001",
         "session_id_prefix": "0xb238edc27e8234dd",
-        "body": "0x7a05f054defe033b2a3683877cc5cce0d136f3197937ee8567ab476bb794100f01",
+        "body": "0xd735a32ee1db857554b0d60c242104bbd3719dbb78ae5d14f6c29f50b97c4d5901",
         "deviation": {
           "type": "bad_tag",
           "negates": "veles-record-reconnect-confirm"
@@ -1008,7 +1008,7 @@
         "direction": "0x01",
         "record_type": "0x0001",
         "session_id_prefix": "0xb238edc27e8234dd",
-        "body": "0x7a05f054defe033b2a3683877cc5cce0d136f3197937ee8567ab476bb794100f01",
+        "body": "0xd735a32ee1db857554b0d60c242104bbd3719dbb78ae5d14f6c29f50b97c4d5901",
         "deviation": {
           "type": "mutated_session",
           "negates": "veles-record-reconnect-confirm"
@@ -1039,7 +1039,7 @@
         "direction": "0x01",
         "record_type": "0x0001",
         "session_id_prefix": "0xb238edc27e8234dd",
-        "body": "0x7a05f054defe033b2a3683877cc5cce0d136f3197937ee8567ab476bb794100f01",
+        "body": "0xd735a32ee1db857554b0d60c242104bbd3719dbb78ae5d14f6c29f50b97c4d5901",
         "deviation": {
           "type": "mutated_direction",
           "negates": "veles-record-reconnect-confirm"

@@ -1,10 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { ConnectorApp, type ConnectorAction, type ConnectorView } from '../../src/connector';
-import { ConnectorController } from '../../src/connector/controller';
 import type { PeerHint } from '../../src/connector/hints';
 import type { ConnectorViewModel } from '../../src/connector/view-model';
-import { MockNativePort } from './mock-port';
 import {
     HANDLE_CONNECTION,
     HANDLE_CONNECTION_2,
@@ -20,37 +18,15 @@ import {
     shutdownCompleteEvent,
     wireErrorEvent,
 } from './fixtures';
-
-class FakeClock {
-    now = 0;
-    private nextId = 1;
-    private readonly tasks = new Map<number, { due: number; run: () => void }>();
-
-    readonly setTimeout = (fn: () => void, ms: number): number => {
-        const id = this.nextId;
-        this.nextId += 1;
-        this.tasks.set(id, { due: this.now + ms, run: fn });
-        return id;
-    };
-
-    readonly clearTimeout = (handle: unknown): void => {
-        if (typeof handle === 'number') this.tasks.delete(handle);
-    };
-
-    advance(ms: number): void {
-        this.now += ms;
-        for (const [id, task] of [...this.tasks]) {
-            if (task.due <= this.now) {
-                this.tasks.delete(id);
-                task.run();
-            }
-        }
-    }
-
-    get pendingTimers(): number {
-        return this.tasks.size;
-    }
-}
+import {
+    answerHandshake,
+    createTestController,
+    createTestTrust,
+    deferred,
+    flush as sessionFlush,
+    sessionEngineDeps,
+} from './session-harness';
+import { TestPhone } from '../session/client-harness';
 
 class RecordingView implements ConnectorView {
     readonly models: ConnectorViewModel[] = [];
@@ -82,54 +58,59 @@ async function flush(): Promise<void> {
     for (let index = 0; index < 20; index += 1) await Promise.resolve();
 }
 
-function setup() {
-    const clock = new FakeClock();
-    const ports: MockNativePort[] = [];
-    const controller = new ConnectorController({
-        connectNative: vi.fn(() => {
-            const port = new MockNativePort();
-            ports.push(port);
-            return port;
-        }),
-        lastError: () => ports.at(-1)?.lastError,
-        now: () => clock.now,
-        setTimeout: clock.setTimeout,
-        clearTimeout: clock.clearTimeout,
-        requestTimeoutMs: 30_000,
-    });
+async function setup(options: { extraPeers?: number } = {}) {
+    const context = createTestController();
+    const trust = await createTestTrust(context.clock);
+    const phone = await TestPhone.create();
+    const peerId = await trust.addPeer(phone, { state: 'active', hint: 'winrt:phone-a' });
+    const others: { phone: TestPhone; peerId: string }[] = [];
+    for (let index = 0; index < (options.extraPeers ?? 0); index += 1) {
+        const other = await TestPhone.create();
+        const otherId = await trust.addPeer(other, {
+            state: 'active',
+            label: `Second phone ${index + 1}`,
+        });
+        others.push({ phone: other, peerId: otherId });
+    }
     const view = new RecordingView();
     const activePeers = vi.fn<() => Promise<PeerHint[]>>(async () => []);
     const app = new ConnectorApp({
-        controller,
+        controller: context.controller,
         view,
         trustSource: { activePeers },
-        setTimeout: clock.setTimeout,
-        clearTimeout: clock.clearTimeout,
+        setTimeout: context.clock.setTimeout,
+        clearTimeout: context.clock.clearTimeout,
+        session: {
+            createRepository(verifier) {
+                trust.bindVerifier(verifier);
+                return trust.repository;
+            },
+            createEngineDeps(handle, peer, localInstallationId) {
+                return sessionEngineDeps(trust, context.clock, localInstallationId)(handle, peer);
+            },
+        },
     });
-    const currentPort = (): MockNativePort => {
-        const port = ports.at(-1);
-        if (port === undefined) throw new Error('no port created');
-        return port;
-    };
-    return { app, view, clock, ports, activePeers, currentPort, controller };
+    return { ...context, app, view, activePeers, trust, phone, peerId, others };
 }
 
+type AppContext = Awaited<ReturnType<typeof setup>>;
+
 async function startReady(
-    context = setup(),
+    context: AppContext,
     overrides: Record<string, unknown> = {},
-): Promise<ReturnType<typeof setup>> {
+): Promise<AppContext> {
     const started = context.app.start();
     const posted = await context.currentPort().nextPosted();
     await context.currentPort().emit(readyEvent({ request_id: posted.request_id, ...overrides }));
     await started;
-    await flush();
+    await sessionFlush();
     expect(context.view.last.host.state).toBe('ready');
     return context;
 }
 
 describe('connector app startup and recovery', () => {
     it('opens the host and negotiates hello on startup', async () => {
-        const context = setup();
+        const context = await setup();
         const started = context.app.start();
         const posted = await context.currentPort().nextPosted();
         expect(posted).toMatchObject({
@@ -149,7 +130,7 @@ describe('connector app startup and recovery', () => {
     });
 
     it('shows install guidance for an asynchronous missing host and Retry reopens the bridge', async () => {
-        const context = setup();
+        const context = await setup();
         const started = context.app.start();
         await context.currentPort().nextPosted();
         await context.currentPort().disconnect('Specified native messaging host not found.');
@@ -175,7 +156,7 @@ describe('connector app startup and recovery', () => {
     });
 
     it('fails closed with update guidance for an incompatible API', async () => {
-        const context = setup();
+        const context = await setup();
         const started = context.app.start();
         const posted = await context.currentPort().nextPosted();
         await context.currentPort().emit(
@@ -203,7 +184,7 @@ describe('connector app startup and recovery', () => {
 
 describe('connector app unsolicited host failures', () => {
     it('shows macOS permission guidance for an unsolicited scan failure and keeps a healthy link', async () => {
-        const context = await startReady(setup(), { platform: 'macos' });
+        const context = await startReady(await setup(), { platform: 'macos' });
 
         const scan = context.app.handleAction({ type: 'search' });
         const scanPosted = await context.currentPort().nextPosted();
@@ -223,6 +204,7 @@ describe('connector app unsolicited host failures', () => {
                 connection_handle: HANDLE_CONNECTION,
             }),
         );
+        await answerHandshake(context, { phone: context.phone });
         await connect;
         await flush();
         const before = context.currentPort().posted.length;
@@ -289,7 +271,7 @@ describe('connector app unsolicited host failures', () => {
 
 describe('connector app search and connection actions', () => {
     it('searches, lists discovered phones, connects and disconnects without replaying work', async () => {
-        const context = await startReady();
+        const context = await startReady(await setup());
 
         const search = context.app.handleAction({ type: 'search' });
         const scanPosted = await context.currentPort().nextPosted();
@@ -317,6 +299,7 @@ describe('connector app search and connection actions', () => {
                 platform_hint: 'winrt:provisional',
             }),
         );
+        await answerHandshake(context, { phone: context.phone });
         await connect;
         await flush();
         expect(context.view.last.connections[0]).toMatchObject({
@@ -324,8 +307,10 @@ describe('connector app search and connection actions', () => {
             status: 'connected',
             hintLabel: 'Unverified hint: winrt:provisional',
         });
-        // A connected hint is provisional display data; it never triggers a
-        // trust read, authentication or durable write.
+        // The connected hint stays provisional display data; it is persisted
+        // only after the session's authentication gate opens (below), never on
+        // the transport connect itself, and the recovery hint source is not
+        // consulted for a manual connect.
         expect(context.activePeers).not.toHaveBeenCalled();
 
         const beforeDisconnect = context.currentPort().posted.length;
@@ -350,7 +335,7 @@ describe('connector app search and connection actions', () => {
     });
 
     it('stops an active scan through the explicit stop control', async () => {
-        const context = await startReady();
+        const context = await startReady(await setup());
         const search = context.app.handleAction({ type: 'search' });
         const scanPosted = await context.currentPort().nextPosted();
         await context
@@ -374,7 +359,7 @@ describe('connector app search and connection actions', () => {
 
 describe('connector app shutdown and stale work', () => {
     it('shuts down explicitly and does not auto-reconnect afterwards', async () => {
-        const context = await startReady();
+        const context = await startReady(await setup());
         const shut = context.app.handleAction({ type: 'shutdown' });
         const posted = await context.currentPort().nextPosted();
         expect(posted).toMatchObject({ type: 'shutdown' });
@@ -392,7 +377,7 @@ describe('connector app shutdown and stale work', () => {
     });
 
     it('cancels a scheduled reconnect on tab close and ignores a stale hello', async () => {
-        const context = await startReady();
+        const context = await startReady(await setup());
         await context.currentPort().disconnect();
         await flush();
         expect(context.clock.pendingTimers).toBeGreaterThan(0);
@@ -404,7 +389,7 @@ describe('connector app shutdown and stale work', () => {
         expect(context.clock.pendingTimers).toBe(0);
         expect(context.view.models).toHaveLength(renders);
 
-        const stale = setup();
+        const stale = await setup();
         const started = stale.app.start();
         await stale.currentPort().nextPosted();
         stale.app.dispose();
@@ -416,7 +401,7 @@ describe('connector app shutdown and stale work', () => {
     });
 
     it('does not create a replacement port after app close even if a stale disconnect arrives', async () => {
-        const context = await startReady();
+        const context = await startReady(await setup());
         const before = context.currentPort().posted.length;
 
         context.app.dispose();
@@ -430,7 +415,7 @@ describe('connector app shutdown and stale work', () => {
     });
 
     it('uses Retry as a real same-Mac access probe, then clears permission guidance on success', async () => {
-        const context = await startReady(setup(), { platform: 'macos' });
+        const context = await startReady(await setup(), { platform: 'macos' });
 
         const scan = context.app.handleAction({ type: 'search' });
         const scanPosted = await context.currentPort().nextPosted();
@@ -499,7 +484,7 @@ describe('connector app shutdown and stale work', () => {
 
 describe('connector app automatic recovery regressions', () => {
     it('recovers a lost phone while an unrelated operation failure is displayed', async () => {
-        const context = await startReady();
+        const context = await startReady(await setup());
 
         const search = context.app.handleAction({ type: 'search' });
         const searchPosted = await context.currentPort().nextPosted();
@@ -519,6 +504,7 @@ describe('connector app automatic recovery regressions', () => {
                 connection_handle: HANDLE_CONNECTION,
             }),
         );
+        await answerHandshake(context, { phone: context.phone });
         await connect;
         await flush();
 
@@ -573,9 +559,9 @@ describe('connector app automatic recovery regressions', () => {
     });
 
     it('recovers the correct associated phone after a failed operation with two live links', async () => {
-        const context = setup();
+        const context = await setup();
         context.activePeers.mockResolvedValue([
-            { peerId: 'peer-a', label: 'Phone A', hint: 'winrt:phone-a' },
+            { peerId: context.peerId, label: 'Phone A', hint: 'winrt:phone-a' },
         ]);
         await startReady(context);
 
@@ -601,6 +587,7 @@ describe('connector app automatic recovery regressions', () => {
                 platform_hint: 'winrt:phone-a',
             }),
         );
+        await answerHandshake(context, { phone: context.phone });
         await flush();
 
         const search = context.app.handleAction({ type: 'search' });
@@ -621,6 +608,10 @@ describe('connector app automatic recovery regressions', () => {
                 connection_handle: HANDLE_CONNECTION_2,
             }),
         );
+        await answerHandshake(context, {
+            phone: context.phone,
+            connectionHandle: HANDLE_CONNECTION_2,
+        });
         await connectB;
         await flush();
 
@@ -681,7 +672,7 @@ describe('connector app automatic recovery regressions', () => {
     });
 
     it('treats failed BLE recovery as failure and exhausts three host attempts', async () => {
-        const context = await startReady();
+        const context = await startReady(await setup());
         await context.currentPort().disconnect();
         await flush();
 
@@ -719,7 +710,7 @@ describe('connector app automatic recovery regressions', () => {
     });
 
     it('resets the host allowance only after a successful recovery', async () => {
-        const context = await startReady();
+        const context = await startReady(await setup());
         await context.currentPort().disconnect();
         await flush();
 
@@ -741,9 +732,11 @@ describe('connector app automatic recovery regressions', () => {
     });
 
     it('never reconnects an intentionally disconnected peer when a different link is lost', async () => {
-        const context = setup();
+        const context = await setup({ extraPeers: 1 });
+        const phoneB = context.others[0];
+        if (phoneB === undefined) throw new Error('missing second phone');
         context.activePeers.mockResolvedValue([
-            { peerId: 'peer-a', label: 'Phone A', hint: 'winrt:phone-a' },
+            { peerId: context.peerId, label: 'Phone A', hint: 'winrt:phone-a' },
         ]);
         await startReady(context);
 
@@ -768,6 +761,7 @@ describe('connector app automatic recovery regressions', () => {
                 platform_hint: 'winrt:phone-a',
             }),
         );
+        await answerHandshake(context, { phone: context.phone });
         await flush();
 
         // The user explicitly disconnects A. That intent must survive.
@@ -796,6 +790,7 @@ describe('connector app automatic recovery regressions', () => {
         const connectB = context.app.handleAction({
             type: 'connect',
             deviceHandle: HANDLE_DEVICE,
+            peerId: phoneB.peerId,
         });
         const connectPosted = await context.currentPort().nextPosted();
         await context.currentPort().emit(
@@ -804,6 +799,10 @@ describe('connector app automatic recovery regressions', () => {
                 connection_handle: HANDLE_CONNECTION_2,
             }),
         );
+        await answerHandshake(context, {
+            phone: phoneB.phone,
+            connectionHandle: HANDLE_CONNECTION_2,
+        });
         await connectB;
         await flush();
 
@@ -840,9 +839,9 @@ describe('connector app automatic recovery regressions', () => {
     });
 
     it('falls back to search for host recovery after an explicit user disconnect', async () => {
-        const context = setup();
+        const context = await setup();
         context.activePeers.mockResolvedValue([
-            { peerId: 'peer-a', label: 'Phone A', hint: 'winrt:phone-a' },
+            { peerId: context.peerId, label: 'Phone A', hint: 'winrt:phone-a' },
         ]);
         await startReady(context);
 
@@ -864,6 +863,10 @@ describe('connector app automatic recovery regressions', () => {
                 connection_handle: HANDLE_CONNECTION_2,
             }),
         );
+        await answerHandshake(context, {
+            phone: context.phone,
+            connectionHandle: HANDLE_CONNECTION_2,
+        });
         await connect;
         await flush();
 
@@ -902,7 +905,7 @@ describe('connector app automatic recovery regressions', () => {
     });
 
     it('invalidates a deferred link-recovery trust read when the port is replaced', async () => {
-        const context = await startReady();
+        const context = await startReady(await setup());
 
         // Establish B through search.
         const search = context.app.handleAction({ type: 'search' });
@@ -923,6 +926,10 @@ describe('connector app automatic recovery regressions', () => {
                 connection_handle: HANDLE_CONNECTION_2,
             }),
         );
+        await answerHandshake(context, {
+            phone: context.phone,
+            connectionHandle: HANDLE_CONNECTION_2,
+        });
         await connect;
         await flush();
 
@@ -960,7 +967,7 @@ describe('connector app automatic recovery regressions', () => {
         expect(replacementScan).toMatchObject({ type: 'start_scan' });
         const beforeOldRead = context.currentPort().posted.length;
 
-        resolveOldRead?.([{ peerId: 'peer-a', label: 'Phone A', hint: 'winrt:phone-a' }]);
+        resolveOldRead?.([{ peerId: context.peerId, label: 'Phone A', hint: 'winrt:phone-a' }]);
         await flush();
         context.clock.advance(60_000);
         await flush();
@@ -979,9 +986,9 @@ describe('connector app automatic recovery regressions', () => {
     });
 
     it('retries a failed hint connect recovery and resets only on connected', async () => {
-        const context = setup();
+        const context = await setup();
         context.activePeers.mockResolvedValue([
-            { peerId: 'peer-a', label: 'Phone A', hint: 'winrt:phone-a' },
+            { peerId: context.peerId, label: 'Phone A', hint: 'winrt:phone-a' },
         ]);
         await startReady(context);
 
@@ -1031,13 +1038,14 @@ describe('connector app automatic recovery regressions', () => {
                 platform_hint: 'winrt:phone-a',
             }),
         );
+        await answerHandshake(context, { phone: context.phone });
         await flush();
         expect(context.view.last.reconnectStatusText).toBeNull();
         expect(context.view.last.connections).toHaveLength(1);
     });
 
     it('retries a failed scan recovery and resets only on scan started', async () => {
-        const context = await startReady();
+        const context = await startReady(await setup());
         await context.currentPort().disconnect();
         await flush();
         context.clock.advance(1_000);
@@ -1070,9 +1078,9 @@ describe('connector app automatic recovery regressions', () => {
     });
 
     it('discards an obsolete peer cycle across port replacement so later loss recovers', async () => {
-        const context = setup();
+        const context = await setup();
         context.activePeers.mockResolvedValue([
-            { peerId: 'peer-a', label: 'Phone A', hint: 'winrt:phone-a' },
+            { peerId: context.peerId, label: 'Phone A', hint: 'winrt:phone-a' },
         ]);
         await startReady(context);
 
@@ -1091,6 +1099,7 @@ describe('connector app automatic recovery regressions', () => {
                 platform_hint: 'winrt:phone-a',
             }),
         );
+        await answerHandshake(context, { phone: context.phone });
         await flush();
 
         // A loss schedules peer:A but the port dies before its timer fires.
@@ -1120,6 +1129,10 @@ describe('connector app automatic recovery regressions', () => {
                 platform_hint: 'winrt:phone-a',
             }),
         );
+        await answerHandshake(context, {
+            phone: context.phone,
+            connectionHandle: HANDLE_CONNECTION_2,
+        });
         await flush();
 
         // A later A loss must get a fresh cycle, not be blocked by the
@@ -1145,7 +1158,7 @@ describe('connector app automatic recovery regressions', () => {
     });
 
     it('restores ready phase and usable controls after a successful manual retry', async () => {
-        const context = await startReady();
+        const context = await startReady(await setup());
 
         const failed = context.app.handleAction({ type: 'search' });
         const failedPosted = await context.currentPort().nextPosted();
@@ -1195,5 +1208,47 @@ describe('connector app automatic recovery regressions', () => {
         await next;
         await flush();
         expect(context.view.last.controls.stopScan.enabled).toBe(true);
+    });
+
+    it('rechecks liveness after the installation identity read before a recovery connect', async () => {
+        const context = await setup();
+        context.activePeers.mockResolvedValue([
+            { peerId: context.peerId, label: 'Phone A', hint: 'winrt:phone-a' },
+        ]);
+        const originalIdentity = context.trust.repository.identity.bind(context.trust.repository);
+        const gate = deferred();
+        context.trust.repository.identity = async () => {
+            await gate.promise;
+            return originalIdentity();
+        };
+        await startReady(context);
+
+        // Host loss starts the hint-recovery attempt on a replacement port.
+        await context.currentPort().disconnect();
+        await flush();
+        context.clock.advance(1_000);
+        await flush();
+        const hello = await context.currentPort().nextPosted();
+        await context.currentPort().emit(readyEvent({ request_id: hello.request_id }));
+        await flush();
+        expect(
+            context
+                .currentPort()
+                .posted.some((message) => (message as { type?: string }).type === 'connect'),
+        ).toBe(false);
+
+        // The port is replaced while the attempt is paused in the identity read.
+        await context.currentPort().disconnect();
+        await flush();
+        gate.resolve();
+        await flush();
+
+        // The stale attempt must observe liveness before any transport connect.
+        expect(
+            context
+                .currentPort()
+                .posted.some((message) => (message as { type?: string }).type === 'connect'),
+        ).toBe(false);
+        expect(context.ports).toHaveLength(2);
     });
 });

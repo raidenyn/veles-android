@@ -1,0 +1,81 @@
+{
+  "st-rec-duplicate-sequence-terminates": "execute",
+  "st-rec-skipped-sequence-terminates": "execute",
+  "st-rec-reordered-sequence-terminates": "execute",
+  "st-rec-unknown-type-terminates": "execute",
+  "st-rec-excess-length-terminates": "execute",
+  "st-rec-bad-tag-terminates-without-advance": "execute",
+  "st-neg-records-after-bad-tag-cannot-continue": {
+    "engine-effect": {
+      "terminate": true,
+      "erase": true,
+      "deliver": false
+    }
+  },
+  "st-rec-max-u64-sequence-then-terminated": "execute",
+  "st-rec-direction-mismatch-terminates": "execute",
+  "st-rec-blocked-pull-vs-empty-history": "deferred:OTP-13/14",
+  "st-rec-peer-isolation": "execute",
+  "st-rec-ack-idempotent-unknown-noop": "execute",
+  "st-rec-pull-five-events-max": "execute",
+  "st-rec-client-full-pull-delivers": "execute",
+  "st-rec-app-error-terminal": "execute",
+  "st-rec-unauthenticated-record-before-confirm-terminates": "execute",
+  "st-neg-event-count-over-max": {
+    "engine-effect": {
+      "terminate": true,
+      "erase": true,
+      "deliver": false
+    }
+  },
+  "st-neg-seq-u64-overflow": {
+    "engine-effect": {
+      "terminate": false,
+      "erase": false,
+      "deliver": false
+    }
+  },
+  "st-rec-session-role-mismatch-terminates": "execute",
+  "st-rec-heartbeat-rate-terminates": {
+    "engine-effect": {
+      "terminate": true,
+      "erase": true,
+      "deliver": false
+    }
+  },
+  "st-rec-push-retransmit-drops-after-max": "deferred:OTP-15",
+  "st-rec-policy-response-flag-settles-pull": "deferred:OTP-13/14",
+  "st-neg-policy-notice-does-not-settle-pull": "deferred:OTP-13/14",
+  "st-rec-phone-full-on-first-reconnect-peer-active": "execute",
+  "st-rec-full-pending-peer-commit-duplicate-no-regression": "deferred:OTP-10",
+  "st-rec-commit-lost-recovery": "deferred:OTP-10",
+  "st-rec-ack-lost-active-client-direct-ack": "deferred:OTP-10",
+  "st-rec-complete-lost-recovery-client": "deferred:OTP-10",
+  "st-rec-recovery-session-stays-recovery-only": "deferred:OTP-10",
+  "st-rec-client-activation-pending-upgrades-on-phone-proof": "execute",
+  "st-rec-revocation-is-generic-preauth-failure": "execute",
+  "st-rec-revoke-disconnects-connected-peer": "deferred:OTP-11",
+  "st-rec-pending-expiry-deletes-incomplete": "deferred:OTP-10",
+  "st-rec-boot-continuity-loss-deletes-incomplete-only": "deferred:OTP-10",
+  "st-rec-authentication-without-authorization": "execute",
+  "st-rec-replay-of-prior-session-rejected": "execute",
+  "st-rec-removal-mutual-authenticated": "deferred:OTP-11",
+  "st-neg-secret-in-persisted-state": {
+    "engine-effect": {
+      "terminate": false,
+      "erase": false,
+      "deliver": false
+    }
+  },
+  "st-neg-pull-authorized-while-record-pending": {
+    "engine-effect": {
+      "terminate": true,
+      "erase": true,
+      "deliver": false
+    }
+  },
+  "st-rec-recovery-commit-mac-mismatch": "deferred:OTP-10",
+  "st-rec-recovery-complete-mac-mismatch": "deferred:OTP-10",
+  "st-rec-phone-complete-lost-prepares-then-full-session": "deferred:OTP-10",
+  "st-rec-client-mirror-durable-across-restart": "execute"
+}

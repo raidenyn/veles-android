@@ -35,6 +35,7 @@ import {
   fixturesArrayDigest,
   checkNegative,
   gcmDecrypt,
+  pubFromPriv,
   recordDeviation,
   spake2Exchange,
   validateP1363LowS,
@@ -243,6 +244,38 @@ test("engine recomputation matches committed outputs for every positive crypto f
       assert.equal(recomputed[name], committed, `${fixture.id}.${name} recomputed must equal committed`);
     }
   }
+});
+
+// ---------- 3a. reconnect hello point invariant (OTP2-REC-020, OTP-09 D0) ----------
+
+test("reconnect hello carries the ephemeral key", () => {
+  const reconnect = cryptoFixtures(loadCommitted()).find((f) => f.id === "veles-reconnect-authentication");
+  assert.ok(reconnect, "the committed reconnect vector must exist");
+  const { outputs } = reconnect.expected;
+  // The 65-byte point at hello offset 16 is the fresh uncompressed SEC1 point of
+  // the *ephemeral* private key used for ECDH (OTP2-REC-020/020b), never the
+  // identity public key.
+  const helloPoint = (payload) => bytesToHex(Buffer.from(payload.slice(2), "hex").subarray(16, 81));
+  assert.equal(
+    helloPoint(outputs.phone_hello_payload),
+    outputs.phone_ephemeral_pub,
+    "phone hello must embed the phone ephemeral public key",
+  );
+  assert.equal(
+    helloPoint(outputs.client_hello_payload),
+    outputs.client_ephemeral_pub,
+    "client hello must embed the client ephemeral public key",
+  );
+  assert.equal(
+    outputs.phone_ephemeral_pub,
+    pubFromPriv(reconnect.input.phone_ephemeral_priv),
+    "phone_ephemeral_pub must be the public key of phone_ephemeral_priv",
+  );
+  assert.equal(
+    outputs.client_ephemeral_pub,
+    pubFromPriv(reconnect.input.client_ephemeral_priv),
+    "client_ephemeral_pub must be the public key of client_ephemeral_priv",
+  );
 });
 
 // ---------- 4. candidate ↔ committed determinism ----------

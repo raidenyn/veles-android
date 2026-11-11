@@ -24,16 +24,101 @@ import me.nagaev.veles.BuildConfig
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-/** All platform operations are confined to the main looper. Callbacks are generation-local. */
+/**
+ * All platform operations are confined to the main looper. Callbacks are generation-local: every
+ * admitted link gets a [ConnectionGeneration] and the listener receives one ordered effect
+ * stream for it. [send]/[close] may be called from the session host's threads; admission and the
+ * platform work they trigger stay safe (the byte transport is synchronized, the pump is posted).
+ */
+@Suppress("TooManyFunctions") // GATT lifecycle, admission, fragmentation plumbing and session transport.
 internal class SharingGattServer(
     private val context: Context,
     private val onState: (SharingAvailability) -> Unit,
-    private val onRecord: (String, ByteArray) -> ByteArray?,
-) {
+    private val listener: ConnectionListener,
+) : SessionTransport {
     private val handler = Handler(Looper.getMainLooper())
     private val transport = GattTransport(SystemClock::elapsedRealtime)
     private val ingress = IngressBudget()
     private val admitted = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * One boundary for generation transitions, send-queue admission and completion metadata:
+     * [generations], [closing], [pending] and the transport's per-address state are only changed
+     * while holding [stateLock], so disconnect/reconnect can never interleave with an enqueue
+     * or acknowledge a record that was never admitted.
+     */
+    private val stateLock = Any()
+    private val generations = mutableMapOf<String, ConnectionGeneration>()
+    private var nextSerial = 0L
+    private val closing = mutableSetOf<String>()
+
+    private data class PendingSend(val gen: ConnectionGeneration, val token: Long?)
+
+    /** One queued outbound record and its completion token, in send order per address. */
+    private val pending = mutableMapOf<String, ArrayDeque<PendingSend>>()
+
+    /** The fragment passed to `notifyCharacteristicChanged` and awaiting its callback. */
+    private data class Flight(val gen: ConnectionGeneration, val serial: Long)
+    private val inflight = ConcurrentHashMap<String, Flight>()
+    private val flightSerial = java.util.concurrent.atomic.AtomicLong()
+
+    /**
+     * One address's outstanding stale notification callbacks: every fragment that was passed to
+     * `notifyCharacteristicChanged` for a generation that ended before its callback arrived.
+     * Each entry is a callback still owed to this process, so cardinality is preserved: N ended
+     * generations with a fragment in flight require N callbacks before the replacement may send
+     * again. Entries older than [QUARANTINE_MILLIS] are counted as [late] and stay counted: that
+     * callback can no longer be matched to a generation, so it consumes its entry and fails the
+     * live link closed. The address never pumps while any entry remains, and an entry is only
+     * ever consumed by an arriving callback, never by a disconnect or a sweep.
+     */
+    internal class StaleCallbacks {
+        private val recent = ArrayDeque<Long>()
+        private var late = 0
+
+        val outstanding: Boolean get() = recent.isNotEmpty() || late > 0
+
+        fun add(at: Long) {
+            // One fragment per address is in flight at a time, so this bound is defensive: an
+            // entry beyond it can never be matched and is counted as [late] from the start.
+            if (recent.size >= MAX_OUTSTANDING_STALE) late += 1 else recent.addLast(at)
+        }
+
+        fun expire(now: Long) {
+            while (recent.isNotEmpty() && now - recent.first() >= QUARANTINE_MILLIS) {
+                recent.removeFirst()
+                late += 1
+            }
+        }
+
+        /** Consumes one owed callback; true only while it is still inside its quarantine. */
+        fun consume(now: Long): Boolean? {
+            expire(now)
+            if (recent.isNotEmpty()) {
+                recent.removeFirst()
+                return true
+            }
+            if (late > 0) {
+                late -= 1
+                return false
+            }
+            return null
+        }
+    }
+
+    private val stale = mutableMapOf<String, StaleCallbacks>()
+
+    /** Idempotent transfer of one GATT ingress slot from the callback to the record's owner. */
+    private class BoundedAdmission(
+        private val id: String,
+        private val budget: IngressBudget,
+    ) : RecordAdmission {
+        private val released = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        override fun release() {
+            if (released.compareAndSet(false, true)) budget.release(id)
+        }
+    }
 
     /** Inbound frames accepted but not yet processed; close() must report them as dropped, never silently. */
     private data class QueuedInbound(val id: String, val bytes: Int)
@@ -89,6 +174,7 @@ internal class SharingGattServer(
                     return@post
                 }
                 overflowed.remove(id) // a stale entry must never outlive the link it was raised for
+                val serial = ++nextSerial
                 if (!transport.connect(id)) {
                     server?.cancelConnection(device)
                 } else {
@@ -96,6 +182,9 @@ internal class SharingGattServer(
                     admitted.add(id)
                     if (BuildConfig.DEBUG) SyntheticTransportFixture.telemetry?.connected(id)
                     connectedAt[id] = SystemClock.elapsedRealtime()
+                    val gen = ConnectionGeneration(id, serial)
+                    synchronized(stateLock) { generations[id] = gen }
+                    listener.onConnected(gen)
                 }
             }
         }
@@ -138,9 +227,11 @@ internal class SharingGattServer(
                 if (valid) postMalformed(device) else postUnsupported(device, requestId, responseNeeded)
                 return
             }
-            postValue(device, value, trackReceived = BuildConfig.DEBUG && SyntheticTransportFixture.telemetry != null) { copy ->
+            val arrival = synchronized(stateLock) { generations[device.address] }
+            postValue(device, value, trackReceived = BuildConfig.DEBUG && SyntheticTransportFixture.telemetry != null) { copy, admission ->
                 val id = device.address
                 val validOperation = characteristic.uuid == WRITE_UUID && !preparedWrite && !responseNeeded && offset == 0
+                var handedOff = false
                 if (!validOperation || id !in ready || id !in subscribed) {
                     if (BuildConfig.DEBUG) {
                         SyntheticTransportFixture.telemetry?.inbound(
@@ -152,6 +243,11 @@ internal class SharingGattServer(
                         )
                     }
                     if (responseNeeded) server?.sendResponse(device, requestId, BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED, 0, null)
+                } else if (arrival == null || synchronized(stateLock) { generations[id] } != arrival) {
+                    // An ended generation's queued fragment must never seed the next link's parser.
+                    if (BuildConfig.DEBUG) {
+                        SyntheticTransportFixture.telemetry?.inbound(id, "fragment_dropped", "stale_generation", copy.size, null)
+                    }
                 } else {
                     val result = transport.receive(id, copy)
                     if (BuildConfig.DEBUG) {
@@ -165,42 +261,26 @@ internal class SharingGattServer(
                     }
                     if (result.disconnect) disconnect(id)
                     result.record?.let { record ->
+                        val digest = if (BuildConfig.DEBUG) SyntheticTransportFixture.sha256Hex(record) else null
                         if (BuildConfig.DEBUG) {
-                            SyntheticTransportFixture.telemetry?.inbound(
-                                id,
-                                "record_complete",
-                                null,
-                                record.size,
-                                SyntheticTransportFixture.sha256Hex(record),
-                            )
+                            SyntheticTransportFixture.telemetry?.inbound(id, "record_complete", null, record.size, digest)
                         }
-                        val response = onRecord(id, record)
-                        if (BuildConfig.DEBUG) {
-                            SyntheticTransportFixture.telemetry?.inbound(
-                                id,
-                                "reply_generated",
-                                if (response == null) "none" else "produced",
-                                record.size,
-                                SyntheticTransportFixture.sha256Hex(record),
-                            )
-                        }
+                        // The callee owns a copy plus the ingress admission; the transport's
+                        // reassembled buffer is erased here.
+                        val owned = record.copyOf()
                         record.fill(0)
-                        if (response != null) {
-                            val queued = transport.enqueue(id, response)
+                        if (synchronized(stateLock) { generations[id] } == arrival) {
+                            listener.onRecord(arrival, owned, admission)
+                            handedOff = true
                             if (BuildConfig.DEBUG) {
-                                SyntheticTransportFixture.telemetry?.inbound(
-                                    id,
-                                    "reply_queue",
-                                    if (queued) "accepted" else transport.enqueueRefusalReason(id, response.size),
-                                    response.size,
-                                    SyntheticTransportFixture.sha256Hex(response),
-                                )
+                                SyntheticTransportFixture.telemetry?.inbound(id, "record_delegated", null, owned.size, digest)
                             }
-                            response.fill(0)
-                            pump(id)
+                        } else {
+                            owned.fill(0)
                         }
                     }
                 }
+                handedOff
             }
         }
         override fun onCharacteristicReadRequest(
@@ -242,7 +322,7 @@ internal class SharingGattServer(
             value: ByteArray,
         ) {
             if (value.size > 2) return
-            postValue(device, value) { copy ->
+            postValue(device, value) { copy, _ ->
                 val valid = descriptor.uuid == CCCD_UUID &&
                     descriptor.characteristic.uuid == NOTIFY_UUID &&
                     !preparedWrite &&
@@ -271,6 +351,7 @@ internal class SharingGattServer(
                         null,
                     )
                 }
+                false
             }
         }
         override fun onExecuteWrite(device: BluetoothDevice, requestId: Int, execute: Boolean) = post {
@@ -278,18 +359,60 @@ internal class SharingGattServer(
             Unit
         }
         override fun onNotificationSent(device: BluetoothDevice, status: Int) {
-            // Raw arrival is recorded before the looper hop: close() flushes queued work and drops late callbacks.
+            // The raw arrival binds the callback to the fragment (and so the generation) that was
+            // passed to notifyCharacteristicChanged; the looper hop must not re-resolve either.
             if (BuildConfig.DEBUG) SyntheticTransportFixture.telemetry?.callbackSeen(device.address, status, closed)
-            onNotificationSentOnMain(device, status)
+            onNotificationSentOnMain(device, status, inflight[device.address])
         }
-        private fun onNotificationSentOnMain(device: BluetoothDevice, status: Int) = post {
+        private fun onNotificationSentOnMain(device: BluetoothDevice, status: Int, flight: Flight?) = post {
             if (BuildConfig.DEBUG) SyntheticTransportFixture.telemetry?.callback(device.address, status)
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                disconnect(device.address)
-            } else {
-                transport.notificationComplete(device.address, true)
-                pump(device.address)
+            val id = device.address
+            val now = SystemClock.elapsedRealtime()
+            var staleAck: Boolean? = null
+            var completed: PendingSend? = null
+            var ignored = false
+            var failed = false
+            synchronized(stateLock) {
+                // One owed callback per ended generation. While any is outstanding the pump stays
+                // fenced, so a callback arriving here can never be mistaken for the live
+                // fragment's acknowledgement: it consumes exactly one owed callback instead.
+                staleAck = stale[id]?.consume(now)
+                if (staleAck == null) {
+                    if (flight == null) {
+                        // No fenced notification owns this address: a success acknowledges
+                        // nothing, while a failure still fails the current link closed.
+                        failed = status != BluetoothGatt.GATT_SUCCESS
+                        ignored = !failed
+                    } else if (inflight[id] !== flight || generations[id] != flight.gen) {
+                        // A duplicate callback, or one bound to a superseded fragment.
+                        ignored = true
+                    } else {
+                        inflight.remove(id)
+                        if (status == BluetoothGatt.GATT_SUCCESS) {
+                            if (transport.notificationComplete(id, true)) completed = completedRecordLocked(id)
+                        } else {
+                            failed = true
+                        }
+                    }
+                }
             }
+            val consumed = staleAck
+            if (consumed != null) {
+                // Keep this link's flight: remove() then counts its outstanding callback, so a
+                // delayed ack for the closed replacement can never acknowledge the next
+                // generation's fragment. A callback inside its quarantine releases the pump; one
+                // that arrived too late fails the link closed.
+                if (consumed) pump(id) else disconnect(id)
+                return@post
+            }
+            if (ignored) return@post
+            if (failed) {
+                disconnect(id)
+                return@post
+            }
+            completed?.let { record -> if (record.token != null) listener.onSendComplete(record.gen, record.token, true) }
+            pump(id)
+            finishCloseIfDrained(id)
         }
     }
     private val sweep = object : Runnable {
@@ -300,6 +423,14 @@ internal class SharingGattServer(
                     (id !in ready || id !in subscribed) && SystemClock.elapsedRealtime() - at >= 5000
                 }
                     .keys.toList().forEach(::disconnect)
+                // An outstanding stale callback is never forgotten by the sweep: an entry that
+                // ages out is still owed and now also ambiguous, so the address keeps its pump
+                // fenced until callbacks actually arrive (fail closed, never complete).
+                synchronized(stateLock) {
+                    val now = SystemClock.elapsedRealtime()
+                    stale.values.forEach { it.expire(now) }
+                    stale.keys.filter { !stale.getValue(it).outstanding }.forEach(stale::remove)
+                }
                 handler.postDelayed(this, 1000)
             }
         }
@@ -345,7 +476,15 @@ internal class SharingGattServer(
         handler.postDelayed({
             if (id !in subscribed) return@postDelayed
             val record = SyntheticTransportFixture.unsolicited()
-            val queued = transport.enqueue(id, record)
+            val queued = synchronized(stateLock) {
+                val gen = generations[id]
+                if (gen != null && transport.enqueue(id, record)) {
+                    pending.getOrPut(id) { ArrayDeque() }.addLast(PendingSend(gen, null))
+                    true
+                } else {
+                    false
+                }
+            }
             SyntheticTransportFixture.unsolicitedEvidence.add(
                 SyntheticTransportFixture.Unsolicited(
                     peer = SyntheticTransportFixture.sha256Hex(id.toByteArray()).take(PEER_HASH_CHARS),
@@ -363,12 +502,96 @@ internal class SharingGattServer(
     }
 
     private fun pump(id: String) {
-        if (id !in subscribed) return
         val device = devices[id] ?: return
-        val bytes = transport.nextFragment(id) ?: return
-        val code = server?.notifyCharacteristicChanged(device, notify, false, bytes)
-        if (BuildConfig.DEBUG && code != null) SyntheticTransportFixture.telemetry?.notifyResult(id, bytes.size, code)
-        if (code != BluetoothStatusCodes.SUCCESS) disconnect(id)
+        val request = synchronized(stateLock) {
+            if (id !in subscribed || stale[id]?.outstanding == true) return
+            val gen = generations[id]
+            val fragment = gen?.let { transport.nextFragment(id) }
+            if (gen == null || fragment == null) return
+            val flight = Flight(gen, flightSerial.incrementAndGet())
+            inflight[id] = flight
+            flight to fragment
+        }
+        val code = server?.notifyCharacteristicChanged(device, notify, false, request.second)
+        if (BuildConfig.DEBUG && code != null) {
+            SyntheticTransportFixture.telemetry?.notifyResult(id, request.second.size, code)
+        }
+        if (code != BluetoothStatusCodes.SUCCESS) {
+            inflight.remove(id, request.first)
+            disconnect(id)
+        }
+    }
+
+    /**
+     * Admission only: the record is queued and the pump is posted, so the caller (the session
+     * host, possibly off the main looper) gets a synchronous answer and never owns the bytes.
+     * Generation validation, enqueue and token insertion happen under one lock, so a disconnect
+     * cannot interleave and the pump cannot complete a record before its token is registered.
+     */
+    override fun send(gen: ConnectionGeneration, bytes: ByteArray, token: Long?): Boolean {
+        var refusal: String? = null
+        val queued = synchronized(stateLock) {
+            when {
+                closed || generations[gen.address] != gen || gen.address in closing -> false
+                transport.enqueue(gen.address, bytes) -> {
+                    pending.getOrPut(gen.address) { ArrayDeque() }.addLast(PendingSend(gen, token))
+                    true
+                }
+                else -> {
+                    refusal = transport.enqueueRefusalReason(gen.address, bytes.size)
+                    false
+                }
+            }
+        }
+        if (BuildConfig.DEBUG) {
+            SyntheticTransportFixture.telemetry?.inbound(
+                gen.address,
+                "reply_queue",
+                if (queued) "accepted" else refusal ?: "stale_generation",
+                bytes.size,
+                SyntheticTransportFixture.sha256Hex(bytes),
+            )
+        }
+        if (!queued) return false
+        post { pump(gen.address) }
+        return true
+    }
+
+    /** Ordered terminal policy: queue flush first, then the cancelled link (design D4). */
+    override fun close(gen: ConnectionGeneration) {
+        val current = synchronized(stateLock) {
+            if (closed || generations[gen.address] != gen) {
+                false
+            } else {
+                closing.add(gen.address)
+                true
+            }
+        }
+        if (!current) return
+        post {
+            if (synchronized(stateLock) { generations[gen.address] } != gen) return@post
+            pump(gen.address)
+            finishCloseIfDrained(gen.address)
+        }
+    }
+
+    /** Pops the record whose last fragment was just acknowledged; the caller holds [stateLock]. */
+    private fun completedRecordLocked(id: String): PendingSend? {
+        val queue = pending[id] ?: return null
+        val entry = queue.removeFirstOrNull() ?: return null
+        if (queue.isEmpty()) pending.remove(id)
+        return if (generations[id] == entry.gen) entry else null
+    }
+
+    private fun finishCloseIfDrained(id: String) {
+        val drained = synchronized(stateLock) {
+            if (id !in closing) {
+                false
+            } else {
+                id !in subscribed || pending[id].isNullOrEmpty()
+            }
+        }
+        if (drained) disconnect(id)
     }
 
     private fun post(block: () -> Unit) {
@@ -385,11 +608,15 @@ internal class SharingGattServer(
         }
     }
 
+    /**
+     * Copies [value] under one ingress slot. The [RecordAdmission] is released here unless the
+     * block transfers it to a record's owner (returns true), so queued engine work stays bounded.
+     */
     private fun postValue(
         device: BluetoothDevice,
         value: ByteArray,
         trackReceived: Boolean = false,
-        block: (ByteArray) -> Unit,
+        block: (ByteArray, RecordAdmission) -> Boolean,
     ) {
         val id = device.address
         if (closed) {
@@ -419,20 +646,22 @@ internal class SharingGattServer(
             failClosed(id)
             return
         }
+        val admission = BoundedAdmission(id, ingress)
         val copy = value.copyOf()
         val token = if (trackReceived) trackQueuedInbound(id, value.size) else null
         if (trackReceived && token == null) {
             copy.fill(0)
-            ingress.release(id)
+            admission.release()
             return
         }
         post {
             if (token != null) untrackQueuedInbound(token)
+            var handedOff = false
             try {
-                block(copy)
+                handedOff = block(copy, admission)
             } finally {
                 copy.fill(0)
-                ingress.release(id)
+                if (!handedOff) admission.release()
             }
         }
     }
@@ -462,6 +691,7 @@ internal class SharingGattServer(
      */
     private fun postMalformed(device: BluetoothDevice) {
         val id = device.address
+        val gen = synchronized(stateLock) { generations[id] }
         if (BuildConfig.DEBUG) SyntheticTransportFixture.telemetry?.inbound(id, "fragment_rejected", "oversized", 0, null)
         if (id !in admitted || id in overflowed) return
         if (!ingress.acquire(id)) {
@@ -471,8 +701,11 @@ internal class SharingGattServer(
         post {
             try {
                 // An empty frame is below the 4-byte header, i.e. malformed: receive() discards this peer's
-                // partial transactions (OTP2-GAT-011) and delivers nothing.
-                transport.receive(id, ByteArray(0))
+                // partial transactions (OTP2-GAT-011) and delivers nothing. A stale generation's discard
+                // must not touch the next link's parser.
+                if (gen != null && synchronized(stateLock) { generations[id] } == gen) {
+                    transport.receive(id, ByteArray(0))
+                }
             } finally {
                 ingress.release(id)
             }
@@ -499,13 +732,27 @@ internal class SharingGattServer(
 
     private fun remove(id: String) {
         if (BuildConfig.DEBUG && id in admitted) SyntheticTransportFixture.telemetry?.disconnected(id)
+        val (gen, dropped) = synchronized(stateLock) {
+            val removed = generations.remove(id)
+            closing.remove(id)
+            // Every fragment in flight when its generation ends is one callback this process is
+            // still owed; count it before the transport forgets the queue.
+            inflight.remove(id)?.let { stale.getOrPut(id) { StaleCallbacks() }.add(SystemClock.elapsedRealtime()) }
+            transport.disconnect(id)
+            removed to pending.remove(id)?.toList().orEmpty()
+        }
+        // Pending tokens are reported below, after the transport state is gone.
         admitted.remove(id)
         overflowed.remove(id)
-        transport.disconnect(id)
         devices.remove(id)
         subscribed.remove(id)
         connectedAt.remove(id)
         ready.remove(id)
+        // Every queued record of the ended generation is a lost send: report tokened ones.
+        dropped.forEach { record ->
+            if (record.gen == gen && record.token != null) listener.onSendComplete(record.gen, record.token, false)
+        }
+        if (gen != null) listener.onDisconnected(gen)
     }
     private fun disconnect(id: String) {
         val device = devices[id]
@@ -546,6 +793,11 @@ internal class SharingGattServer(
                 disconnect(id)
             } catch (_: SecurityException) { /* Local state already erased. */ }
         }
+        synchronized(stateLock) {
+            pending.clear()
+            inflight.clear()
+            stale.clear()
+        }
         transport.clear()
         try {
             server?.clearServices()
@@ -565,5 +817,11 @@ internal class SharingGattServer(
         val NOTIFY_UUID: UUID = UUID.fromString("8e400002-8f3c-4d1a-b64a-8e3c9b0d2a51")
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         private const val PEER_HASH_CHARS = 8
+
+        /** How long a disconnected link's last notification may keep the replacement fenced. */
+        private const val QUARANTINE_MILLIS = 1_000L
+
+        /** Defensive cap on remembered unmatched callbacks per address; excess is immediately ambiguous. */
+        private const val MAX_OUTSTANDING_STALE = 8
     }
 }

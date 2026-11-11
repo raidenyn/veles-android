@@ -16,9 +16,22 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import me.nagaev.veles.session.IdentitySigner
+import me.nagaev.veles.session.PeerLookup
+import me.nagaev.veles.session.PhoneSessionEngine
+import me.nagaev.veles.trust.ActivationStep
+import me.nagaev.veles.trust.InstallationIdentity
+import me.nagaev.veles.trust.InstallationTrustRepository
+import me.nagaev.veles.trust.PendingPeer
+import me.nagaev.veles.trust.TrustedPeer
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -29,6 +42,8 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.time.Duration
 
+@Suppress("LargeClass") // One GATT server harness: transport, admission, fragmentation and session adapter.
+@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class SharingGattServerTest {
@@ -43,7 +58,35 @@ class SharingGattServerTest {
     private var records = 0
     private var response = byteArrayOf(7)
     private var suppressReply = false
+    private val connections = mutableListOf<ConnectionGeneration>()
+    private val disconnections = mutableListOf<ConnectionGeneration>()
+    private val completions = mutableListOf<Pair<Long, Boolean>>()
     private lateinit var subject: SharingGattServer
+
+    /** Stand-in for the session host: consumes records and answers through the transport. */
+    private val listener = object : ConnectionListener {
+        override fun onConnected(gen: ConnectionGeneration) {
+            connections += gen
+        }
+
+        override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray, admission: RecordAdmission) {
+            records++
+            try {
+                if (!suppressReply) subject.send(gen, response.copyOf(), null)
+            } finally {
+                bytes.fill(0)
+                admission.release()
+            }
+        }
+
+        override fun onDisconnected(gen: ConnectionGeneration) {
+            disconnections += gen
+        }
+
+        override fun onSendComplete(gen: ConnectionGeneration, token: Long, ok: Boolean) {
+            completions += token to ok
+        }
+    }
 
     @Before fun setup() {
         every { context.getSystemService(BluetoothManager::class.java) } returns manager
@@ -51,12 +94,13 @@ class SharingGattServerTest {
         every { adapter.bluetoothLeAdvertiser } returns advertiser
         every { manager.openGattServer(context, capture(callback)) } returns platform
         every { platform.addService(capture(service)) } returns true
-        subject = SharingGattServer(context, states::add) { _, _ ->
-            records++
-            if (suppressReply) null else response.copyOf()
-        }
-        subject.start()
+        subject = start(listener)
     }
+
+    @Suppress("MaxLineLength") // ktlint keeps this expression body on one line.
+    private fun start(listener: ConnectionListener): SharingGattServer = SharingGattServer(context, states::add, listener).also { it.start() }
+
+    private fun admission(): RecordAdmission = RecordAdmission { }
 
     private fun device(id: String): BluetoothDevice = mockk<BluetoothDevice>().also { every { it.address } returns id }
     private fun flush() = shadowOf(Looper.getMainLooper()).idle()
@@ -140,7 +184,7 @@ class SharingGattServerTest {
             callback.captured.onCharacteristicWriteRequest(peer, 1, write, true, false, 0, frame)
             flush()
             val events = telemetry.snapshot().peers.single().events
-            assertTrue(events.any { it.kind == "reply_generated" && it.label == "none" })
+            assertTrue("the record reaches the listener exactly once", events.count { it.kind == "record_delegated" } == 1)
             assertTrue(events.none { it.kind == "reply_queue" })
             assertTrue(events.any { it.kind == "fragment_rejected" && it.label == "invalid_operation_or_not_ready" })
         } finally {
@@ -683,4 +727,358 @@ class SharingGattServerTest {
             telemetry.events().none { it.kind == "notify_callback" },
         )
     }
+
+    @Test fun echoBytesOnNormalPathGetNoPlaintextReply() {
+        TransportMode.instrumentationEcho = false
+        val scope = CoroutineScope(UnconfinedTestDispatcher())
+        try {
+            val vel = byteArrayOf(0x56, 0x45, 0x4c, 1)
+
+            // The instrumentation echo is inert unless its mode is explicitly enabled.
+            val echoed = mutableListOf<ByteArray>()
+            val echo = InstrumentationEchoListener(
+                object : SessionTransport {
+                    override fun send(gen: ConnectionGeneration, bytes: ByteArray, token: Long?): Boolean {
+                        echoed += bytes.copyOf()
+                        return true
+                    }
+
+                    override fun close(gen: ConnectionGeneration) = Unit
+                },
+            )
+            echo.onRecord(ConnectionGeneration("a", 9), vel.copyOf(), admission())
+            assertTrue("the echo listener must never answer beside the session engine", echoed.isEmpty())
+
+            subject.close()
+            val sent = mutableListOf<ByteArray>()
+            every { platform.notifyCharacteristicChanged(any(), any(), any(), capture(sent)) } returns 0
+            lateinit var server: SharingGattServer
+            val transport = object : SessionTransport {
+                override fun send(gen: ConnectionGeneration, bytes: ByteArray, token: Long?): Boolean = server.send(gen, bytes, token)
+
+                override fun close(gen: ConnectionGeneration) = server.close(gen)
+            }
+            val host = SessionHost(
+                scope,
+                transport,
+                {
+                    PhoneSessionEngine(
+                        localInstallationId = ByteArray(16),
+                        signer = IdentitySigner { error("an unknown peer is never signed for") },
+                        lookup = PeerLookup { null },
+                        clock = { 0L },
+                        nonce = { ByteArray(16) },
+                    )
+                },
+                NoTrust,
+                { 0L },
+            )
+            server = start(host)
+            subject = server
+            val peer = device("a")
+            subscribe(peer)
+            val write = service.captured.getCharacteristic(SharingGattServer.WRITE_UUID)
+            callback.captured.onCharacteristicWriteRequest(peer, 0, write, false, false, 0, byteArrayOf(0x80.toByte(), 1, 0, 4) + vel)
+            flush()
+
+            val reply = sent.single().copyOfRange(4, sent.single().size)
+            assertTrue("no plaintext echo is ever queued", reply.contentEquals(byteArrayOf(0x0F, 0, 0)))
+            assertFalse("the plaintext VEL bytes never reach the wire", reply.contentEquals(vel))
+            callback.captured.onNotificationSent(peer, BluetoothGatt.GATT_SUCCESS)
+            flush()
+            verify { platform.cancelConnection(peer) }
+        } finally {
+            TransportMode.instrumentationEcho = false
+            scope.cancel()
+            subject.close()
+        }
+    }
+
+    @Test fun recordAdmissionsBoundQueuedInboundWorkUntilReleased() {
+        subject.close()
+        val held = mutableListOf<RecordAdmission>()
+        val delivered = mutableListOf<Int>()
+        subject = start(
+            object : ConnectionListener {
+                override fun onConnected(gen: ConnectionGeneration) = Unit
+
+                override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray, admission: RecordAdmission) {
+                    delivered += bytes.size
+                    bytes.fill(0)
+                    held += admission // the engine is still working: the ingress slot stays taken
+                }
+
+                override fun onDisconnected(gen: ConnectionGeneration) = Unit
+                override fun onSendComplete(gen: ConnectionGeneration, token: Long, ok: Boolean) = Unit
+            },
+        )
+        val a = device("a")
+        subscribe(a, 517)
+        val write = service.captured.getCharacteristic(SharingGattServer.WRITE_UUID)
+        repeat(16) { index ->
+            callback.captured.onCharacteristicWriteRequest(
+                a,
+                index,
+                write,
+                false,
+                false,
+                0,
+                byteArrayOf(0x80.toByte(), (index + 1).toByte(), 0, 1, 5),
+            )
+        }
+        callback.captured.onCharacteristicWriteRequest(a, 99, write, false, false, 0, byteArrayOf(0x80.toByte(), 17, 0, 1, 5))
+        flush()
+
+        assertEquals("held admissions bound the queued records", 16, delivered.size)
+        verify { platform.cancelConnection(a) }
+        held.forEach { it.release() }
+        assertEquals(16, held.size)
+        subject.close()
+    }
+
+    @Test fun oldGenerationSendIsRefusedAfterReconnect() {
+        val a = device("a")
+        subscribe(a, 517)
+        val old = connections.last()
+        callback.captured.onConnectionStateChange(a, 0, BluetoothProfile.STATE_DISCONNECTED)
+        flush()
+        subscribe(a, 517)
+        val fresh = connections.last()
+        assertNotEquals("reconnect always starts a new generation", old.serial, fresh.serial)
+
+        val sent = mutableListOf<ByteArray>()
+        every { platform.notifyCharacteristicChanged(any(), any(), any(), capture(sent)) } returns 0
+        assertFalse("an ended generation can never enqueue", subject.send(old, byteArrayOf(1, 2, 3, 4), 1L))
+        flush()
+        assertTrue(sent.isEmpty())
+
+        assertTrue(subject.send(fresh, byteArrayOf(5, 6, 7, 8), 2L))
+        flush()
+        assertEquals(1, sent.size)
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals(listOf(2L to true), completions)
+    }
+
+    @Test fun staleNotificationCallbackNeverAcknowledgesTheNewGeneration() {
+        val sent = mutableListOf<ByteArray>()
+        every { platform.notifyCharacteristicChanged(any(), any(), any(), capture(sent)) } returns 0
+        val a = device("a")
+        subscribe(a, 517)
+        val old = connections.last()
+        assertTrue(subject.send(old, ByteArray(1016) { 3 }, 77L))
+        flush()
+        assertEquals("the first fragment is in flight for the old generation", 1, sent.size)
+
+        // Link loss before the callback, then a new generation takes the same address.
+        callback.captured.onConnectionStateChange(a, 0, BluetoothProfile.STATE_DISCONNECTED)
+        flush()
+        subscribe(a, 517)
+        val fresh = connections.last()
+        assertEquals("the dropped tokened record is reported failed", listOf(77L to false), completions)
+
+        assertTrue(subject.send(fresh, ByteArray(1016) { 9 }, 88L))
+        flush()
+        assertEquals("the replacement waits for the old fragment's callback", 1, sent.size)
+
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals("the stale ack is consumed and releases the replacement", 2, sent.size)
+        assertEquals("a delayed ack cannot complete anything", listOf(77L to false), completions)
+
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals("the new generation completes its own record only", listOf(77L to false, 88L to true), completions)
+    }
+
+    @Test fun staleCallbackAfterQuarantineTimeoutKeepsTheReplacementFenced() {
+        val sent = mutableListOf<ByteArray>()
+        every { platform.notifyCharacteristicChanged(any(), any(), any(), capture(sent)) } returns 0
+        val a = device("a")
+        subscribe(a, 517)
+        val old = connections.last()
+        assertTrue(subject.send(old, ByteArray(1016) { 3 }, 77L))
+        flush()
+        assertEquals(1, sent.size)
+
+        callback.captured.onConnectionStateChange(a, 0, BluetoothProfile.STATE_DISCONNECTED)
+        flush()
+        subscribe(a, 517)
+        val fresh = connections.last()
+        assertEquals(listOf(77L to false), completions)
+        assertTrue(subject.send(fresh, ByteArray(20) { 4 }, 88L))
+        flush()
+        assertEquals("the outstanding callback holds the replacement", 1, sent.size)
+
+        // No stale ack arrived within the quarantine. The callback is now ambiguous, but it is
+        // still owed: the address must never pump while it is unaccounted for.
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(4))
+        assertEquals("an expired quarantine never releases the pump", 1, sent.size)
+
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals(
+            "the ambiguous callback closes the fenced link and completes nothing",
+            listOf(77L to false, 88L to false),
+            completions,
+        )
+        verify { platform.cancelConnection(a) }
+    }
+
+    @Test fun secondReconnectKeepsFencingUntilEveryOwedCallbackArrives() {
+        val sent = mutableListOf<ByteArray>()
+        every { platform.notifyCharacteristicChanged(any(), any(), any(), capture(sent)) } returns 0
+        val a = device("a")
+        subscribe(a, 517)
+        val first = connections.last()
+        assertTrue(subject.send(first, ByteArray(1016) { 3 }, 77L))
+        flush()
+        assertEquals(1, sent.size)
+        callback.captured.onConnectionStateChange(a, 0, BluetoothProfile.STATE_DISCONNECTED)
+        flush()
+
+        // Second generation: fenced by the first generation's owed callback, even after the
+        // quarantine window passes.
+        subscribe(a, 517)
+        val second = connections.last()
+        assertTrue(subject.send(second, ByteArray(20) { 4 }, 88L))
+        flush()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+        assertEquals("the owed callback keeps the second generation fenced", 1, sent.size)
+
+        // The delayed first-generation ack is ambiguous: it closes the second generation without
+        // completing anything. Its own pending record is reported failed with the link.
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals(listOf(77L to false, 88L to false), completions)
+        assertEquals("nothing else was ever sent", 1, sent.size)
+
+        // Third generation: nothing is owed any more, so its own callback is the only one that
+        // can complete its record.
+        subscribe(a, 517)
+        val third = connections.last()
+        assertTrue(subject.send(third, ByteArray(20) { 6 }, 99L))
+        flush()
+        assertEquals("the third generation sends immediately", 2, sent.size)
+
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals(listOf(77L to false, 88L to false, 99L to true), completions)
+    }
+
+    @Test fun successiveExpiredQuarantinesNeverCompleteACurrentToken() {
+        val sent = mutableListOf<ByteArray>()
+        every { platform.notifyCharacteristicChanged(any(), any(), any(), capture(sent)) } returns 0
+        val a = device("a")
+
+        // Generation 1: a token is in flight when the link dies, so one callback is owed.
+        subscribe(a, 517)
+        val first = connections.last()
+        assertTrue(subject.send(first, ByteArray(1016) { 1 }, 11L))
+        flush()
+        assertEquals(1, sent.size)
+        callback.captured.onConnectionStateChange(a, 0, BluetoothProfile.STATE_DISCONNECTED)
+        flush()
+        assertEquals(listOf(11L to false), completions)
+
+        // Generation 2: it may not send, and repeated expiry sweeps never change that. This is
+        // the regression: an expired quarantine used to release the pump, letting a second
+        // generation die with its own callback owed while only one ambiguity marker existed.
+        subscribe(a, 517)
+        val second = connections.last()
+        assertTrue(subject.send(second, ByteArray(20) { 2 }, 22L))
+        flush()
+        repeat(3) {
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+            assertEquals("expiry never releases the pump", 1, sent.size)
+        }
+
+        // The delayed first callback is ambiguous: it closes the second link and reports its
+        // unsent token failed. No record is completed.
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals(listOf(11L to false, 22L to false), completions)
+
+        // Two more delayed successes with no live generation cannot fabricate a completion.
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals(
+            "no delayed callback ever completes a token",
+            listOf(11L to false, 22L to false),
+            completions,
+        )
+
+        // Generation 3: every owed callback is accounted for, so its own ack completes it.
+        subscribe(a, 517)
+        val third = connections.last()
+        assertTrue(subject.send(third, ByteArray(20) { 3 }, 33L))
+        flush()
+        assertEquals(2, sent.size)
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals(listOf(11L to false, 22L to false, 33L to true), completions)
+    }
+
+    @Test fun staleCallbackCardinalitySurvivesExpiry() {
+        // The per-address tracker is the fix's core: N owed callbacks stay N, even after every
+        // one of them has expired. A set/Boolean could only ever represent one.
+        val callbacks = SharingGattServer.StaleCallbacks()
+        callbacks.add(0L)
+        callbacks.add(10L)
+        callbacks.add(20L)
+        assertTrue(callbacks.outstanding)
+
+        callbacks.expire(5_000L)
+        assertEquals("three expired callbacks are still owed", true, callbacks.outstanding)
+        assertEquals("the first expired callback is ambiguous", false, callbacks.consume(5_000L))
+        assertTrue("two remain", callbacks.outstanding)
+        assertEquals(false, callbacks.consume(5_000L))
+        assertTrue("one remains", callbacks.outstanding)
+        assertEquals(false, callbacks.consume(5_000L))
+        assertEquals("nothing is owed once all three arrived", false, callbacks.outstanding)
+        assertNull(callbacks.consume(5_000L))
+
+        // A callback inside its quarantine is still trustworthy and releases the pump.
+        callbacks.add(10_000L)
+        assertEquals(true, callbacks.consume(10_500L))
+        assertEquals(false, callbacks.outstanding)
+    }
+
+    @Test fun duplicateNotificationCallbackNeverAcknowledgesASecondRecord() {
+        val sent = mutableListOf<ByteArray>()
+        every { platform.notifyCharacteristicChanged(any(), any(), any(), capture(sent)) } returns 0
+        val a = device("a")
+        subscribe(a, 517)
+        val gen = connections.last()
+        assertTrue(subject.send(gen, ByteArray(20) { 1 }, 5L))
+        flush()
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals(listOf(5L to true), completions)
+
+        // Nothing else is queued: a repeated success cannot fabricate a completion.
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals(listOf(5L to true), completions)
+
+        assertTrue(subject.send(gen, ByteArray(20) { 2 }, 6L))
+        flush()
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals(listOf(5L to true, 6L to true), completions)
+    }
+}
+
+private object NoTrust : InstallationTrustRepository {
+    override suspend fun identity(): InstallationIdentity = error("no trust in this fixture")
+    override suspend fun peers(): List<TrustedPeer> = emptyList()
+    override suspend fun activePeers(): List<TrustedPeer> = emptyList()
+    override suspend fun addPending(peer: PendingPeer) = error("no trust in this fixture")
+    override suspend fun confirm(peerId: String, step: ActivationStep, proof: ByteArray) = error("no trust in this fixture")
+    override suspend fun revoke(peerId: String) = error("no trust in this fixture")
+    override suspend fun markAuthenticated(peerId: String) = Unit
 }

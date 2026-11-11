@@ -205,22 +205,29 @@ internal class GattTransport(private val clock: () -> Long) {
         return header + record.copyOfRange(peer.offset, peer.offset + count)
     }
 
-    @Synchronized fun notificationComplete(id: String, success: Boolean) {
-        val peer = peers[id] ?: return
+    /**
+     * Acknowledges the fragment returned by [nextFragment]. True only when that fragment was the
+     * last of its record, so the adapter can map the record's completion token without
+     * duplicating the fragment arithmetic (design D4 "send completion").
+     */
+    @Synchronized fun notificationComplete(id: String, success: Boolean): Boolean {
+        val peer = peers[id] ?: return false
         if (!success) {
             disconnect(id)
-            return
+            return false
         }
-        if (!peer.awaiting) return
+        if (!peer.awaiting) return false
         peer.awaiting = false
         peer.offset += peer.sentBytes
         peer.index++
-        if (peer.offset == peer.queue.first().size) {
+        val lastFragment = peer.offset == peer.queue.first().size
+        if (lastFragment) {
             peer.queue.removeFirst().fill(0)
             peer.offset = 0
             peer.index = 0
             peer.transaction = peer.transaction % 255 + 1
         }
+        return lastFragment
     }
 
     private fun reject(peer: Peer, diagnostic: String): Received {

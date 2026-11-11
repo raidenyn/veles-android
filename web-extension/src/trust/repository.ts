@@ -89,7 +89,19 @@ export class ChromeTrustRepository {
         });
     }
 
-    authenticated(peerId: string, hint: string | undefined, proof: Uint8Array): Promise<void> {
+    /**
+     * Records successful-authentication metadata for exactly the generation the
+     * caller authenticated. `fence` is invoked synchronously immediately before
+     * the durable write, after every asynchronous verifier/validation step, so a
+     * link that went away during that window cannot still persist `lastSeen` or a
+     * replacement hint.
+     */
+    authenticated(
+        peerId: string,
+        hint: string | undefined,
+        proof: Uint8Array,
+        fence?: () => boolean,
+    ): Promise<void> {
         const evidence = proof.slice();
         return this.update(async (s) => {
             const peer = this.find(s, peerId);
@@ -100,7 +112,7 @@ export class ChromeTrustRepository {
                 peer.platformHint = hint;
             }
             peer.lastSeenMillis = this.wall();
-        });
+        }, fence);
     }
 
     forgetHint(peerId: string): Promise<void> {
@@ -140,7 +152,10 @@ export class ChromeTrustRepository {
         return peer;
     }
 
-    private async update<T>(operation: (snapshot: TrustSnapshot) => T | Promise<T>): Promise<T> {
+    private async update<T>(
+        operation: (snapshot: TrustSnapshot) => T | Promise<T>,
+        fence?: () => boolean,
+    ): Promise<T> {
         try {
             return await this.lock(async () => {
                 await this.local.restrict();
@@ -208,6 +223,9 @@ export class ChromeTrustRepository {
                 const result = await operation(snapshot);
                 requireTrust(snapshot.peers.length <= 256);
                 for (const peer of snapshot.peers) await this.validatePeer(peer, snapshot.identity);
+                // The caller's generation fence runs after every asynchronous
+                // step and immediately before the durable write.
+                if (fence !== undefined) requireTrust(fence());
                 await this.local.write(snapshot);
                 return result;
             });

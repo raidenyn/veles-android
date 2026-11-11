@@ -137,6 +137,75 @@ class TrustRepositoryTest {
         assertTrue(repo.peers().isEmpty())
     }
 
+    @Test fun `markAuthenticated stamps lastSeen for every record that can authenticate`() = runTest {
+        val repo = repository()
+        repo.identity()
+        val pending = peer()
+        val committed = peer().copy(installationId = "04".repeat(16))
+        val active = peer().copy(installationId = "05".repeat(16))
+        repo.addPending(pending)
+        repo.addPending(committed)
+        repo.confirm(committed.installationId, ActivationStep.COMMIT, byteArrayOf(1))
+        repo.addPending(active)
+        repo.confirm(active.installationId, ActivationStep.COMMIT, byteArrayOf(1))
+        repo.confirm(active.installationId, ActivationStep.ACK, byteArrayOf(1))
+
+        val before = repo.peers().associateBy { it.installationId }
+        assertEquals(
+            setOf(TrustState.PENDING, TrustState.COMMITTED_WAITING_ACK, TrustState.ACTIVE),
+            before.values.map { it.state }.toSet(),
+        )
+        wall = 9000L
+        listOf(pending, committed, active).forEach { repo.markAuthenticated(it.installationId) }
+
+        val after = repo.peers().associateBy { it.installationId }
+        listOf(pending, committed, active).forEach { peer ->
+            val was = before.getValue(peer.installationId)
+            val now = after.getValue(peer.installationId)
+            assertEquals("lastSeen for ${peer.installationId}", 9000L, now.lastSeenMillis)
+            assertEquals("state is never changed", was.state, now.state)
+            assertEquals("stateChangedAtMillis is never changed", was.stateChangedAtMillis, now.stateChangedAtMillis)
+            assertEquals("pending creation is never changed", was.createdAtMillis, now.createdAtMillis)
+            assertEquals("pending expiry is never changed", was.createdElapsedMillis, now.createdElapsedMillis)
+        }
+    }
+
+    @Test fun `markAuthenticated never extends a pending record lifetime`() = runTest {
+        val repo = repository()
+        repo.identity()
+        val pending = peer()
+        repo.addPending(pending)
+        wall = 9000L
+
+        repo.markAuthenticated(pending.installationId)
+
+        elapsed = 10L + 86_400_000L
+        assertTrue("the pending deadline still starts at creation", repository().peers().isEmpty())
+    }
+
+    @Test fun `markAuthenticated rejects an unknown or deleted id`() = runTest {
+        val repo = repository()
+        repo.identity()
+        val pending = peer()
+        repo.addPending(pending)
+
+        assertFails { repo.markAuthenticated("09".repeat(16)) }
+        repo.revoke(pending.installationId)
+        assertFails { repo.markAuthenticated(pending.installationId) }
+    }
+
+    @Test fun `markAuthenticated value survives repository recreation`() = runTest {
+        val repo = repository()
+        repo.identity()
+        val pending = peer()
+        repo.addPending(pending)
+        wall = 9000L
+
+        repo.markAuthenticated(pending.installationId)
+
+        assertEquals(9000L, repository().peers().single().lastSeenMillis)
+    }
+
     private suspend fun assertFails(block: suspend () -> Unit) {
         try {
             block()

@@ -1,8 +1,10 @@
 name: check-android
 
-# Android node of the CI component tree (ci.yml -> `android / <job>`): static checks, JVM unit tests and
-# the emulator suite. Checks only: nothing here builds or uploads a release APK (label-driven PR builds
-# and master builds own that, see docs/ci.md).
+# Android node of the CI component tree (ci.yml -> `android / <job>`): static checks, JVM unit tests,
+# the release-hook guard and the emulator suite. Checks only: the release-hook guard assembles the
+# unsigned release APK in order to scan its DEX, manifest and resources for debug hooks, but nothing
+# here signs, packages or uploads a release artifact (label-driven PR builds and master builds own
+# that, see docs/ci.md).
 
 on:
   workflow_call:
@@ -64,6 +66,31 @@ jobs:
           name: unit-test-results
           path: app/build/test-results/
           if-no-files-found: ignore
+
+  release-hook-guard:
+    name: release-hook-guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - name: Activate pinned Rust toolchain
+        working-directory: rust
+        run: rustup show active-toolchain
+      - name: Install pinned Android NDK
+        run: |
+          NDK_VERSION="$(./gradlew -q rustNdkVersion)"
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/rust-tools
+          key: rust-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/toolchain-tools.toml', 'rust/Cargo.lock') }}
+      - run: ./gradlew :app:releaseHookGuard
 
   instrumented-tests:
     name: instrumented-tests

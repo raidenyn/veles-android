@@ -351,6 +351,35 @@ describe('bounded reconnect policy', () => {
         expect(attempts.filter((attempt) => attempt.key === 'peer-b')).toHaveLength(2);
     });
 
+    it('BLE success with failed auth consumes attempts until the bound', async () => {
+        const clock = new FakeClock();
+        const attempts: number[] = [];
+        // Each attempt reaches the transport level (a BLE connect would have
+        // succeeded), but authentication fails, so it is not a success and the
+        // three-attempt allowance is exhausted.
+        const policy = makePolicy(clock, (attempt) => {
+            attempts.push(attempt.attempt);
+            return false;
+        });
+
+        policy.schedule('peer:p1', { kind: 'hint', peerId: 'p1', hint: 'winrt:one' });
+        clock.advance(1_000);
+        await flush();
+        expect(attempts).toEqual([1]);
+        clock.advance(2_000);
+        await flush();
+        expect(attempts).toEqual([1, 2]);
+        clock.advance(4_000);
+        await flush();
+        expect(attempts).toEqual([1, 2, 3]);
+        expect(policy.isExhausted('peer:p1')).toBe(true);
+        expect(clock.pendingTimers).toBe(0);
+
+        clock.advance(60_000);
+        await flush();
+        expect(attempts).toEqual([1, 2, 3]);
+    });
+
     it('does nothing when a late timer or late async result arrives after intentional close', async () => {
         const clock = new FakeClock();
         const attempts: ReconnectAttempt[] = [];

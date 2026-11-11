@@ -204,6 +204,19 @@ export function guidanceFor(
 
     if (failure === null || failure === undefined) return null;
 
+    if (failure.code === 'authentication_failed') {
+        return {
+            kind: 'retryable',
+            title: 'Could not authenticate',
+            message:
+                'The phone and this connector could not complete a verified reconnect session. No record was sent or replayed. Choose Connect again, or re-pair the phone if it keeps failing.',
+            actionLabel: 'Retry',
+            canRetry: true,
+            bleControlsEnabled: true,
+            noAutomaticReplay: true,
+        };
+    }
+
     if (
         failure.code === 'port_closed' ||
         (failure.code === 'internal' && failure.stage === 'port_closed')
@@ -295,6 +308,8 @@ function errorMessage(failure: FailureLike): string {
             return 'The selected phone is no longer connected.';
         case 'protocol_violation':
             return 'The bridge sent an unexpected or correlated-invalid message.';
+        case 'authentication_failed':
+            return 'Could not authenticate — re-pair required.';
         case 'internal':
             return failure.stage === 'port_closed'
                 ? 'The Native Messaging port closed.'

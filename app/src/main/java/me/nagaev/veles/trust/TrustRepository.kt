@@ -75,6 +75,14 @@ interface InstallationTrustRepository {
     suspend fun addPending(peer: PendingPeer)
     suspend fun confirm(peerId: String, step: ActivationStep, proof: ByteArray)
     suspend fun revoke(peerId: String)
+
+    /**
+     * Records a successful authenticated reconnect (veles-v1.md §11.3). Applies to any existing,
+     * validated record that can authenticate — `ACTIVE`, `PENDING` or `COMMITTED_WAITING_ACK` —
+     * and never changes the state, its transition time or a pending record's lifetime. An
+     * unknown, expired or deleted id throws [TrustException].
+     */
+    suspend fun markAuthenticated(peerId: String)
 }
 
 class TrustRepository(
@@ -94,7 +102,7 @@ class TrustRepository(
         val createdAt = wallMillis()
         val record = TrustedPeer(
             peer.installationId, peer.publicKey, peer.label, peer.deviceType, peer.enrollmentTranscript,
-            fingerprint(snapshot.identity.publicKey, peer.publicKey), TrustState.PENDING,
+            peerFingerprint(snapshot.identity.publicKey, peer.publicKey), TrustState.PENDING,
             createdAt, null, elapsedMillis(), snapshot.continuityToken, createdAt,
         )
         validatePeer(record, snapshot.identity)
@@ -115,6 +123,17 @@ class TrustRepository(
 
     override suspend fun revoke(peerId: String) = update { snapshot ->
         snapshot.copy(peers = snapshot.peers.filterNot { it.installationId == peerId }) to Unit
+    }
+
+    /**
+     * The write is metadata only: one transaction, `lastSeenMillis` replaced, every state and
+     * pending-lifetime field kept byte-identical, so a pending record expires on its original
+     * deadline (veles-v1.md §11.3).
+     */
+    override suspend fun markAuthenticated(peerId: String) = update { snapshot ->
+        val peer = snapshot.peers.singleOrNull { it.installationId == peerId } ?: throw TrustException()
+        val now = wallMillis()
+        snapshot.copy(peers = snapshot.peers.map { if (it == peer) it.copy(lastSeenMillis = now) else it }) to Unit
     }
 
     private suspend fun <T> update(block: (TrustSnapshot) -> Pair<TrustSnapshot, T>): T = storage.transaction { stored ->
@@ -171,16 +190,17 @@ class TrustRepository(
         checkTrust(peer.createdAtMillis >= 0 && (peer.lastSeenMillis == null || peer.lastSeenMillis >= 0))
         checkTrust(peer.stateChangedAtMillis >= 0 && peer.createdElapsedMillis >= 0)
         TrustEncoding.requireHex(peer.bootToken, HASH_BYTES)
-        checkTrust(peer.fingerprint == fingerprint(identity.publicKey, peer.publicKey))
+        checkTrust(peer.fingerprint == peerFingerprint(identity.publicKey, peer.publicKey))
     }
-
-    private fun fingerprint(phone: String, client: String): String = TrustEncoding.hex(
-        MessageDigest.getInstance("SHA-256").digest(
-            "Veles identity fingerprint v1".toByteArray(Charsets.US_ASCII) +
-                TrustEncoding.bytes(phone) + TrustEncoding.bytes(client),
-        ),
-    )
 }
+
+/** The OTP2-REC-011a identity fingerprint; shared with the debug injector so records validate. */
+internal fun peerFingerprint(phone: String, client: String): String = TrustEncoding.hex(
+    MessageDigest.getInstance("SHA-256").digest(
+        "Veles identity fingerprint v1".toByteArray(Charsets.US_ASCII) +
+            TrustEncoding.bytes(phone) + TrustEncoding.bytes(client),
+    ),
+)
 
 internal fun checkTrust(value: Boolean) {
     if (!value) throw TrustException()

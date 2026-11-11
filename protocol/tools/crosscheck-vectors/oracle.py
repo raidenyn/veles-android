@@ -584,6 +584,9 @@ def derive_reconnect(fixture_input: dict) -> dict:
     phone_pub = pub_from_priv(fixture_input["phone_identity_priv"])
     client_pub = pub_from_priv(fixture_input["client_identity_priv"])
 
+    phone_eph = encode_uncompressed(point_mul(int(hexof(fixture_input["phone_ephemeral_priv"]), 16), G))
+    client_eph = encode_uncompressed(point_mul(int(hexof(fixture_input["client_ephemeral_priv"]), 16), G))
+
     def hello(installation_id, pub, nonce, role, caps):
         cap_bytes = b"".join(bytes([int(c, 16)]) for c in caps)
         return (
@@ -592,9 +595,11 @@ def derive_reconnect(fixture_input: dict) -> dict:
             + u16be(1) + u16be(len(cap_bytes)) + cap_bytes
         )
 
-    phone_hello = hello(fixture_input["phone_installation_id"], phone_pub,
+    # OTP2-REC-020: the hello carries the sender's fresh ephemeral public key
+    # (never the identity key); ECDH below uses the same ephemeral keys.
+    phone_hello = hello(fixture_input["phone_installation_id"], phone_eph.hex(),
                         fixture_input["phone_nonce"], "01", fixture_input["phone_caps"])
-    client_hello = hello(fixture_input["client_installation_id"], client_pub,
+    client_hello = hello(fixture_input["client_installation_id"], client_eph.hex(),
                          fixture_input["client_nonce"], "02", fixture_input["client_caps"])
     rbase = label("reconnect_transcript") + phone_hello + client_hello
     digest = sha256(rbase)
@@ -606,8 +611,6 @@ def derive_reconnect(fixture_input: dict) -> dict:
         raise ValueError("oracle self-check: phone signature failed its own verification")
     if not ecdsa_verify(digest, bytes.fromhex(hexof(client_pub)), int.from_bytes(cl_r, "big"), int.from_bytes(cl_s, "big")):
         raise ValueError("oracle self-check: client signature failed its own verification")
-    phone_eph = encode_uncompressed(point_mul(int(hexof(fixture_input["phone_ephemeral_priv"]), 16), G))
-    client_eph = encode_uncompressed(point_mul(int(hexof(fixture_input["client_ephemeral_priv"]), 16), G))
     ss_phone = point_mul(int.from_bytes(bytes.fromhex(hexof(fixture_input["phone_ephemeral_priv"])), "big"), decode_point_any(client_eph))[0].to_bytes(32, "big")
     ss_client = point_mul(int.from_bytes(bytes.fromhex(hexof(fixture_input["client_ephemeral_priv"])), "big"), decode_point_any(phone_eph))[0].to_bytes(32, "big")
     if ss_phone != ss_client:

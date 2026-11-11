@@ -181,6 +181,25 @@ class GattTransportBudgetTest {
         assertNull(transport.nextFragment("a"))
     }
 
+    @Test fun notificationCompletionReportsExactlyTheLastFragmentOfEachRecord() {
+        val transport = link(185)
+        assertFalse("completion requires a fragment in flight", transport.notificationComplete("a", true))
+        assertTrue(transport.enqueue("a", record(179)))
+        assertEquals(178, transport.nextFragment("a")?.let { it.size - 4 })
+        assertFalse("a non-final fragment is not a completion", transport.notificationComplete("a", true))
+        assertEquals(1, transport.nextFragment("a")?.let { it.size - 4 })
+        assertTrue("the final fragment completes the record", transport.notificationComplete("a", true))
+        assertFalse("a record completes once", transport.notificationComplete("a", true))
+
+        assertTrue(transport.enqueue("a", record(200)))
+        assertTrue(transport.enqueue("a", record(4096)))
+        var completions = 0
+        while (transport.nextFragment("a") != null) {
+            if (transport.notificationComplete("a", true)) completions++
+        }
+        assertEquals("one completion per queued record", 2, completions)
+    }
+
     @Test fun twoLinksWithDifferentMtusKeepIndependentBudgets() {
         val transport = GattTransport { now }
         for ((id, mtu) in listOf("narrow" to 185, "wide" to 517)) {
