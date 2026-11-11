@@ -33,7 +33,7 @@ contains every commit and is pushed. The harness owns the worktree; it was left 
 
 ## PR comment
 
-- **Comment status**: `pending`
+- **Comment status**: `posted` (https://github.com/raidenyn/veles-android/pull/139#issuecomment-6786641878)
 
 ---
 
