@@ -108,7 +108,7 @@ class SessionHost(
      * rejects that frame generically, so every non-pairing caller (tests, the debug probe)
      * gets the unchanged reconnect behavior without production wiring.
      */
-    private val pairingFactory: (ConnectionGeneration) -> PairingConnection = { RejectingPairingConnection },
+    private val pairingFactory: (ConnectionGeneration) -> PairingConnection = { RejectingPairingConnection() },
 ) : ConnectionListener {
     private class OwnedRecord(val bytes: ByteArray, val admission: RecordAdmission)
 
@@ -427,7 +427,7 @@ class SessionHost(
             runPairing(live) { pairing.onFrame(bytes) }
             return
         }
-        if (isPairingRequest(bytes)) {
+        if (isPairingFrame(bytes)) {
             live.engine?.teardown()
             live.engine = null
             val machine = pairingFactory(live.gen)
@@ -440,16 +440,26 @@ class SessionHost(
     }
 
     /**
-     * A first frame is a pairing request only when it is a structurally valid pre-auth
-     * `0x01` frame. A protected record also starts with the protocol version byte `1`, so
-     * the envelope length must match as well; otherwise the generation stays on the
-     * reconnect engine, whose pre-auth frame set is unchanged.
+     * Selects the pairing path for the first frame of a generation.
+     *
+     * `0x02`-`0x05` are unambiguous pairing frames: a protected record starts with the
+     * protocol version `1` and a reconnect frame with `0x06`/`0x07`/`0x0F`, never `2`-`5`.
+     * They are routed to the machine even with a broken envelope so it can count them as a
+     * malformed pairing connection.
+     *
+     * `0x01` is shared: `pairing_request` and a protected record's first byte are both
+     * `1`. The envelope length must match, so a malformed `0x01` frame (a bad length) stays
+     * on the reconnect engine and gets the generic reject without spending any pairing
+     * budget — reconnect traffic MUST NOT share the pairing budgets (limits.json). That is
+     * the accepted boundary: the machine never sees such a frame.
      */
-    private fun isPairingRequest(bytes: ByteArray): Boolean {
+    private fun isPairingFrame(bytes: ByteArray): Boolean {
         if (bytes.size < PAIRING_FRAME_HEADER) return false
         val type = bytes[0].toInt() and U8_MASK
+        if (type in PAIRING_FIRST_FRAME_MIN..PAIRING_FIRST_FRAME_MAX) return true
+        if (type != PAIRING_REQUEST_TYPE) return false
         val length = ((bytes[1].toInt() and U8_MASK) shl BITS_PER_BYTE) or (bytes[2].toInt() and U8_MASK)
-        return type == PAIRING_REQUEST_TYPE && length == bytes.size - PAIRING_FRAME_HEADER
+        return length == bytes.size - PAIRING_FRAME_HEADER
     }
 
     private suspend fun runPairing(live: Live, call: suspend () -> List<Outgoing>) {
@@ -605,5 +615,7 @@ class SessionHost(
         const val BITS_PER_BYTE = 8
         const val PAIRING_REQUEST_TYPE = 0x01
         const val PAIRING_FRAME_HEADER = 3
+        const val PAIRING_FIRST_FRAME_MIN = 0x02
+        const val PAIRING_FIRST_FRAME_MAX = 0x05
     }
 }

@@ -48,7 +48,7 @@ class SessionHostRoutingTest {
     ): SessionHost {
         val factory: (ConnectionGeneration) -> PairingConnection = { gen ->
             pairingConnections++
-            pairing?.invoke(gen) ?: RejectingPairingConnection
+            pairing?.invoke(gen) ?: RejectingPairingConnection()
         }
         return SessionHost(backgroundScope, wire, engine, NoTrust, { clock.now }, factory)
     }
@@ -79,6 +79,58 @@ class SessionHostRoutingTest {
         assertTrue(wire.closed.isEmpty())
 
         host.shutdown()
+    }
+
+    @Test
+    fun default_rejection_answers_every_generation() = runTest {
+        // No pairing factory: every generation gets its own default rejection.
+        val host = host()
+
+        repeat(DEFAULT_GENERATIONS) { index ->
+            val gen = ConnectionGeneration("d$index", index.toLong() + 1)
+            deliver(host, gen, requestFrame())
+            assertEquals(
+                "generation ${index + 1} must get the generic frame and a close",
+                listOf("0f0000"),
+                wire.sent.filter { it.gen == gen }.map { hex(it.bytes) },
+            )
+            assertEquals(listOf(gen), wire.closed.filter { it == gen })
+        }
+
+        assertEquals("the default path handled every generation", DEFAULT_GENERATIONS, pairingConnections)
+        host.shutdown()
+    }
+
+    @Test
+    fun malformed_pairing_first_frames_spend_the_pairing_budget() = runTest {
+        val endpoint = PairingEndpoint({ clock.now }, { core })
+        val host = host(pairing = { gen -> endpoint.connection(gen.serial) })
+
+        // `0x02`-`0x05` first frames are unambiguous pairing traffic and count as malformed.
+        repeat(MALFORMED_PAIRING_FRAMES) { index ->
+            val gen = ConnectionGeneration("bad$index", index.toLong() + 1)
+            deliver(host, gen, byteArrayOf(((index % MALFORMED_TYPES) + FIRST_MALFORMED_TYPE).toByte(), 0, 0))
+            assertEquals(
+                "malformed generation ${index + 1} is rejected generically",
+                listOf("0f0000"),
+                wire.sent.filter { it.gen == gen }.map { hex(it.bytes) },
+            )
+        }
+
+        endpoint.window.open()
+        val gen = ConnectionGeneration("pairing", PAIRING_GENERATION)
+        deliver(host, gen, requestFrame())
+
+        assertEquals(
+            "twenty malformed pairing connections block the next request",
+            listOf("0f0000"),
+            wire.sent.filter { it.gen == gen }.map { hex(it.bytes) },
+        )
+        assertTrue("no offer is emitted", wire.sent.filter { it.gen == gen }.none { it.bytes[0].toInt() == OFFER })
+        assertEquals("every malformed generation used the pairing path", MALFORMED_PAIRING_FRAMES + 1, pairingConnections)
+
+        host.shutdown()
+        endpoint.shutdown()
     }
 
     @Test
@@ -195,6 +247,10 @@ class SessionHostRoutingTest {
         const val VERSION_OFFSET = 16
         const val CAPS_LEN_OFFSET = 18
         const val MALFORMED_RECONNECT_CONNECTIONS = 21
+        const val DEFAULT_GENERATIONS = 2
+        const val MALFORMED_PAIRING_FRAMES = 20
+        const val MALFORMED_TYPES = 4
+        const val FIRST_MALFORMED_TYPE = 0x02
         const val PAIRING_GENERATION = 100L
         val TRUNCATED_HELLO = byteArrayOf(0x06, 0, 5, 1)
     }

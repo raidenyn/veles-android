@@ -278,6 +278,58 @@ class PhonePairingMachineTest : PairingTestBase() {
         }
     }
 
+    @Test
+    fun no_window_request_counts_against_the_request_budget() = runBlocking {
+        // The `pA` budgets are raised so only the request ceiling can refuse the last one.
+        val harness = harness(PairingLimits(freshPaRollingMax = 50, malformedConnectionsRollingMax = 100))
+        try {
+            val cold = harness.newMachine()
+            assertEquals(
+                "a request with no open window is refused",
+                PREAUTH_REJECT_WIRE,
+                wire(harness.send(cold, requestFrame())),
+            )
+            assertEquals(PairingState.IDLE, cold.state)
+
+            harness.open()
+            repeat(9) { index ->
+                val machine = harness.newMachine()
+                harness.offer(machine)
+                machine.onDisconnect()
+            }
+
+            val eleventh = harness.newMachine()
+            assertEquals(
+                "the window-closed request spent the request budget",
+                PREAUTH_REJECT_WIRE,
+                wire(harness.send(eleventh, requestFrame())),
+            )
+        } finally {
+            harness.closeAll()
+        }
+    }
+
+    @Test
+    fun unexpected_core_failure_still_gets_the_generic_reject() = runBlocking {
+        val harness = harness(PairingLimits(attemptsPerPairingId = 1))
+        fake.exchangeThrowsUnexpected = true
+        try {
+            harness.open()
+            val machine = harness.newMachine()
+            harness.offer(machine)
+
+            val refusal = harness.send(machine, pointFrame(validPoint()))
+
+            assertEquals("an unexpected core failure is the identical generic frame", PREAUTH_REJECT_WIRE, wire(refusal))
+            assertEquals("the connection is closed", 0, fake.openHandles())
+            assertEquals("the attempt stays consumed", 1, harness.admission.attemptsChargedForTest(harness.window.pairingId))
+            assertEquals(PairingState.WINDOW_OPEN, machine.state)
+        } finally {
+            fake.exchangeThrowsUnexpected = false
+            harness.closeAll()
+        }
+    }
+
     private suspend fun exhaustedBudgetFailure(): List<String> {
         val harness = harness(PairingLimits(attemptsPerPairingId = 1, rollingAttemptsMax = 10))
         return try {
@@ -390,6 +442,7 @@ class PhonePairingMachineTest : PairingTestBase() {
         val handles = mutableListOf<Long>()
         var confirmFails = false
         var exchangeFails = false
+        var exchangeThrowsUnexpected = false
         var onExchange: (() -> Unit)? = null
 
         override fun start(role: Role, code: ByteArray, context: ByteArray): Started {
@@ -403,6 +456,7 @@ class PhonePairingMachineTest : PairingTestBase() {
         override fun exchange(handle: Handle, peerPoint: ByteArray): ByteArray {
             calls += "exchange"
             onExchange?.invoke()
+            if (exchangeThrowsUnexpected) error("unexpected core failure")
             if (exchangeFails) throw PairingCoreException("exchange failed")
             return FAKE_CA.copyOf()
         }

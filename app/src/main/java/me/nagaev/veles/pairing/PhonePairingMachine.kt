@@ -1,6 +1,7 @@
 package me.nagaev.veles.pairing
 
 import android.os.SystemClock
+import kotlinx.coroutines.CancellationException
 import me.nagaev.veles.session.P256
 import me.nagaev.veles.session.Role
 import me.nagaev.veles.session.SessionReject
@@ -31,15 +32,21 @@ interface PairingConnection {
     fun cancel()
 }
 
-/** Rejects the first pairing frame generically; used when no window machine is wired. */
-internal object RejectingPairingConnection : PairingConnection {
+/**
+ * Rejects pairing frames generically; used when no window machine is wired. One instance
+ * per generation, because the default factory is called once per connection and a shared
+ * one-shot object would leave later generations connected and unanswered.
+ */
+internal class RejectingPairingConnection : PairingConnection {
     private var rejected = false
 
     override suspend fun onFrame(bytes: ByteArray): List<Outgoing> {
-        synchronized(this) {
-            if (rejected) return emptyList()
+        val alreadyRejected = synchronized(this) {
+            val first = !rejected
             rejected = true
+            !first
         }
+        if (alreadyRejected) return emptyList()
         return listOf(Outgoing.Frame(PairingFrames.preauthReject()), Outgoing.Disconnect)
     }
 
@@ -64,6 +71,12 @@ internal object RejectingPairingConnection : PairingConnection {
  * The execution handle stays open after a verified `cB`: the protected enrollment
  * channel (Task 7's `EnrollmentSession`) finishes it and consumes `Ke`. Every other exit
  * path — disconnect, inactivity, cancel, admission failure — closes it.
+ *
+ * The machine serializes on a plain lock: [onTick], [onDisconnect] and [cancel] are
+ * non-suspending in the connection seam, and the host already serializes every call for a
+ * generation under its own `Mutex`. Task 7 can move this to a `Mutex` together with the
+ * suspend trust-store calls; until then `synchronized` is the only lock those three
+ * lifecycle calls can take.
  */
 class PhonePairingMachine(
     private val window: PairingWindow,
@@ -86,7 +99,15 @@ class PhonePairingMachine(
     var state: PairingState = PairingState.IDLE
         private set
 
-    override suspend fun onFrame(bytes: ByteArray): List<Outgoing> = synchronized(lock) { handleFrame(bytes) }
+    override suspend fun onFrame(bytes: ByteArray): List<Outgoing> = try {
+        synchronized(lock) { handleFrame(bytes) }
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        // Every pre-confirmation failure must fail closed with the identical generic
+        // frame; an unexpected core failure must not leave the peer connected.
+        synchronized(lock) { reject() }
+    }
 
     override fun onTick(): List<Outgoing> = synchronized(lock) {
         if (state !in ACTIVE_STATES) return emptyList()
@@ -130,10 +151,12 @@ class PhonePairingMachine(
 
     @Suppress("ReturnCount") // One branch per admission gate, in normative order.
     private fun onRequest(payload: ByteArray): List<Outgoing> {
+        // Every `pairing_request` spends the request budget at ingress, including a busy,
+        // window-closed, over-limit or malformed one (limits.json:pairing_request_rolling_max).
+        if (admission.requestAllowed(conn) == Decision.Reject) return reject()
         if (state != PairingState.WINDOW_OPEN && state != PairingState.IDLE) return reject()
         if (!window.isOpen()) return reject()
         val request = Request.parse(payload) ?: return malformedReject()
-        if (admission.requestAllowed(conn) == Decision.Reject) return reject()
         if (!admission.beginOp()) return reject()
         holdsOperation = true
         if (admission.paAllowed(conn) == Decision.Reject) return reject()
@@ -159,7 +182,9 @@ class PhonePairingMachine(
 
     @Suppress("ReturnCount") // One branch per admission gate, in normative order.
     private fun onPoint(payload: ByteArray): List<Outgoing> {
-        if (state != PairingState.SPAKE_IN_FLIGHT) return reject()
+        // A point outside an execution is malformed pairing input (and so counts against
+        // the malformed-connection budget, like a first-frame `0x02`-`0x03`).
+        if (state != PairingState.SPAKE_IN_FLIGHT) return malformedReject()
         if (payload.size != POINT_BYTES) return malformedReject()
         if (!windowLive()) return reject()
         try {
@@ -186,7 +211,9 @@ class PhonePairingMachine(
 
     @Suppress("ReturnCount") // One branch per admission gate, in normative order.
     private fun onConfirmation(payload: ByteArray): List<Outgoing> {
-        if (state != PairingState.AWAITING_CB) return reject()
+        // A confirmation outside `awaiting_cB` is malformed pairing input (and so counts
+        // against the malformed-connection budget, like a first-frame `0x05`).
+        if (state != PairingState.AWAITING_CB) return malformedReject()
         if (payload.size != CONFIRMATION_BYTES) return malformedReject()
         if (!windowLive()) return reject()
         val current = execution ?: return reject()
