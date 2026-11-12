@@ -315,6 +315,10 @@ class ScenarioConformanceTest {
 // Fixture and inventory reading
 // ---------------------------------------------------------------------------------------------
 
+/** The boot marker of the first process and of a later restart (OTP2-STA-010c). */
+private const val BOOT_MARKER = "boot"
+private const val BOOT_MARKER_RESTART = "boot-restart"
+
 private object ScenarioFixtures {
     private fun read(path: String): JsonObject {
         val stream = checkNotNull(ScenarioFixtures::class.java.getResourceAsStream(path)) { "missing $path" }
@@ -696,6 +700,13 @@ private class PhoneSession(val name: String) {
     var deletedIncomplete: Boolean = false
     var revokedTrust: Boolean = false
 
+    /** The real store and its stable identity, reused across a simulated restart. */
+    var storage: ScenarioTrustStorage? = null
+    var identityKeys: IdentityKeyStore? = null
+
+    /** The boot marker this peer's repository currently reports; a restart changes it. */
+    var bootMarker: String = BOOT_MARKER
+
     val state: String
         get() = when {
             engine?.isOpen == true -> "session_open"
@@ -765,7 +776,7 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
             if (persisted != null && persisted != "deleted" && persisted != "absent") {
                 val createdElapsed = fixture.persisted["created_monotonic_ms:$RECORD_PREFIX$peer"]?.toLongOrNull()
                     ?: clock.now
-                created.repository = repository(created, persisted, createdElapsed)
+                created.repository = seedRepository(created, persisted, createdElapsed)
             }
         }
     }
@@ -774,7 +785,7 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
      * Seeds the real OTP-04 store from `persisted_state`. Every later transition, MAC check and
      * proof consumption runs through [TrustRepository] and this session's [ProofRegistry].
      */
-    private fun repository(peer: PhoneSession, state: String, createdElapsed: Long): TrustRepository {
+    private fun seedRepository(peer: PhoneSession, state: String, createdElapsed: Long): TrustRepository {
         val local = TestIdentity.generate()
         val et = fixtureEt() ?: ByteArray(HASH_BYTES)
         val clientPublic = TrustEncoding.hex(peer.peer.identityPublicKey)
@@ -811,15 +822,25 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
             override fun generate(): String = TrustEncoding.hex(local.publicKey)
             override fun sign(message: ByteArray): ByteArray = ByteArray(0)
         }
-        return TrustRepository(
-            ScenarioTrustStorage(snapshot),
-            keys,
-            { clock.now },
-            { BOOT_MARKER },
-            { clock.now },
-            ActivationVerifier { trusted, step, proof -> peer.registry.consume(trusted, step, proof) },
-        )
+        peer.storage = ScenarioTrustStorage(snapshot)
+        peer.identityKeys = keys
+        peer.bootMarker = BOOT_MARKER
+        return repository(peer)
     }
+
+    /**
+     * One repository over this peer's existing durable storage with its *current* boot marker.
+     * A restart rebuilds it this way, so OTP2-STA-010c's continuity rule (not the runner) is
+     * what deletes incomplete records.
+     */
+    private fun repository(peer: PhoneSession): TrustRepository = TrustRepository(
+        checkNotNull(peer.storage) { "a seeded store is required" },
+        checkNotNull(peer.identityKeys) { "a seeded identity is required" },
+        { clock.now },
+        { peer.bootMarker },
+        { clock.now },
+        ActivationVerifier { trusted, step, proof -> peer.registry.consume(trusted, step, proof) },
+    )
 
     /** Projects the real store into the fixture's durable-slot string and returns it. */
     private suspend fun refreshStore(peer: PhoneSession): String {
@@ -1142,14 +1163,18 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
         peer.authenticated = false
         peer.sessionClass = null
         if (step.simulate["continuity_token_matches"] == "false") {
-            // OTP2-STA-010c: continuity loss deletes only incomplete records, through the same
-            // real repository the lookup reads, so a later refresh cannot resurrect them.
-            if (refreshStore(peer) in INCOMPLETE_STATES) {
-                peer.repository?.revoke(TrustEncoding.hex(peer.peer.installationId))
-                peer.repository = null
+            // OTP2-STA-010c: a restart reports a new boot marker. The repository over the same
+            // storage rotates the continuity token and deletes only the incomplete records;
+            // the runner observes that real transition instead of revoking anything itself.
+            val before = refreshStore(peer)
+            peer.bootMarker = BOOT_MARKER_RESTART
+            if (peer.storage != null) {
+                peer.repository = repository(peer)
                 peer.activation = null
-                run.storeStates[peer.name] = "deleted"
-                peer.deletedIncomplete = true
+                refreshStore(peer)
+                if (before in INCOMPLETE_STATES && run.storeStates[peer.name] == "deleted") {
+                    peer.deletedIncomplete = true
+                }
             }
         }
         return emptyList()
@@ -1308,7 +1333,6 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
         const val OVERSIZE_RECORD_BYTES = RecordCodec.MAX_RECORD + 1
         const val HASH_BYTES = 32
         const val HMAC_ALGORITHM = "HmacSHA256"
-        const val BOOT_MARKER = "boot"
         const val BOOT_TOKEN = "abababababababababababababababababababababababababababababababab"
         const val STAGE_COMMIT: Byte = 0x01
         const val STAGE_ACK: Byte = 0x03
@@ -1492,9 +1516,11 @@ private object Effects {
             "verify_client_signature" -> sessions.any { it.signatureVerified }
             "reconnect_confirm_sent_peer_state_active" -> sessions.any { it.phonePeerStates.contains(1) }
             "delete_incomplete_materials" -> sessions.any { it.deletedIncomplete }
-            "erase_incomplete_materials" -> run.transitions.any {
-                it.second == "deleted" && it.first in INCOMPLETE_STATES
-            }
+            // OTP2-CRY-019g: only an activation MAC failure erases incomplete materials; a
+            // runner-driven cancel/revoke must not satisfy this claim.
+            "erase_incomplete_materials" -> steps.any {
+                it.terminated == "authorization" && it.simulate["act_mac_ok"] == "false"
+            } && run.transitions.any { it.second == "deleted" && it.first in INCOMPLETE_STATES }
             "erase_trust_record_revoked" -> sessions.any { it.revokedTrust }
             "reject_activation_mac_mismatch" -> steps.any {
                 it.terminated == "authorization" && it.simulate["act_mac_ok"] == "false"

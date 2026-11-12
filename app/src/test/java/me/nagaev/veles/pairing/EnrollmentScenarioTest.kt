@@ -670,6 +670,7 @@ class EnrollmentScenarioTest : PairingTestBase() {
                 },
                 { "Phone" },
                 { ByteArray(NONCE_BYTES) { 0x2a } },
+                proofs = ProofRegistry(),
             )
             machines += machine
             live[label] = Live(machine, TracePeer(fixture, core, nextNonce))

@@ -256,8 +256,8 @@ internal class SharingService : Service() {
 internal class PairingEndpoint(
     private val clock: () -> Long = SystemClock::elapsedRealtime,
     private val trust: InstallationTrustRepository,
+    private val proofs: ProofRegistry,
     coreFactory: () -> PairingCore = { VelesPairingCore() },
-    private val proofs: ProofRegistry = ProofRegistry(),
 ) {
     private val limits = PairingLimits()
     private val core: PairingCore by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { coreFactory() }

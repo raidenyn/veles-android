@@ -146,7 +146,16 @@ class PhonePairingMachineTest : PairingTestBase() {
         val window = PairingWindow({ now })
         window.open()
         val pairingId = window.pairingId
-        val machine = PhonePairingMachine(window, admission, CONN_ONE, NoTrust, { fake }, { now }, PairingLimits())
+        val machine = PhonePairingMachine(
+            window,
+            admission,
+            CONN_ONE,
+            NoTrust,
+            { fake },
+            { now },
+            PairingLimits(),
+            proofs = ProofRegistry(),
+        )
         try {
             now = 1_000L
             machine.onFrame(requestFrame())
@@ -424,6 +433,8 @@ class PhonePairingMachineTest : PairingTestBase() {
                     nonce.toByte()
                 }
             },
+            { "Phone" },
+            proofs = ProofRegistry(),
         ).also { machines += it }
 
         /** Sends a request and asserts the offer reached the wire. */

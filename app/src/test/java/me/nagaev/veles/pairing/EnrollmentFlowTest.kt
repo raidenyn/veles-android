@@ -411,6 +411,7 @@ class EnrollmentFlowTest : PairingTestBase() {
             { ByteArray(16) { _ -> (++nonceCounter).toByte() } },
             { "Phone" },
             { ByteArray(16) { 0x2a } },
+            ProofRegistry(),
         )
 
         fun requestFrame(): ByteArray = requestFrame(clientNonce)

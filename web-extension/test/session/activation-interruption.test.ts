@@ -7,7 +7,7 @@ import { ProofRegistry } from '../../src/pairing/proofs';
 import { IndexedDbIdentityStore } from '../../src/trust/identity';
 import { ChromeTrustRepository } from '../../src/trust/repository';
 import type { TrustSnapshot } from '../../src/trust/model';
-import { concat, hmacSha256 } from '../../src/session/schedule';
+import { concat, hmacSha256, type RecoveryKeys } from '../../src/session/schedule';
 import type { SessionEffect } from '../../src/session/engine';
 import { RecordType, SessionClass } from '../../src/session/wire';
 import {
@@ -23,8 +23,8 @@ import {
 // mirror across a restart, and two desktops against one phone.
 //
 // The same production pieces as `activation.test.ts` run here: the real client engine,
-// the real `ActivationEngine` over a session-bound `ProofRegistry`, the injected clock,
-// and the OTP2-STA-010d connector context rules of `ChromeTrustRepository`.
+// the real `ActivationEngine` over a session-bound `ProofRegistry`, and the
+// OTP2-STA-010d connector context rules of `ChromeTrustRepository`.
 
 const ET = new Uint8Array(32).fill(0x42);
 const STAGE_PREPARE = 0;
@@ -40,7 +40,7 @@ type Cut =
     | 'ack_lost'
     | 'ack_delivered';
 
-/** The client's durable mirror for one phone, with the phone-side record driven by the test. */
+/** The client's durable mirror for one phone, driven by the activation handler. */
 class MirrorTrust implements ActivationTrustRepository {
     peerId = '';
     state: MirrorState | 'deleted' = 'pending';
@@ -87,29 +87,41 @@ class Exchange {
     readonly proofs = new ProofRegistry();
     readonly activation = new ActivationEngine({ trust: this.trust, proofs: this.proofs });
     harness: PhoneHarness | null = null;
+    commitType: number | null = null;
+    ackType: number | null = null;
+    mirror: MirrorState;
+    /** The phone's scripted record state; it decides the confirm byte the phone sends. */
+    phone: PhoneState;
     private sequence = 1n;
+    private clientTx = 1n;
     private owed: { type: number; body: Uint8Array }[] = [];
 
-    constructor(
-        public mirror: MirrorState,
-        public phone: PhoneState,
-    ) {}
+    constructor(mirror: MirrorState, phone: PhoneState = 'pending') {
+        this.mirror = mirror;
+        this.phone = phone;
+    }
 
     async openSession(): Promise<{ sessionClass: SessionClass; unprompted: { type: number }[] }> {
         this.harness = await PhoneHarness.create({
             state: this.mirror,
             et: ET,
             handler: this.activation,
+            upgrade: async (peerId) => {
+                // A phone-reported active proof promotes the durable mirror.
+                this.trust.peerId = peerId;
+                this.trust.state = 'active';
+            },
         });
         this.trust.peerId = this.harness.peerId;
         this.trust.state = this.mirror;
         const opened = await this.harness.openSession({
-            peerState: this.mirror === 'active' ? PEER_STATE_ACTIVE : PEER_STATE_BELOW_ACTIVE,
+            peerState: this.phone === 'active' ? PEER_STATE_ACTIVE : PEER_STATE_BELOW_ACTIVE,
         });
         if (opened.authenticated.kind !== 'authenticated') {
             throw new Error('the session did not authenticate');
         }
         this.sequence = 1n;
+        this.clientTx = 1n;
         this.owed = opened.authenticated.unprompted ?? [];
         return {
             sessionClass: opened.authenticated.sessionClass,
@@ -156,15 +168,17 @@ class Exchange {
         return this.requireHarness().engine.onInbound(record);
     }
 
-    /** Applies the handshake up to [cut]; the phone and mirror states follow the real events. */
+    /** Applies the handshake up to [cut]; commit/ack are the records actually on the wire. */
     async forward(cut: Cut): Promise<void> {
         if (cut === 'before_prepare') return;
         const commitEffects = await this.deliverPrepare();
         if (cut === 'prepare_lost') return;
         const commit = await this.requireHarness().openClientApplication(
             sendOf(commitEffects),
-            this.sequence - 1n,
+            this.clientTx,
         );
+        this.clientTx += 1n;
+        this.commitType = commit.type;
         expect(commit.type).toBe(RecordType.ACTIVATION_COMMIT);
         this.phone = 'committed_waiting_ack';
         if (cut === 'commit_lost') return;
@@ -172,32 +186,42 @@ class Exchange {
         if (cut === 'complete_lost') return;
         const ack = await this.requireHarness().openClientApplication(
             sendOf(ackEffects),
-            this.sequence - 1n,
+            this.clientTx,
         );
+        this.clientTx += 1n;
+        this.ackType = ack.type;
         expect(ack.type).toBe(RecordType.ACTIVATION_ACK);
         this.mirror = 'active_activation_pending';
         if (cut === 'ack_lost') return;
         this.phone = 'active';
+        // The phone is active; the mirror is promoted only by a FULL reconnect on that proof.
+        await this.promote();
     }
 
-    /** Resumes a fresh signed session until the phone record is active. */
+    /** Resumes a new reconnect generation until the phone record is active. */
     async resume(): Promise<void> {
         if (this.mirror === 'pending') {
             const commitEffects = await this.deliverPrepare();
             const commit = await this.requireHarness().openClientApplication(
                 sendOf(commitEffects),
-                this.sequence - 1n,
+                this.clientTx,
             );
+            this.clientTx += 1n;
+            this.commitType = commit.type;
             expect(commit.type).toBe(RecordType.ACTIVATION_COMMIT);
-            this.phone = 'committed_waiting_ack';
             const ackEffects = await this.deliverComplete();
             const ack = await this.requireHarness().openClientApplication(
                 sendOf(ackEffects),
-                this.sequence - 1n,
+                this.clientTx,
             );
+            this.clientTx += 1n;
+            this.ackType = ack.type;
             expect(ack.type).toBe(RecordType.ACTIVATION_ACK);
             this.mirror = 'active_activation_pending';
-        } else {
+            this.phone = 'active';
+            return;
+        }
+        if (this.mirror === 'active_activation_pending') {
             // An active-family mirror ignores the phone's prepare and owes step 5.
             await this.deliverPrepare();
             for (const owed of this.owed) {
@@ -205,27 +229,74 @@ class Exchange {
                     owed.type,
                     owed.body,
                 );
-                expect(effects.length).toBe(1);
+                const ack = await this.requireHarness().openClientApplication(
+                    sendOf(effects),
+                    this.clientTx,
+                );
+                this.clientTx += 1n;
+                this.ackType = ack.type;
+                expect(ack.type).toBe(RecordType.ACTIVATION_ACK);
             }
+            this.phone = 'active';
         }
-        this.phone = 'active';
     }
 
-    async otpAuthorized(): Promise<boolean> {
+    /** A real FULL reconnect on the phone's active proof promotes the durable mirror. */
+    private async promote(): Promise<void> {
+        this.requireHarness().engine.teardown();
+        this.harness = null;
+        this.owed = [];
+        this.mirror = 'active_activation_pending';
+        this.harness = await PhoneHarness.create({
+            state: 'active_activation_pending',
+            et: ET,
+            handler: this.activation,
+            upgrade: async (peerId) => {
+                this.trust.peerId = peerId;
+                this.trust.state = 'active';
+            },
+        });
+        this.trust.peerId = this.harness.peerId;
+        this.trust.state = 'active_activation_pending';
+        const opened = await this.harness.openSession({ peerState: PEER_STATE_ACTIVE });
+        if (opened.authenticated.kind !== 'authenticated') {
+            throw new Error('the promoted session did not authenticate');
+        }
+        expect(opened.authenticated.sessionClass).toBe(SessionClass.FULL);
+        expect(this.trust.state).toBe('active');
+        this.mirror = 'active';
+        this.sequence = 1n;
+        this.clientTx = 1n;
+    }
+
+    /** Sends a real OTP pull; an incomplete record must refuse it without delivering data. */
+    async assertNoOtp(): Promise<void> {
         const classOf = this.requireHarness().engine.sessionClass;
-        if (classOf !== SessionClass.FULL) return false;
+        expect(classOf, 'an incomplete record must not be a full session').not.toBe(
+            SessionClass.FULL,
+        );
+        await expect(
+            this.requireHarness().engine.sendApplication(
+                RecordType.PULL_REQUEST,
+                new Uint8Array(0),
+            ),
+        ).rejects.toThrow();
+    }
+
+    /** Sends a real OTP pull; a full session must deliver it. */
+    async assertOtpDelivered(): Promise<void> {
         const effects = await this.requireHarness().engine.sendApplication(
             RecordType.PULL_REQUEST,
             new Uint8Array(0),
         );
-        return effects.length === 1;
+        expect(effects.length).toBe(1);
     }
 
-    engineClass(): SessionClass | null {
+    sessionClassOf(): SessionClass | null {
         return this.requireHarness().engine.sessionClass;
     }
 
-    recoveryKeys(): Uint8Array {
+    phoneActivationKey(): Uint8Array {
         return this.recovery().kRecPhone;
     }
 
@@ -255,6 +326,62 @@ async function phoneIdentity(): Promise<{ pair: CryptoKeyPair; id: string; raw: 
     return { pair, id, raw };
 }
 
+interface RepositoryHarness {
+    keys: IndexedDbIdentityStore;
+    make: () => ChromeTrustRepository;
+    closeConnectors: () => void;
+}
+
+function repositoryHarness(db: IDBFactory, verifier = async () => true): RepositoryHarness {
+    const keys = new IndexedDbIdentityStore(db);
+    let value: unknown;
+    const live = new Set<string>();
+    let chain = Promise.resolve();
+    const local = {
+        restrict: async () => undefined,
+        read: async () => structuredClone(value),
+        write: async (next: TrustSnapshot) => {
+            value = structuredClone(next);
+        },
+        clear: async () => {
+            value = undefined;
+        },
+    };
+    const lock = async <T>(fn: () => Promise<T>): Promise<T> => {
+        const result = chain.then(fn);
+        chain = result.then(
+            () => undefined,
+            () => undefined,
+        );
+        return result;
+    };
+    const make = () => {
+        const id = crypto.randomUUID();
+        live.add(id);
+        return new ChromeTrustRepository(
+            keys,
+            local,
+            lock,
+            verifier,
+            () => 0,
+            () => 1000,
+            { id, isAlive: async (context) => live.has(context) },
+        );
+    };
+    return { keys, make, closeConnectors: () => live.clear() };
+}
+
+async function peerIdentity(db: IDBFactory) {
+    const key = await new IndexedDbIdentityStore(db, crypto.randomUUID()).create();
+    return {
+        installationId: key.installationId,
+        publicKey: key.publicKey,
+        label: 'Phone',
+        deviceType: 0,
+        enrollmentTranscript: 'ab'.repeat(32),
+    };
+}
+
 describe('chrome activation expiry and interruption', () => {
     let db: IDBFactory;
 
@@ -263,41 +390,7 @@ describe('chrome activation expiry and interruption', () => {
     });
 
     it('chrome_context_loss_deletes_pending', async () => {
-        const keys = new IndexedDbIdentityStore(db);
-        let value: unknown;
-        const live = new Set<string>();
-        let chain = Promise.resolve();
-        const local = {
-            restrict: async () => undefined,
-            read: async () => structuredClone(value),
-            write: async (next: TrustSnapshot) => {
-                value = structuredClone(next);
-            },
-            clear: async () => {
-                value = undefined;
-            },
-        };
-        const lock = async <T>(fn: () => Promise<T>): Promise<T> => {
-            const result = chain.then(fn);
-            chain = result.then(
-                () => undefined,
-                () => undefined,
-            );
-            return result;
-        };
-        const make = () => {
-            const id = crypto.randomUUID();
-            live.add(id);
-            return new ChromeTrustRepository(
-                keys,
-                local,
-                lock,
-                async () => true,
-                () => 0,
-                () => 1000,
-                { id, isAlive: async (context) => live.has(context) },
-            );
-        };
+        const s = repositoryHarness(db);
         const peer = async () => {
             // A peer identity, never the repository's own: the repository creates its key
             // on its first operation, so a pre-created identity would look like key loss.
@@ -310,60 +403,44 @@ describe('chrome activation expiry and interruption', () => {
                 enrollmentTranscript: 'ab'.repeat(32),
             };
         };
-        const repository = make();
+        const repository = s.make();
         await repository.addPending(await peer());
         expect(await repository.peers()).toHaveLength(1);
 
-        live.clear();
+        s.closeConnectors();
 
         expect(
-            await make().peers(),
+            await s.make().peers(),
             'connector-context loss deletes the connector-scoped pending record',
         ).toEqual([]);
 
-        const restarted = make();
+        const restarted = s.make();
         const mirror = await peer();
         await restarted.addPending(mirror);
         await restarted.confirm(mirror.installationId, 'complete', Uint8Array.of(1));
-        live.clear();
-        const survivors = await make().peers();
+        s.closeConnectors();
+        const survivors = await s.make().peers();
         expect(survivors.map((record) => record.state)).toEqual(['active_activation_pending']);
     });
 
     it('mirror_survives_restart', async () => {
-        const identity = await phoneIdentity();
-        const store = profileStore(identity.id, identity.raw, ET);
+        const s = repositoryHarness(db);
+        const first = s.make();
+        const mirror = await peerIdentity(db);
+        await first.addPending(mirror);
+        await first.confirm(mirror.installationId, 'complete', Uint8Array.of(1));
 
-        const first = await PhoneHarness.create({
-            state: 'active_activation_pending',
-            et: ET,
-            store,
-            phoneIdentity: identity.pair,
-            phoneId: identity.id,
-        });
-        await first.openSession({ peerState: PEER_STATE_ACTIVE });
-        expect(store.get(identity.id)?.state).toBe('active');
-        first.engine.teardown();
+        // A restart opens a new repository instance over the same durable storage; the
+        // active-family mirror is not connector-scoped and survives.
+        s.closeConnectors();
+        const restarted = s.make();
+        expect((await restarted.peers()).map((record) => record.state)).toEqual([
+            'active_activation_pending',
+        ]);
 
-        // Process restart: the mirror is reloaded from durable storage. Only an incomplete
-        // record is deleted on a continuity-token change, so the active mirror survives.
-        const restarted = new Map(
-            [...store.entries()].filter(([, record]) => record.state !== 'pending'),
-        );
-        const second = await PhoneHarness.create({
-            state: restarted.get(identity.id)?.state ?? 'active',
-            et: ET,
-            store: restarted,
-            phoneIdentity: identity.pair,
-            phoneId: identity.id,
-        });
-        const reopened = await second.openSession({ peerState: PEER_STATE_ACTIVE });
-        if (reopened.authenticated.kind !== 'authenticated') {
-            throw new Error('the restarted session did not authenticate');
-        }
-        expect(reopened.authenticated.sessionClass).toBe(SessionClass.FULL);
-        expect(second.engine).not.toBe(first.engine);
-        expect(restarted.get(identity.id)?.state).toBe('active');
+        await restarted.confirm(mirror.installationId, 'phone_active', Uint8Array.of(1));
+        s.closeConnectors();
+        expect((await s.make().peers()).map((record) => record.state)).toEqual(['active']);
     });
 
     it('interruption_at_every_activation_message', async () => {
@@ -376,7 +453,7 @@ describe('chrome activation expiry and interruption', () => {
             'ack_delivered',
         ];
         for (const cut of cuts) {
-            const exchange = new Exchange('pending', 'pending');
+            const exchange = new Exchange('pending');
             const opened = await exchange.openSession();
             expect(opened.sessionClass).toBe(SessionClass.ACTIVATION_RECOVERY);
             await exchange.forward(cut);
@@ -384,41 +461,61 @@ describe('chrome activation expiry and interruption', () => {
             const resumed = new Exchange(exchange.mirror, exchange.phone);
             await resumed.openSession();
             await resumed.resume();
-            expect(resumed.phone, `${cut} resumes the phone record`).toBe('active');
-            expect([SessionClass.ACTIVATION_RECOVERY, SessionClass.FULL_PENDING_PEER]).toContain(
-                resumed.engineClass(),
-            );
-            expect(await resumed.otpAuthorized(), `${cut} authorizes no OTP data`).toBe(false);
+            if (exchange.mirror === 'active') {
+                expect(resumed.trust.state, `${cut} keeps the active mirror`).toBe('active');
+                expect(resumed.sessionClassOf(), `${cut} reaches FULL`).toBe(SessionClass.FULL);
+                await resumed.assertOtpDelivered();
+            } else {
+                expect(resumed.trust.state, `${cut} leaves a durable mirror`).toBe(
+                    'active_activation_pending',
+                );
+                expect(resumed.ackType, `${cut} sends the activation ack`).toBe(
+                    RecordType.ACTIVATION_ACK,
+                );
+                await resumed.assertNoOtp();
+            }
             await resumed.teardown();
             await exchange.teardown();
         }
     });
 
     it('one_sided_pending', async () => {
-        // The client committed but never saw complete: a fresh session re-commits.
+        // The phone committed but the client never saw complete: a new session re-commits.
         const pending = new Exchange('pending', 'committed_waiting_ack');
-        const opened = await pending.openSession();
-        expect(opened.sessionClass).toBe(SessionClass.ACTIVATION_RECOVERY);
-        await pending.forward('ack_lost');
-        expect(pending.trust.confirms).toHaveLength(1);
+        await pending.openSession();
+        await pending.resume();
+        expect(pending.commitType).toBe(RecordType.ACTIVATION_COMMIT);
+        expect(pending.ackType).toBe(RecordType.ACTIVATION_ACK);
         expect(pending.trust.state).toBe('active_activation_pending');
+        await pending.assertNoOtp();
 
-        // The client is active-family and only lost the ack: it owes step 5 on the gate.
+        // The client committed and is active-family, but lost the ack: it owes step 5.
         const active = new Exchange('active_activation_pending', 'committed_waiting_ack');
         const activeOpened = await active.openSession();
         expect(activeOpened.sessionClass).toBe(SessionClass.ACTIVATION_RECOVERY);
         expect(activeOpened.unprompted.map((owed) => owed.type)).toEqual([
             RecordType.ACTIVATION_ACK,
         ]);
-        await active.deliverPrepare();
+        await active.resume();
+        expect(active.commitType).toBeNull();
+        expect(active.ackType).toBe(RecordType.ACTIVATION_ACK);
         expect(active.trust.confirms).toEqual([]);
+        expect(active.trust.state).toBe('active_activation_pending');
+        await active.assertNoOtp();
+
+        // A fully active mirror whose phone still reports the client below active is
+        // full_pending_peer: the class alone must not authorize OTP data.
+        const fullPending = new Exchange('active', 'committed_waiting_ack');
+        const fullPendingOpened = await fullPending.openSession();
+        expect(fullPendingOpened.sessionClass).toBe(SessionClass.FULL_PENDING_PEER);
+        await fullPending.assertNoOtp();
 
         // The opposite one-sided case: no activation message may recover the client's
         // pending mirror into OTP access.
         const orphan = new Exchange('pending', 'pending');
         const orphanOpened = await orphan.openSession();
         expect(orphanOpened.sessionClass).toBe(SessionClass.ACTIVATION_RECOVERY);
-        expect(await orphan.otpAuthorized()).toBe(false);
+        await orphan.assertNoOtp();
     });
 
     it('incomplete_records_authorize_no_otp', async () => {
@@ -429,11 +526,11 @@ describe('chrome activation expiry and interruption', () => {
             );
             const opened = await exchange.openSession();
             expect(opened.sessionClass).not.toBe(SessionClass.FULL);
-            expect(await exchange.otpAuthorized()).toBe(false);
+            await exchange.assertNoOtp();
         }
     });
 
-    it('two_desktops_sequential', async () => {
+    it('two_desktops_reconnect_without_a_code', async () => {
         const identity = await phoneIdentity();
         const desktops = [
             profileStore(identity.id, identity.raw, new Uint8Array(32).fill(0x41)),
@@ -462,17 +559,39 @@ describe('chrome activation expiry and interruption', () => {
         }
     });
 
-    it('replayed_recovery_record_erases_incomplete_materials', async () => {
-        const exchange = new Exchange('pending', 'pending');
+    it('wrong_complete_mac_erases_incomplete_materials', async () => {
+        const exchange = new Exchange('pending');
         await exchange.openSession();
-        const recovery = exchange.recoveryKeys();
-        const complete = await mac(recovery, STAGE_COMPLETE);
+        const complete = await mac(exchange.phoneActivationKey(), STAGE_COMPLETE);
         complete[complete.length - 1] ^= 0x01;
         const record = await exchange.phoneRecord(RecordType.ACTIVATION_COMPLETE, 1n, complete);
-        const harness = exchange.liveHarness();
-        const effects = await harness.engine.onInbound(record);
+        const effects = await exchange.liveHarness().engine.onInbound(record);
         expect(terminatedReason(effects)).toBe('authorization');
-        expect(exchange.trust.revoked, 'a MAC mismatch erases the incomplete mirror').toBe(true);
+        expect(exchange.trust.revoked, 'a wrong MAC erases the incomplete mirror').toBe(true);
         expect(exchange.trust.state).toBe('deleted');
+        expect(await exchange.trust.peers()).toEqual([]);
+    });
+
+    it('wrong_length_activation_body_erases_incomplete_materials', async () => {
+        const exchange = new Exchange('pending');
+        await exchange.openSession();
+        const handler = exchange.activation.forSession({
+            sessionIdPrefix: new Uint8Array(8).fill(0x55),
+            sessionClass: SessionClass.ACTIVATION_RECOVERY,
+            peerId: exchange.trust.peerId,
+            et: ET.slice(),
+            peerState: PEER_STATE_BELOW_ACTIVE,
+            recovery: {
+                kRecClient: new Uint8Array(32),
+                kRecPhone: new Uint8Array(32),
+            } satisfies RecoveryKeys,
+        });
+        await expect(
+            handler.handle(RecordType.ACTIVATION_COMMIT, new Uint8Array(31), async () => undefined),
+        ).rejects.toThrow();
+        expect(exchange.trust.revoked, 'an unverifiable body erases the incomplete mirror').toBe(
+            true,
+        );
+        expect(await exchange.trust.peers()).toEqual([]);
     });
 });

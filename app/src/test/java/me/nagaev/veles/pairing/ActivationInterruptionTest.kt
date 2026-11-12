@@ -14,7 +14,9 @@ import me.nagaev.veles.session.RecordType
 import me.nagaev.veles.session.RecoveryKeys
 import me.nagaev.veles.session.Role
 import me.nagaev.veles.session.SessionClass
+import me.nagaev.veles.session.SessionContext
 import me.nagaev.veles.session.SessionEffect
+import me.nagaev.veles.session.SessionReject
 import me.nagaev.veles.session.TestClient
 import me.nagaev.veles.session.TestIdentity
 import me.nagaev.veles.session.TestPeers
@@ -52,7 +54,7 @@ import javax.crypto.spec.SecretKeySpec
  * the phone's 86 400 s boot-scoped pending lifetime is exercised without sleeping.
  *
  * The interruption contract is exactly: after any activation message is lost, the record is
- * resumable by a fresh signed recovery session, or it expires with no partial access, or it
+ * resumable by a new reconnect generation, or it expires with no partial access, or it
  * never existed (a verified `cB` interrupted before the peer identity was persisted, whose only
  * path is a new pairing window). No interruption may authorize OTP data.
  */
@@ -123,11 +125,16 @@ class ActivationInterruptionTest {
             assertEquals("cut $cut resumes to an active phone record", TrustState.ACTIVE, ended)
             if (run.mirror == Mirror.ACTIVE) {
                 assertEquals("cut $cut completed activation", SessionClass.FULL, resumed.sessionClass)
-                assertTrue("a completed activation authorizes OTP data", resumed.otpAuthorized())
+                assertEquals("cut $cut keeps the active mirror", Mirror.ACTIVE, resumed.mirror)
+                resumed.assertOtpDelivered()
             } else {
-                assertFalse("cut $cut never authorizes OTP data", resumed.otpAuthorized())
+                assertEquals(
+                    "cut $cut leaves a durable activation-pending mirror",
+                    Mirror.ACTIVE_PENDING,
+                    resumed.mirror,
+                )
+                resumed.assertNoOtp()
             }
-            assertTrue("cut $cut leaves a consistent mirror state", run.mirror in MIRROR_STATES)
         }
     }
 
@@ -141,7 +148,7 @@ class ActivationInterruptionTest {
                 RecordType.ACTIVATION_COMMIT.wire,
                 exchange.commitType,
             )
-            assertFalse("no OTP data on a one-sided pending", exchange.otpAuthorized())
+            exchange.assertNoOtp()
         }
         // The client is already active-family and only lost the ack: it owes step 5.
         resumeOneSided(TrustState.COMMITTED_WAITING_ACK, Mirror.ACTIVE_PENDING) { exchange ->
@@ -150,11 +157,16 @@ class ActivationInterruptionTest {
                 RecordType.ACTIVATION_ACK.wire,
                 exchange.ackType,
             )
-            assertFalse("no OTP data on a one-sided pending", exchange.otpAuthorized())
+            exchange.assertNoOtp()
         }
         resumeOneSided(TrustState.ACTIVE, Mirror.ACTIVE_PENDING) { exchange ->
             assertEquals("an active phone keeps its state", TrustState.ACTIVE, exchange.download())
-            assertFalse("no OTP data on a one-sided pending", exchange.otpAuthorized())
+            assertEquals(
+                "a client below active on an active phone fixes full_pending_peer",
+                SessionClass.FULL_PENDING_PEER,
+                exchange.sessionClass,
+            )
+            exchange.assertNoOtp()
         }
 
         // The opposite one-sided case: a phone pending record whose client has no record at
@@ -228,6 +240,42 @@ class ActivationInterruptionTest {
         }
     }
 
+    /**
+     * The record codec already refuses a non-32-byte activation body before the engine's
+     * handler, so this pins the handler's own OTP2-CRY-019g rule directly: an activation body
+     * this session cannot verify must not leave an incomplete record behind.
+     */
+    @Test
+    fun unverifiable_activation_body_erases_incomplete_record() = runBlocking {
+        val store = Store()
+        val repository = store.repository(BOOT_A)
+        val client = TestClient()
+        val peerId = seed(store, repository, client, TrustState.PENDING)
+        val handler = ActivationEngine(repository, store.proofs).forSession(
+            SessionContext(
+                sessionIdPrefix = ByteArray(8) { 0x55 },
+                sessionClass = SessionClass.ACTIVATION_RECOVERY,
+                peerId = peerId,
+                et = ET.copyOf(),
+                peerState = PEER_STATE_BELOW_ACTIVE,
+                recovery = RecoveryKeys(ByteArray(32) { 0x61 }, ByteArray(32) { 0x62 }),
+            ),
+        )
+
+        var rejected = false
+        try {
+            handler.handle(RecordType.ACTIVATION_COMMIT.wire, ByteArray(31)) { _, _ -> }
+        } catch (_: SessionReject) {
+            rejected = true
+        }
+
+        assertTrue("an unverifiable activation body is rejected", rejected)
+        assertTrue(
+            "OTP2-CRY-019g: any unverifiable activation MAC deletes the incomplete record",
+            repository.peers().isEmpty(),
+        )
+    }
+
     @Test
     fun two_desktops_sequential() = runBlocking {
         val store = Store()
@@ -268,7 +316,7 @@ class ActivationInterruptionTest {
                 TrustState.ACTIVE,
                 repository.peers().first { it.installationId == TrustEncoding.hex(desktop.installationId) }.state,
             )
-            assertTrue("desktop ${index + 1} may pull OTP data", otpAuthorized(engine, client, session, 1uL))
+            assertTrue("desktop ${index + 1} may pull OTP data", otpDelivered(engine, client, 1uL))
         }
     }
 
@@ -298,6 +346,7 @@ class ActivationInterruptionTest {
     ) {
         private lateinit var engine: PhoneSessionEngine
         private lateinit var session: SessionEffect.Authenticated
+        private var rx = 1uL
         var sessionClass: SessionClass? = null
             private set
         var commitType: Int? = null
@@ -312,6 +361,7 @@ class ActivationInterruptionTest {
             val peerState = if (mirror == Mirror.ACTIVE) PEER_STATE_ACTIVE else PEER_STATE_BELOW_ACTIVE
             session = completeSession(engine, client, peerState)
             sessionClass = session.sessionClass
+            rx = 1uL
         }
 
         /** Applies the handshake up to [cut] and returns the durable phone state. */
@@ -323,7 +373,7 @@ class ActivationInterruptionTest {
             commitType = RecordType.ACTIVATION_COMMIT.wire
             val commit = client.record(
                 RecordType.ACTIVATION_COMMIT.wire,
-                1uL,
+                rx++,
                 mac(recovery.kRecClient, STAGE_COMMIT),
             )
             if (cut == Cut.COMMIT_LOST) return download()
@@ -335,50 +385,78 @@ class ActivationInterruptionTest {
             ackType = RecordType.ACTIVATION_ACK.wire
             val ack = client.record(
                 RecordType.ACTIVATION_ACK.wire,
-                2uL,
+                rx++,
                 mac(recovery.kRecClient, STAGE_ACK),
             )
             if (cut == Cut.ACK_LOST) return download()
             engine.onInbound(ack)
-            mirror = Mirror.ACTIVE
+            // The phone is active; the next FULL reconnect where the phone reports this client
+            // active is what promotes the durable mirror.
+            promote()
             return download()
         }
 
-        /** Resumes the exchange on a fresh signed session until the phone record is active. */
+        /** Resumes the exchange on a new reconnect generation until the phone record is active. */
         suspend fun resume(): TrustState {
             if (download() == TrustState.ACTIVE && mirror == Mirror.ACTIVE) return TrustState.ACTIVE
             val prepare = sendUnprompted(engine, session).singleOrNull()
-            var sequence = 1uL
             if (mirror == Mirror.PENDING) {
                 checkNotNull(prepare) { "a pending client must receive the recovery prepare" }
                 client.openPhoneRecord(prepare.bytes, 1uL)
                 commitType = RecordType.ACTIVATION_COMMIT.wire
                 val commit = client.record(
                     RecordType.ACTIVATION_COMMIT.wire,
-                    1uL,
+                    rx++,
                     mac(recovery.kRecClient, STAGE_COMMIT),
                 )
                 val complete = engine.onInbound(commit).filterIsInstance<SessionEffect.Send>().single()
                 client.openPhoneRecord(complete.bytes, 2uL)
                 mirror = Mirror.ACTIVE_PENDING
-                sequence = 2uL
             }
             if (mirror == Mirror.ACTIVE_PENDING) {
                 ackType = RecordType.ACTIVATION_ACK.wire
                 val ack = client.record(
                     RecordType.ACTIVATION_ACK.wire,
-                    sequence,
+                    rx++,
                     mac(recovery.kRecClient, STAGE_ACK),
                 )
                 engine.onInbound(ack)
-                mirror = Mirror.ACTIVE
             }
             return download()
         }
 
+        /** Models the durable mirror promotion by a real FULL reconnect on the active phone. */
+        private suspend fun promote() {
+            engine.teardown()
+            engine = this@ActivationInterruptionTest.engine(repository, store.proofs)
+            session = completeSession(engine, client, PEER_STATE_ACTIVE)
+            sessionClass = session.sessionClass
+            rx = 1uL
+            check(sessionClass == SessionClass.FULL) { "the active phone must report this client active" }
+            mirror = Mirror.ACTIVE
+        }
+
         fun download(): TrustState = runBlocking { peer(repository, peerId).state }
 
-        suspend fun otpAuthorized(): Boolean = otpAuthorized(engine, client, session, 1uL)
+        /** Sends a real OTP pull and asserts it terminates without delivering any OTP data. */
+        suspend fun assertNoOtp() {
+            val effects = engine.onInbound(client.record(RecordType.PULL_REQUEST.wire, rx, ByteArray(0)))
+            assertTrue(
+                "an incomplete record terminates on an OTP pull (class $sessionClass)",
+                effects.any { it is SessionEffect.Terminated },
+            )
+            assertFalse("an incomplete record delivers no OTP data", effects.any { it is SessionEffect.Deliver })
+        }
+
+        /** Sends a real OTP pull and asserts a full session delivers it. */
+        suspend fun assertOtpDelivered() {
+            val effects = engine.onInbound(client.record(RecordType.PULL_REQUEST.wire, rx, ByteArray(0)))
+            assertTrue(
+                "a full session delivers the OTP pull",
+                effects.any { it is SessionEffect.Deliver && it.type == RecordType.PULL_REQUEST.wire },
+            )
+            assertFalse("a full session does not terminate on an OTP pull", effects.any { it is SessionEffect.Terminated })
+        }
     }
 
     private suspend fun resumeOneSided(
@@ -417,15 +495,14 @@ class ActivationInterruptionTest {
         engine.sendApplication(owed.type, owed.body).filterIsInstance<SessionEffect.Send>().single()
     }
 
-    private suspend fun otpAuthorized(
+    private suspend fun otpDelivered(
         engine: PhoneSessionEngine,
         client: TestClient,
-        session: SessionEffect.Authenticated,
         sequence: ULong,
     ): Boolean {
-        if (session.sessionClass != SessionClass.FULL) return false
         val effects = engine.onInbound(client.record(RecordType.PULL_REQUEST.wire, sequence, ByteArray(0)))
-        return effects.any { it is SessionEffect.Deliver && it.type == RecordType.PULL_REQUEST.wire }
+        return effects.any { it is SessionEffect.Deliver && it.type == RecordType.PULL_REQUEST.wire } &&
+            effects.none { it is SessionEffect.Terminated }
     }
 
     private fun engine(repository: InstallationTrustRepository, proofs: ProofRegistry): PhoneSessionEngine = PhoneSessionEngine(
@@ -779,7 +856,7 @@ class ActivationInterruptionTest {
     }
 }
 
-/** Accepts the authorized OTP pull only, so `otpAuthorized` observes a real delivery. */
+/** Accepts the authorized OTP pull only, so the probe observes a real delivery. */
 private class PullHandler : ApplicationHandler {
     override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
 

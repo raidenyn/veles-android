@@ -107,7 +107,7 @@ class PhonePairingMachine(
     private val nonce: () -> ByteArray = { ByteArray(NONCE_BYTES).also(SecureRandom()::nextBytes) },
     private val label: () -> String = { DEVICE_LABEL },
     private val identityNonce: () -> ByteArray = { ByteArray(IDENTITY_NONCE_BYTES).also(SecureRandom()::nextBytes) },
-    private val proofs: ProofRegistry = ProofRegistry(),
+    private val proofs: ProofRegistry,
 ) : PairingConnection {
     private val mutex = Mutex()
     private var execution: PairingExecution? = null

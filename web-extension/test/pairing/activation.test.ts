@@ -23,7 +23,9 @@ class FakeTrust {
 
     peers(): Promise<readonly { installationId: string; state: string }[]> {
         return Promise.resolve(
-            this.peerId === '' ? [] : [{ installationId: this.peerId, state: this.state }],
+            this.peerId === '' || this.state === 'deleted'
+                ? []
+                : [{ installationId: this.peerId, state: this.state }],
         );
     }
 
@@ -137,6 +139,7 @@ describe('chrome activation engine', () => {
         // OTP2-CRY-019g: a wrong activation MAC deletes the incomplete mirror.
         expect(trust.revoked).toBe(true);
         expect(trust.state).toBe('deleted');
+        expect(await trust.peers()).toEqual([]);
     });
 
     it('step5_ack_only_for_active_family', async () => {

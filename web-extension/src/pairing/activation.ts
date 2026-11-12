@@ -108,10 +108,10 @@ class SessionActivation implements ApplicationHandler {
         body: Uint8Array,
         reply: (type: number, body: Uint8Array) => Promise<void>,
     ): Promise<void> {
-        if (body.length !== AUTHENTICATOR_BYTES) throw new SessionReject();
+        if (body.length !== AUTHENTICATOR_BYTES) return this.#rejectUnverifiable();
         const et = this.#et;
         const recovery = this.#recovery;
-        if (et === null || recovery === null) throw new SessionReject();
+        if (et === null || recovery === null) return this.#rejectUnverifiable();
         if (type === RecordType.ENROLLMENT_PREPARE) {
             await this.#verify(recovery.kRecPhone, et, STAGE_PREPARE, body);
             // Step 0: only a genuinely pending client may re-commit. An active-family mirror
@@ -171,12 +171,17 @@ class SessionActivation implements ApplicationHandler {
         } finally {
             expected.fill(0);
         }
-        if (!matches) {
-            // OTP2-CRY-019g: a wrong recovery activation MAC on an incomplete mirror deletes
-            // it before the session fails closed; no half-activated record survives.
-            await this.#eraseIncomplete();
-            throw new SessionReject();
-        }
+        if (!matches) await this.#rejectUnverifiable();
+    }
+
+    /**
+     * OTP2-CRY-019g: an activation record this session cannot verify (wrong length, missing
+     * `ET`/recovery keys, wrong MAC) must not leave an incomplete record behind. The Kotlin
+     * handler applies the same rule.
+     */
+    async #rejectUnverifiable(): Promise<never> {
+        await this.#eraseIncomplete();
+        throw new SessionReject();
     }
 
     /** Deletes only this peer's incomplete record; an active-family mirror is never touched. */

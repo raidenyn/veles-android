@@ -81,9 +81,9 @@ private class SessionActivation(
         body: ByteArray,
         reply: suspend (type: Int, body: ByteArray) -> Unit,
     ) {
-        if (body.size != AUTHENTICATOR_BYTES) throw SessionReject()
-        val transcript = et ?: throw SessionReject()
-        val clientKey = recovery?.kRecClient ?: throw SessionReject()
+        if (body.size != AUTHENTICATOR_BYTES) rejectUnverifiable()
+        val transcript = et ?: rejectUnverifiable()
+        val clientKey = recovery?.kRecClient ?: rejectUnverifiable()
         val step = if (type == RecordType.ACTIVATION_COMMIT.wire) ActivationStep.COMMIT else ActivationStep.ACK
         val stage = if (type == RecordType.ACTIVATION_COMMIT.wire) STAGE_COMMIT else STAGE_ACK
         val expected = activationMac(clientKey, transcript, stage)
@@ -92,12 +92,9 @@ private class SessionActivation(
         } finally {
             expected.fill(0)
         }
-        // OTP2-CRY-019g / states.json: a wrong activation MAC on an incomplete record deletes
-        // it before the session ends, so no half-activated trust state survives.
-        if (!matches) {
-            eraseIncomplete()
-            throw SessionReject()
-        }
+        // OTP2-CRY-019g / states.json: any unverifiable activation MAC on an incomplete record
+        // deletes it before the session ends, so no half-activated trust state survives.
+        if (!matches) rejectUnverifiable()
         val peer = trust.peers().firstOrNull { it.installationId == peerId } ?: throw SessionReject()
         if (!applyVerified(peer, step, body)) throw SessionReject()
         if (step == ActivationStep.COMMIT) {
@@ -108,6 +105,16 @@ private class SessionActivation(
                 complete.fill(0)
             }
         }
+    }
+
+    /**
+     * OTP2-CRY-019g: an activation record this session cannot verify (wrong length, missing
+     * `ET`/recovery keys, wrong MAC) must not leave an incomplete record behind. The same rule
+     * is used by the enrollment connection, so both paths behave identically.
+     */
+    private suspend fun rejectUnverifiable(): Nothing {
+        eraseIncomplete()
+        throw SessionReject()
     }
 
     /** Deletes only an incomplete record of this peer; an active record is never touched. */
