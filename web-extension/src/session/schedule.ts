@@ -59,7 +59,7 @@ function label(value: string): Uint8Array {
     return encoder.encode(value);
 }
 
-function concat(...parts: Uint8Array[]): Uint8Array {
+export function concat(...parts: Uint8Array[]): Uint8Array {
     let length = 0;
     for (const part of parts) length += part.length;
     const joined = new Uint8Array(length);
@@ -80,7 +80,7 @@ function requireSharedSecret(ss: Uint8Array): void {
     if (ss.every((byte) => byte === 0)) reject();
 }
 
-async function sha256(data: Uint8Array): Promise<Uint8Array> {
+export async function sha256(data: Uint8Array): Promise<Uint8Array> {
     try {
         return new Uint8Array(await crypto.subtle.digest('SHA-256', data));
     } catch {
@@ -103,11 +103,15 @@ async function hmacSha256(key: Uint8Array, data: Uint8Array): Promise<Uint8Array
     }
 }
 
-async function hkdfExtract(salt: Uint8Array, ikm: Uint8Array): Promise<Uint8Array> {
+export async function hkdfExtract(salt: Uint8Array, ikm: Uint8Array): Promise<Uint8Array> {
     return hmacSha256(salt.length === 0 ? new Uint8Array(HKDF_HASH_BYTES) : salt, ikm);
 }
 
-async function hkdfExpand(prk: Uint8Array, info: Uint8Array, length: number): Promise<Uint8Array> {
+export async function hkdfExpand(
+    prk: Uint8Array,
+    info: Uint8Array,
+    length: number,
+): Promise<Uint8Array> {
     if (prk.length === 0 || length <= 0 || length > HKDF_MAX_BLOCKS * HKDF_HASH_BYTES) reject();
     const output = new Uint8Array(length);
     let produced = 0;

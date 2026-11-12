@@ -255,7 +255,8 @@ function eraseReconnectKeys(keys: ReconnectKeys | null): void {
     keys.sessionId.fill(0);
 }
 
-function equalConstantTime(left: Uint8Array, right: Uint8Array): boolean {
+/** Constant-time byte equality for MACs and fingerprints (OTP2-REC-011a). */
+export function equalConstantTime(left: Uint8Array, right: Uint8Array): boolean {
     if (left.length !== right.length) return false;
     let difference = 0;
     for (let index = 0; index < left.length; index += 1) {

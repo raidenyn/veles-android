@@ -50,6 +50,8 @@ jobs:
         working-directory: web-extension
       - run: npm run lint
         working-directory: web-extension
+      - name: Guard against direct MAC comparisons outside the constant-time helpers
+        run: node scripts/check-mac-comparisons.mjs
       - run: npm run typecheck
         working-directory: web-extension
 

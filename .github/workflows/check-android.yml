@@ -31,6 +31,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
       - run: ./gradlew spotlessCheck
       - run: ./gradlew detekt
+      - name: Guard against direct MAC comparisons outside the constant-time helpers
+        run: node scripts/check-mac-comparisons.mjs
       - name: Guard against raw android.util.Log usage outside LogSink.kt
         run: |
           fail=0
