@@ -105,6 +105,10 @@ jobs:
           key: rust-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/toolchain-tools.toml', 'rust/Cargo.lock') }}
       - run: ./gradlew :app:assembleDebug
       - run: rust/scripts/verify-apk-jni.sh app/build/outputs/apk/debug/app-debug.apk
+      # Both test-only Rust outputs the extension build and loopback need: the
+      # WASM package bundled into the extension and the host-JVM cdylib. Neither
+      # is a product, and the clean/assert-clean pair below proves it.
+      - run: ./gradlew rustHostJni rustWasm
       - run: npm ci && npm run build
         working-directory: web-extension
       - run: ./gradlew clean

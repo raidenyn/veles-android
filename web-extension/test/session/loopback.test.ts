@@ -25,6 +25,11 @@ import { hexOf } from './client-harness';
 const CLASSPATH = process.env.VELES_LOOPBACK_CLASSPATH ?? '';
 const REQUIRED = process.env.VELES_LOOPBACK_REQUIRED === '1';
 const JAVA = process.env.VELES_LOOPBACK_JAVA ?? 'java';
+// OTP-10: the Gradle `rustHostJni` output directory, exported by `sessionLoopbackCheck`.
+// The child JVM loads the real Rust core with System.loadLibrary("veles_crypto"), so the
+// directory must be on java.library.path. Left unset in a bare local run (the OTP-09
+// scenarios do not touch the native core); CI always sets it.
+const HOST_JNI_DIR = process.env.VELES_HOST_JNI_DIR ?? '';
 const CLASS_NAME = 'me.nagaev.veles.session.loopback.PhoneLoopbackMainKt';
 const TIMEOUT_MS = 30_000;
 
@@ -174,7 +179,11 @@ interface LoopbackProcess {
 }
 
 function startPhone(seed: string): LoopbackProcess {
-    const child = spawn(JAVA, ['-cp', CLASSPATH, CLASS_NAME, seed], {
+    const jvmArguments = ['-cp', CLASSPATH];
+    if (HOST_JNI_DIR !== '') {
+        jvmArguments.push(`-Djava.library.path=${HOST_JNI_DIR}`);
+    }
+    const child = spawn(JAVA, [...jvmArguments, CLASS_NAME, seed], {
         stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
     let buffered = Buffer.alloc(0);

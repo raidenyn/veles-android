@@ -16,7 +16,7 @@ pub fn reverse_bytes(input: &[u8]) -> Vec<u8> {
 // a generic `java.lang.RuntimeException`, and return null on failure. See the
 // comment on `ThrowGenericRuntimeException` below for a nuance on what
 // "already pending" does and doesn't cover.
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", feature = "host-jni"))]
 mod android {
     use std::any::Any;
     use std::ptr::null_mut;

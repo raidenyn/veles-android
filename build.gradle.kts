@@ -657,7 +657,12 @@ val sessionLoopbackClasspathFile = layout.projectDirectory.file("app/build/sessi
 val sessionLoopbackCheck = tasks.register<Exec>("sessionLoopbackCheck") {
     group = "verification"
     description = "Runs the Kotlin phone / TypeScript client cross-endpoint session loopback."
-    dependsOn(":app:sessionLoopbackClasspath", protocolWebInstall)
+    dependsOn(
+        "rustHostJni",
+        "rustWasm",
+        ":app:sessionLoopbackClasspath",
+        protocolWebInstall,
+    )
     workingDir(layout.projectDirectory.dir("web-extension"))
     doFirst {
         val classpathFile = sessionLoopbackClasspathFile.asFile
@@ -672,6 +677,10 @@ val sessionLoopbackCheck = tasks.register<Exec>("sessionLoopbackCheck") {
             "VELES_LOOPBACK_JAVA",
             File(System.getProperty("java.home"), "bin/java").absolutePath,
         )
+        // OTP-10: the child JVM loads the real host-JVM Rust core through
+        // System.loadLibrary("veles_crypto"); the spawn turns this into
+        // -Djava.library.path so the test-only `rustHostJni` output resolves.
+        environment("VELES_HOST_JNI_DIR", rustHostJniDir.get().asFile.absolutePath)
     }
     commandLine(npmCommand, "exec", "vitest", "run", "test/session/loopback.test.ts")
 }
@@ -760,6 +769,55 @@ tasks.register<Exec>("rustWasmConformanceTest") {
 
 // Separate output and target directories keep test-only native exports out of
 // the app's generated/jniLibs directory, release APK and rustPackage.
+// OTP-10: the same applies to the host-JVM cdylib. `host-jni` is a non-default
+// feature, so this task is the only producer of a host library; it writes under
+// build/rust/ (covered by `clean` and rust/scripts/assert-clean.sh) and never
+// into app/build/generated/jniLibs, rustPackage or any release artifact.
+val rustHostJniDir = layout.buildDirectory.dir("rust/host-jni")
+val rustHostJniTargetDir = layout.buildDirectory.dir("rust/host-jni-target")
+val hostJniLibraryName = when {
+    windowsExecutableSuffix.isNotEmpty() -> "veles_crypto.dll"
+    System.getProperty("os.name").startsWith("Mac") -> "libveles_crypto.dylib"
+    else -> "libveles_crypto.so"
+}
+
+val rustHostJni = tasks.register<Exec>("rustHostJni") {
+    group = "rust"
+    description = "Builds the locked host-JVM cdylib used by JVM tests and the loopback child JVM."
+    dependsOn("rustToolchainCheck")
+    inputs.files(
+        fileTree(rustCrateDir) { include("Cargo.toml", "src/**/*.rs") },
+        rustDir.file("Cargo.toml"),
+        rustDir.file("Cargo.lock"),
+        rustDir.file("rust-toolchain.toml"),
+    )
+    outputs.dir(rustHostJniDir)
+    workingDir(rustDir)
+    doFirst {
+        delete(rustHostJniDir)
+        environment("CARGO_TARGET_DIR", rustHostJniTargetDir.get().asFile)
+        // The JNI boundary keeps the panic machinery; a test-only build must
+        // match the release product's unwind behavior so panics surface as
+        // Java exceptions instead of aborting the test JVM.
+        environment("CARGO_PROFILE_RELEASE_PANIC", "unwind")
+        // Explicit registry-path remap (rustJniConformance sets none): the host
+        // library embeds panic locations like the product .so, so a build must
+        // not depend on where CARGO_HOME happens to store the registry.
+        environment("RUSTFLAGS", cargoRegistryRemapRustFlags())
+    }
+    commandLine(
+        "cargo", "build", "--locked", "--release",
+        "--package", "veles-crypto", "--features", "host-jni",
+    )
+    doLast {
+        val built = rustHostJniTargetDir.get().asFile.resolve("release/$hostJniLibraryName")
+        check(built.isFile) { "rustHostJni: expected the host library at $built" }
+        val output = rustHostJniDir.get().asFile
+        output.mkdirs()
+        built.copyTo(output.resolve(hostJniLibraryName), overwrite = true)
+    }
+}
+
 tasks.register<Exec>("rustJniConformance") {
     group = "verification"
     dependsOn(verifyCargoNdk)
@@ -893,6 +951,18 @@ val rustLintHost = tasks.register<Exec>("rustLintHost") {
     )
 }
 
+val rustLintHostJni = tasks.register<Exec>("rustLintHostJni") {
+    group = "rust"
+    description = "Runs denied-warning Clippy on the host-JVM JNI exports (non-default host-jni feature)."
+    dependsOn("rustToolchainCheck")
+    workingDir(rustDir)
+    environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
+    commandLine(
+        "cargo", "clippy", "--package", "veles-crypto", "--all-targets", "--locked",
+        "--features", "host-jni", "--", "-D", "warnings",
+    )
+}
+
 val rustLintWasm = tasks.register<Exec>("rustLintWasm") {
     group = "rust"
     dependsOn(rustToolchainCheck)
@@ -928,8 +998,8 @@ val rustLintAndroid = tasks.register<Exec>("rustLintAndroid") {
 
 val rustLint = tasks.register("rustLint") {
     group = "rust"
-    description = "Runs denied-warning Clippy checks for host, WASM, and Android JNI."
-    dependsOn(rustLintHost, rustLintWasm, rustLintAndroid)
+    description = "Runs denied-warning Clippy checks for host, host-JNI, WASM, and Android JNI."
+    dependsOn(rustLintHost, rustLintHostJni, rustLintWasm, rustLintAndroid)
 }
 
 tasks.register("rustNdkVersion") {

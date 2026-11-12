@@ -11,6 +11,10 @@ crate-type = ["rlib", "cdylib"]
 # allow RFC fixed-scalar anchors through the actual runtime boundaries.
 [features]
 conformance = []
+# Host-JVM JNI exports for the local test loopback and the CI loopback child JVM.
+# Non-default: no Android, WASM, packaging or release build enables it, so the
+# host library stays a test-only artifact.
+host-jni = ["dep:jni"]
 
 [lints]
 workspace = true
@@ -30,6 +34,11 @@ serde_json = "=1.0.154"
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "=0.22.4"
+
+# Optional on every other target: only the explicit `host-jni` feature enables
+# it, so a host Cargo invocation without the feature compiles no JNI exports.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+jni = { version = "=0.22.4", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "=0.2.127"
