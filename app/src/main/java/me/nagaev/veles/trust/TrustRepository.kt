@@ -113,10 +113,14 @@ class TrustRepository(
         val peer = snapshot.peers.singleOrNull { it.installationId == peerId } ?: throw TrustException()
         val expected = if (step == ActivationStep.COMMIT) TrustState.PENDING else TrustState.COMMITTED_WAITING_ACK
         val next = if (step == ActivationStep.COMMIT) TrustState.COMMITTED_WAITING_ACK else TrustState.ACTIVE
-        checkTrust((peer.state == expected || peer.state == next) && activationVerifier.verify(peer, step, proof.copyOf()))
+        // A duplicate COMMIT on an ACTIVE record is a no-op, but only once the stage MAC verifies
+        // (veles-v1.md §11.4, OTP2-STA-010b); the same holds for a duplicate ACK.
+        val duplicate = peer.state == TrustState.ACTIVE
+        checkTrust((peer.state == expected || peer.state == next || duplicate) && activationVerifier.verify(peer, step, proof.copyOf()))
         snapshot.copy(
             peers = snapshot.peers.map {
-                if (it == peer && peer.state != next) it.copy(state = next, stateChangedAtMillis = wallMillis()) else it
+                // Only the accepted state this step moves from transitions, so no state can regress.
+                if (it == peer && peer.state == expected) it.copy(state = next, stateChangedAtMillis = wallMillis()) else it
             },
         ) to Unit
     }

@@ -105,8 +105,14 @@ export class ChromeTrustRepository {
         const evidence = proof.slice();
         return this.update(async (s) => {
             const peer = this.find(s, peerId);
-            requireTrust(peer.state !== 'pending');
+            const pending = peer.state === 'pending';
+            // A pending record belongs to one connector's monotonic interval, as in confirm().
+            requireTrust(!pending || peer.pendingContext === this.owner.id);
             requireTrust(await this.verify(structuredClone(peer), 'authenticated', evidence));
+            // A recovery session may authenticate a still-pending client. The pending
+            // invariant forbids lastSeen and a hint, so this is a verified no-op: no field
+            // changes and the record stays byte-identical (veles-v1.md §11.4).
+            if (pending) return;
             if (hint !== undefined) {
                 this.validateHint(hint);
                 peer.platformHint = hint;
