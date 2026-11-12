@@ -22,12 +22,14 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import me.nagaev.veles.BuildConfig
 import me.nagaev.veles.R
+import me.nagaev.veles.pairing.ActivationEngine
 import me.nagaev.veles.pairing.PairingAdmission
 import me.nagaev.veles.pairing.PairingConnection
 import me.nagaev.veles.pairing.PairingCore
 import me.nagaev.veles.pairing.PairingLimits
 import me.nagaev.veles.pairing.PairingWindow
 import me.nagaev.veles.pairing.PhonePairingMachine
+import me.nagaev.veles.pairing.ProofRegistry
 import me.nagaev.veles.pairing.VelesPairingCore
 import me.nagaev.veles.permissions.PermissionsActivity
 import me.nagaev.veles.session.BuildSessionExtensions
@@ -36,6 +38,7 @@ import me.nagaev.veles.session.LocalRecordState
 import me.nagaev.veles.session.PeerLookup
 import me.nagaev.veles.session.PeerRecord
 import me.nagaev.veles.session.PhoneSessionEngine
+import me.nagaev.veles.session.composeApplicationHandlers
 import me.nagaev.veles.trust.ActivationVerifier
 import me.nagaev.veles.trust.AndroidIdentityKeyStore
 import me.nagaev.veles.trust.InstallationTrustRepository
@@ -124,16 +127,25 @@ internal class SharingService : Service() {
     }
 
     /**
-     * The production session path. No activation implementation exists in OTP-09, and no
-     * activation step is performed, so the verifier is an explicit reject-all: OTP-10 replaces
-     * it with the transcript verifier. The installation id is read once, before the first link
-     * is admitted, because the engine factory is not suspending.
+     * The production session path. The repository's verifier is the session-bound proof
+     * registry the pairing machine and the recovery activation engine fill; the debug
+     * `BuildSessionExtensions` and `ProbeReceiver` repositories deliberately stay reject-all
+     * (OTP-10 plan 9d). The installation id is read once, before the first link is admitted,
+     * because the engine factory is not suspending.
+     *
+     * The activation handler is always built and composed with the build-type extension handler
+     * (the debug probe), so a release build with a null extension still activates.
      */
     private fun sessionHost(transport: SessionTransport): SessionHost {
-        val repository = createAndroidTrustRepository(this, ActivationVerifier { _, _, _ -> false })
+        val proofs = ProofRegistry()
+        val repository = createAndroidTrustRepository(
+            this,
+            ActivationVerifier { peer, step, proof -> proofs.consume(peer, step, proof) },
+        )
         val localInstallationId = runBlocking { TrustEncoding.bytes(repository.identity().installationId) }
         val keyStore = AndroidIdentityKeyStore()
-        val handler = BuildSessionExtensions.applicationHandler(this)
+        val activation = ActivationEngine(repository, proofs)
+        val handler = composeApplicationHandlers(activation, BuildSessionExtensions.applicationHandler(this))
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         sessionScope = scope
         // One window and one admission for the service; the native core is resolved only

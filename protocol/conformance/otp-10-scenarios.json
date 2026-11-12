@@ -45,14 +45,14 @@
   "st-neg-client-persist-failure-publishes-nothing": "execute",
   "st-neg-phone-persist-failure-sends-no-prepare": "execute",
   "st-en-phone-pending-survives-interruption-with-et": "execute",
-  "st-rec-full-pending-peer-commit-duplicate-no-regression": "deferred:Task 9",
-  "st-rec-commit-lost-recovery": "deferred:Task 9",
-  "st-rec-ack-lost-active-client-direct-ack": "deferred:Task 9",
-  "st-rec-complete-lost-recovery-client": "deferred:Task 9",
-  "st-rec-recovery-session-stays-recovery-only": "deferred:Task 9",
+  "st-rec-full-pending-peer-commit-duplicate-no-regression": "execute",
+  "st-rec-commit-lost-recovery": "execute",
+  "st-rec-ack-lost-active-client-direct-ack": "execute",
+  "st-rec-complete-lost-recovery-client": "execute",
+  "st-rec-recovery-session-stays-recovery-only": "execute",
   "st-rec-pending-expiry-deletes-incomplete": "deferred:Task 9",
   "st-rec-boot-continuity-loss-deletes-incomplete-only": "deferred:Task 9",
   "st-rec-recovery-commit-mac-mismatch": "deferred:Task 9",
   "st-rec-recovery-complete-mac-mismatch": "deferred:Task 9",
-  "st-rec-phone-complete-lost-prepares-then-full-session": "deferred:Task 9"
+  "st-rec-phone-complete-lost-prepares-then-full-session": "execute"
 }

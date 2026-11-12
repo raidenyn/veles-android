@@ -30,6 +30,7 @@ import {
     type IdentityRecord,
 } from './enrollment';
 import type { PairingCore } from './core';
+import type { ProofRegistry } from './proofs';
 
 export type { PairingCore } from './core';
 import {
@@ -70,6 +71,8 @@ export interface ClientTrustRepository {
 export interface ClientMachineDeps {
     core: PairingCore;
     repo: ClientTrustRepository;
+    /** Session-bound proof registry: the enrollment flow registers the `complete` MAC. */
+    proofs?: ProofRegistry;
     clock: () => number;
     code: string;
     label?: string;
@@ -221,6 +224,7 @@ function importAes(raw: Uint8Array): Promise<CryptoKey> {
 export class ClientMachine {
     readonly #core: PairingCore;
     readonly #repo: ClientTrustRepository;
+    readonly #proofs: ProofRegistry | undefined;
     readonly #clock: () => number;
     readonly #code: string;
     readonly #label: string;
@@ -257,6 +261,7 @@ export class ClientMachine {
     constructor(deps: ClientMachineDeps) {
         this.#core = deps.core;
         this.#repo = deps.repo;
+        this.#proofs = deps.proofs;
         this.#clock = deps.clock;
         this.#code = deps.code;
         this.#label = deps.label ?? DEFAULT_LABEL;
@@ -649,12 +654,17 @@ export class ClientMachine {
         }
         expected.fill(0);
         const peerId = this.#pendingPeerId;
-        if (peerId === null) return this.#failPostAuthentication();
+        const prefix = this.#prefix;
+        if (peerId === null || prefix === null) return this.#failPostAuthentication();
         try {
-            // The verifier is the repository's stage-bound proof; Task 9 wires the
-            // enrollment proof registry. Here it receives the real received MAC.
+            // The repository verifier is the session-bound proof registry filled here with the
+            // MAC this enrollment connection just verified; it receives the real received MAC.
+            this.#proofs?.register(hex(prefix), [
+                { peerId, stage: 'complete', proof: body.slice() },
+            ]);
             await this.#repo.confirm(peerId, 'complete', body.slice());
         } catch {
+            this.#proofs?.revoke(hex(prefix));
             return this.#failPostAuthentication();
         }
         this.#pendingPeerId = null;

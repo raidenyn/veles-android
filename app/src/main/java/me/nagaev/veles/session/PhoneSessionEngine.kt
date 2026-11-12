@@ -530,7 +530,14 @@ class PhoneSessionEngine(
         state = State.OPEN
         lastActivityAt = clock()
         sessionHandler = handler?.forSession(sessionContext(cls, installationId, prefix, record))
-        listOf(SessionEffect.Authenticated(cls, installationId.copyOf(), prefix.copyOf()))
+        // OTP2-STA-010b steps 0/5: the context is fixed, but the owner sends these after the
+        // effect; computing the MAC here keeps the send out of the finality monitor.
+        val unprompted = try {
+            sessionHandler?.unprompted().orEmpty()
+        } catch (_: Exception) {
+            return terminate(STAGE_DEPENDENCY)
+        }
+        listOf(SessionEffect.Authenticated(cls, installationId.copyOf(), prefix.copyOf(), unprompted))
     }
 
     /**

@@ -19,6 +19,7 @@ import me.nagaev.veles.session.PhoneSessionEngine
 import me.nagaev.veles.session.SessionClass
 import me.nagaev.veles.session.SessionEffect
 import me.nagaev.veles.session.SessionReject
+import me.nagaev.veles.session.UnpromptedApplication
 import me.nagaev.veles.trust.InstallationTrustRepository
 import me.nagaev.veles.trust.TrustEncoding
 import me.nagaev.veles.trust.TrustException
@@ -404,7 +405,15 @@ class SessionHost(
                     }
                     true -> sent = true
                 }
-                is SessionEffect.Authenticated -> if (!markAuthenticated(live, effect)) return false
+                is SessionEffect.Authenticated -> {
+                    if (!markAuthenticated(live, effect)) {
+                        eraseApplications(effect.unprompted, 0)
+                        return false
+                    }
+                    // OTP2-STA-010b steps 0/5: the owner sends what the session owes only after
+                    // it handled the gate, never from inside the handler's context hook.
+                    if (!sendUnprompted(live, effect.unprompted)) return false
+                }
                 is SessionEffect.Terminated -> Unit
                 is SessionEffect.Deliver -> Unit // OTP-09 has no application consumer; OTP-10 adds one.
                 SessionEffect.Close -> {
@@ -538,6 +547,46 @@ class SessionHost(
         for (index in from until effects.size) {
             (effects[index] as? SessionEffect.Send)?.bytes?.fill(0)
         }
+    }
+
+    /**
+     * Sends the records the freshly opened session owes (OTP2-STA-010b steps 0/5). The caller
+     * holds [Live.mutex]; the engine's `sendApplication` is the same path a user send takes, so
+     * authorization and sequence rules apply unchanged. Bodies are erased after each attempt.
+     */
+    @Suppress("ReturnCount") // Each guard is a distinct terminal outcome for the generation.
+    private suspend fun sendUnprompted(
+        live: Live,
+        applications: List<UnpromptedApplication>,
+    ): Boolean {
+        val engine = live.engine ?: run {
+            eraseApplications(applications, 0)
+            return true
+        }
+        for ((index, application) in applications.withIndex()) {
+            try {
+                if (!isCurrent(live) || !engine.isOpen) {
+                    eraseApplications(applications, index)
+                    return false
+                }
+                val effects = engine.sendApplication(application.type, application.body)
+                if (effects.isEmpty()) continue
+                if (!apply(live, effects)) return false
+            } catch (_: SessionReject) {
+                failedLocked(live)
+                return false
+            } catch (_: Exception) {
+                failedLocked(live)
+                return false
+            } finally {
+                application.body.fill(0)
+            }
+        }
+        return true
+    }
+
+    private fun eraseApplications(applications: List<UnpromptedApplication>, from: Int) {
+        for (index in from until applications.size) applications[index].body.fill(0)
     }
 
     private suspend fun markAuthenticated(live: Live, effect: SessionEffect.Authenticated): Boolean {

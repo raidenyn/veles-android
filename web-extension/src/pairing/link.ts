@@ -14,6 +14,7 @@
 import { DeviceType } from './enrollment';
 import { ClientMachine, type ClientTrustRepository } from './client-machine';
 import { PairingExecution, initPairingCore, type PairingCore } from './core';
+import type { ProofRegistry } from './proofs';
 import type { ConnectorResult } from '../connector/port';
 import type { WireEvent } from '../connector/protocol';
 
@@ -39,6 +40,8 @@ export interface PairingTransport {
 export interface PairingLinkDeps {
     controller: PairingTransport;
     repo: ClientTrustRepository;
+    /** Optional session-bound proof registry for the activation `complete` stage. */
+    proofs?: ProofRegistry;
     code: string;
     deviceHandle: string;
     clock?: () => number;
@@ -104,6 +107,7 @@ export class PairingLink {
             repo: deps.repo,
             clock: deps.clock ?? defaultClock,
             code: deps.code,
+            ...(deps.proofs === undefined ? {} : { proofs: deps.proofs }),
             ...(deps.label === undefined ? {} : { label: deps.label }),
             ...(deps.deviceType === undefined ? {} : { deviceType: deps.deviceType }),
             ...(deps.nonce === undefined ? {} : { nonce: deps.nonce }),

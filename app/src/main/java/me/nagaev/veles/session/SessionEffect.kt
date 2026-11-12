@@ -8,11 +8,19 @@ sealed interface SessionEffect {
      */
     data class Send(val bytes: ByteArray, val completionToken: Long? = null) : SessionEffect
 
-    /** The authentication gate opened: the class is fixed for the rest of the session. */
+    /**
+     * The authentication gate opened: the class is fixed for the rest of the session.
+     *
+     * [unprompted] carries the application records this session owes at open (OTP2-STA-010b
+     * steps 0 and 5). The engine never sends them itself: the owner applies each one through
+     * [PhoneSessionEngine.sendApplication] after it has handled this effect, so no suspend seal
+     * runs inside the engine's finality monitor.
+     */
     data class Authenticated(
         val sessionClass: SessionClass,
         val peerId: ByteArray,
         val sessionIdPrefix: ByteArray,
+        val unprompted: List<UnpromptedApplication> = emptyList(),
     ) : SessionEffect
 
     /** A verified, authorized application record body for the host. */
@@ -44,6 +52,9 @@ data class SessionContext(
     val recovery: RecoveryKeys?,
 )
 
+/** One record a handler owes the peer as soon as the session is open (OTP2-STA-010b). */
+data class UnpromptedApplication(val type: Int, val body: ByteArray)
+
 /**
  * Application records that have a handler. An authorized record without a handler fails
  * closed (OTP2 protected-record-session "Authorized records without a handler fail closed").
@@ -62,4 +73,11 @@ interface ApplicationHandler {
      * `sendApplication` without waiting for an inbound record (OTP-10 plan 9b).
      */
     fun forSession(context: SessionContext): ApplicationHandler = this
+
+    /**
+     * Records this session-scoped handler owes as soon as the gate opens. The engine only
+     * reports them on [SessionEffect.Authenticated]; the owner sends each one with
+     * `sendApplication` after handling the effect.
+     */
+    fun unprompted(): List<UnpromptedApplication> = emptyList()
 }

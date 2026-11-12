@@ -46,8 +46,10 @@ import {
 } from './connector/view-model';
 import type { ClientEngineDeps } from './session/engine';
 import type { DevelopmentProbe } from './debug/probe';
+import { ActivationEngine } from './pairing/activation';
 import { initPairingCore } from './pairing/core';
 import { PairingLink } from './pairing/link';
+import { ProofRegistry } from './pairing/proofs';
 import { bytes } from './trust/model';
 import { normalizeLowS } from './session/ecdsa';
 import { IndexedDbIdentityStore } from './trust/identity';
@@ -193,12 +195,16 @@ export interface ConnectorControllerLike extends SessionController {
  * verifier can delegate to the manager's stage-bound verifier.
  */
 export interface ConnectorSessionOptions {
-    createRepository(verifier: AuthenticationVerifier): ChromeTrustRepository;
+    createRepository(
+        verifier: AuthenticationVerifier,
+        proofs: ProofRegistry,
+    ): ChromeTrustRepository;
     createEngineDeps(
         handle: string,
         peerId: string,
         localInstallationId: Uint8Array,
         repository: ChromeTrustRepository,
+        proofs: ProofRegistry,
     ): ClientEngineDeps;
 }
 
@@ -245,6 +251,7 @@ export class ConnectorApp {
     private readonly view: ConnectorView;
     private readonly trustSource: TrustHintSource;
     private readonly repository: ChromeTrustRepository | null;
+    private readonly proofs: ProofRegistry;
     readonly sessions: SessionManager | null;
     private readonly reconnect: ReconnectPolicy;
     private readonly unsubscribers: (() => void)[] = [];
@@ -278,17 +285,25 @@ export class ConnectorApp {
         this.controller = deps.controller;
         this.view = deps.view;
         const session = deps.session;
+        this.proofs = new ProofRegistry();
         if (session === undefined) {
             this.repository = null;
             this.sessions = null;
             this.trustSource = deps.trustSource ?? createChromeTrustHintSource();
         } else {
             // One repository per connector lifetime. Its verifier forwards to the
-            // manager's stage-bound verifier; until the manager exists every
-            // authentication is refused.
+            // manager's stage-bound verifier for `phone_active`/`authenticated`, and to
+            // the session-bound proof registry for the activation `complete` stage; until
+            // the manager exists, except for a pairing proof, every authentication is
+            // refused.
             const holder: { verify: AuthenticationVerifier } = { verify: async () => false };
-            const repository = session.createRepository((peer, stage, proof) =>
-                holder.verify(peer, stage, proof),
+            const proofs = this.proofs;
+            const repository = session.createRepository(
+                (peer, stage, proof) =>
+                    stage === 'complete' && proofs.consume(peer.installationId, stage, proof)
+                        ? Promise.resolve(true)
+                        : holder.verify(peer, stage, proof),
+                proofs,
             );
             const timers =
                 deps.setTimeout === undefined && deps.clearTimeout === undefined
@@ -305,7 +320,7 @@ export class ConnectorApp {
                 (handle, peerId) => {
                     const identity = this.localInstallationId;
                     if (identity === null) throw new Error('installation identity unavailable');
-                    return session.createEngineDeps(handle, peerId, identity, repository);
+                    return session.createEngineDeps(handle, peerId, identity, repository, proofs);
                 },
                 () => deps.controller.portGeneration,
                 timers,
@@ -404,6 +419,7 @@ export class ConnectorApp {
             const link = await PairingLink.start({
                 controller: this.controller,
                 repo: repository,
+                proofs: this.proofs,
                 code,
                 deviceHandle,
                 // Register the handle from the connected event, before the first
@@ -1313,11 +1329,13 @@ function productionSessionOptions(): ConnectorSessionOptions {
             peerId: string,
             localInstallationId: Uint8Array,
             repository: ChromeTrustRepository,
+            proofs: ProofRegistry,
         ): ClientEngineDeps {
             return {
                 localInstallationId,
                 expectedPeerId: peerId,
                 isCurrent: () => false,
+                handler: new ActivationEngine({ trust: repository, proofs }),
                 lookupPhone: async (id) => {
                     const peers = await repository.peers();
                     const peer = peers.find((candidate) => candidate.installationId === id);

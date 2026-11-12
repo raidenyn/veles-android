@@ -95,6 +95,12 @@ export interface SessionContext {
     recovery: RecoveryKeys | null;
 }
 
+/** One record a handler owes the peer as soon as the session is open (OTP2-STA-010b). */
+export interface UnpromptedApplication {
+    type: number;
+    body: Uint8Array;
+}
+
 /** Application records that have a handler. An authorized record without one fails closed. */
 export interface ApplicationHandler {
     handles(type: number): boolean;
@@ -112,6 +118,13 @@ export interface ApplicationHandler {
      * record (OTP-10 plan 9b).
      */
     forSession?(context: SessionContext): ApplicationHandler;
+
+    /**
+     * Records the session-scoped handler owes as soon as the gate opens (OTP2-STA-010b steps
+     * 0 and 5). The engine only reports them on the `authenticated` effect; the session owner
+     * sends each one after it handled the effect.
+     */
+    unprompted?(): UnpromptedApplication[] | Promise<UnpromptedApplication[]>;
 }
 
 /** Effects that a session host turns into transport writes, host callbacks and teardown. */
@@ -122,6 +135,8 @@ export type SessionEffect =
           sessionClass: SessionClass;
           peerId: string;
           sessionIdPrefix: Uint8Array;
+          /** Present only when the session owes an unprompted record at open. */
+          unprompted?: UnpromptedApplication[];
       }
     | { kind: 'deliver'; type: number; body: Uint8Array }
     | { kind: 'terminated'; reason: string }
@@ -1141,7 +1156,7 @@ export class ClientSessionEngine {
         return value === PEER_STATE_ACTIVE || value === PEER_STATE_BELOW_ACTIVE ? value : null;
     }
 
-    #authenticate(state: EngineState): SessionEffect[] {
+    async #authenticate(state: EngineState): Promise<SessionEffect[]> {
         if (this.#state !== state || state.phase === 'closed') return [];
         const expired = this.#expiryFailure(this.#deps.now());
         if (expired !== null) return this.#terminate(expired);
@@ -1178,12 +1193,22 @@ export class ClientSessionEngine {
                               ? null
                               : (state.keys?.recovery ?? null),
                   }) ?? handler);
+        // OTP2-STA-010b steps 0/5: the context is fixed here, but the owner sends these after
+        // the effect through `sendApplication`, never from inside `forSession`.
+        let unprompted: UnpromptedApplication[] = [];
+        try {
+            unprompted = (await state.handler?.unprompted?.()) ?? [];
+        } catch {
+            if (this.#state !== state) return [];
+            return this.#terminate(STAGE_DEPENDENCY);
+        }
         return [
             {
                 kind: 'authenticated',
                 sessionClass,
                 peerId,
                 sessionIdPrefix: prefix.slice(),
+                ...(unprompted.length === 0 ? {} : { unprompted }),
             },
         ];
     }
