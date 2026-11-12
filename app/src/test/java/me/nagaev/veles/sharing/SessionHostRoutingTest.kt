@@ -103,7 +103,7 @@ class SessionHostRoutingTest {
 
     @Test
     fun malformed_pairing_first_frames_spend_the_pairing_budget() = runTest {
-        val endpoint = PairingEndpoint({ clock.now }, { core })
+        val endpoint = PairingEndpoint({ clock.now }, NoTrust, { core })
         val host = host(pairing = { gen -> endpoint.connection(gen.serial) })
 
         // `0x02`-`0x05` first frames are unambiguous pairing traffic and count as malformed.
@@ -135,7 +135,7 @@ class SessionHostRoutingTest {
 
     @Test
     fun one_byte_0x03_first_frame_counts_as_a_malformed_pairing_connection() = runTest {
-        val endpoint = PairingEndpoint({ clock.now }, { core })
+        val endpoint = PairingEndpoint({ clock.now }, NoTrust, { core })
         val host = host(pairing = { gen -> endpoint.connection(gen.serial) })
 
         // A single-byte `pairing_client_point`: no envelope, but still `0x03` pairing traffic.
@@ -166,7 +166,7 @@ class SessionHostRoutingTest {
 
     @Test
     fun no_window_pairing_request_rejected_generically() = runTest {
-        val endpoint = PairingEndpoint({ clock.now }, { core })
+        val endpoint = PairingEndpoint({ clock.now }, NoTrust, { core })
         val host = host(pairing = { gen -> endpoint.connection(gen.serial) })
         val gen = ConnectionGeneration("aa", 1)
 
@@ -187,7 +187,7 @@ class SessionHostRoutingTest {
 
     @Test
     fun reconnect_malformed_does_not_use_pairing_budget() = runTest {
-        val endpoint = PairingEndpoint({ clock.now }, { core })
+        val endpoint = PairingEndpoint({ clock.now }, NoTrust, { core })
         val host = host(pairing = { gen -> endpoint.connection(gen.serial) })
 
         // Malformed *reconnect* traffic: a truncated reconnect_hello on each generation.
@@ -212,7 +212,7 @@ class SessionHostRoutingTest {
 
     @Test
     fun shutdown_erases_window_and_closes_handle() = runTest {
-        val endpoint = PairingEndpoint({ clock.now }, { core })
+        val endpoint = PairingEndpoint({ clock.now }, NoTrust, { core })
         val host = host(pairing = { gen -> endpoint.connection(gen.serial) })
         endpoint.window.open()
         val gen = ConnectionGeneration("aa", 1)

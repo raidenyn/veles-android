@@ -560,7 +560,7 @@ class SessionHost(
     }
 
     /** Terminal failure; the caller already holds [Live.mutex]. */
-    private fun failedLocked(live: Live) {
+    private suspend fun failedLocked(live: Live) {
         teardownLocked(live)
         transport.close(live.gen)
     }
@@ -582,7 +582,7 @@ class SessionHost(
      * [Live.mutex] and the operation is idempotent. Buffered worker steps reference the same
      * records, so their later erase is a no-op.
      */
-    private fun teardownLocked(live: Live) {
+    private suspend fun teardownLocked(live: Live) {
         live.ended = true
         live.tick?.cancel()
         live.queue.close()

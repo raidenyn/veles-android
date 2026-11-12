@@ -138,7 +138,7 @@ internal class SharingService : Service() {
         sessionScope = scope
         // One window and one admission for the service; the native core is resolved only
         // when a pairing_request actually starts an execution.
-        val pairing = PairingEndpoint()
+        val pairing = PairingEndpoint(trust = repository)
         val host = SessionHost(
             scope,
             transport,
@@ -239,6 +239,7 @@ internal class SharingService : Service() {
  */
 internal class PairingEndpoint(
     private val clock: () -> Long = SystemClock::elapsedRealtime,
+    private val trust: InstallationTrustRepository,
     coreFactory: () -> PairingCore = { VelesPairingCore() },
 ) {
     private val limits = PairingLimits()
@@ -252,6 +253,7 @@ internal class PairingEndpoint(
         window = window,
         admission = admission,
         conn = conn,
+        trust = trust,
         coreProvider = { core },
         clock = clock,
         limits = limits,

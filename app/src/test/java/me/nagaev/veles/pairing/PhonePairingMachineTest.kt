@@ -4,6 +4,11 @@ import kotlinx.coroutines.runBlocking
 import me.nagaev.veles.session.P256
 import me.nagaev.veles.session.Role
 import me.nagaev.veles.session.TestPeers
+import me.nagaev.veles.trust.ActivationStep
+import me.nagaev.veles.trust.InstallationIdentity
+import me.nagaev.veles.trust.InstallationTrustRepository
+import me.nagaev.veles.trust.PendingPeer
+import me.nagaev.veles.trust.TrustedPeer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -141,7 +146,7 @@ class PhonePairingMachineTest : PairingTestBase() {
         val window = PairingWindow({ now })
         window.open()
         val pairingId = window.pairingId
-        val machine = PhonePairingMachine(window, admission, CONN_ONE, { fake }, { now }, PairingLimits())
+        val machine = PhonePairingMachine(window, admission, CONN_ONE, NoTrust, { fake }, { now }, PairingLimits())
         try {
             now = 1_000L
             machine.onFrame(requestFrame())
@@ -409,6 +414,7 @@ class PhonePairingMachineTest : PairingTestBase() {
             window,
             admission,
             conn,
+            NoTrust,
             { fake },
             { now },
             limits,
@@ -430,7 +436,7 @@ class PhonePairingMachineTest : PairingTestBase() {
         suspend fun send(machine: PhonePairingMachine, frame: ByteArray): List<Outgoing> = machine.onFrame(frame)
 
         fun closeAll() {
-            machines.forEach(PhonePairingMachine::onDisconnect)
+            runBlocking { machines.forEach { it.onDisconnect() } }
             machines.clear()
         }
     }
@@ -480,6 +486,16 @@ class PhonePairingMachineTest : PairingTestBase() {
         override fun openHandles(): Int = open.size
 
         fun count(name: String): Int = calls.count { it == name }
+    }
+
+    private object NoTrust : InstallationTrustRepository {
+        override suspend fun identity(): InstallationIdentity = error("enrollment is not under test")
+        override suspend fun peers(): List<TrustedPeer> = emptyList()
+        override suspend fun activePeers(): List<TrustedPeer> = emptyList()
+        override suspend fun addPending(peer: PendingPeer) = error("enrollment is not under test")
+        override suspend fun confirm(peerId: String, step: ActivationStep, proof: ByteArray) = error("enrollment is not under test")
+        override suspend fun revoke(peerId: String) = error("enrollment is not under test")
+        override suspend fun markAuthenticated(peerId: String) = error("enrollment is not under test")
     }
 
     private companion object {

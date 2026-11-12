@@ -2,9 +2,14 @@ package me.nagaev.veles.pairing
 
 import android.os.SystemClock
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import me.nagaev.veles.session.AppErrorCode
 import me.nagaev.veles.session.P256
+import me.nagaev.veles.session.RecordType
 import me.nagaev.veles.session.Role
 import me.nagaev.veles.session.SessionReject
+import me.nagaev.veles.trust.InstallationTrustRepository
 import java.security.SecureRandom
 
 /** The phone pairing machine's state (`phone_pairing` in `protocol/v1/states.json`). */
@@ -14,22 +19,29 @@ enum class PairingState {
     SPAKE_IN_FLIGHT,
     AWAITING_CB,
     ENROLLMENT_PROTECTED,
+    AWAITING_COMMIT,
 }
 
 /**
  * One pairing connection as the host drives it. [PhonePairingMachine] is the only
  * production implementation; the host's default rejects `pairing_request` without a
  * window machine, which keeps every non-pairing test free of production wiring.
+ *
+ * Every entry point is suspending: the enrollment flow writes the trust store
+ * (`addPending`/`revoke`), so the machine serializes on a [Mutex] instead of a plain
+ * monitor. `SessionHost` already serializes each generation, and it is the only
+ * production caller of the lifecycle methods.
  */
 interface PairingConnection {
     suspend fun onFrame(bytes: ByteArray): List<Outgoing>
 
     /** Drives the 30 s step inactivity timeout; the host ticks every second. */
-    fun onTick(): List<Outgoing>
+    suspend fun onTick(): List<Outgoing>
 
-    fun onDisconnect()
+    suspend fun onDisconnect()
 
-    fun cancel()
+    /** Local cancel: tears the connection down and deletes this enrollment's pending record. */
+    suspend fun cancel(): List<Outgoing>
 }
 
 /**
@@ -50,16 +62,16 @@ internal class RejectingPairingConnection : PairingConnection {
         return listOf(Outgoing.Frame(PairingFrames.preauthReject()), Outgoing.Disconnect)
     }
 
-    override fun onTick(): List<Outgoing> = emptyList()
+    override suspend fun onTick(): List<Outgoing> = emptyList()
 
-    override fun onDisconnect() = Unit
+    override suspend fun onDisconnect() = Unit
 
-    override fun cancel() = Unit
+    override suspend fun cancel(): List<Outgoing> = emptyList()
 }
 
 /**
  * One connection's pairing execution on top of the phone-wide [PairingWindow] and
- * [PairingAdmission] (§11.1 through a verified `cB`).
+ * [PairingAdmission] (§11.1 through `awaiting_commit`).
  *
  * Admission order for a `pairing_client_point` is exactly the normative one: framing and
  * `pairing_id`, the window deadline, [P256.requireValidPoint], the atomic non-refundable
@@ -68,30 +80,40 @@ internal class RejectingPairingConnection : PairingConnection {
  * releases the in-flight slot and emits the identical empty `preauth_reject` plus a
  * disconnect.
  *
- * The execution handle stays open after a verified `cB`: the protected enrollment
- * channel (Task 7's `EnrollmentSession`) finishes it and consumes `Ke`. Every other exit
- * path — disconnect, inactivity, cancel, admission failure — closes it.
+ * At the verified `cB` (OTP2-CRY-009a) the code is consumed and the window closed, the
+ * handle is finished for `Ke`, and the §5.1 schedule is derived in memory. The phone then
+ * sends its own `enroll_identity`; only after the client's authenticated record passed
+ * OTP2-REC-010/011a and the OTP2-STA-012 duplicate guard may it durably persist the complete
+ * pending record (with `ET`) and send `enrollment_prepare`. Any failure after `cB` erases
+ * the enrollment keys and keeps the code consumed; the only continuation is the signed
+ * recovery path of a later connection.
  *
- * The machine serializes on a plain lock: [onTick], [onDisconnect] and [cancel] are
- * non-suspending in the connection seam, and the host already serializes every call for a
- * generation under its own `Mutex`. Task 7 can move this to a `Mutex` together with the
- * suspend trust-store calls; until then `synchronized` is the only lock those three
- * lifecycle calls can take.
+ * A native handle, a connection hint or any wire value never selects the local identity:
+ * [EnrollmentSession.create] resolves it from the trust store.
  */
+@Suppress("LongParameterList", "TooManyFunctions") // One seam per §11.1 step and one dependency per collaborator.
 class PhonePairingMachine(
     private val window: PairingWindow,
     private val admission: PairingAdmission,
     private val conn: ConnId,
+    private val trust: InstallationTrustRepository,
     private val coreProvider: () -> PairingCore,
     private val clock: () -> Long = SystemClock::elapsedRealtime,
     private val limits: PairingLimits = PairingLimits(),
     private val nonce: () -> ByteArray = { ByteArray(NONCE_BYTES).also(SecureRandom()::nextBytes) },
+    private val label: () -> String = { DEVICE_LABEL },
+    private val identityNonce: () -> ByteArray = { ByteArray(IDENTITY_NONCE_BYTES).also(SecureRandom()::nextBytes) },
 ) : PairingConnection {
-    private val lock = Any()
+    private val mutex = Mutex()
     private var execution: PairingExecution? = null
+    private var enrollment: EnrollmentSession? = null
     private var pairingId: ByteArray? = null
     private var clientNonce: ByteArray? = null
     private var context: ByteArray? = null
+    private var phonePoint: ByteArray? = null
+    private var clientPoint: ByteArray? = null
+    private var phoneConfirm: ByteArray? = null
+    private var clientConfirm: ByteArray? = null
     private var holdsOperation = false
     private var lastActivity = 0L
 
@@ -99,44 +121,74 @@ class PhonePairingMachine(
     var state: PairingState = PairingState.IDLE
         private set
 
+    /** The live enrollment key holder, for the OTP2-CRY-011/019e erasure assertions. */
+    internal fun enrollmentKeysForTest(): EnrollmentKeys? = enrollment?.keysForTest
+
     override suspend fun onFrame(bytes: ByteArray): List<Outgoing> = try {
-        synchronized(lock) { handleFrame(bytes) }
+        mutex.withLock {
+            // After a verified cB every frame is a protected enrollment record, including a
+            // malformed one: routing it through the pairing decoder would spend the
+            // malformed-pairing budget on authenticated traffic and still fail closed.
+            if (state == PairingState.ENROLLMENT_PROTECTED || state == PairingState.AWAITING_COMMIT) {
+                onProtectedRecord(bytes)
+            } else {
+                handleFrame(bytes)
+            }
+        }
     } catch (cancellation: CancellationException) {
         throw cancellation
     } catch (_: Exception) {
-        // Every pre-confirmation failure must fail closed with the identical generic
+        // Every post-confirmation failure must fail closed with the identical generic
         // frame; an unexpected core failure must not leave the peer connected.
-        synchronized(lock) { reject() }
+        mutex.withLock { reject() }
     }
 
-    override fun onTick(): List<Outgoing> = synchronized(lock) {
-        if (state !in ACTIVE_STATES) return emptyList()
-        if (clock() - lastActivity < limits.requestInactivityTimeoutMillis) return emptyList()
+    override suspend fun onTick(): List<Outgoing> = mutex.withLock {
+        if (state !in ACTIVE_STATES) return@withLock emptyList()
+        if (clock() - lastActivity < limits.requestInactivityTimeoutMillis) return@withLock emptyList()
         eraseExecution()
+        eraseEnrollment()
+        eraseSecrets()
         state = if (window.isOpen()) PairingState.WINDOW_OPEN else PairingState.IDLE
         listOf(Outgoing.Disconnect)
     }
 
-    override fun onDisconnect() = synchronized(lock) {
+    override suspend fun onDisconnect() = mutex.withLock {
         eraseExecution()
+        eraseEnrollment()
         eraseSecrets()
         state = if (window.isOpen()) PairingState.WINDOW_OPEN else PairingState.IDLE
     }
 
-    override fun cancel() = synchronized(lock) {
+    override suspend fun cancel(): List<Outgoing> = mutex.withLock {
+        // Only a record this enrollment persisted may be deleted: an earlier active or
+        // unrelated peer record is never touched by a cancel.
+        val peerId = enrollment?.persistedPeerId
         eraseExecution()
+        eraseEnrollment()
         eraseSecrets()
         state = PairingState.IDLE
         window.cancel()
+        if (peerId != null) {
+            try {
+                trust.revoke(peerId)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                // Local state is already erased; a store failure leaves only an inactive
+                // record, never an open window or a live key.
+            }
+        }
+        listOf(Outgoing.Disconnect)
     }
 
     @Suppress("ReturnCount") // One branch per distinct admission or protocol failure.
-    private fun handleFrame(bytes: ByteArray): List<Outgoing> {
+    private suspend fun handleFrame(bytes: ByteArray): List<Outgoing> {
         val frame = try {
             PairingFrames.decode(bytes)
         } catch (_: PairingFrameReject) {
             // Only `0x01`-`0x05` frames are pairing traffic: a stray reconnect frame is
-            // rejected generically but never spends the malformed pairing-connection budget.
+            // rejected generically but never spends the malformed pair-connection budget.
             if (isPairingType(bytes)) admission.malformed(conn)
             return reject()
         }
@@ -150,7 +202,7 @@ class PhonePairingMachine(
     }
 
     @Suppress("ReturnCount") // One branch per admission gate, in normative order.
-    private fun onRequest(payload: ByteArray): List<Outgoing> {
+    private suspend fun onRequest(payload: ByteArray): List<Outgoing> {
         // Every `pairing_request` spends the request budget at ingress, including a busy,
         // window-closed, over-limit or malformed one (limits.json:pairing_request_rolling_max).
         if (admission.requestAllowed(conn) == Decision.Reject) return reject()
@@ -171,6 +223,7 @@ class PhonePairingMachine(
             pairingId = currentId
             clientNonce = request.clientNonce.copyOf()
             context = ctx
+            phonePoint = started.point.copyOf()
             state = PairingState.SPAKE_IN_FLIGHT
             lastActivity = clock()
             val offer = offerPayload(currentId, phoneNonce, started.point)
@@ -181,7 +234,7 @@ class PhonePairingMachine(
     }
 
     @Suppress("ReturnCount") // One branch per admission gate, in normative order.
-    private fun onPoint(payload: ByteArray): List<Outgoing> {
+    private suspend fun onPoint(payload: ByteArray): List<Outgoing> {
         // A point outside an execution is malformed pairing input (and so counts against
         // the malformed-connection budget, like a first-frame `0x02`-`0x03`).
         if (state != PairingState.SPAKE_IN_FLIGHT) return malformedReject()
@@ -204,13 +257,15 @@ class PhonePairingMachine(
             return reject()
         }
         if (confirmation.size != CONFIRMATION_BYTES) return reject()
+        clientPoint = payload.copyOf()
+        phoneConfirm = confirmation.copyOf()
         state = PairingState.AWAITING_CB
         lastActivity = clock()
         return listOf(Outgoing.Frame(PairingFrames.encode(PairingFrameType.CA, confirmation)))
     }
 
-    @Suppress("ReturnCount") // One branch per admission gate, in normative order.
-    private fun onConfirmation(payload: ByteArray): List<Outgoing> {
+    @Suppress("ReturnCount") // One branch per normative step of the verified-cB transition.
+    private suspend fun onConfirmation(payload: ByteArray): List<Outgoing> {
         // A confirmation outside `awaiting_cB` is malformed pairing input (and so counts
         // against the malformed-connection budget, like a first-frame `0x05`).
         if (state != PairingState.AWAITING_CB) return malformedReject()
@@ -225,9 +280,128 @@ class PhonePairingMachine(
         }
         // OTP2-CRY-009a: a verified cB consumes the one-use code and closes the window.
         window.cancel()
+        clientConfirm = payload.copyOf()
+        val session = try {
+            openEnrollment(current)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            return reject()
+        }
+        // The handle is consumed by `finish`; a later reject must not close it twice.
+        execution = null
+        enrollment = session
         state = PairingState.ENROLLMENT_PROTECTED
         lastActivity = clock()
-        return emptyList()
+        return try {
+            // OTP2-REC-010 order: the phone releases its record only after verifying cB.
+            listOf(Outgoing.Frame(session.ownIdentityFrame()))
+        } catch (_: Exception) {
+            reject()
+        }
+    }
+
+    /** Derives `Ke`, the §5.1 schedule and the phone's own identity record from `cB`. */
+    private suspend fun openEnrollment(current: PairingExecution): EnrollmentSession {
+        val pts = phonePoint
+        val peer = clientPoint
+        val ca = phoneConfirm
+        val cb = clientConfirm
+        val ctx = context
+        if (pts == null || peer == null || ca == null || cb == null || ctx == null) throw EnrollmentReject()
+        val shared = current.finish()
+        return try {
+            EnrollmentSession.create(
+                shared = shared,
+                context = ctx,
+                phonePoint = pts,
+                clientPoint = peer,
+                phoneConfirm = ca,
+                clientConfirm = cb,
+                trust = trust,
+                label = label(),
+                identityNonce = identityNonce(),
+            )
+        } finally {
+            shared.fill(0)
+        }
+    }
+
+    @Suppress("ReturnCount") // One branch per allow-list type and its handler.
+    private suspend fun onProtectedRecord(bytes: ByteArray): List<Outgoing> {
+        val session = enrollment ?: return reject()
+        val record = try {
+            session.open(bytes)
+        } catch (_: Exception) {
+            return reject()
+        }
+        return try {
+            when (record.type) {
+                RecordType.ENROLL_IDENTITY -> onClientIdentity(session, record.body)
+                // OTP2-CRY-020a framework records are authorized but carry no state here.
+                RecordType.APP_HEARTBEAT -> if (record.body.isEmpty()) emptyList() else reject()
+                // Any other authorized type has no handler on this task's states: fail closed
+                // rather than half-process an activation record.
+                else -> reject()
+            }
+        } catch (_: EnrollmentReject) {
+            reject()
+        } finally {
+            record.body.fill(0)
+        }
+    }
+
+    @Suppress("ReturnCount") // Distinct outcomes: bad record, duplicate, persist failure, prepare.
+    private suspend fun onClientIdentity(session: EnrollmentSession, body: ByteArray): List<Outgoing> {
+        // OTP2-REC-010/011a and OTP2-CRY-005a: structure, role-bound device type, own-record
+        // fingerprint and the full P-256 point check all run before any store is touched.
+        val client = try {
+            var received: IdentityRecord? = null
+            EnrollmentRecords.decodeForStorage(body, IdentityRole.CLIENT, P256::requireValidPoint) { received = it }
+            received ?: throw EnrollmentReject()
+        } catch (_: Exception) {
+            return reject()
+        }
+        val canonical = try {
+            EnrollmentRecords.encode(client, IdentityRole.CLIENT)
+        } catch (_: Exception) {
+            return reject()
+        }
+        val et = try {
+            session.transcript(canonical)
+        } catch (_: Exception) {
+            canonical.fill(0)
+            return reject()
+        } finally {
+            canonical.fill(0)
+        }
+        return try {
+            when (session.persist(client, et)) {
+                EnrollmentSession.PersistResult.DUPLICATE -> {
+                    val error = try {
+                        session.appErrorFrame(AppErrorCode.ENROLLMENT_REJECTED)
+                    } catch (_: Exception) {
+                        return reject()
+                    }
+                    // OTP2-STA-012: terminate, erase pairing state and keep the existing record.
+                    terminate(error)
+                }
+                EnrollmentSession.PersistResult.FAILED -> reject()
+                EnrollmentSession.PersistResult.PERSISTED -> {
+                    val prepare = try {
+                        session.prepareFrame()
+                    } catch (_: Exception) {
+                        return reject()
+                    }
+                    // OTP2-STA-010a: awaiting_commit is entered only by a sent prepare.
+                    state = PairingState.AWAITING_COMMIT
+                    lastActivity = clock()
+                    listOf(Outgoing.Frame(prepare))
+                }
+            }
+        } finally {
+            et.fill(0)
+        }
     }
 
     /** True while the window is open and still bound to this execution's `pairing_id`. */
@@ -261,8 +435,19 @@ class PhonePairingMachine(
     /** Closes the handle, releases the slot and returns the generic failure plus disconnect. */
     private fun reject(): List<Outgoing> {
         eraseExecution()
+        eraseEnrollment()
+        eraseSecrets()
         state = if (window.isOpen()) PairingState.WINDOW_OPEN else PairingState.IDLE
         return listOf(Outgoing.Frame(PairingFrames.preauthReject()), Outgoing.Disconnect)
+    }
+
+    /** Erases the session, keeps the window consumed and closes with [error] first. */
+    private fun terminate(error: ByteArray): List<Outgoing> {
+        eraseExecution()
+        eraseEnrollment()
+        eraseSecrets()
+        state = if (window.isOpen()) PairingState.WINDOW_OPEN else PairingState.IDLE
+        return listOf(Outgoing.Frame(error), Outgoing.Disconnect)
     }
 
     private fun malformedReject(): List<Outgoing> {
@@ -279,6 +464,11 @@ class PhonePairingMachine(
         }
     }
 
+    private fun eraseEnrollment() {
+        enrollment?.erase()
+        enrollment = null
+    }
+
     private fun eraseSecrets() {
         pairingId?.fill(0)
         pairingId = null
@@ -286,6 +476,14 @@ class PhonePairingMachine(
         clientNonce = null
         context?.fill(0)
         context = null
+        phonePoint?.fill(0)
+        phonePoint = null
+        clientPoint?.fill(0)
+        clientPoint = null
+        phoneConfirm?.fill(0)
+        phoneConfirm = null
+        clientConfirm?.fill(0)
+        clientConfirm = null
     }
 
     private companion object {
@@ -293,7 +491,10 @@ class PhonePairingMachine(
             PairingState.SPAKE_IN_FLIGHT,
             PairingState.AWAITING_CB,
             PairingState.ENROLLMENT_PROTECTED,
+            PairingState.AWAITING_COMMIT,
         )
+        const val DEVICE_LABEL = "Phone"
+        const val IDENTITY_NONCE_BYTES = 16
     }
 }
 
