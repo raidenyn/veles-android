@@ -67,14 +67,24 @@ class RecoveryKeysTest {
         )
         val progress = engine.driveToPeerConfirm(client)
 
+        // The engine derived both keys from the record's ET and this session's fixture PRK.
+        // Keep the live holder across the gate: the null in the context alone cannot prove the
+        // in-place erasure, because that null is the separate full-class branch.
+        val holder = engine.recoveryKeysForTest ?: error("a record with ET must derive recovery keys")
+        assertArrayEquals(bytes(outputs, "k_rec_client"), holder.kRecClient)
+        assertArrayEquals(bytes(outputs, "k_rec_phone"), holder.kRecPhone)
+
         assertTrue(engine.onInbound(progress.clientConfirmRecord).isEmpty())
         val authenticated = engine.onSendComplete(progress.token, true)
             .single() as SessionEffect.Authenticated
         assertEquals(SessionClass.FULL, authenticated.sessionClass)
         assertTrue(engine.isOpen)
 
-        // OTP2-CRY-019f: a full session never hands the recovery keys to the handler; the
-        // holder was zeroed at the single class-fix point.
+        // OTP2-CRY-019f: the holder is zeroed once the class is full, and the session stays open.
+        assertArrayEquals(ByteArray(HASH_BYTES), holder.kRecClient)
+        assertArrayEquals(ByteArray(HASH_BYTES), holder.kRecPhone)
+
+        // ... and a full session never hands those keys to the session handler either.
         val context = checkNotNull(handler.context) { "the handler must receive the session context" }
         assertEquals(SessionClass.FULL, context.sessionClass)
         assertNull(context.recovery)

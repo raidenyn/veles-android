@@ -101,12 +101,28 @@ describe('recovery activation keys', () => {
             handler,
         });
 
-        const { authenticated } = await harness.openSession({ peerState: PEER_STATE_ACTIVE });
+        const drive = await harness.drive();
+
+        // The engine derived both keys from the looked-up record's ET. Keep the live holder
+        // across the gate: the null in the context alone cannot prove the in-place erasure,
+        // because that null is the separate full-class branch.
+        const holder = harness.engine._recoveryKeys;
+        expect(holder).not.toBeNull();
+        expect(holder?.kRecClient.some((byte) => byte !== 0)).toBe(true);
+        expect(holder?.kRecPhone.some((byte) => byte !== 0)).toBe(true);
+
+        await harness.engine.onSendComplete(drive.token, true);
+        const authenticated = (
+            await harness.engine.onInbound(await harness.confirmRecord(PEER_STATE_ACTIVE))
+        )[0];
         expect(authenticated).toMatchObject({ kind: 'authenticated', sessionClass: 'FULL' });
         expect(harness.engine.isOpen).toBe(true);
 
-        // OTP2-CRY-019f: a full session never hands the recovery holder to the handler; the
-        // holder was zeroed at the single class-fix point.
+        // OTP2-CRY-019f: the holder is zeroed once the class is full, and the session stays open.
+        expect(holder?.kRecClient).toEqual(new Uint8Array(32));
+        expect(holder?.kRecPhone).toEqual(new Uint8Array(32));
+
+        // ... and a full session never hands those keys to the session handler either.
         expect(captured?.sessionClass).toBe('FULL');
         expect(captured?.recovery).toBeNull();
     });

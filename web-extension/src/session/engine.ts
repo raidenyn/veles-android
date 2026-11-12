@@ -583,6 +583,15 @@ export class ClientSessionEngine {
         return this.#state.phase === 'closed' && this.#state.keys === null;
     }
 
+    /**
+     * Test-only OTP2-CRY-019f observation: the live recovery holder of the derived keys. It is
+     * the same holder the session context carries for a non-full class, so a test can take it
+     * before the gate and assert its bytes are zeroed once the class is `full`.
+     */
+    get _recoveryKeys(): RecoveryKeys | null {
+        return this.#state.keys?.recovery ?? null;
+    }
+
     /** Test-only read of the next expected inbound sequence (Task 10 effect observations). */
     get _inboundSequence(): bigint {
         return this.#state.inboundSequence;

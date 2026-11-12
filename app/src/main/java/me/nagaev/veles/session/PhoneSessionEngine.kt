@@ -2,6 +2,7 @@ package me.nagaev.veles.session
 
 import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CancellationException
+import me.nagaev.veles.trust.TrustEncoding
 import java.math.BigInteger
 import java.security.KeyPair
 import java.security.MessageDigest
@@ -186,6 +187,14 @@ class PhoneSessionEngine(
     /** Test-only OTP2-STA-015 erasure observation: final state with no key material left. */
     @VisibleForTesting
     val keysErasedForTest: Boolean get() = state == State.CLOSED && keys == null
+
+    /**
+     * Test-only OTP2-CRY-019f observation: the live recovery holder of the derived keys. It is
+     * the same holder the session context carries for a non-full class, so a test can take it
+     * before the gate and assert its bytes are zeroed once the class resolves to `full`.
+     */
+    @VisibleForTesting
+    val recoveryKeysForTest: RecoveryKeys? get() = keys?.recovery
 
     @Suppress("ReturnCount") // Each validation failure rejects before any state is applied.
     private suspend fun onClientHello(bytes: ByteArray): List<SessionEffect> {
@@ -537,19 +546,11 @@ class PhoneSessionEngine(
     ): SessionContext = SessionContext(
         sessionIdPrefix = prefix.copyOf(),
         sessionClass = cls,
-        peerId = hexOf(installationId),
+        peerId = TrustEncoding.hex(installationId),
         et = record.et?.copyOf(),
         peerState = peerState,
         recovery = if (cls == SessionClass.FULL) null else keys?.recovery,
     )
-
-    private fun hexOf(value: ByteArray): String = buildString(value.size * 2) {
-        for (byte in value) {
-            val unsigned = byte.toInt() and U8_MASK
-            append(HEX_DIGITS[unsigned ushr HEX_BITS])
-            append(HEX_DIGITS[unsigned and HEX_MASK])
-        }
-    }
 
     private fun selectClass(record: PeerRecord, confirmedPeerState: Int): SessionClass = when (record.state) {
         LocalRecordState.ACTIVE ->
@@ -742,9 +743,6 @@ class PhoneSessionEngine(
         const val SESSION_PREFIX_BYTES = 8
         const val UNCOMPRESSED_TAG = 0x04
         const val U8_MASK = 0xFF
-        const val HEX_BITS = 4
-        const val HEX_MASK = 0x0F
-        const val HEX_DIGITS = "0123456789abcdef"
         const val PEER_STATE_ACTIVE = 0x01
         const val PEER_STATE_BELOW_ACTIVE = 0x02
         const val CONFIRM_SEQUENCE: ULong = 0uL

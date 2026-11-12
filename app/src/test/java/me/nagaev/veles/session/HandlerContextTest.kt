@@ -93,7 +93,8 @@ class HandlerContextTest {
         val error = client.openPhoneRecord((effects[0] as SessionEffect.Send).bytes, 1uL)
         assertEquals(RecordType.APP_ERROR.wire, error.type)
         assertEquals(AppErrorCode.PROTOCOL_VIOLATION.wire, error.body[0].toInt() and 0xFF)
-        assertTrue(effects[1] is SessionEffect.Terminated)
+        val terminated = effects[1] as SessionEffect.Terminated
+        assertEquals("the no-handler branch fired, not authorization", "unhandled", terminated.reason)
         assertEquals(SessionEffect.Close, effects[2])
         assertTrue("nothing is delivered", effects.none { it is SessionEffect.Deliver })
         assertFalse("the session ends", engine.isOpen)
