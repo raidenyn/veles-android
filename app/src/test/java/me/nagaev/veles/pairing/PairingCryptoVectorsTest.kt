@@ -29,9 +29,45 @@ class PairingCryptoVectorsTest : PairingTestBase() {
     fun pairing_code_vectors_round_trip_on_the_real_core() {
         val positives = fixtures().filter { it.str("id").startsWith("veles-pairing-code-") }
         assertEquals(2, positives.size)
+        assertEquals(
+            "both committed pairing-code vectors must be consumed",
+            setOf("veles-pairing-code-000000", "veles-pairing-code-123456"),
+            positives.map { it.str("id") }.toSet(),
+        )
 
         for (fixture in positives) {
             roundTrip(fixture.obj("input").str("code"), hex(fixture.obj("expected").obj("outputs").str("ctx")))
+        }
+        assertEquals(0, core.openHandles())
+    }
+
+    @Test
+    fun context_mismatch_vector_cannot_start_and_a_full_mismatch_fails_confirmation() {
+        val negative = fixture("veles-neg-context-mismatch")
+        val deviation = negative.obj("input").obj("deviation")
+        val code = negative.obj("input").str("code").toByteArray(Charsets.US_ASCII)
+
+        // The vector's deviation is a truncated public context; the core bounds the context
+        // length, so it can never start an execution with it.
+        val truncated = hex(deviation.str("value"))
+        assertEquals(16, truncated.size)
+        assertThrows(PairingCoreException::class.java) { core.start(Role.CLIENT, code, truncated) }
+
+        val base = contextOf(deviation.str("negates"))
+        val mismatched = base.copyOf().also { hex(deviation.str("value")).copyInto(it, CONTEXT_PREFIX_BYTES + 6) }
+        val phone = core.start(Role.PHONE, code, base)
+        val client = core.start(Role.CLIENT, code, mismatched)
+
+        PairingExecution(core, phone.handle).use { phoneSide ->
+            PairingExecution(core, client.handle).use { clientSide ->
+                val ca = phoneSide.exchange(client.point)
+                assertEquals(CONFIRMATION_BYTES, ca.size)
+                assertEquals(0, clientSide.exchange(phone.point).size)
+                assertThrows(
+                    "a different public context must fail the SPAKE2 confirmation",
+                    PairingCoreException::class.java,
+                ) { clientSide.confirm(ca) }
+            }
         }
         assertEquals(0, core.openHandles())
     }
@@ -204,6 +240,7 @@ class PairingCryptoVectorsTest : PairingTestBase() {
 
     private companion object {
         const val BASE_POSITIVE = "veles-pairing-code-000000"
+        const val CONTEXT_PREFIX_BYTES = 30
         const val POINT_BYTES = 65
         const val CONFIRMATION_BYTES = 32
         const val KEY_BYTES = 16

@@ -1325,7 +1325,9 @@ describe('OTP-09 scenario inventory', () => {
         ).toHaveLength(21);
     });
 
-    it('otp10InventoryOnlyOverridesTheOtp09Otp10Deferrals', () => {
+    it('otp10InventoryOwnsTheFormerOtp09DeferralsWithoutOverlap', () => {
+        // OTP-10 is implemented: the ten former OTP-09 deferrals now live only in the
+        // OTP-10 inventory (no OTP-09 entry may still override them).
         const deferredToOtp10 = Object.entries(INVENTORY_ENTRIES)
             .filter(([, entry]) => entry === 'deferred:OTP-10')
             .map(([id]) => id)
@@ -1343,6 +1345,19 @@ describe('OTP-09 scenario inventory', () => {
         expect(
             Object.keys(OTP10_INVENTORY_ENTRIES).filter((id) => SESSION_IDS.has(id)),
         ).toHaveLength(10);
+    });
+
+    it('nothingIsDeferredToOtp10', () => {
+        // OTP-10 is implemented: the merged inventory owns every former deferral as an
+        // executed scenario or an explicit engine-effect assertion.
+        expect(
+            Object.entries(INVENTORY_ENTRIES).filter(([, entry]) => entry === 'deferred:OTP-10'),
+        ).toEqual([]);
+        expect(
+            Object.values(OTP10_INVENTORY_ENTRIES).filter(
+                (entry) => typeof entry === 'string' && OTP10_DEFERRAL.test(entry),
+            ),
+        ).toEqual([]);
     });
 
     it('enrollmentTracesBelongToTheEnrollmentRunners', () => {

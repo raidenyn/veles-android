@@ -47,16 +47,9 @@
   "st-rec-policy-response-flag-settles-pull": "deferred:OTP-13/14",
   "st-neg-policy-notice-does-not-settle-pull": "deferred:OTP-13/14",
   "st-rec-phone-full-on-first-reconnect-peer-active": "execute",
-  "st-rec-full-pending-peer-commit-duplicate-no-regression": "deferred:OTP-10",
-  "st-rec-commit-lost-recovery": "deferred:OTP-10",
-  "st-rec-ack-lost-active-client-direct-ack": "deferred:OTP-10",
-  "st-rec-complete-lost-recovery-client": "deferred:OTP-10",
-  "st-rec-recovery-session-stays-recovery-only": "deferred:OTP-10",
   "st-rec-client-activation-pending-upgrades-on-phone-proof": "execute",
   "st-rec-revocation-is-generic-preauth-failure": "execute",
   "st-rec-revoke-disconnects-connected-peer": "deferred:OTP-11",
-  "st-rec-pending-expiry-deletes-incomplete": "deferred:OTP-10",
-  "st-rec-boot-continuity-loss-deletes-incomplete-only": "deferred:OTP-10",
   "st-rec-authentication-without-authorization": "execute",
   "st-rec-replay-of-prior-session-rejected": "execute",
   "st-rec-removal-mutual-authenticated": "deferred:OTP-11",
@@ -74,8 +67,5 @@
       "deliver": false
     }
   },
-  "st-rec-recovery-commit-mac-mismatch": "deferred:OTP-10",
-  "st-rec-recovery-complete-mac-mismatch": "deferred:OTP-10",
-  "st-rec-phone-complete-lost-prepares-then-full-session": "deferred:OTP-10",
   "st-rec-client-mirror-durable-across-restart": "execute"
 }

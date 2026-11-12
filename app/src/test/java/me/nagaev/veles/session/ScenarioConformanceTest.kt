@@ -90,7 +90,9 @@ class ScenarioConformanceTest {
     }
 
     @Test
-    fun otp10InventoryOnlyOverridesTheOtp09Otp10Deferrals() {
+    fun otp10InventoryOwnsTheFormerOtp09DeferralsWithoutOverlap() {
+        // OTP-10 is implemented: the ten former OTP-09 deferrals now live only in the
+        // OTP-10 inventory (no OTP-09 entry may still override them).
         val deferredToOtp10 = inventory.filterValues { it == "deferred:OTP-10" }.keys
         assertEquals(
             "an OTP-10 entry may only override the OTP-09 deferred:OTP-10 entry of the same id",
@@ -105,6 +107,20 @@ class ScenarioConformanceTest {
             "the OTP-10 inventory owns exactly the ten recovery ids OTP-09 deferred",
             10,
             otp10Inventory.keys.count { it in ScenarioFixtures.sessionIds },
+        )
+    }
+
+    @Test
+    fun nothingIsDeferredToOtp10() {
+        // OTP-10 is implemented: the merged inventory owns every former deferral as an
+        // executed scenario or an explicit engine-effect assertion.
+        assertTrue(
+            "no OTP-09 entry may still defer to OTP-10",
+            inventory.values.none { it == "deferred:OTP-10" },
+        )
+        assertTrue(
+            "no OTP-10 entry may defer to a plan task",
+            otp10Inventory.values.none { it is String && OTP10_DEFERRAL.matches(it) },
         )
     }
 
@@ -1520,7 +1536,8 @@ private object Effects {
             // runner-driven cancel/revoke must not satisfy this claim.
             "erase_incomplete_materials" -> steps.any {
                 it.terminated == "authorization" && it.simulate["act_mac_ok"] == "false"
-            } && run.transitions.any { it.second == "deleted" && it.first in INCOMPLETE_STATES }
+            } &&
+                run.transitions.any { it.second == "deleted" && it.first in INCOMPLETE_STATES }
             "erase_trust_record_revoked" -> sessions.any { it.revokedTrust }
             "reject_activation_mac_mismatch" -> steps.any {
                 it.terminated == "authorization" && it.simulate["act_mac_ok"] == "false"
