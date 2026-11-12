@@ -46,6 +46,7 @@ import {
 } from './connector/view-model';
 import type { ClientEngineDeps } from './session/engine';
 import type { DevelopmentProbe } from './debug/probe';
+import { initPairingCore } from './pairing/core';
 import { bytes } from './trust/model';
 import { normalizeLowS } from './session/ecdsa';
 import { IndexedDbIdentityStore } from './trust/identity';
@@ -1317,6 +1318,12 @@ async function bootstrapOwnedConnector(): Promise<ConnectorApp | null> {
         renderSecondaryPage(document, ownershipResult);
         return null;
     }
+
+    // OTP-10: the connector tab owns the bundled WASM pairing core; the MV3
+    // service worker never loads it. Warm the module once, off the startup
+    // path; a failure stays local to the pairing flow and never blocks the
+    // host connection.
+    void initPairingCore().catch(() => undefined);
 
     // Only the owner answers the launcher ping. Secondary/restored documents
     // therefore cannot be mistaken for the document that owns the host.

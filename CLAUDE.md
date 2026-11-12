@@ -71,13 +71,15 @@ Details: `docs/windows-ble-poc.md` (Android) and `docs/desktop-ble-poc.md` (macO
 # Run a single instrumented test class
 ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.nagaev.permissions.ui.VelesPermissionsAppTests
 
-# Web extension (OTP-01 sub-project 1a) — requires node >= 22 and npm on PATH
+# Web extension (OTP-01 sub-project 1a; OTP-10 bundles the generated WASM core) — requires node >= 22 and npm on PATH.
+# The source imports the generated package, so from the repo root run `./gradlew rustWasm` first;
+# npm run build/package/typecheck, npm test and the browser check all need it.
 cd web-extension
 npm ci                          # install deps from lockfile
 npm run format:check            # prettier check
 npm run lint                    # eslint
 npm run typecheck               # tsc --noEmit
-npm test                        # vitest source-level tests (smoke + manifest guard)
+npm test                        # vitest source-level tests (incl. the pairing core wrapper)
 npm run test:bundle             # vitest bundle tests (requires `npm run build` first)
 npm run package                 # vite build + deterministic zip + sha256 sidecar -> ../build/web-extension/
 
@@ -93,6 +95,10 @@ npm run package                 # vite build + deterministic zip + sha256 sideca
 
 # Build web-target WASM into web-extension/rust-wasm/pkg/
 ./gradlew rustWasm
+
+# Build the test-only host-JVM cdylib into build/rust/host-jni/ (never packaged or released);
+# testDebugUnitTest, :app:protocolJvmTest and the session loopback child JVM load it
+./gradlew rustHostJni
 
 # Native-bridge (OTP-01 sub-project 1c) — Tauri 2.x packaging/build scaffold for the Native Messaging host.
 # NOTE: these are existing TOOLING commands, not the approved production architecture. Per the RFC
@@ -267,6 +273,7 @@ On Android 15 (SDK 35)+, the OS redacts OTP/2FA content inside notifications bef
 | `otp/` | `NotificationListener` service, `CopyDataReceiver` |
 | `otp/handlers/` | `MessageHandler` / `OtpMessageHandler` interfaces, `RegexMessageHandler`, `CompositeMessageHandler`, `UserNotifierOtpMessageHandler` |
 | `otp/config/` | `BankHandlerConfig` (Room entity), `BankHandlerConfigDao`, `BankHandlerDatabase` (with seed), `BankHandlerRepository` |
+| `pairing/` | OTP-10 SPAKE2 pairing window, admission, `PairingExecution`, enrollment session and activation (new; lands with the pairing tasks) |
 | `permissions/` | `PermissionsActivity` launcher |
 | `permissions/services/` | `PermissionProvider` per type (`ACCESS_NOTIFICATIONS`, `SEND_NOTIFICATIONS`, `RECEIVE_SENSITIVE_NOTIFICATIONS`), `SensitiveNotificationsStatus`, `CompanionAssociationService`, `SensitiveNotificationPermissionProvider`, `IntentSenderLauncher` |
 | `permissions/viewmodal/` | `PermissionsViewModel` (StateFlow MVVM), `PermissionsState`, `PermissionsActions`, `SensitiveNotificationsUiState` |

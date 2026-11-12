@@ -363,6 +363,48 @@ test('web extension workflow packages the extension after its ordinary checks', 
   assert.doesNotMatch(source, /secrets:/, 'Web workflow must not accept signing secrets');
 });
 
+// OTP-10: every extension job that resolves the WASM import builds the package
+// first, with the pinned Rust toolchain and the shared tool cache.
+function assertWasmBeforeNpm(block, name) {
+  const runs = steps(block).map((step) => runCommands(step.join('\n')).join('\n'));
+  const wasm = runs.findIndex((run) => /(?:^|\s)\.\/gradlew rustWasm(?:\s|$)/.test(run));
+  assert.ok(wasm >= 0, `${name} must run ./gradlew rustWasm`);
+  const npm = runs.findIndex((run) => /(?:^|\s)npm (?:ci|test|run)\b/.test(run));
+  assert.ok(npm === -1 || wasm < npm, `${name} must run ./gradlew rustWasm before npm`);
+}
+
+function assertWasmToolchain(block, name) {
+  assert.match(block, /actions\/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5/, `${name} must set up the pinned JDK for Gradle`);
+  assert.match(block, /gradle\/actions\/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6/, `${name} must set up Gradle`);
+  assert.match(block, /working-directory:\s*rust\s*\n\s*run:\s*rustup show active-toolchain/, `${name} must activate the pinned Rust toolchain`);
+  assert.match(block, /path:\s*build\/rust-tools/, `${name} must cache the pinned Rust tools`);
+  assert.match(block, /key:\s*rust-tools-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-\$\{\{ hashFiles\('rust\/rust-toolchain\.toml', 'rust\/toolchain-tools\.toml', 'rust\/Cargo\.lock'\) \}\}/, `${name} must key the cache on the Rust pins`);
+  assertWasmBeforeNpm(block, name);
+}
+
+test('web extension workflows build the WASM package before the TS client', async () => {
+  const check = await workflow('check-web-extension.yml');
+  const checkJobs = workflowJobBlocks(executableYaml(check));
+  assert.deepEqual(Object.keys(checkJobs).sort(), ['browser-tests', 'lint', 'unit-tests']);
+  for (const [job, block] of Object.entries(checkJobs)) assertWasmToolchain(block, `check-web-extension.yml ${job}`);
+
+  const build = await workflow('build-web-extension.yml');
+  const buildJobs = workflowJobBlocks(executableYaml(build));
+  assert.deepEqual(Object.keys(buildJobs), ['build']);
+  assertWasmToolchain(buildJobs.build, 'build-web-extension.yml build');
+
+  // Negative: a missing WASM step or one placed after the npm client fails.
+  const dropped = check.replace(/^ *- run: \.\/gradlew rustWasm\n/gm, '');
+  assert.notEqual(dropped, check);
+  assert.throws(() => assertWasmToolchain(workflowJobBlocks(executableYaml(dropped)).lint, 'mutated lint'), /rustWasm/);
+  const moved = build.replace(
+    '      # The extension imports the generated WASM package (build, typecheck and tests).\n      - run: ./gradlew rustWasm\n      - run: npm ci --ignore-scripts\n        working-directory: web-extension\n',
+    '      - run: npm ci --ignore-scripts\n        working-directory: web-extension\n      - run: ./gradlew rustWasm\n',
+  );
+  assert.notEqual(moved, build);
+  assert.throws(() => assertWasmToolchain(workflowJobBlocks(executableYaml(moved)).build, 'mutated build'), /before npm/);
+});
+
 test('Rust workflow packages rust-jni-wasm without a reference rebuild', async () => {
   const source = await workflow('build-rust.yml');
   assertReusableWorkflow(source, 'build-rust.yml');
@@ -781,7 +823,8 @@ function uploadPathsOrEmpty(source) {
 }
 
 const CLEAN_CONTRACT_ORDER = [
-  ':app:assembleDebug', 'verify-apk-jni.sh', 'npm run build', './gradlew clean', 'assert-clean.sh', ':app:assembleDebug', 'verify-apk-jni.sh',
+  ':app:assembleDebug', 'verify-apk-jni.sh', './gradlew rustHostJni', './gradlew rustWasm',
+  'npm run build', './gradlew clean', 'assert-clean.sh', ':app:assembleDebug', 'verify-apk-jni.sh',
 ];
 
 function assertCleanContractOrder(source) {
@@ -806,6 +849,9 @@ test('rust / jni-integration keeps the clean contract order in one job', async (
   const dropped = source.replace('      - run: npm ci && npm run build\n', '');
   assert.notEqual(dropped, source);
   assert.throws(() => assertCleanContractOrder(dropped));
+  const unbuilt = source.replace('      - name: Build the WASM package bundled into the extension\n        run: ./gradlew rustWasm\n', '');
+  assert.notEqual(unbuilt, source);
+  assert.throws(() => assertCleanContractOrder(unbuilt), /rustWasm/);
 });
 
 const PR_TITLE_EVENTS = '[opened, edited, reopened, synchronize]';

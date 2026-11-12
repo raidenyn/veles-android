@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { buildExtensionManifest } from '../src/manifest';
 
 function walk(dir: string, base = ''): string[] {
@@ -26,8 +26,13 @@ describe('dist/ contents (post-build artifact)', () => {
         // and forces a conscious review. Hash-named files (chunks/-[hash].js,
         // assets/[name]-[hash][extname]) are part of the asserted list because
         // under the committed lockfile they are deterministic.
+        //
+        // The WASM asset name changes with every Rust build, so it is matched
+        // by pattern instead of an exact hashed name.
         const files = walk(DIST).sort();
-        expect(files).toEqual([
+        const wasm = files.filter((file) => /^assets\/veles_crypto_bg-[^/]+\.wasm$/.test(file));
+        expect(wasm).toHaveLength(1);
+        expect(files.filter((file) => !wasm.includes(file))).toEqual([
             'background.js',
             'chunks/clipboard-DE1lG-x_.js',
             'chunks/modulepreload-polyfill-DaKOjhqt.js',
@@ -47,6 +52,25 @@ describe('dist/ contents (post-build artifact)', () => {
             'popup.js',
             'trust.js',
         ]);
+    });
+
+    it('bundles the WASM core for the connector tab only', () => {
+        const files = walk(DIST);
+        const wasm = files.filter((file) => /^assets\/veles_crypto_bg-[^/]+\.wasm$/.test(file));
+        expect(wasm).toHaveLength(1);
+        const asset = basename(wasm[0]);
+
+        // The connector entry references the emitted asset; it is the only
+        // script that may do so.
+        const referencing = files
+            .filter((file) => file.endsWith('.js'))
+            .filter((file) => readFileSync(join(DIST, file), 'utf8').includes(asset));
+        expect(referencing).toEqual(['connector.js']);
+
+        // The MV3 service worker (background.js) and its chunks never load it.
+        const background = readFileSync(join(DIST, 'background.js'), 'utf8');
+        expect(background).not.toContain(asset);
+        expect(background).not.toContain('veles_crypto');
     });
 
     it('dist/manifest.json matches the canonical generator exactly', () => {

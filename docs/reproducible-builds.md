@@ -164,7 +164,7 @@ with component checksums) and one optional local verifier:
 | Component | CI producer (single build) | Optional local verifier | Verifier output |
 |---|---|---|---|
 | Android APK | `./gradlew assembleRelease` in `build-android.yml`; artifact `android-release` = actual APK + `mapping.txt` + `SHA256SUMS` | `verify/verify.sh <apk> <ref>` (Docker rebuild + signature-stripped compare) | `build/verification/android/app-release-unsigned.apk` |
-| Web-extension | `npm run package` in `build-web-extension.yml`; artifact `web-extension` = ZIP + sidecar + `SHA256SUMS` | `verify/verify-web.sh` (candidate/reference byte compare) | `build/web-extension/{veles-extension-<version>.zip,.zip.sha256,SHA256SUMS}` |
+| Web-extension | `./gradlew rustWasm` then `npm run package` in `build-web-extension.yml`; artifact `web-extension` = ZIP + sidecar + `SHA256SUMS` | `verify/verify-web.sh` (candidate/reference byte compare) | `build/web-extension/{veles-extension-<version>.zip,.zip.sha256,SHA256SUMS}` |
 | Rust JNI/WASM | `./gradlew rustPackage` in `build-rust.yml`; artifact `rust-jni-wasm` | `verify/verify-rust.sh` (candidate/reference byte compare) | `build/rust-package/{jni,wasm,SHA256SUMS}` |
 | Native Windows | OTP-25: `bridgeInstallerUnsigned` **once** on `windows-2025` in `build-native-windows.yml`; it builds slots a and b in separate target directories; artifact `native-release-windows-<run>-<attempt>` = `tree.tar` + `provenance.json` + `report-ab.json` + `SHA256SUMS` | `publish-release.yml` verifies that same run's A/B report before signing; the debug path uses `bridgeInstallerDebug` and needs no A/B | `build/native-bridge/installer/{target,slots,out}/` |
 | Native macOS | OTP-25: same release shape on `macos-26` under the pinned Xcode in `build-native-macos.yml`; artifact `native-release-macos-<run>-<attempt>` | `publish-release.yml` verifies that same run's A/B report before signing; the debug path uses `bridgeInstallerDebug` and needs no A/B | `build/native-bridge/installer/{target,slots,out}/` |
@@ -222,8 +222,8 @@ outputs (plus the ordinary producer trees every build creates):
 | `build/verification/SHA256SUMS.toolchains` | aggregate manifest: `android/`, `web-extension/`, `rust/`, `native-bridge/windows/`, `native-bridge/macos/` namespaces |
 | `build/verification/android/app-release-unsigned.apk` | canonical unsigned reference APK |
 | `build/verification/native-bridge/{windows,macos}/` | verified native product bytes, `METADATA.native-bridge.jsonl`, `SHA256SUMS.native-bridge` |
-| `build/sbom/web-extension.cdx.json` | CycloneDX SBOM (web, incl. dev deps) |
-| `build/sbom/rust.cdx.json` | CycloneDX SBOM (`rust/Cargo.lock`) |
+| `build/sbom/web-extension.cdx.json` | CycloneDX SBOM (web, incl. dev deps). npm-only: the extension ZIP also bundles the `veles-crypto` WASM crate, which is not an npm package and is covered by `rust.cdx.json` |
+| `build/sbom/rust.cdx.json` | CycloneDX SBOM (`rust/Cargo.lock`; covers the WASM crate bundled into the extension) |
 | `build/sbom/native-bridge.cdx.json` | CycloneDX SBOM (`native-bridge/src-tauri/Cargo.lock`, Tauri scaffold) |
 | `build/sbom/native-host.cdx.json` | CycloneDX SBOM (`native-bridge/host/Cargo.lock`, OTP-24 production host; includes the vendored `bluest` 0.6.9) |
 | `build/verification/supply-chain/vendored-patches.txt` | vendored-patch provenance report (`vendor/bluest`) |
@@ -432,6 +432,9 @@ Generated output boundaries are intentionally narrow:
 - **WASM**: `./gradlew rustWasm` builds the web target into `web-extension/rust-wasm/pkg/`.
   This is the one path in the repo that is *not* traceable to source in git — it's build
   output, and `web-extension/rust-wasm/pkg/` is gitignored like `web-extension/dist/`.
+  Vite bundles the package into the connector entry (the `.wasm` becomes an
+  `assets/veles_crypto_bg-<hash>.wasm` asset), so the extension ZIP carries the crate
+  even though `web-extension.cdx.json` is npm-only; `rust.cdx.json` covers it.
 - **Local caches**: `build/rust/target` (the Cargo build cache) and `build/rust-tools`
   (the auxiliary-CLI install cache) live under the top-level `build/` directory, which is
   already gitignored; `rust/scripts/assert-clean.sh` asserts none of these generated paths
@@ -440,10 +443,16 @@ Generated output boundaries are intentionally narrow:
 The web-extension's npm dependencies are exact-pinned in `web-extension/package.json`
 (no `^`/`~`) and resolved via the committed `package-lock.json`. The deterministic
 packaging (zip + sha256 sidecar) and manifest/CSP guard run as npm scripts
-(`npm run package`, `npm test`) — no Gradle wrapping needed for the extension since
-it never touches the APK. Developer Node/npm are not pinned — `engines.node >= 22.0.0`
-is a floor; the exact Node 26.8.1 reference pin lives in `verify/Dockerfile.web` and
-`verify/Dockerfile.rust`.
+(`npm run package`, `npm test`). The extension is no longer free of Gradle wrapping:
+its source imports the generated `rust-wasm/pkg` package, so `./gradlew rustWasm` (and
+therefore the pinned Rust toolchain and `build/rust-tools` cache) must run before any
+command that resolves that import — `npm run build`, `npm run package`, `npm run
+typecheck`, the Vitest suites and the Playwright browser tests. The
+`check-web-extension.yml` lint, unit-tests and browser-tests jobs and
+`build-web-extension.yml` do this explicitly; `npm run package` still never touches
+the APK. Developer Node/npm are not pinned —
+`engines.node >= 22.0.0` is a floor; the exact Node 26.8.1 reference pin lives in
+`verify/Dockerfile.web` and `verify/Dockerfile.rust`.
 
 > **Scope note (2026-10-26).** The Tauri-based native-bridge described here is OTP-01 build/packaging
 > scaffolding kept as tooling. It is not the approved production runtime: the RFC amendment makes

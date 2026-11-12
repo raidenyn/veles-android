@@ -643,7 +643,7 @@ val protocolWebInstall = tasks.register<Exec>("protocolWebInstall") {
 val protocolWebTest = tasks.register<Exec>("protocolWebTest") {
     group = "verification"
     description = "Runs the web extension OTP-02 shared-fixture consumer."
-    dependsOn(protocolWebInstall)
+    dependsOn(protocolWebInstall, rustWasm)
     workingDir(layout.projectDirectory.dir("web-extension"))
     commandLine(npmCommand, "exec", "vitest", "run", "test/protocol-fixtures.test.ts")
 }
