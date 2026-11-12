@@ -24,8 +24,12 @@ import javax.crypto.spec.SecretKeySpec
  * Every in-scope `records.json` / `reconnect.json` scenario is replayed against the real
  * [PhoneSessionEngine]; the scenario inventory (`protocol/conformance/otp-09-scenarios.json`)
  * decides which ids execute, which are endpoint-effect checks for trace-validation negatives,
- * and which are deferred with an owning task. The TypeScript runner drives the client engine
- * over the same inventory.
+ * and which are deferred with an owning task. The OTP-10 inventory
+ * (`protocol/conformance/otp-10-scenarios.json`) owns the `enrollment.json` traces and the ids
+ * OTP-09 deferred to OTP-10: its entry for an id overrides the OTP-09 `deferred:OTP-10` entry,
+ * and no other overlap between the two files is allowed. `enrollment.json` ids stay with the
+ * OTP-10 enrollment runners, so this runner only executes `records.json` / `reconnect.json` ids.
+ * The TypeScript runner drives the client engine over the same merged inventory.
  *
  * The harness follows the plan's step mapping: [ScenarioPeer] is a scripted client built from
  * the same codec, [ScenarioHandler] is passive (it records deliveries, acks and buffer state
@@ -38,26 +42,32 @@ import javax.crypto.spec.SecretKeySpec
  */
 class ScenarioConformanceTest {
     private val inventory = ScenarioFixtures.inventory
+    private val otp10Inventory = ScenarioFixtures.otp10Inventory
+    private val effectiveInventory = ScenarioFixtures.effectiveInventory
+    private val executionInventory = ScenarioFixtures.executionInventory
 
     @Test
     fun inventoryCoversEveryFixtureId() {
-        val ids = ScenarioFixtures.all.map { it.id }
-        assertEquals("every fixture id must have an inventory entry", ids.toSet(), inventory.keys)
-        inventory.forEach { (id, entry) ->
-            when (entry) {
-                is String -> assertTrue(
-                    "$id has an unsupported classification $entry",
-                    entry == "execute" || entry.startsWith("deferred:OTP-"),
-                )
-                is JsonObject -> {
-                    val effect = entry["engine-effect"] as? JsonObject
-                    assertNotNull("$id engine-effect must be an object", effect)
-                    listOf("terminate", "erase", "deliver").forEach { key ->
-                        assertNotNull("$id engine-effect.$key is required", effect?.get(key))
-                    }
-                }
-                else -> throw AssertionError("$id has an unsupported classification")
-            }
+        // Coverage is per fixture file: the OTP-09 inventory owns records.json/reconnect.json,
+        // the OTP-10 inventory owns enrollment.json (minus the five OTP-02 fixture self-checks)
+        // and the ids OTP-09 deferred to OTP-10.
+        assertTrue(
+            "the OTP-09 inventory must list records/reconnect ids only",
+            inventory.keys.all { it in ScenarioFixtures.sessionIds },
+        )
+        assertEquals(
+            "every records/reconnect fixture id needs an OTP-09 entry or an OTP-10 override",
+            ScenarioFixtures.sessionIds,
+            inventory.keys + otp10Inventory.keys.intersect(ScenarioFixtures.sessionIds),
+        )
+        assertEquals(
+            "every enrollment fixture id except the self-checks must have an OTP-10 entry",
+            ScenarioFixtures.enrollmentIds - FIXTURE_SELF_CHECK_IDS,
+            otp10Inventory.keys - ScenarioFixtures.sessionIds,
+        )
+        inventory.forEach { (id, entry) -> assertClassification("otp-09", id, entry, OTP09_DEFERRAL) }
+        otp10Inventory.forEach { (id, entry) ->
+            assertClassification("otp-10", id, entry, OTP10_DEFERRAL)
         }
         assertEquals("execute scenarios", 21, inventory.values.count { it == "execute" })
         assertTrue(
@@ -67,8 +77,49 @@ class ScenarioConformanceTest {
     }
 
     @Test
+    fun otp10InventoryOnlyOverridesTheOtp09Otp10Deferrals() {
+        val deferredToOtp10 = inventory.filterValues { it == "deferred:OTP-10" }.keys
+        assertEquals(
+            "an OTP-10 entry may only override the OTP-09 deferred:OTP-10 entry of the same id",
+            deferredToOtp10,
+            otp10Inventory.keys.intersect(inventory.keys),
+        )
+        assertTrue(
+            "an OTP-10 entry must never override an executed OTP-09 id",
+            otp10Inventory.keys.intersect(inventory.filterValues { it == "execute" }.keys).isEmpty(),
+        )
+        assertEquals(
+            "the OTP-10 inventory owns exactly the ten recovery ids OTP-09 deferred",
+            10,
+            otp10Inventory.keys.count { it in ScenarioFixtures.sessionIds },
+        )
+    }
+
+    @Test
+    fun enrollmentTracesBelongToTheEnrollmentRunners() {
+        assertEquals(
+            "the five fixture self-checks stay in the OTP-02 runner",
+            5,
+            ScenarioFixtures.enrollment.count { it.id in FIXTURE_SELF_CHECK_IDS },
+        )
+        assertTrue(
+            "the OTP-10 inventory must not claim a fixture self-check",
+            otp10Inventory.keys.intersect(FIXTURE_SELF_CHECK_IDS).isEmpty(),
+        )
+        assertTrue(
+            "the OTP-09 inventory must never claim an enrollment.json id",
+            inventory.keys.intersect(ScenarioFixtures.enrollmentIds).isEmpty(),
+        )
+        assertEquals(
+            "the two inventories cover every session and enrollment fixture id exactly once",
+            ScenarioFixtures.sessionIds + ScenarioFixtures.enrollmentIds - FIXTURE_SELF_CHECK_IDS,
+            effectiveInventory.keys,
+        )
+    }
+
+    @Test
     fun everyExecutedPhoneScenarioPasses() {
-        inventory.filterValues { it == "execute" }.forEach { (id, _) ->
+        executionInventory.filterValues { it == "execute" }.forEach { (id, _) ->
             val fixture = ScenarioFixtures.byId(id)
             if (fixture.role != "phone") return@forEach
             val run = runScenario(fixture)
@@ -90,7 +141,7 @@ class ScenarioConformanceTest {
 
     @Test
     fun everyEngineEffectPhoneScenarioPasses() {
-        inventory.filterValues { it is JsonObject }.forEach { (id, entry) ->
+        executionInventory.filterValues { it is JsonObject }.forEach { (id, entry) ->
             val fixture = ScenarioFixtures.byId(id)
             if (fixture.role != "phone") return@forEach
             val run = runScenario(fixture)
@@ -125,7 +176,7 @@ class ScenarioConformanceTest {
 
     @Test
     fun deferredScenariosArePrintedWithTheirOwningTask() {
-        inventory.filterValues { it is String && it.startsWith("deferred:") }
+        effectiveInventory.filterValues { it is String && it.startsWith("deferred:") }
             .toSortedMap()
             .forEach { (id, owner) ->
                 println("deferred $id -> ${(owner as String).removePrefix("deferred:")}")
@@ -134,7 +185,7 @@ class ScenarioConformanceTest {
 
     @Test
     fun everyEffectNameInAnExecutedScenarioIsMapped() {
-        inventory.filterValues { it == "execute" || it is JsonObject }.keys.forEach { id ->
+        executionInventory.filterValues { it == "execute" || it is JsonObject }.keys.forEach { id ->
             val fixture = ScenarioFixtures.byId(id)
             if (fixture.role != "phone") return@forEach
             val effects = fixture.expected["effects"]?.jsonObject ?: return@forEach
@@ -146,7 +197,9 @@ class ScenarioConformanceTest {
 
     @Test
     fun clientRoleScenariosAreDrivenByTheTypeScriptRunner() {
-        val executed = inventory.filterValues { it == "execute" }.keys.map { ScenarioFixtures.byId(it) }
+        val executed = executionInventory.filterValues { it == "execute" }
+            .keys
+            .map { ScenarioFixtures.byId(it) }
         val phone = executed.filter { it.role == "phone" }
         val client = executed.filter { it.role == "client" }
         assertEquals(
@@ -154,16 +207,38 @@ class ScenarioConformanceTest {
             executed.size,
             phone.size + client.size,
         )
+        // The client-id set is read from the inventory (the fixture role of every execute entry),
+        // not a fixed list, so an OTP-10 entry that flips a recovery trace to `execute` reaches the
+        // TypeScript runner without editing this test.
+        val inventoryClientIds = executionInventory.filterValues { it == "execute" }
+            .keys
+            .map { ScenarioFixtures.byId(it) }
+            .filter { it.role == "client" }
+            .map { it.id }
+            .toSet()
+        assertTrue("the inventory must drive at least one client scenario", inventoryClientIds.isNotEmpty())
         assertEquals(
             "the client engine scenarios are the TypeScript runner's set",
-            setOf(
-                "st-rec-direction-mismatch-terminates",
-                "st-rec-client-full-pull-delivers",
-                "st-rec-client-activation-pending-upgrades-on-phone-proof",
-                "st-rec-client-mirror-durable-across-restart",
-            ),
+            inventoryClientIds,
             client.map { it.id }.toSet(),
         )
+    }
+
+    private fun assertClassification(source: String, id: String, entry: Any, deferral: Regex) {
+        when (entry) {
+            is String -> assertTrue(
+                "$source $id has an unsupported classification $entry",
+                entry == "execute" || deferral.matches(entry),
+            )
+            is JsonObject -> {
+                val effect = entry["engine-effect"] as? JsonObject
+                assertNotNull("$source $id engine-effect must be an object", effect)
+                listOf("terminate", "erase", "deliver").forEach { key ->
+                    assertNotNull("$source $id engine-effect.$key is required", effect?.get(key))
+                }
+            }
+            else -> throw AssertionError("$source $id has an unsupported classification")
+        }
     }
 
     private fun assertMapped(name: String) {
@@ -193,6 +268,26 @@ class ScenarioConformanceTest {
             val (key, state) = entry.split('=', limit = 2)
             key to state
         }
+
+    private companion object {
+        /**
+         * The five trace-validation self-checks stay with the OTP-02 fixture runner
+         * (`protocol/checks/state.test.mjs`); they exercise the fixture format, not a machine.
+         */
+        val FIXTURE_SELF_CHECK_IDS = setOf(
+            "st-neg-unknown-event",
+            "st-neg-nonmonotonic-time",
+            "st-neg-timeout-early",
+            "st-neg-unknown-machine",
+            "st-neg-step-expect-wrong",
+        )
+
+        /** The OTP-09 inventory defers implementation work to a later change. */
+        val OTP09_DEFERRAL = Regex("deferred:OTP-[0-9]+(?:/[0-9]+)?")
+
+        /** The OTP-10 inventory defers a scenario to the plan task that will execute it. */
+        val OTP10_DEFERRAL = Regex("deferred:Task [0-9]+")
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -213,8 +308,24 @@ private object ScenarioFixtures {
 
     val records: List<ScenarioFixture> = fixtures("/fixtures/records.json")
     val reconnect: List<ScenarioFixture> = fixtures("/fixtures/reconnect.json")
+    val enrollment: List<ScenarioFixture> = fixtures("/fixtures/enrollment.json")
     val all: List<ScenarioFixture> = records + reconnect
-    val inventory: Map<String, Any> = read("/otp-09-scenarios.json").entries.associate { (key, value) ->
+    val sessionIds: Set<String> = all.map { it.id }.toSet()
+    val enrollmentIds: Set<String> = enrollment.map { it.id }.toSet()
+
+    val inventory: Map<String, Any> = inventory("/otp-09-scenarios.json")
+    val otp10Inventory: Map<String, Any> = inventory("/otp-10-scenarios.json")
+
+    /** An OTP-10 entry of an id overrides the OTP-09 entry of the same id. */
+    val effectiveInventory: Map<String, Any> = inventory + otp10Inventory
+
+    /**
+     * The OTP-09 runners execute `records.json`/`reconnect.json` ids only; `enrollment.json` ids
+     * belong to the OTP-10 enrollment runners.
+     */
+    val executionInventory: Map<String, Any> = effectiveInventory.filterKeys { it in sessionIds }
+
+    private fun inventory(path: String): Map<String, Any> = read(path).entries.associate { (key, value) ->
         key to when (value) {
             is JsonPrimitive -> value.content
             is JsonObject -> value

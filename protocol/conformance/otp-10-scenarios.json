@@ -1,0 +1,58 @@
+{
+  "st-en-attempts-five-ok-sixth-rejected": "deferred:Task 5",
+  "st-en-rolling-attempts-boundaries": "deferred:Task 5",
+  "st-en-malformed-point-no-consumption": "deferred:Task 5",
+  "st-en-valid-pb-consumes-before-sensitive-operations": "deferred:Task 5",
+  "st-en-pa-churn-rolling-and-per-connection": "deferred:Task 5",
+  "st-en-second-request-in-flight-rejected": "deferred:Task 5",
+  "st-en-window-expiry-closes": "deferred:Task 5",
+  "st-en-role-mismatch-frame-rejected": "deferred:Task 5",
+  "st-en-client-confirms-in-order": "deferred:Task 8",
+  "st-en-phone-identity-device-type-mismatch": "deferred:Task 7",
+  "st-en-duplicate-installation-rejected": "deferred:Task 7",
+  "st-enrollment-full-success-then-no-otp-on-enrollment-connection": "deferred:Task 7",
+  "st-en-cancel-cancels-pending": "deferred:Task 7",
+  "st-en-window-deadline-pb-299999-allowed": "deferred:Task 5",
+  "st-en-window-deadline-pb-300000-rejected": "deferred:Task 5",
+  "st-en-window-deadline-pb-300001-rejected": "deferred:Task 5",
+  "st-en-window-deadline-cb-299999-allowed": "deferred:Task 5",
+  "st-en-window-deadline-cb-300000-rejected": "deferred:Task 5",
+  "st-en-window-deadline-cb-300001-rejected": "deferred:Task 5",
+  "st-en-enrollment-no-otp-client-receives": "deferred:Task 8",
+  "st-neg-same-connection-pb-after-invalid-point": {
+    "engine-effect": {
+      "terminate": true,
+      "erase": true,
+      "deliver": false
+    }
+  },
+  "st-en-prepare-sent-after-persist-pairing": "deferred:Task 7",
+  "st-en-client-prepare-gate-full-flow": "deferred:Task 8",
+  "st-neg-commit-without-verified-prepare": {
+    "engine-effect": {
+      "terminate": true,
+      "erase": true,
+      "deliver": false
+    }
+  },
+  "st-neg-early-prepare-rejected": "deferred:Task 8",
+  "st-neg-prepare-mismatch-erases": "deferred:Task 8",
+  "st-en-code-one-use-window-closed-after-cb": "deferred:Task 7",
+  "st-en-cb-disconnect-before-identity-repair-only": "deferred:Task 7",
+  "st-en-client-one-sided-pending-cancelled-then-fresh-pairing": "deferred:Task 8",
+  "st-rec-no-peer-record-no-recovery": "deferred:Task 9",
+  "st-en-inactivity-before-identity-repair-only": "deferred:Task 7",
+  "st-neg-client-persist-failure-publishes-nothing": "deferred:Task 8",
+  "st-neg-phone-persist-failure-sends-no-prepare": "deferred:Task 7",
+  "st-en-phone-pending-survives-interruption-with-et": "deferred:Task 7",
+  "st-rec-full-pending-peer-commit-duplicate-no-regression": "deferred:Task 9",
+  "st-rec-commit-lost-recovery": "deferred:Task 9",
+  "st-rec-ack-lost-active-client-direct-ack": "deferred:Task 9",
+  "st-rec-complete-lost-recovery-client": "deferred:Task 9",
+  "st-rec-recovery-session-stays-recovery-only": "deferred:Task 9",
+  "st-rec-pending-expiry-deletes-incomplete": "deferred:Task 9",
+  "st-rec-boot-continuity-loss-deletes-incomplete-only": "deferred:Task 9",
+  "st-rec-recovery-commit-mac-mismatch": "deferred:Task 9",
+  "st-rec-recovery-complete-mac-mismatch": "deferred:Task 9",
+  "st-rec-phone-complete-lost-prepares-then-full-session": "deferred:Task 9"
+}

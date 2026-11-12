@@ -70,6 +70,38 @@
       "source_anchor": "veles-v1.md#sec-spake-attempts"
     },
     {
+      "name": "pairing_malformed_connections_rolling_max",
+      "value": 20,
+      "unit": "connections",
+      "scope": "phone within rolling one-minute interval, malformed or invalid-point pairing connections (frame types 0x01-0x05 only; reconnect traffic never uses this budget)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-spake-attempts"
+    },
+    {
+      "name": "pairing_malformed_rolling_interval_seconds",
+      "value": 60,
+      "unit": "seconds",
+      "scope": "phone rolling interval for malformed pairing connections",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-spake-attempts"
+    },
+    {
+      "name": "pairing_request_rolling_max",
+      "value": 10,
+      "unit": "requests",
+      "scope": "phone within rolling one-minute interval, every pairing_request frame (busy, window-closed, over-limit and malformed rejections all count)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-spake-attempts"
+    },
+    {
+      "name": "pairing_request_rolling_interval_seconds",
+      "value": 60,
+      "unit": "seconds",
+      "scope": "phone rolling interval for pairing_request frames",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-spake-attempts"
+    },
+    {
       "name": "pairing_request_inactivity_timeout_seconds",
       "value": 30,
       "unit": "seconds",

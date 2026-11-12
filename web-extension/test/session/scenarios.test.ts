@@ -30,6 +30,7 @@ import {
 
 const PROTOCOL_ROOT = resolve(import.meta.dirname, '../../../protocol');
 const INVENTORY = resolve(PROTOCOL_ROOT, 'conformance/otp-09-scenarios.json');
+const OTP10_INVENTORY = resolve(PROTOCOL_ROOT, 'conformance/otp-10-scenarios.json');
 const RECORD_PREFIX = 'durable_client_record:';
 const EVENT_BYTES = 79;
 const RECORD_TAG_BYTES = 16;
@@ -60,7 +61,41 @@ function loadFixtures(path: string): Fixture[] {
 }
 
 const FIXTURES: Fixture[] = [...loadFixtures('records.json'), ...loadFixtures('reconnect.json')];
-const INVENTORY_ENTRIES = JSON.parse(readFileSync(INVENTORY, 'utf8')) as Record<string, unknown>;
+const ENROLLMENT_FIXTURES: Fixture[] = loadFixtures('enrollment.json');
+const INVENTORY_ENTRIES = readInventory(INVENTORY);
+const OTP10_INVENTORY_ENTRIES = readInventory(OTP10_INVENTORY);
+/** An OTP-10 entry of an id overrides the OTP-09 entry of the same id. */
+const EFFECTIVE_INVENTORY: Record<string, unknown> = {
+    ...INVENTORY_ENTRIES,
+    ...OTP10_INVENTORY_ENTRIES,
+};
+const SESSION_IDS = new Set(FIXTURES.map((fixture) => fixture.id));
+const ENROLLMENT_IDS = new Set(ENROLLMENT_FIXTURES.map((fixture) => fixture.id));
+/** The OTP-09 runner executes `records.json`/`reconnect.json` ids only. */
+const EXECUTION_INVENTORY: Record<string, unknown> = Object.fromEntries(
+    Object.entries(EFFECTIVE_INVENTORY).filter(([id]) => SESSION_IDS.has(id)),
+);
+/** The five trace-validation self-checks stay with the OTP-02 fixture runner. */
+const FIXTURE_SELF_CHECK_IDS = [
+    'st-neg-unknown-event',
+    'st-neg-nonmonotonic-time',
+    'st-neg-timeout-early',
+    'st-neg-unknown-machine',
+    'st-neg-step-expect-wrong',
+];
+/** The OTP-09 inventory defers implementation work to a later change. */
+const OTP09_DEFERRAL = /^deferred:OTP-[0-9]+(?:\/[0-9]+)?$/;
+/** The OTP-10 inventory defers a scenario to the plan task that will execute it. */
+const OTP10_DEFERRAL = /^deferred:Task [0-9]+$/;
+
+function readInventory(path: string): Record<string, unknown> {
+    return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+}
+
+function classificationOf(entry: unknown, deferral: RegExp): boolean {
+    if (typeof entry === 'string') return entry === 'execute' || deferral.test(entry);
+    return engineEffectOf(entry) !== null;
+}
 
 const byId = (id: string): Fixture => {
     const fixture = FIXTURES.find((candidate) => candidate.id === id);
@@ -1117,26 +1152,76 @@ function finalSnapshot(run: RunObservations): Map<string, string> {
 
 describe('OTP-09 scenario inventory', () => {
     it('inventoryCoversEveryFixtureId', () => {
-        expect(Object.keys(INVENTORY_ENTRIES).sort()).toEqual(
-            FIXTURES.map((fixture) => fixture.id).sort(),
+        // Coverage is per fixture file: the OTP-09 inventory owns records.json/reconnect.json,
+        // the OTP-10 inventory owns enrollment.json (minus the five OTP-02 fixture self-checks)
+        // and the ids OTP-09 deferred to OTP-10.
+        expect(Object.keys(INVENTORY_ENTRIES).every((id) => SESSION_IDS.has(id))).toBe(true);
+        const coveredSessionIds = new Set([
+            ...Object.keys(INVENTORY_ENTRIES),
+            ...Object.keys(OTP10_INVENTORY_ENTRIES).filter((id) => SESSION_IDS.has(id)),
+        ]);
+        expect([...coveredSessionIds].sort()).toEqual([...SESSION_IDS].sort());
+        const otp10EnrollmentIds = Object.keys(OTP10_INVENTORY_ENTRIES)
+            .filter((id) => !SESSION_IDS.has(id))
+            .sort();
+        expect(otp10EnrollmentIds).toEqual(
+            [...ENROLLMENT_IDS].filter((id) => !FIXTURE_SELF_CHECK_IDS.includes(id)).sort(),
         );
         for (const [id, entry] of Object.entries(INVENTORY_ENTRIES)) {
-            if (typeof entry === 'string') {
-                expect(
-                    entry === 'execute' || entry.startsWith('deferred:OTP-'),
-                    `${id} classification`,
-                ).toBe(true);
-            } else {
-                expect(engineEffectOf(entry), `${id} engine-effect shape`).not.toBeNull();
-            }
+            expect(classificationOf(entry, OTP09_DEFERRAL), `OTP-09 ${id} classification`).toBe(
+                true,
+            );
+        }
+        for (const [id, entry] of Object.entries(OTP10_INVENTORY_ENTRIES)) {
+            expect(classificationOf(entry, OTP10_DEFERRAL), `OTP-10 ${id} classification`).toBe(
+                true,
+            );
         }
         expect(
             Object.values(INVENTORY_ENTRIES).filter((entry) => entry === 'execute'),
         ).toHaveLength(21);
     });
 
+    it('otp10InventoryOnlyOverridesTheOtp09Otp10Deferrals', () => {
+        const deferredToOtp10 = Object.entries(INVENTORY_ENTRIES)
+            .filter(([, entry]) => entry === 'deferred:OTP-10')
+            .map(([id]) => id)
+            .sort();
+        const overlapping = Object.keys(OTP10_INVENTORY_ENTRIES)
+            .filter((id) => id in INVENTORY_ENTRIES)
+            .sort();
+        expect(overlapping).toEqual(deferredToOtp10);
+        const executedOtp09 = Object.entries(INVENTORY_ENTRIES)
+            .filter(([, entry]) => entry === 'execute')
+            .map(([id]) => id);
+        expect(
+            Object.keys(OTP10_INVENTORY_ENTRIES).filter((id) => executedOtp09.includes(id)),
+        ).toEqual([]);
+        expect(
+            Object.keys(OTP10_INVENTORY_ENTRIES).filter((id) => SESSION_IDS.has(id)),
+        ).toHaveLength(10);
+    });
+
+    it('enrollmentTracesBelongToTheEnrollmentRunners', () => {
+        for (const id of FIXTURE_SELF_CHECK_IDS) {
+            expect(ENROLLMENT_IDS.has(id), `self-check ${id} must be an enrollment fixture`).toBe(
+                true,
+            );
+            expect(
+                OTP10_INVENTORY_ENTRIES[id],
+                `self-check ${id} stays in the OTP-02 runner`,
+            ).toBeUndefined();
+        }
+        expect(Object.keys(INVENTORY_ENTRIES).filter((id) => ENROLLMENT_IDS.has(id))).toEqual([]);
+        const owned = new Set([
+            ...SESSION_IDS,
+            ...[...ENROLLMENT_IDS].filter((id) => !FIXTURE_SELF_CHECK_IDS.includes(id)),
+        ]);
+        expect(Object.keys(EFFECTIVE_INVENTORY).sort()).toEqual([...owned].sort());
+    });
+
     it('everyEffectNameInAnExecutedClientScenarioIsMapped', () => {
-        const executed = Object.entries(INVENTORY_ENTRIES).filter(
+        const executed = Object.entries(EXECUTION_INVENTORY).filter(
             ([id, entry]) =>
                 (entry === 'execute' || engineEffectOf(entry) !== null) &&
                 roleOf(byId(id)) === 'client',
@@ -1154,23 +1239,28 @@ describe('OTP-09 scenario inventory', () => {
     });
 
     it('clientRoleScenariosAreDrivenByTheTypeScriptRunner', () => {
-        const client = Object.entries(INVENTORY_ENTRIES)
-            .filter(([, entry]) => entry === 'execute')
-            .map(([id]) => id)
-            .filter((id) => roleOf(byId(id)) === 'client');
-        expect(client.sort()).toEqual(
-            [
-                'st-rec-client-activation-pending-upgrades-on-phone-proof',
-                'st-rec-client-full-pull-delivers',
-                'st-rec-client-mirror-durable-across-restart',
-                'st-rec-direction-mismatch-terminates',
-            ].sort(),
+        const executed = Object.entries(EXECUTION_INVENTORY).filter(
+            ([, entry]) => entry === 'execute',
         );
+        const phone = executed.filter(([id]) => roleOf(byId(id)) === 'phone');
+        const client = executed.filter(([id]) => roleOf(byId(id)) === 'client');
+        expect(phone.length + client.length, 'every execute id belongs to one runner').toBe(
+            executed.length,
+        );
+        // The client-id set is read from the inventory (the fixture role of every execute entry),
+        // not a fixed list, so an OTP-10 entry that flips a recovery trace to `execute` reaches
+        // this runner without editing the test.
+        const inventoryClientIds = executed
+            .filter(([id]) => roleOf(byId(id)) === 'client')
+            .map(([id]) => id)
+            .sort();
+        expect(inventoryClientIds.length).toBeGreaterThan(0);
+        expect(client.map(([id]) => id).sort()).toEqual(inventoryClientIds);
     });
 });
 
 describe('client conformance scenarios', () => {
-    for (const [id, entry] of Object.entries(INVENTORY_ENTRIES)) {
+    for (const [id, entry] of Object.entries(EXECUTION_INVENTORY)) {
         const fixture = byId(id);
         if (roleOf(fixture) !== 'client') continue;
         const endpoint = engineEffectOf(entry);
@@ -1233,7 +1323,7 @@ describe('client conformance scenarios', () => {
     }
 
     it('deferred scenarios are printed with their owning task', () => {
-        const deferred = Object.entries(INVENTORY_ENTRIES)
+        const deferred = Object.entries(EFFECTIVE_INVENTORY)
             .filter(([, entry]) => typeof entry === 'string' && entry.startsWith('deferred:'))
             .sort(([left], [right]) => left.localeCompare(right));
         for (const [id, owner] of deferred) {
