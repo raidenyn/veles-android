@@ -14,6 +14,9 @@ const P2C_NONCE_LABEL = 'Veles reconnect A-to-B nonce v1';
 const P2C_CONFIRM_LABEL = 'Veles reconnect A-to-B confirmation v1';
 const SESSION_ID_LABEL = 'Veles reconnect session ID v1';
 const CONFIRM_INPUT_LABEL = 'Veles reconnect confirmation input v1';
+// OTP2-CRY-019f: the exact ASCII labels are 35 and 34 bytes; `info = label || ET`.
+const REC_CLIENT_LABEL = 'Veles recovery client activation v1';
+const REC_PHONE_LABEL = 'Veles recovery phone activation v1';
 
 const NONCE_BYTES = 16;
 const SHARED_SECRET_BYTES = 32;
@@ -38,7 +41,19 @@ export type ReconnectKeyName =
     | 'sessionId';
 
 /** Raw derived key material. Callers zero the AES bytes after `importKeys`. */
-export type ReconnectKeyMaterial = Record<ReconnectKeyName, Uint8Array>;
+export type ReconnectKeyMaterial = Record<ReconnectKeyName, Uint8Array> & {
+    /**
+     * OTP2-CRY-019f recovery activation keys, non-null only when the peer record
+     * carried `ET`. Zeroed once the session class resolves to `full`.
+     */
+    recovery: RecoveryKeys | null;
+};
+
+/** The OTP2-CRY-019f recovery activation keys, one Expand output per direction. */
+export interface RecoveryKeys {
+    kRecClient: Uint8Array;
+    kRecPhone: Uint8Array;
+}
 
 /** The reconnect keys as the session engine keeps them: AES keys are CryptoKeys. */
 export interface ReconnectKeys {
@@ -49,6 +64,7 @@ export interface ReconnectKeys {
     p2cPrefix: Uint8Array;
     phoneConfirmKey: Uint8Array;
     sessionId: Uint8Array;
+    recovery: RecoveryKeys | null;
 }
 
 function reject(): never {
@@ -153,13 +169,15 @@ export async function derivePrk(
 }
 
 /**
- * Derives the seven OTP2-REC-020b outputs under their exact labels and returns
- * the raw bytes. The intermediate PRK is zeroed before returning.
+ * Derives the seven OTP2-REC-020b outputs under their exact labels and, when the
+ * peer record carries `ET`, the OTP2-CRY-019f recovery activation keys. The
+ * intermediate PRK is zeroed before returning.
  */
 export async function deriveKeyMaterial(
     ss: Uint8Array,
     phoneNonce: Uint8Array,
     clientNonce: Uint8Array,
+    et: Uint8Array | null = null,
 ): Promise<ReconnectKeyMaterial> {
     requireSharedSecret(ss);
     const salt = await deriveSalt(phoneNonce, clientNonce);
@@ -183,10 +201,22 @@ export async function deriveKeyMaterial(
             p2cPrefix,
             phoneConfirmKey,
             sessionId,
+            recovery: await recoveryKeys(prk, et),
         };
     } finally {
         prk.fill(0);
     }
+}
+
+/** OTP2-CRY-019f: both directions are derived whenever the peer record carries `ET`. */
+async function recoveryKeys(prk: Uint8Array, et: Uint8Array | null): Promise<RecoveryKeys | null> {
+    if (et === null) return null;
+    requireSized(et, HASH_BYTES);
+    const [kRecClient, kRecPhone] = await Promise.all([
+        hkdfExpand(prk, concat(label(REC_CLIENT_LABEL), et), AES_KEY_BYTES),
+        hkdfExpand(prk, concat(label(REC_PHONE_LABEL), et), AES_KEY_BYTES),
+    ]);
+    return { kRecClient, kRecPhone };
 }
 
 /** Imports the AES keys as non-extractable; the caller zeroes the raw bytes. */
@@ -219,6 +249,7 @@ export async function importKeys(material: ReconnectKeyMaterial): Promise<Reconn
         p2cPrefix: material.p2cPrefix,
         phoneConfirmKey: material.phoneConfirmKey,
         sessionId: material.sessionId,
+        recovery: material.recovery,
     };
 }
 

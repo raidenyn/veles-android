@@ -1322,7 +1322,13 @@ function productionSessionOptions(): ConnectorSessionOptions {
                     const peers = await repository.peers();
                     const peer = peers.find((candidate) => candidate.installationId === id);
                     if (peer === undefined) return undefined;
-                    return { publicKey: bytes(peer.publicKey, 65), state: peer.state };
+                    return {
+                        publicKey: bytes(peer.publicKey, 65),
+                        state: peer.state,
+                        // OTP2-CRY-019f: the public `ET` persisted with the pending,
+                        // committed or active record binds the recovery keys.
+                        et: bytes(peer.enrollmentTranscript, 32),
+                    };
                 },
                 upgradeMirror: (id, proof) => repository.confirm(id, 'phone_active', proof),
                 now: () => performance.now(),

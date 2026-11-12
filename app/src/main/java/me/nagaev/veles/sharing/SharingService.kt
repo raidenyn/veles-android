@@ -213,6 +213,9 @@ internal class SharingService : Service() {
                         TrustState.PENDING -> LocalRecordState.PENDING
                         TrustState.COMMITTED_WAITING_ACK -> LocalRecordState.COMMITTED_WAITING_ACK
                     },
+                    // OTP2-CRY-019f: the public `ET` persisted with the pending/committed record
+                    // (and kept on `active`) is what binds the session's recovery activation keys.
+                    et = TrustEncoding.bytes(peer.enrollmentTranscript),
                 )
             }
         }

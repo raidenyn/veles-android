@@ -22,6 +22,7 @@ import {
     rbase as reconnectRbase,
     type ReconnectKeyMaterial,
     type ReconnectKeys,
+    type RecoveryKeys,
 } from './schedule';
 import {
     AppErrorCode,
@@ -110,7 +111,7 @@ export interface ClientEngineDeps {
     isCurrent(): boolean;
     lookupPhone(
         id: string,
-    ): Promise<{ publicKey: Uint8Array; state: PhoneRecordState } | undefined>;
+    ): Promise<{ publicKey: Uint8Array; state: PhoneRecordState; et?: Uint8Array } | undefined>;
     /** Wraps `repository.confirm(peerId, 'phone_active', proof)` with a session-bound verifier. */
     upgradeMirror(peerId: string, proof: Uint8Array): Promise<void>;
     now(): number;
@@ -130,6 +131,12 @@ type Phase =
 interface PhoneRecord {
     publicKey: Uint8Array;
     state: PhoneRecordState;
+    /**
+     * The public canonical enrollment transcript `ET` (OTP2-CRY-020b) of the
+     * pending, committed or active record. Present means the engine derives the
+     * OTP2-CRY-019f recovery activation keys.
+     */
+    et?: Uint8Array;
 }
 
 /**
@@ -243,6 +250,14 @@ function eraseKeyMaterial(material: ReconnectKeyMaterial | null): void {
     material.p2cPrefix.fill(0);
     material.phoneConfirmKey.fill(0);
     material.sessionId.fill(0);
+    eraseRecoveryKeys(material.recovery);
+}
+
+/** OTP2-CRY-019f: zero both recovery keys in place, keeping the holder observable. */
+function eraseRecoveryKeys(recovery: RecoveryKeys | null): void {
+    if (recovery === null) return;
+    recovery.kRecClient.fill(0);
+    recovery.kRecPhone.fill(0);
 }
 
 /** Zeros every engine-owned key array. The AES `CryptoKey`s are not zeroable. */
@@ -253,6 +268,7 @@ function eraseReconnectKeys(keys: ReconnectKeys | null): void {
     keys.p2cPrefix.fill(0);
     keys.phoneConfirmKey.fill(0);
     keys.sessionId.fill(0);
+    eraseRecoveryKeys(keys.recovery);
 }
 
 /** Constant-time byte equality for MACs and fingerprints (OTP2-REC-011a). */
@@ -540,6 +556,14 @@ export class ClientSessionEngine {
         return this.#state.phase === 'closed' && this.#state.keys === null;
     }
 
+    /**
+     * Test-only OTP2-CRY-019f observation: the live recovery holder of the
+     * derived keys. Its bytes are zeroed once the session class is `full`.
+     */
+    get _recoveryKeys(): RecoveryKeys | null {
+        return this.#state.keys?.recovery ?? null;
+    }
+
     /** Test-only read of the next expected inbound sequence (Task 10 effect observations). */
     get _inboundSequence(): bigint {
         return this.#state.inboundSequence;
@@ -575,7 +599,7 @@ export class ClientSessionEngine {
         if (hexOf(hello.installationId) !== this.#deps.expectedPeerId) {
             return this.#failPreAuth();
         }
-        let record: { publicKey: Uint8Array; state: PhoneRecordState } | undefined;
+        let record: { publicKey: Uint8Array; state: PhoneRecordState; et?: Uint8Array } | undefined;
         try {
             record = await this.#deps.lookupPhone(this.#deps.expectedPeerId);
         } catch {
@@ -590,7 +614,11 @@ export class ClientSessionEngine {
             return this.#terminate(STAGE_UNEXPECTED_FRAME);
         }
         state.peerId = this.#deps.expectedPeerId;
-        state.peerRecord = { publicKey: record.publicKey.slice(), state: record.state };
+        state.peerRecord = {
+            publicKey: record.publicKey.slice(),
+            state: record.state,
+            et: record.et?.slice(),
+        };
         state.phoneHello = hello;
         state.transcript = reconnectRbase(frame.payload, state.clientHello);
         state.phase = 'awaiting_phone_signature';
@@ -652,7 +680,12 @@ export class ClientSessionEngine {
         try {
             const shared = await deriveSharedSecret(ephemeral.privateKey, hello.ephemeralPublicKey);
             try {
-                material = await deriveKeyMaterial(shared, hello.nonce, localNonce);
+                material = await deriveKeyMaterial(
+                    shared,
+                    hello.nonce,
+                    localNonce,
+                    state.peerRecord?.et ?? null,
+                );
                 keys = await importKeys(material);
                 // The AES keys are inside non-extractable CryptoKeys now; the
                 // other arrays are owned by `keys` and must not be wiped here.
@@ -1092,6 +1125,9 @@ export class ClientSessionEngine {
             return this.#terminate(STAGE_RECORD_INVALID);
         }
         const sessionClass = selectSessionClass(record.state, state.peerState);
+        // OTP2-CRY-019f: the class is only fixed here, so a `full` session zeroes the recovery
+        // keys derived at the handshake. Every other class keeps them for its activation rows.
+        if (sessionClass === SessionClass.FULL) eraseRecoveryKeys(state.keys?.recovery ?? null);
         state.sessionClass = sessionClass;
         state.phoneConfirmFinalizing = false;
         state.authenticated = true;

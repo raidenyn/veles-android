@@ -8,6 +8,11 @@ data class PeerRecord(
     val installationId: ByteArray,
     val identityPublicKey: ByteArray,
     val state: LocalRecordState,
+    /**
+     * The public canonical enrollment transcript `ET` (OTP2-CRY-020b) of the pending, committed
+     * or active record. Non-null means the engine derives the OTP2-CRY-019f recovery keys.
+     */
+    val et: ByteArray? = null,
 )
 
 /**

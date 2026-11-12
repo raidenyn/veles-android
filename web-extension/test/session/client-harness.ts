@@ -191,11 +191,15 @@ function randomBytes(length: number): Uint8Array {
 export interface PhoneRecord {
     publicKey: Uint8Array;
     state: TrustState;
+    /** OTP2-CRY-019f: the record's public `ET`, present when recovery keys must derive. */
+    et?: Uint8Array;
 }
 
 export interface PhoneHarnessOptions {
     /** Local client trust-record state used to seed `store` when the record is absent. */
     state?: TrustState;
+    /** Optional public `ET` seeded into the local record (OTP2-CRY-019f). */
+    et?: Uint8Array;
     phoneId?: string;
     phoneIdentity?: CryptoKeyPair;
     phoneEphemeral?: CryptoKeyPair;
@@ -309,7 +313,11 @@ export class PhoneHarness {
         const peerId = options.phoneId ?? hexOf(phone.installationId);
         const store = options.store ?? new Map<string, PhoneRecord>();
         if (!store.has(peerId)) {
-            store.set(peerId, { publicKey: phone.publicKey, state: options.state ?? 'active' });
+            store.set(peerId, {
+                publicKey: phone.publicKey,
+                state: options.state ?? 'active',
+                ...(options.et === undefined ? {} : { et: options.et.slice() }),
+            });
         }
         const clientIdentity = await crypto.subtle.generateKey(
             { name: 'ECDSA', namedCurve: 'P-256' },
