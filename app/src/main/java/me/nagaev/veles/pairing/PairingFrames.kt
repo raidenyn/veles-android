@@ -40,6 +40,14 @@ object PairingFrames {
     private const val U8_MASK = 0xFF
     private const val BITS_PER_BYTE = 8
     private const val HIGH_BYTE_SHIFT = 8
+    private const val PREAUTH_REJECT = 0x0F
+
+    /**
+     * The constant empty-payload `preauth_reject` frame (OTP2-ENC-010e). Pairing
+     * failures emit exactly these bytes, the same ones the reconnect engine sends,
+     * so no reason code and no payload can cross the wire.
+     */
+    fun preauthReject(): ByteArray = byteArrayOf(PREAUTH_REJECT.toByte(), 0, 0)
 
     fun encode(type: PairingFrameType, payload: ByteArray): ByteArray {
         if (payload.size > MAX_FRAME - HEADER_BYTES) reject()

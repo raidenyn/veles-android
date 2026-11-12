@@ -593,7 +593,7 @@ class SessionHostTest {
         val transport = RecordingTransport()
         val repository = RecordingTrust()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        val host = SessionHost(scope, transport, { engine(client, handler = handler) }, repository) { clock.now }
+        val host = SessionHost(scope, transport, { engine(client, handler = handler) }, repository, clock = { clock.now })
         val gen = ConnectionGeneration("aa", 1)
         try {
             host.onConnected(gen)

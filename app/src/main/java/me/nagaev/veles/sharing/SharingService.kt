@@ -22,6 +22,13 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import me.nagaev.veles.BuildConfig
 import me.nagaev.veles.R
+import me.nagaev.veles.pairing.PairingAdmission
+import me.nagaev.veles.pairing.PairingConnection
+import me.nagaev.veles.pairing.PairingCore
+import me.nagaev.veles.pairing.PairingLimits
+import me.nagaev.veles.pairing.PairingWindow
+import me.nagaev.veles.pairing.PhonePairingMachine
+import me.nagaev.veles.pairing.VelesPairingCore
 import me.nagaev.veles.permissions.PermissionsActivity
 import me.nagaev.veles.session.BuildSessionExtensions
 import me.nagaev.veles.session.IdentitySigner
@@ -40,6 +47,7 @@ import java.security.SecureRandom
 internal class SharingService : Service() {
     private var gatt: SharingGattServer? = null
     private var host: SessionHost? = null
+    private var pairing: PairingEndpoint? = null
     private var sessionScope: CoroutineScope? = null
     private var registered = false
     private val preferences get() = getSharedPreferences("sharing", MODE_PRIVATE)
@@ -128,6 +136,9 @@ internal class SharingService : Service() {
         val handler = BuildSessionExtensions.applicationHandler(this)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         sessionScope = scope
+        // One window and one admission for the service; the native core is resolved only
+        // when a pairing_request actually starts an execution.
+        val pairing = PairingEndpoint()
         val host = SessionHost(
             scope,
             transport,
@@ -143,7 +154,9 @@ internal class SharingService : Service() {
             },
             repository,
             SystemClock::elapsedRealtime,
+            pairingFactory = { gen -> pairing.connection(gen.serial) },
         )
+        this.pairing = pairing
         this.host = host
         BuildSessionExtensions.attach(host)
         return host
@@ -164,8 +177,11 @@ internal class SharingService : Service() {
      * falls back to a forced erasure, so a suspended Keystore call cannot leave keys behind.
      */
     private fun shutdownSessions() {
+        // The host closes every live pairing execution; the window then erases the code.
         host?.let { runBlocking { it.shutdown() } }
         host = null
+        pairing?.shutdown()
+        pairing = null
         sessionScope?.cancel()
         sessionScope = null
     }
@@ -210,4 +226,37 @@ internal class SharingService : Service() {
 
         override fun close(gen: ConnectionGeneration) = server.close(gen)
     }
+}
+
+/**
+ * The production pairing endpoint: one window and one admission for the whole service,
+ * and one core resolved lazily on the first `pairing_request` that survives admission.
+ *
+ * Constructing this object never touches `VelesCrypto`: the window and the admission are
+ * pure state, and the core is only reached when a machine calls `start`. That keeps a
+ * Robolectric-hosted service start free of the JNI library while still giving every
+ * connection the same phone-wide budgets and window.
+ */
+internal class PairingEndpoint(
+    private val clock: () -> Long = SystemClock::elapsedRealtime,
+    coreFactory: () -> PairingCore = { VelesPairingCore() },
+) {
+    private val limits = PairingLimits()
+    private val core: PairingCore by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { coreFactory() }
+    private val admission = PairingAdmission(limits, clock)
+
+    internal val window = PairingWindow(clock)
+
+    /** One connection's machine; [conn] is the process-unique generation serial. */
+    fun connection(conn: Long): PairingConnection = PhonePairingMachine(
+        window = window,
+        admission = admission,
+        conn = conn,
+        coreProvider = { core },
+        clock = clock,
+        limits = limits,
+    )
+
+    /** Erases the pairing code and the pairing id; live executions are closed by the host. */
+    fun shutdown() = window.cancel()
 }
