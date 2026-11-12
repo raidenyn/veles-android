@@ -66,7 +66,9 @@ class EnrollmentScenarioTest : PairingTestBase() {
     @Test
     fun every_executed_phone_trace_passes_on_the_real_core() = runBlocking {
         val executed = inventory.filterValues { it == "execute" }.keys
-        val phone = fixtures.filter { it.role == "phone" && it.id in executed }.map { it.id }
+        val phone = fixtures
+            .filter { it.role == "phone" && it.id in executed && it.id !in SESSION_TRACE_IDS }
+            .map { it.id }
         assertEquals("the executed phone traces are exactly the phone enrollment set", EXECUTED_PHONE_TRACES, phone.toSet())
         phone.forEach { runTrace(it) }
     }
@@ -223,6 +225,9 @@ class EnrollmentScenarioTest : PairingTestBase() {
                     "pairing_confirm_b" -> onConfirmB(index, step.connection, step.simulate)
                     "pairing_confirm_a" -> onDirectionViolation(index, step.connection)
                     "enroll_identity" -> onEnrollIdentity(index, step)
+                    "activation_commit" -> onActivationCommit(index, step)
+                    "activation_ack" -> onActivationAck(index)
+                    "protected_record" -> onUnauthorizedRecord(index, step)
                     "cancel_pairing" -> onCancel()
                     "inactivity_timeout" -> onInactivity()
                     else -> error("${fixture.id} has no mapping for ${step.event}")
@@ -267,6 +272,8 @@ class EnrollmentScenarioTest : PairingTestBase() {
 
         /** The phone pairing state for the trace's `phone_pairing:main` machine. */
         fun state(): String = when {
+            machines.any { it.state == PairingState.ACTIVE } -> "active"
+            machines.any { it.state == PairingState.COMMITTED_WAITING_ACK } -> "committed_waiting_ack"
             machines.any { it.state == PairingState.AWAITING_COMMIT } -> "awaiting_commit"
             machines.any { it.state == PairingState.ENROLLMENT_PROTECTED } -> "enrollment_protected"
             machines.any { it.state == PairingState.AWAITING_CB } -> "awaiting_cB"
@@ -466,6 +473,7 @@ class EnrollmentScenarioTest : PairingTestBase() {
                     }
                     expectedEt.fill(0)
                     current.peer.verifyPrepare(protectedRecord)
+                    current.peer.captureTranscript()
                     observe("send_enrollment_prepare")
                     if (durablePending) observe("record_persisted_pending")
                 }
@@ -508,6 +516,73 @@ class EnrollmentScenarioTest : PairingTestBase() {
                 else -> error("${fixture.id} step $index: unexpected enrollment answer")
             }
             trust.failPersist = false
+        }
+
+        /**
+         * OTP2-STA-010b step 1 on the enrollment connection: the client's activation_commit is
+         * verified against the enrollment keys, moves the record to committed_waiting_ack and
+         * the phone answers activation_complete bound to the same ET.
+         */
+        private suspend fun onActivationCommit(index: Int, step: TraceStep) {
+            val connection = step.explicitConnection ?: live.keys.lastOrNull() ?: "main"
+            val current = live[connection]
+                ?: error("${fixture.id} step $index: no live connection for the activation commit")
+            val frame = current.peer.activationFrame(
+                ACTIVATION_COMMIT_TYPE,
+                STAGE_COMMIT,
+                macOk = step.simulate["act_mac_ok"] != "false",
+            )
+            val outgoing = deliverToMachine(index, connection, frame)
+                ?: return
+            val response = outgoing.filterIsInstance<Outgoing.Frame>().singleOrNull()?.bytes
+                ?: error("${fixture.id} step $index: the commit answer carries no frame")
+            assertEquals("${fixture.id} step $index: the commit is answered by complete", ACTIVATION_COMPLETE_TYPE, recordTypeOf(response))
+            current.peer.verifyComplete(response)
+            assertEquals(
+                "${fixture.id} step $index: the commit moves the machine",
+                PairingState.COMMITTED_WAITING_ACK,
+                current.machine.state,
+            )
+            assertEquals("${fixture.id} step $index: the durable record is committed", "committed_waiting_ack", durableState())
+            observe("persist_committed_waiting_ack")
+            observe("record_committed")
+        }
+
+        /** OTP2-STA-010b step 6: the verified ack activates the record and ends the enrollment. */
+        private suspend fun onActivationAck(index: Int) {
+            val connection = live.keys.lastOrNull() ?: "main"
+            val current = live[connection]
+                ?: error("${fixture.id} step $index: no live connection for the activation ack")
+            val outgoing = deliverToMachine(
+                index,
+                connection,
+                current.peer.activationFrame(ACTIVATION_ACK_TYPE, STAGE_ACK),
+            ) ?: return
+            assertTrue("${fixture.id} step $index: the ack sends nothing", outgoing.isEmpty())
+            assertEquals("${fixture.id} step $index: the ack activates the machine", PairingState.ACTIVE, current.machine.state)
+            assertEquals("${fixture.id} step $index: the durable record is active", "active", durableState())
+            assertNull("${fixture.id} step $index: the enrollment keys are erased", current.machine.enrollmentKeysForTest())
+            observe("record_active_by_ack")
+            observe("record_activated_by_ack")
+            observe("erase_enrollment_keys")
+            observe("erase_enrollment_remnants")
+        }
+
+        /** OTP2-REC-035: the enrollment connection never carries OTP data. */
+        private suspend fun onUnauthorizedRecord(index: Int, step: TraceStep) {
+            val connection = step.explicitConnection ?: live.keys.lastOrNull() ?: "main"
+            val current = live[connection]
+                ?: error("${fixture.id} step $index: no live connection for the unauthorized record")
+            val type = step.simulate.getValue("record_type").removePrefix("0x").toInt(16)
+            val frame = current.peer.recordFrame(type)
+            val outgoing = deliverToMachine(index, connection, frame)
+                ?: return
+            assertEquals("${fixture.id} step $index: an OTP record is refused generically", PREAUTH_REJECT, frameType(outgoing))
+            observe("reject_unauthorized_enrollment_record")
+            assertNull("${fixture.id} step $index: the enrollment keys are erased", current.machine.enrollmentKeysForTest())
+            observe("erase_enrollment_keys")
+            closeIfDisconnected(connection, outgoing)
+            observe("close_enrollment_connection")
         }
 
         private suspend fun onCancel() {
@@ -689,6 +764,9 @@ class EnrollmentScenarioTest : PairingTestBase() {
         private var prefix: ByteArray? = null
         private var phoneIdentityBody: ByteArray? = null
         private var clientIdentityBody: ByteArray? = null
+        private var clientTx: EnrollmentKeys? = null
+        private var txSequence = 0uL
+        private var transcript: ByteArray? = null
 
         fun requestFrame(): ByteArray {
             val payload = ByteArray(REQUEST_FIXED + caps.size)
@@ -774,15 +852,17 @@ class EnrollmentScenarioTest : PairingTestBase() {
             }
             clientIdentityBody = body.copyOf()
             val derived = keys ?: error("${fixture.id}: enrollment keys missing")
+            clientTx = derived
             val frame = RecordCodec.seal(
                 derived.bToAAesKey,
                 derived.bToANoncePrefix,
                 checkNotNull(prefix),
                 Direction.CLIENT_TO_PHONE,
                 RecordType.ENROLL_IDENTITY.wire,
-                0uL,
+                txSequence,
                 body,
             )
+            txSequence += 1uL
             if (simulate["aead_ok"] == "false") frame[frame.size - 1] = (frame[frame.size - 1].toInt() xor 1).toByte()
             return frame
         }
@@ -797,6 +877,73 @@ class EnrollmentScenarioTest : PairingTestBase() {
             checkNotNull(phoneIdentityBody),
             checkNotNull(clientIdentityBody),
         )
+
+        /** Retains the canonical transcript for the activation MACs of this connection. */
+        fun captureTranscript() {
+            transcript = expectedTranscript()
+        }
+
+        /** OTP2-CRY-019a: a client activation record over `ET` under the enrollment key. */
+        fun activationFrame(type: Int, stage: Byte, macOk: Boolean = true): ByteArray {
+            val derived = clientTx ?: error("${fixture.id}: no client identity was sent")
+            val et = transcript ?: error("${fixture.id}: no transcript for an activation record")
+            val mac = Mac.getInstance(HMAC_ALGORITHM).run {
+                init(SecretKeySpec(derived.clientActivationKey, HMAC_ALGORITHM))
+                doFinal(et + byteArrayOf(stage))
+            }
+            if (!macOk) mac[mac.size - 1] = (mac[mac.size - 1].toInt() xor 0x01).toByte()
+            return try {
+                RecordCodec.seal(
+                    derived.bToAAesKey,
+                    derived.bToANoncePrefix,
+                    checkNotNull(prefix),
+                    Direction.CLIENT_TO_PHONE,
+                    type,
+                    txSequence++,
+                    mac,
+                )
+            } finally {
+                mac.fill(0)
+            }
+        }
+
+        /** A well-formed record of any type, used for the OTP-on-enrollment refusal. */
+        fun recordFrame(type: Int): ByteArray = RecordCodec.seal(
+            checkNotNull(clientTx).bToAAesKey,
+            checkNotNull(clientTx).bToANoncePrefix,
+            checkNotNull(prefix),
+            Direction.CLIENT_TO_PHONE,
+            type,
+            txSequence++,
+            ByteArray(0),
+        )
+
+        /** OTP2-CRY-019a: activation_complete must bind the same ET under the phone key. */
+        fun verifyComplete(frame: ByteArray) {
+            val derived = clientTx ?: error("${fixture.id}: no client identity was sent")
+            val opened = RecordCodec.open(
+                derived.aToBAesKey,
+                derived.aToBNoncePrefix,
+                checkNotNull(prefix),
+                Direction.PHONE_TO_CLIENT,
+                COMPLETE_SEQUENCE,
+                frame,
+            )
+            val et = transcript ?: error("${fixture.id}: no transcript")
+            val expected = Mac.getInstance(HMAC_ALGORITHM).run {
+                init(SecretKeySpec(derived.phoneActivationKey, HMAC_ALGORITHM))
+                doFinal(et + byteArrayOf(STAGE_COMPLETE))
+            }
+            try {
+                assertTrue(
+                    "${fixture.id}: activation_complete binds ET under the phone activation key",
+                    MessageDigest.isEqual(expected, opened.body),
+                )
+            } finally {
+                expected.fill(0)
+                opened.body.fill(0)
+            }
+        }
 
         /** OTP2-CRY-019a: the prepare MAC must be over the same `ET` under the client-derived key. */
         fun verifyPrepare(frame: ByteArray) {
@@ -1055,6 +1202,14 @@ class EnrollmentScenarioTest : PairingTestBase() {
         const val PREAUTH_REJECT = 0x0F
         const val ERROR_TYPE = 0x0003
         const val PREPARE_TYPE = 0x0104
+        const val ACTIVATION_COMMIT_TYPE = 0x0101
+        const val ACTIVATION_COMPLETE_TYPE = 0x0102
+        const val ACTIVATION_ACK_TYPE = 0x0103
+        const val COMPLETE_SEQUENCE = 2uL
+        const val STAGE_COMMIT: Byte = 0x01
+        const val STAGE_COMPLETE: Byte = 0x02
+        const val STAGE_ACK: Byte = 0x03
+        const val HMAC_ALGORITHM = "HmacSHA256"
         const val ATTEMPTS_PER_PAIRING_ID = 5
         const val ROLLING_ATTEMPTS_MAX = 5
         const val FRESH_PA_ROLLING_MAX = 5
@@ -1115,7 +1270,12 @@ class EnrollmentScenarioTest : PairingTestBase() {
             "st-en-inactivity-before-identity-repair-only",
             "st-neg-phone-persist-failure-sends-no-prepare",
             "st-en-phone-pending-survives-interruption-with-et",
+            "st-enrollment-full-success-then-no-otp-on-enrollment-connection",
+            "st-en-prepare-sent-after-persist-pairing",
         )
+
+        /** Enrollment-file traces that drive the reconnect engine, not the pairing machine. */
+        val SESSION_TRACE_IDS = setOf("st-rec-no-peer-record-no-recovery")
     }
 }
 

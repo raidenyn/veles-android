@@ -10,7 +10,7 @@
   "st-en-client-confirms-in-order": "execute",
   "st-en-phone-identity-device-type-mismatch": "execute",
   "st-en-duplicate-installation-rejected": "execute",
-  "st-enrollment-full-success-then-no-otp-on-enrollment-connection": "deferred:Task 9",
+  "st-enrollment-full-success-then-no-otp-on-enrollment-connection": "execute",
   "st-en-cancel-cancels-pending": "execute",
   "st-en-window-deadline-pb-299999-allowed": "execute",
   "st-en-window-deadline-pb-300000-rejected": "execute",
@@ -26,7 +26,7 @@
       "deliver": false
     }
   },
-  "st-en-prepare-sent-after-persist-pairing": "deferred:Task 9",
+  "st-en-prepare-sent-after-persist-pairing": "execute",
   "st-en-client-prepare-gate-full-flow": "execute",
   "st-neg-commit-without-verified-prepare": {
     "engine-effect": {
@@ -40,7 +40,7 @@
   "st-en-code-one-use-window-closed-after-cb": "execute",
   "st-en-cb-disconnect-before-identity-repair-only": "execute",
   "st-en-client-one-sided-pending-cancelled-then-fresh-pairing": "execute",
-  "st-rec-no-peer-record-no-recovery": "deferred:Task 9",
+  "st-rec-no-peer-record-no-recovery": "execute",
   "st-en-inactivity-before-identity-repair-only": "execute",
   "st-neg-client-persist-failure-publishes-nothing": "execute",
   "st-neg-phone-persist-failure-sends-no-prepare": "execute",
@@ -50,9 +50,9 @@
   "st-rec-ack-lost-active-client-direct-ack": "execute",
   "st-rec-complete-lost-recovery-client": "execute",
   "st-rec-recovery-session-stays-recovery-only": "execute",
-  "st-rec-pending-expiry-deletes-incomplete": "deferred:Task 9",
-  "st-rec-boot-continuity-loss-deletes-incomplete-only": "deferred:Task 9",
-  "st-rec-recovery-commit-mac-mismatch": "deferred:Task 9",
-  "st-rec-recovery-complete-mac-mismatch": "deferred:Task 9",
+  "st-rec-pending-expiry-deletes-incomplete": "execute",
+  "st-rec-boot-continuity-loss-deletes-incomplete-only": "execute",
+  "st-rec-recovery-commit-mac-mismatch": "execute",
+  "st-rec-recovery-complete-mac-mismatch": "execute",
   "st-rec-phone-complete-lost-prepares-then-full-session": "execute"
 }

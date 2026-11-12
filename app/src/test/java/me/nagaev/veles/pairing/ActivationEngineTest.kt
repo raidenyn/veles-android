@@ -107,7 +107,8 @@ class ActivationEngineTest {
         )
 
         assertTrue("a wrong commit ends the session", effects.any { it is SessionEffect.Terminated })
-        assertEquals(TrustState.PENDING, commitHarness.peers().single().state)
+        // OTP2-CRY-019g: a wrong activation MAC never leaves a half-activated record.
+        assertTrue("a wrong commit deletes the incomplete record", commitHarness.peers().isEmpty())
         assertFalse(commitHarness.engine.isOpen)
 
         val ackClient = TestClient()
@@ -134,7 +135,7 @@ class ActivationEngineTest {
         )
 
         assertTrue("a wrong ack ends the session", ackEffects.any { it is SessionEffect.Terminated })
-        assertEquals(TrustState.COMMITTED_WAITING_ACK, ackHarness.peers().single().state)
+        assertTrue("a wrong ack deletes the incomplete record", ackHarness.peers().isEmpty())
         assertFalse(ackHarness.engine.isOpen)
     }
 

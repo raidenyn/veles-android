@@ -1,5 +1,6 @@
 package me.nagaev.veles.pairing
 
+import kotlinx.coroutines.CancellationException
 import me.nagaev.veles.session.ApplicationHandler
 import me.nagaev.veles.session.RecordType
 import me.nagaev.veles.session.SessionClass
@@ -74,6 +75,7 @@ private class SessionActivation(
         )
     }
 
+    @Suppress("ReturnCount") // One guard per missing session fact.
     override suspend fun handle(
         type: Int,
         body: ByteArray,
@@ -85,10 +87,16 @@ private class SessionActivation(
         val step = if (type == RecordType.ACTIVATION_COMMIT.wire) ActivationStep.COMMIT else ActivationStep.ACK
         val stage = if (type == RecordType.ACTIVATION_COMMIT.wire) STAGE_COMMIT else STAGE_ACK
         val expected = activationMac(clientKey, transcript, stage)
-        try {
-            if (!MessageDigest.isEqual(expected, body)) throw SessionReject()
+        val matches = try {
+            MessageDigest.isEqual(expected, body)
         } finally {
             expected.fill(0)
+        }
+        // OTP2-CRY-019g / states.json: a wrong activation MAC on an incomplete record deletes
+        // it before the session ends, so no half-activated trust state survives.
+        if (!matches) {
+            eraseIncomplete()
+            throw SessionReject()
         }
         val peer = trust.peers().firstOrNull { it.installationId == peerId } ?: throw SessionReject()
         if (!applyVerified(peer, step, body)) throw SessionReject()
@@ -99,6 +107,25 @@ private class SessionActivation(
             } finally {
                 complete.fill(0)
             }
+        }
+    }
+
+    /** Deletes only an incomplete record of this peer; an active record is never touched. */
+    private suspend fun eraseIncomplete() {
+        val peer = try {
+            trust.peers().firstOrNull { it.installationId == peerId }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            return
+        } ?: return
+        if (peer.state == TrustState.ACTIVE) return
+        try {
+            trust.revoke(peerId)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            // The session still fails closed; a store failure leaves no usable record.
         }
     }
 

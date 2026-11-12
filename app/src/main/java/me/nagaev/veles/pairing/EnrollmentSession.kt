@@ -9,6 +9,7 @@ import me.nagaev.veles.trust.InstallationTrustRepository
 import me.nagaev.veles.trust.PendingPeer
 import me.nagaev.veles.trust.TrustEncoding
 import java.security.GeneralSecurityException
+import java.security.MessageDigest
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
@@ -48,6 +49,9 @@ internal class EnrollmentSession private constructor(
     /** The peer id this enrollment persisted, or null when nothing was made durable. */
     var persistedPeerId: String? = null
         private set
+
+    /** The session id the proof registry binds this enrollment's activation MACs to. */
+    val sessionIdHex: String get() = TrustEncoding.hex(sessionIdPrefix)
 
     /** The enrollment key holder, exposed only for the erasure assertions. */
     internal val keysForTest: EnrollmentKeys get() = keys
@@ -155,6 +159,42 @@ internal class EnrollmentSession private constructor(
         }
     }
 
+    /**
+     * OTP2-CRY-019a activation MAC check: `HMAC-SHA-256(K_act_client, ET || stage)` compared in
+     * constant time with [body]. A mismatch never authorizes a store transition.
+     */
+    fun verifyActivation(body: ByteArray, stage: Byte): Boolean {
+        if (body.size != AUTHENTICATOR_BYTES) return false
+        val et = transcript ?: throw EnrollmentReject()
+        val expected = hmac(keys.clientActivationKey, et + byteArrayOf(stage))
+        return try {
+            MessageDigest.isEqual(expected, body)
+        } finally {
+            expected.fill(0)
+        }
+    }
+
+    /** OTP2-CRY-019a `activation_complete`: `HMAC-SHA-256(K_act_phone, ET || 0x02)`. */
+    fun activationCompleteFrame(): ByteArray {
+        val et = transcript ?: throw EnrollmentReject()
+        val mac = hmac(keys.phoneActivationKey, et + byteArrayOf(STAGE_COMPLETE))
+        return try {
+            val frame = RecordCodec.seal(
+                keys.aToBAesKey,
+                keys.aToBNoncePrefix,
+                sessionIdPrefix,
+                Direction.PHONE_TO_CLIENT,
+                RecordType.ACTIVATION_COMPLETE.wire,
+                txSequence,
+                mac,
+            )
+            txSequence += 1uL
+            frame
+        } finally {
+            mac.fill(0)
+        }
+    }
+
     /** OTP2-STA-012 protected refusal: `app_error` with code `0x04` `enrollment_rejected`. */
     fun appErrorFrame(code: AppErrorCode): ByteArray {
         val reason = ERROR_REASON.toByteArray(Charsets.US_ASCII)
@@ -198,7 +238,9 @@ internal class EnrollmentSession private constructor(
 
     companion object {
         private const val STAGE_PREPARE: Byte = 0x00
+        private const val STAGE_COMPLETE: Byte = 0x02
         private const val HMAC_ALGORITHM = "HmacSHA256"
+        private const val AUTHENTICATOR_BYTES = 32
         private const val ERROR_REASON = "enrollment rejected"
 
         private val ALLOWED_TYPES = setOf(

@@ -31,6 +31,8 @@ const STAGE_ACK = 0x03;
 export interface ActivationTrustRepository {
     peers(): Promise<readonly { installationId: string; state: string }[]>;
     confirm(peerId: string, stage: 'complete', proof: Uint8Array): Promise<void>;
+    /** Deletes an incomplete record; used when a recovery activation MAC does not verify. */
+    revoke(peerId: string): Promise<void>;
 }
 
 export interface ActivationEngineOptions {
@@ -163,10 +165,32 @@ class SessionActivation implements ApplicationHandler {
         received: Uint8Array,
     ): Promise<void> {
         const expected = await activationMac(key, et, stage);
+        let matches: boolean;
         try {
-            if (!equalConstantTime(expected, received)) throw new SessionReject();
+            matches = equalConstantTime(expected, received);
         } finally {
             expected.fill(0);
+        }
+        if (!matches) {
+            // OTP2-CRY-019g: a wrong recovery activation MAC on an incomplete mirror deletes
+            // it before the session fails closed; no half-activated record survives.
+            await this.#eraseIncomplete();
+            throw new SessionReject();
+        }
+    }
+
+    /** Deletes only this peer's incomplete record; an active-family mirror is never touched. */
+    async #eraseIncomplete(): Promise<void> {
+        try {
+            const peers = await this.#trust.peers();
+            const peer = peers.find(
+                (candidate) => candidate.installationId === this.#context.peerId,
+            );
+            if (peer !== undefined && peer.state === 'pending') {
+                await this.#trust.revoke(peer.installationId);
+            }
+        } catch {
+            // The session still fails closed; a store failure leaves no usable record.
         }
     }
 }

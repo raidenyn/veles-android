@@ -439,6 +439,7 @@ interface RunObservations {
     continuityMatched: boolean;
     continuityLost: boolean;
     deletedIncomplete: boolean;
+    erasedIncomplete: boolean;
     upgrades: number;
     storeState: string;
     /** State the repository loaded from durable storage before any session upgrade. */
@@ -601,6 +602,7 @@ class ClientScenario {
         continuityMatched: true,
         continuityLost: false,
         deletedIncomplete: false,
+        erasedIncomplete: false,
         upgrades: 0,
         storeState: '',
         reloadedState: '',
@@ -730,6 +732,16 @@ class ClientScenario {
                     live.state = 'active_activation_pending';
                     this.activationConfirms += 1;
                     this.repository?.persist(this.processToken);
+                },
+                revoke: async (peerId) => {
+                    // OTP2-CRY-019g: a wrong recovery MAC deletes only the incomplete mirror.
+                    const live = this.repository?.store.get(peerId);
+                    if (live !== undefined && live.state === 'pending') {
+                        this.observations.erasedIncomplete = true;
+                    }
+                    this.persistedState = 'deleted';
+                    this.observations.storeState = 'deleted';
+                    this.repository?.delete();
                 },
             },
             proofs: this.proofs,
@@ -1211,7 +1223,11 @@ const CLIENT_EFFECTS: Record<string, (run: RunObservations) => boolean> = {
     reconnect_confirm_sent_peer_state_active: (run) =>
         run.clientConfirmPeerStates.includes(PEER_STATE_ACTIVE),
     delete_incomplete_materials: (run) => run.deletedIncomplete,
-    erase_incomplete_materials: () => false,
+    erase_incomplete_materials: (run) => run.erasedIncomplete,
+    reject_activation_mac_mismatch: (run) =>
+        run.steps.some(
+            (step) => step.terminated === 'authorization' && step.simulate.act_mac_ok === 'false',
+        ),
 };
 
 /**

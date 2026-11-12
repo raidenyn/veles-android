@@ -9,7 +9,9 @@ import me.nagaev.veles.session.P256
 import me.nagaev.veles.session.RecordType
 import me.nagaev.veles.session.Role
 import me.nagaev.veles.session.SessionReject
+import me.nagaev.veles.trust.ActivationStep
 import me.nagaev.veles.trust.InstallationTrustRepository
+import me.nagaev.veles.trust.TrustState
 import java.security.SecureRandom
 
 /** The phone pairing machine's state (`phone_pairing` in `protocol/v1/states.json`). */
@@ -20,6 +22,8 @@ enum class PairingState {
     AWAITING_CB,
     ENROLLMENT_PROTECTED,
     AWAITING_COMMIT,
+    COMMITTED_WAITING_ACK,
+    ACTIVE,
 }
 
 /**
@@ -103,6 +107,7 @@ class PhonePairingMachine(
     private val nonce: () -> ByteArray = { ByteArray(NONCE_BYTES).also(SecureRandom()::nextBytes) },
     private val label: () -> String = { DEVICE_LABEL },
     private val identityNonce: () -> ByteArray = { ByteArray(IDENTITY_NONCE_BYTES).also(SecureRandom()::nextBytes) },
+    private val proofs: ProofRegistry = ProofRegistry(),
 ) : PairingConnection {
     private val mutex = Mutex()
     private var execution: PairingExecution? = null
@@ -129,7 +134,11 @@ class PhonePairingMachine(
             // After a verified cB every frame is a protected enrollment record, including a
             // malformed one: routing it through the pairing decoder would spend the
             // malformed-pairing budget on authenticated traffic and still fail closed.
-            if (state == PairingState.ENROLLMENT_PROTECTED || state == PairingState.AWAITING_COMMIT) {
+            if (state == PairingState.ENROLLMENT_PROTECTED ||
+                state == PairingState.AWAITING_COMMIT ||
+                state == PairingState.COMMITTED_WAITING_ACK ||
+                state == PairingState.ACTIVE
+            ) {
                 onProtectedRecord(bytes)
             } else {
                 handleFrame(bytes)
@@ -329,6 +338,9 @@ class PhonePairingMachine(
 
     @Suppress("ReturnCount") // One branch per allow-list type and its handler.
     private suspend fun onProtectedRecord(bytes: ByteArray): List<Outgoing> {
+        // OTP2-REC-035: the enrollment connection never carries OTP data, and activation
+        // ends the enrollment keys. Any record after activation is unauthorized.
+        if (state == PairingState.ACTIVE) return reject()
         val session = enrollment ?: return reject()
         val record = try {
             session.open(bytes)
@@ -338,17 +350,117 @@ class PhonePairingMachine(
         return try {
             when (record.type) {
                 RecordType.ENROLL_IDENTITY -> onClientIdentity(session, record.body)
+                RecordType.ACTIVATION_COMMIT -> onActivationCommit(session, record.body)
+                RecordType.ACTIVATION_ACK -> onActivationAck(session, record.body)
                 // OTP2-CRY-020a framework records are authorized but carry no state here.
                 RecordType.APP_HEARTBEAT -> if (record.body.isEmpty()) emptyList() else reject()
-                // Any other authorized type has no handler on this task's states: fail closed
-                // rather than half-process an activation record.
+                // Any other authorized type has no handler on the enrollment connection:
+                // fail closed rather than half-process an activation record.
                 else -> reject()
             }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
         } catch (_: EnrollmentReject) {
             reject()
         } finally {
             record.body.fill(0)
         }
+    }
+
+    /**
+     * OTP2-STA-010b step 1 on the enrollment connection: the verified commit moves the pending
+     * record to `committed_waiting_ack` and the phone releases `activation_complete`. A wrong
+     * MAC deletes this enrollment's incomplete record and terminates (OTP2-CRY-019g).
+     */
+    @Suppress("ReturnCount") // One branch per failure of the verified commit.
+    private suspend fun onActivationCommit(session: EnrollmentSession, body: ByteArray): List<Outgoing> {
+        val peerId = session.persistedPeerId ?: return reject()
+        if (!session.verifyActivation(body, STAGE_COMMIT)) return eraseIncompleteFailure(session, peerId)
+        val peer = try {
+            trust.peers().firstOrNull { it.installationId == peerId }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            return reject()
+        } ?: return reject()
+        if (peer.state == TrustState.PENDING) {
+            proofs.register(session.sessionIdHex, listOf(ActivationProof(peerId, ActivationStep.COMMIT, body.copyOf())))
+            val written = try {
+                trust.confirm(peerId, ActivationStep.COMMIT, body.copyOf())
+                true
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                false
+            }
+            if (!written) {
+                proofs.revoke(session.sessionIdHex)
+                return reject()
+            }
+        } else if (peer.state != TrustState.COMMITTED_WAITING_ACK) {
+            return reject()
+        }
+        state = PairingState.COMMITTED_WAITING_ACK
+        lastActivity = clock()
+        return listOf(
+            try {
+                Outgoing.Frame(session.activationCompleteFrame())
+            } catch (_: Exception) {
+                return reject()
+            },
+        )
+    }
+
+    /** OTP2-STA-010b step 3/6: the verified ack activates the record and ends the enrollment. */
+    @Suppress("ReturnCount") // One branch per failure of the verified ack.
+    private suspend fun onActivationAck(session: EnrollmentSession, body: ByteArray): List<Outgoing> {
+        val peerId = session.persistedPeerId ?: return reject()
+        if (!session.verifyActivation(body, STAGE_ACK)) return eraseIncompleteFailure(session, peerId)
+        val peer = try {
+            trust.peers().firstOrNull { it.installationId == peerId }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            return reject()
+        } ?: return reject()
+        if (peer.state != TrustState.COMMITTED_WAITING_ACK) return reject()
+        proofs.register(session.sessionIdHex, listOf(ActivationProof(peerId, ActivationStep.ACK, body.copyOf())))
+        val written = try {
+            trust.confirm(peerId, ActivationStep.ACK, body.copyOf())
+            true
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            false
+        }
+        if (!written) {
+            proofs.revoke(session.sessionIdHex)
+            return reject()
+        }
+        // OTP2-CRY-019e: every enrollment key and remnant is erased once the record is active.
+        eraseExecution()
+        eraseEnrollment()
+        eraseSecrets()
+        state = PairingState.ACTIVE
+        lastActivity = clock()
+        return emptyList()
+    }
+
+    /** A wrong activation MAC deletes only this enrollment's incomplete record, then fails. */
+    private suspend fun eraseIncompleteFailure(
+        session: EnrollmentSession,
+        peerId: String,
+    ): List<Outgoing> {
+        proofs.revoke(session.sessionIdHex)
+        try {
+            val peer = trust.peers().firstOrNull { it.installationId == peerId }
+            if (peer != null && peer.state != TrustState.ACTIVE) trust.revoke(peerId)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            // The connection still fails closed; a store failure leaves no usable record.
+        }
+        return reject()
     }
 
     @Suppress("ReturnCount") // Distinct outcomes: bad record, duplicate, persist failure, prepare.
@@ -492,7 +604,11 @@ class PhonePairingMachine(
             PairingState.AWAITING_CB,
             PairingState.ENROLLMENT_PROTECTED,
             PairingState.AWAITING_COMMIT,
+            PairingState.COMMITTED_WAITING_ACK,
+            PairingState.ACTIVE,
         )
+        const val STAGE_COMMIT: Byte = 0x01
+        const val STAGE_ACK: Byte = 0x03
         const val DEVICE_LABEL = "Phone"
         const val IDENTITY_NONCE_BYTES = 16
     }

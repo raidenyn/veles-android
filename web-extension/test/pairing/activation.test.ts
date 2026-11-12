@@ -19,6 +19,7 @@ class FakeTrust {
     readonly confirms: { peerId: string; stage: string; proof: Uint8Array }[] = [];
     peerId = '';
     state = 'pending';
+    revoked = false;
 
     peers(): Promise<readonly { installationId: string; state: string }[]> {
         return Promise.resolve(
@@ -30,6 +31,13 @@ class FakeTrust {
         this.confirms.push({ peerId, stage, proof: proof.slice() });
         this.peerId = peerId;
         this.state = stage === 'complete' ? 'active_activation_pending' : 'active';
+        return Promise.resolve();
+    }
+
+    revoke(peerId: string): Promise<void> {
+        this.revoked = true;
+        this.peerId = peerId;
+        this.state = 'deleted';
         return Promise.resolve();
     }
 }
@@ -126,7 +134,9 @@ describe('chrome activation engine', () => {
 
         expect(terminatedReason(effects)).toBe('authorization');
         expect(trust.confirms).toEqual([]);
-        expect(harness.store.get(harness.peerId)?.state).toBe('pending');
+        // OTP2-CRY-019g: a wrong activation MAC deletes the incomplete mirror.
+        expect(trust.revoked).toBe(true);
+        expect(trust.state).toBe('deleted');
     });
 
     it('step5_ack_only_for_active_family', async () => {

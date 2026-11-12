@@ -330,8 +330,12 @@ private object ScenarioFixtures {
     val records: List<ScenarioFixture> = fixtures("/fixtures/records.json")
     val reconnect: List<ScenarioFixture> = fixtures("/fixtures/reconnect.json")
     val enrollment: List<ScenarioFixture> = fixtures("/fixtures/enrollment.json")
-    val all: List<ScenarioFixture> = records + reconnect
-    val sessionIds: Set<String> = all.map { it.id }.toSet()
+
+    /** Enrollment-file traces that drive the reconnect engine, not the pairing machine. */
+    val enrollmentSessionIds: Set<String> = setOf("st-rec-no-peer-record-no-recovery")
+    val enrollmentSession: List<ScenarioFixture> = enrollment.filter { it.id in enrollmentSessionIds }
+    val all: List<ScenarioFixture> = records + reconnect + enrollmentSession
+    val sessionIds: Set<String> = (records + reconnect).map { it.id }.toSet()
     val enrollmentIds: Set<String> = enrollment.map { it.id }.toSet()
 
     val inventory: Map<String, Any> = inventory("/otp-09-scenarios.json")
@@ -344,7 +348,8 @@ private object ScenarioFixtures {
      * The OTP-09 runners execute `records.json`/`reconnect.json` ids only; `enrollment.json` ids
      * belong to the OTP-10 enrollment runners.
      */
-    val executionInventory: Map<String, Any> = effectiveInventory.filterKeys { it in sessionIds }
+    val executionInventory: Map<String, Any> =
+        effectiveInventory.filterKeys { it in sessionIds || it in enrollmentSessionIds }
 
     private fun inventory(path: String): Map<String, Any> = read(path).entries.associate { (key, value) ->
         key to when (value) {
@@ -689,6 +694,7 @@ private class PhoneSession(val name: String) {
     var closed: Boolean = false
     var keysErased: Boolean = false
     var deletedIncomplete: Boolean = false
+    var revokedTrust: Boolean = false
 
     val state: String
         get() = when {
@@ -717,9 +723,11 @@ private class ScenarioRun(
 
     fun finalState(): Map<String, String> {
         val result = mutableMapOf<String, String>()
-        sessions.values.forEach { peer -> result["session:${peer.name}"] = peer.state }
         sessions.values.forEach { peer ->
-            peer.engine?.let { result.putIfAbsent("durable_phone_record:${peer.name}", storeState(peer.name)) }
+            if (peer.engine != null) result["session:${peer.name}"] = peer.state
+            if (peer.engine != null || peer.name in storeStates) {
+                result["durable_phone_record:${peer.name}"] = storeState(peer.name)
+            }
         }
         return result
     }
@@ -754,8 +762,10 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
     private fun session(peer: String): PhoneSession = run.sessions.getOrPut(peer) {
         PhoneSession(peer).also { created ->
             val persisted = fixture.persisted["$RECORD_PREFIX$peer"]
-            if (persisted != null && persisted != "deleted") {
-                created.repository = repository(created, persisted)
+            if (persisted != null && persisted != "deleted" && persisted != "absent") {
+                val createdElapsed = fixture.persisted["created_monotonic_ms:$RECORD_PREFIX$peer"]?.toLongOrNull()
+                    ?: clock.now
+                created.repository = repository(created, persisted, createdElapsed)
             }
         }
     }
@@ -764,7 +774,7 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
      * Seeds the real OTP-04 store from `persisted_state`. Every later transition, MAC check and
      * proof consumption runs through [TrustRepository] and this session's [ProofRegistry].
      */
-    private fun repository(peer: PhoneSession, state: String): TrustRepository {
+    private fun repository(peer: PhoneSession, state: String, createdElapsed: Long): TrustRepository {
         val local = TestIdentity.generate()
         val et = fixtureEt() ?: ByteArray(HASH_BYTES)
         val clientPublic = TrustEncoding.hex(peer.peer.identityPublicKey)
@@ -781,11 +791,11 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
                 "committed_waiting_ack" -> TrustState.COMMITTED_WAITING_ACK
                 else -> error("unsupported persisted record state $state")
             },
-            createdAtMillis = clock.now,
+            createdAtMillis = createdElapsed,
             lastSeenMillis = null,
-            createdElapsedMillis = clock.now,
+            createdElapsedMillis = createdElapsed,
             bootToken = BOOT_TOKEN,
-            stateChangedAtMillis = clock.now,
+            stateChangedAtMillis = createdElapsed,
         )
         val snapshot = TrustSnapshot(
             identity = InstallationIdentity(
@@ -814,13 +824,15 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
     /** Projects the real store into the fixture's durable-slot string and returns it. */
     private suspend fun refreshStore(peer: PhoneSession): String {
         val repository = peer.repository
-        val state = repository?.peers()?.firstOrNull()?.state?.let {
-            when (it) {
-                TrustState.ACTIVE -> "active"
-                TrustState.PENDING -> "pending"
-                TrustState.COMMITTED_WAITING_ACK -> "committed_waiting_ack"
-            }
-        } ?: "deleted"
+        val state = repository?.peers()
+            ?.firstOrNull { it.installationId == TrustEncoding.hex(peer.peer.installationId) }
+            ?.state?.let {
+                when (it) {
+                    TrustState.ACTIVE -> "active"
+                    TrustState.PENDING -> "pending"
+                    TrustState.COMMITTED_WAITING_ACK -> "committed_waiting_ack"
+                }
+            } ?: if (run.storeStates[peer.name] == "absent") "absent" else "deleted"
         run.storeStates[peer.name] = state
         return state
     }
@@ -857,6 +869,7 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
                 emptyList()
             }
             "process_load" -> processLoad(peer, step)
+            "pending_expiry" -> pendingExpiry(peer)
             "revoke" -> revoke(peer)
             "pairing_confirm_a" -> pairingConfirm(peer)
             else -> throw AssertionError("unmapped scenario event '${step.event}' in ${fixture.id}")
@@ -968,7 +981,7 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
 
     private suspend fun hello(peer: PhoneSession, step: ScenarioStep): List<SessionEffect> {
         if (step.simulate["record_exists"] == "false") {
-            run.storeStates[peer.name] = "deleted"
+            if (run.storeStates[peer.name] != "absent") run.storeStates[peer.name] = "deleted"
             peer.repository = null
             peer.activation = null
         }
@@ -1131,7 +1144,7 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
         if (step.simulate["continuity_token_matches"] == "false") {
             // OTP2-STA-010c: continuity loss deletes only incomplete records, through the same
             // real repository the lookup reads, so a later refresh cannot resurrect them.
-            if (refreshStore(peer) == "pending") {
+            if (refreshStore(peer) in INCOMPLETE_STATES) {
                 peer.repository?.revoke(TrustEncoding.hex(peer.peer.installationId))
                 peer.repository = null
                 peer.activation = null
@@ -1142,8 +1155,19 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
         return emptyList()
     }
 
+    /** OTP2-STA-010c: the real store applies the injected clock's 86 400 s deadline. */
+    private suspend fun pendingExpiry(peer: PhoneSession): List<SessionEffect> {
+        val before = run.storeStates[peer.name]
+        refreshStore(peer)
+        if (before in INCOMPLETE_STATES && run.storeStates[peer.name] == "deleted") {
+            peer.deletedIncomplete = true
+        }
+        return emptyList()
+    }
+
     private suspend fun revoke(peer: PhoneSession): List<SessionEffect> {
         peer.repository?.revoke(TrustEncoding.hex(peer.peer.installationId))
+        peer.revokedTrust = true
         peer.repository = null
         peer.activation = null
         run.storeStates[peer.name] = "deleted"
@@ -1279,6 +1303,7 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
     private fun String.hexBytes(): ByteArray = chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 
     private companion object {
+        val INCOMPLETE_STATES = setOf("pending", "committed_waiting_ack")
         const val RECORD_PREFIX = "durable_phone_record:"
         const val OVERSIZE_RECORD_BYTES = RecordCodec.MAX_RECORD + 1
         const val HASH_BYTES = 32
@@ -1367,6 +1392,8 @@ private object Effects {
         "reconnect_confirm_sent_peer_state_active",
         "delete_incomplete_materials",
         "erase_incomplete_materials",
+        "erase_trust_record_revoked",
+        "reject_activation_mac_mismatch",
         "record_active_by_ack",
         "record_activated_by_ack",
         "record_committed",
@@ -1465,7 +1492,13 @@ private object Effects {
             "verify_client_signature" -> sessions.any { it.signatureVerified }
             "reconnect_confirm_sent_peer_state_active" -> sessions.any { it.phonePeerStates.contains(1) }
             "delete_incomplete_materials" -> sessions.any { it.deletedIncomplete }
-            "erase_incomplete_materials" -> false
+            "erase_incomplete_materials" -> run.transitions.any {
+                it.second == "deleted" && it.first in INCOMPLETE_STATES
+            }
+            "erase_trust_record_revoked" -> sessions.any { it.revokedTrust }
+            "reject_activation_mac_mismatch" -> steps.any {
+                it.terminated == "authorization" && it.simulate["act_mac_ok"] == "false"
+            }
             "enrollment_prepare_sent" -> steps.any { it.sentTypes.contains(RecordType.ENROLLMENT_PREPARE.wire) }
             // The phone never receives a prepare; a client prepare is not an engine event here.
             "enrollment_prepare_processed" -> false
@@ -1533,26 +1566,23 @@ private object Effects {
 
     /** The ack step that actually moved the durable record from committed to active. */
     private fun activatedByAckStep(run: ScenarioRun): Int? {
-        var previous: String? = null
+        val previous = mutableMapOf<String, String>()
         for (step in run.steps) {
             val state = storeStateOf(step)
             if (
                 step.deliveredTypes.contains(RecordType.ACTIVATION_ACK.wire) &&
-                previous == "committed_waiting_ack" &&
+                previous[step.peer] == "committed_waiting_ack" &&
                 state == "active"
             ) {
                 return step.index
             }
-            previous = state
+            if (state != null) previous[step.peer] = state
         }
         return null
     }
 
-    @Suppress("MaxLineLength") // ktlint keeps this expression body on one line.
-    // Single-peer fixtures: the runner reads the sole durable_phone_record entry; multi-peer
-    // ordering belongs to the deferred 9e scenario.
-    private fun storeStateOf(step: StepOutcome): String? =
-        step.stateSnapshot.entries.firstOrNull { it.key.startsWith("durable_phone_record:") }?.value
+    /** Multi-peer: every step reports only its own peer's durable record. */
+    private fun storeStateOf(step: StepOutcome): String? = step.stateSnapshot["durable_phone_record:${step.peer}"]
 
     /**
      * OTP2-STA-015 counter observation against the pre-teardown snapshot:
@@ -1575,6 +1605,7 @@ private object Effects {
         }
     }
 
+    private val INCOMPLETE_STATES = setOf("pending", "committed_waiting_ack")
     private const val TYPE_APP_HEARTBEAT = 0x0002
     private const val TYPE_PULL_REQUEST = 0x0200
     private const val TYPE_PULL_EVENTS = 0x0202
