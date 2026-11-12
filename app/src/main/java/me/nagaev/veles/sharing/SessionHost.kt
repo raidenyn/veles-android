@@ -136,6 +136,12 @@ class SessionHost(
         /** The pairing machine, created only for a generation whose first frame is `0x01`. */
         @Volatile var pairing: PairingConnection? = null
 
+        /**
+         * Set by the first dispatched frame. Only that frame selects the path: later frames
+         * always follow the chosen machine or engine (guarded by [mutex], like dispatch).
+         */
+        var firstFrameSeen = false
+
         /** Bounded FIFO: inbound is capped by the GATT ingress budget; the rest is slack. */
         val queue = Channel<Step>(QUEUE_CAPACITY)
 
@@ -431,19 +437,27 @@ class SessionHost(
      * Routes the first frame: a `pairing_request` (`0x01`) tears down the eager reconnect
      * engine and hands the generation to the pairing machine; every other first frame
      * stays on the reconnect engine, whose pre-auth frame set is therefore unchanged.
+     *
+     * Only the first frame of a generation selects the path. Re-checking later frames would
+     * read a protected record's version/schema bytes (`01 01`) as an envelope length and
+     * hand an authenticated reconnect generation to the pairing machine, and would let a
+     * mid-handshake pairing frame spend the pairing budgets on reconnect traffic.
      */
     private suspend fun dispatchInbound(live: Live, bytes: ByteArray) {
+        if (!live.firstFrameSeen) {
+            live.firstFrameSeen = true
+            if (isPairingFrame(bytes)) {
+                live.engine?.teardown()
+                live.engine = null
+                val machine = pairingFactory(live.gen)
+                live.pairing = machine
+                runPairing(live) { machine.onFrame(bytes) }
+                return
+            }
+        }
         val pairing = live.pairing
         if (pairing != null) {
             runPairing(live) { pairing.onFrame(bytes) }
-            return
-        }
-        if (isPairingFrame(bytes)) {
-            live.engine?.teardown()
-            live.engine = null
-            val machine = pairingFactory(live.gen)
-            live.pairing = machine
-            runPairing(live) { machine.onFrame(bytes) }
             return
         }
         val engine = live.engine ?: return

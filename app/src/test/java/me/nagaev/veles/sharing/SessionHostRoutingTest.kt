@@ -4,6 +4,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import me.nagaev.veles.pairing.Outgoing
 import me.nagaev.veles.pairing.PairingConnection
 import me.nagaev.veles.pairing.PairingFrameType
 import me.nagaev.veles.pairing.PairingFrames
@@ -12,6 +13,9 @@ import me.nagaev.veles.pairing.RejectingPairingConnection
 import me.nagaev.veles.pairing.VelesPairingCore
 import me.nagaev.veles.session.FakeClock
 import me.nagaev.veles.session.PhoneSessionEngine
+import me.nagaev.veles.session.PreAuthCodec
+import me.nagaev.veles.session.Role
+import me.nagaev.veles.session.SignatureFrame
 import me.nagaev.veles.session.TestClient
 import me.nagaev.veles.session.TestIdentity
 import me.nagaev.veles.session.TestPeers
@@ -65,6 +69,104 @@ class SessionHostRoutingTest {
         runCurrent()
         host.onRecord(gen, frame.copyOf(), RecordAdmission { })
         runCurrent()
+    }
+
+    /** Drives the reconnect handshake on [gen] until the known peer is authenticated. */
+    private suspend fun TestScope.authenticate(host: SessionHost, gen: ConnectionGeneration) {
+        host.onConnected(gen)
+        runCurrent()
+        host.onRecord(gen, client.helloFrame.copyOf(), RecordAdmission { })
+        runCurrent()
+        val handshake = wire.sent.filter { it.gen == gen }
+        val phoneHelloPayload = PreAuthCodec.decode(handshake[0].bytes).second
+        val phoneSignature = SignatureFrame.decode(
+            PreAuthCodec.decode(handshake[1].bytes).second,
+            Role.PHONE,
+        ).signature
+        client.acceptPhoneHello(phoneHelloPayload, phoneSignature)
+        host.onRecord(gen, client.signatureFrame(), RecordAdmission { })
+        runCurrent()
+        val token = requireNotNull(wire.sent.last().token) { "the phone reconnect_confirm must be tokened" }
+        host.onRecord(gen, client.confirmRecord(), RecordAdmission { })
+        runCurrent()
+        host.onSendComplete(gen, token, true)
+        runCurrent()
+    }
+
+    private fun sentFrames(gen: ConnectionGeneration): List<String> = wire.sent.filter { it.gen == gen }.map { hex(it.bytes) }
+
+    /**
+     * A pairing machine that answers with a marker frame: if a reconnect frame is ever routed
+     * to the pairing path, the marker reaches the wire and [frames] is non-empty.
+     */
+    private class RecordingPairingConnection : PairingConnection {
+        val frames = mutableListOf<ByteArray>()
+
+        override suspend fun onFrame(bytes: ByteArray): List<Outgoing> {
+            frames += bytes.copyOf()
+            return listOf(Outgoing.Frame(byteArrayOf(PAIRING_MARKER.toByte())), Outgoing.Disconnect)
+        }
+
+        override suspend fun onTick(): List<Outgoing> = emptyList()
+
+        override suspend fun onDisconnect() = Unit
+
+        override suspend fun cancel(): List<Outgoing> = emptyList()
+    }
+
+    @Test
+    fun protected_record_after_authentication_stays_on_the_reconnect_engine() = runTest {
+        val machine = RecordingPairingConnection()
+        val host = host(pairing = { machine })
+        val gen = ConnectionGeneration("aa", 1)
+        authenticate(host, gen)
+        val handshake = sentFrames(gen)
+        assertEquals("the generation is authenticated", 3, handshake.size)
+
+        // A protected client-to-phone record starts `01 01 01` (version, schema, direction).
+        // Bytes 1-2 of a 260-byte record read as a 257-byte pairing payload, so a host that
+        // re-checks every frame would tear the authenticated engine down for the pairing path.
+        val record = ByteArray(PROTECTED_RECORD_BYTES).also {
+            it[VERSION_BYTE] = 1
+            it[SCHEMA_BYTE] = 1
+            it[DIRECTION_BYTE] = 1
+        }
+        host.onRecord(gen, record, RecordAdmission { })
+        runCurrent()
+
+        assertTrue("the frame never reaches a pairing machine", machine.frames.isEmpty())
+        assertEquals("the reconnect engine alone answered", handshake, sentFrames(gen))
+        assertEquals("the engine, not the pairing machine, ended the generation", listOf(gen), wire.closed)
+
+        host.shutdown()
+    }
+
+    @Test
+    fun pairing_request_mid_handshake_stays_on_the_reconnect_engine() = runTest {
+        val machine = RecordingPairingConnection()
+        val host = host(pairing = { machine })
+        val gen = ConnectionGeneration("aa", 1)
+        host.onConnected(gen)
+        runCurrent()
+        host.onRecord(gen, client.helloFrame.copyOf(), RecordAdmission { })
+        runCurrent()
+        val handshake = sentFrames(gen)
+        assertEquals("the engine answered the first frame", 2, handshake.size)
+
+        // Only the first frame chooses the path: a pairing_request after reconnect_hello is
+        // still reconnect traffic and must not build a pairing machine or spend its budget.
+        host.onRecord(gen, requestFrame(), RecordAdmission { })
+        runCurrent()
+
+        assertTrue("the second frame never reaches a pairing machine", machine.frames.isEmpty())
+        assertEquals(
+            "the reconnect engine answered with its own pre-auth reject",
+            handshake + PREAUTH_REJECT_HEX,
+            sentFrames(gen),
+        )
+        assertEquals("the engine ended the generation", listOf(gen), wire.closed)
+
+        host.shutdown()
     }
 
     @Test
@@ -267,7 +369,10 @@ class SessionHostRoutingTest {
         override suspend fun addPending(peer: PendingPeer) = error("not used")
         override suspend fun confirm(peerId: String, step: ActivationStep, proof: ByteArray) = error("not used")
         override suspend fun revoke(peerId: String) = error("not used")
-        override suspend fun markAuthenticated(peerId: String) = error("not used")
+
+        // The routing tests authenticate a known peer: the mark is the one trust write the
+        // host performs, and reconnect routing is what they assert, so it is a no-op here.
+        override suspend fun markAuthenticated(peerId: String) = Unit
     }
 
     private companion object {
@@ -284,6 +389,12 @@ class SessionHostRoutingTest {
         const val MALFORMED_TYPES = 4
         const val FIRST_MALFORMED_TYPE = 0x02
         const val PAIRING_GENERATION = 100L
+        const val PROTECTED_RECORD_BYTES = 260
+        const val VERSION_BYTE = 0
+        const val SCHEMA_BYTE = 1
+        const val DIRECTION_BYTE = 2
+        const val PAIRING_MARKER = 0x33
+        const val PREAUTH_REJECT_HEX = "0f0000"
         val TRUNCATED_HELLO = byteArrayOf(0x06, 0, 5, 1)
     }
 }
