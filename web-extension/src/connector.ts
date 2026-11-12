@@ -47,6 +47,7 @@ import {
 import type { ClientEngineDeps } from './session/engine';
 import type { DevelopmentProbe } from './debug/probe';
 import { initPairingCore } from './pairing/core';
+import { PairingLink } from './pairing/link';
 import { bytes } from './trust/model';
 import { normalizeLowS } from './session/ecdsa';
 import { IndexedDbIdentityStore } from './trust/identity';
@@ -253,6 +254,10 @@ export class ConnectorApp {
     private readonly suppressedPeerIds = new Set<string>();
     private readonly recoveryEpochs = new Map<string, number>();
     private trackedConnections = new Map<string, TrackedConnection>();
+    private pairingLink: PairingLink | null = null;
+    // An enrollment connection is not a session: its disappearance must never
+    // schedule reconnect recovery.
+    private pairingHandles = new Set<string>();
     private userDisconnectSeen = false;
     private localInstallationId: Uint8Array | null = null;
 
@@ -378,11 +383,55 @@ export class ConnectorApp {
         }
     }
 
+    /**
+     * Starts the OTP-10 enrollment flow over the BLE link. The flow is not a
+     * `SessionManager` session: it owns its own `PairingLink`, and the connector
+     * tab teardown (`dispose`) is what closes the core handle and deletes this
+     * enrollment's pending record (OTP2-STA-010d).
+     */
+    async startPairing(deviceHandle: string, code: string): Promise<boolean> {
+        if (this.disposed || this.shuttingDown) return false;
+        const repository = this.repository;
+        if (repository === null) {
+            this.applyFailure(synthesizeAuthenticationFailed());
+            return false;
+        }
+        await this.teardownPairing();
+        if (this.disposed) return false;
+        try {
+            this.pairingLink = await PairingLink.start({
+                controller: this.controller,
+                repo: repository,
+                code,
+                deviceHandle,
+            });
+            this.pairingHandles.add(this.pairingLink.connectionHandle);
+            return true;
+        } catch {
+            this.applyFailure(synthesizeAuthenticationFailed());
+            return false;
+        }
+    }
+
+    /** User cancel of the current enrollment attempt. */
+    async cancelPairing(): Promise<void> {
+        const link = this.pairingLink;
+        this.pairingLink = null;
+        if (link !== null) await link.cancel();
+    }
+
+    private teardownPairing(): Promise<void> {
+        const link = this.pairingLink;
+        this.pairingLink = null;
+        return link === null ? Promise.resolve() : link.dispose();
+    }
+
     dispose(): void {
         if (this.disposed) return;
         this.disposed = true;
         this.session += 1;
         this.reconnect.dispose();
+        void this.teardownPairing();
         for (const unsubscribe of this.unsubscribers) unsubscribe();
         this.unsubscribers.length = 0;
         this.view.dispose?.();
@@ -823,6 +872,9 @@ export class ConnectorApp {
 
     private handleClose(close: ConnectorClose): void {
         if (this.disposed) return;
+        // The enrollment link is owned by this connector document; a port death
+        // closes its core handle and deletes the connector-context pending record.
+        void this.teardownPairing();
         // Every port death/replacement invalidates pending readiness and
         // recovery reads from the previous generation, including an ignored
         // user close used to restart the host.
@@ -830,6 +882,7 @@ export class ConnectorApp {
         this.readiness = null;
         this.connectionPeerTargets.clear();
         this.sessionFailedHandles.clear();
+        this.pairingHandles.clear();
         for (const key of this.reconnect.keys()) {
             if (key === 'host') continue;
             this.reconnect.discard(key);
@@ -908,6 +961,7 @@ export class ConnectorApp {
         if (this.ready !== null && this.controller.isOpen() && !this.shuttingDown) {
             for (const [handle, previous] of this.trackedConnections) {
                 if (next.has(handle)) continue;
+                if (this.pairingHandles.delete(handle)) continue;
                 if (this.userDisconnectHandles.delete(handle)) continue;
 
                 const peer = this.connectionPeerTargets.get(handle);

@@ -63,6 +63,19 @@ export function openHandleCount(): number {
     return openHandles.size;
 }
 
+/** The behavior `ClientMachine` needs from one core handle. */
+export interface PairingHandle {
+    exchange(peerPoint: Uint8Array): Uint8Array;
+    confirm(peerConfirmation: Uint8Array): Uint8Array;
+    finish(): Uint8Array;
+    close(): void;
+}
+
+/** The core factory the enrollment machine consumes (`typeof PairingExecution` satisfies it). */
+export interface PairingCore {
+    start(code: string, context: Uint8Array): { execution: PairingHandle; point: Uint8Array };
+}
+
 /** One SPAKE2 execution; `close` is idempotent and safe in a `finally`. */
 export class PairingExecution {
     private closed = false;

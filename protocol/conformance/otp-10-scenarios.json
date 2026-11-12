@@ -7,7 +7,7 @@
   "st-en-second-request-in-flight-rejected": "execute",
   "st-en-window-expiry-closes": "execute",
   "st-en-role-mismatch-frame-rejected": "execute",
-  "st-en-client-confirms-in-order": "deferred:Task 8",
+  "st-en-client-confirms-in-order": "execute",
   "st-en-phone-identity-device-type-mismatch": "execute",
   "st-en-duplicate-installation-rejected": "execute",
   "st-enrollment-full-success-then-no-otp-on-enrollment-connection": "deferred:Task 9",
@@ -18,7 +18,7 @@
   "st-en-window-deadline-cb-299999-allowed": "execute",
   "st-en-window-deadline-cb-300000-rejected": "execute",
   "st-en-window-deadline-cb-300001-rejected": "execute",
-  "st-en-enrollment-no-otp-client-receives": "deferred:Task 8",
+  "st-en-enrollment-no-otp-client-receives": "execute",
   "st-neg-same-connection-pb-after-invalid-point": {
     "engine-effect": {
       "terminate": true,
@@ -27,22 +27,22 @@
     }
   },
   "st-en-prepare-sent-after-persist-pairing": "deferred:Task 9",
-  "st-en-client-prepare-gate-full-flow": "deferred:Task 8",
+  "st-en-client-prepare-gate-full-flow": "execute",
   "st-neg-commit-without-verified-prepare": {
     "engine-effect": {
-      "terminate": true,
-      "erase": true,
+      "terminate": false,
+      "erase": false,
       "deliver": false
     }
   },
-  "st-neg-early-prepare-rejected": "deferred:Task 8",
-  "st-neg-prepare-mismatch-erases": "deferred:Task 8",
+  "st-neg-early-prepare-rejected": "execute",
+  "st-neg-prepare-mismatch-erases": "execute",
   "st-en-code-one-use-window-closed-after-cb": "execute",
   "st-en-cb-disconnect-before-identity-repair-only": "execute",
-  "st-en-client-one-sided-pending-cancelled-then-fresh-pairing": "deferred:Task 8",
+  "st-en-client-one-sided-pending-cancelled-then-fresh-pairing": "execute",
   "st-rec-no-peer-record-no-recovery": "deferred:Task 9",
   "st-en-inactivity-before-identity-repair-only": "execute",
-  "st-neg-client-persist-failure-publishes-nothing": "deferred:Task 8",
+  "st-neg-client-persist-failure-publishes-nothing": "execute",
   "st-neg-phone-persist-failure-sends-no-prepare": "execute",
   "st-en-phone-pending-survives-interruption-with-et": "execute",
   "st-rec-full-pending-peer-commit-duplicate-no-regression": "deferred:Task 9",

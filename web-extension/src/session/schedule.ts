@@ -88,7 +88,7 @@ export async function sha256(data: Uint8Array): Promise<Uint8Array> {
     }
 }
 
-async function hmacSha256(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+export async function hmacSha256(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
     try {
         const hmacKey = await crypto.subtle.importKey(
             'raw',
