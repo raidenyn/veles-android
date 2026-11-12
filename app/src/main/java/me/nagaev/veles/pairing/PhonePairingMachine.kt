@@ -178,6 +178,7 @@ class PhonePairingMachine(
         eraseSecrets()
         state = PairingState.IDLE
         window.cancel()
+        admission.onWindowClosed()
         if (peerId != null) {
             try {
                 trust.revoke(peerId)
@@ -289,6 +290,7 @@ class PhonePairingMachine(
         }
         // OTP2-CRY-009a: a verified cB consumes the one-use code and closes the window.
         window.cancel()
+        admission.onWindowClosed()
         clientConfirm = payload.copyOf()
         val session = try {
             openEnrollment(current)
@@ -443,7 +445,8 @@ class PhonePairingMachine(
         eraseSecrets()
         state = PairingState.ACTIVE
         lastActivity = clock()
-        return emptyList()
+        // The enrollment connection ends when activation completes (states.json ack row).
+        return listOf(Outgoing.Disconnect)
     }
 
     /** A wrong activation MAC deletes only this enrollment's incomplete record, then fails. */
@@ -500,6 +503,10 @@ class PhonePairingMachine(
                 }
                 EnrollmentSession.PersistResult.FAILED -> reject()
                 EnrollmentSession.PersistResult.PERSISTED -> {
+                    // A prepare failure after the durable write keeps the pending record with no
+                    // prepare sent. That is intentional: the signed recovery path (OTP2-STA-010b)
+                    // is exactly the continuation for a pending record whose connection ended
+                    // before the prepare, so the record is not deleted here.
                     val prepare = try {
                         session.prepareFrame()
                     } catch (_: Exception) {

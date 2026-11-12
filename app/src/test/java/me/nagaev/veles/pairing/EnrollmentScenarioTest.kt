@@ -558,14 +558,23 @@ class EnrollmentScenarioTest : PairingTestBase() {
                 connection,
                 current.peer.activationFrame(ACTIVATION_ACK_TYPE, STAGE_ACK),
             ) ?: return
-            assertTrue("${fixture.id} step $index: the ack sends nothing", outgoing.isEmpty())
+            assertTrue(
+                "${fixture.id} step $index: the verified ack ends the enrollment connection",
+                outgoing.contains(Outgoing.Disconnect),
+            )
             assertEquals("${fixture.id} step $index: the ack activates the machine", PairingState.ACTIVE, current.machine.state)
             assertEquals("${fixture.id} step $index: the durable record is active", "active", durableState())
             assertNull("${fixture.id} step $index: the enrollment keys are erased", current.machine.enrollmentKeysForTest())
+            // The host ends the generation on Outgoing.Disconnect and does not report link loss
+            // to the machine, which already erased its own enrollment state.
+            terminated = true
+            live.remove(connection)
+            current.peer.close()
             observe("record_active_by_ack")
             observe("record_activated_by_ack")
             observe("erase_enrollment_keys")
             observe("erase_enrollment_remnants")
+            observe("close_enrollment_connection")
         }
 
         /** OTP2-REC-035: the enrollment connection never carries OTP data. */
