@@ -37,11 +37,24 @@ class NoVelesCryptoUnderRobolectricTest {
         )
     }
 
+    @Test
+    fun closing_an_untracked_handle_does_not_initialize_the_core() {
+        val core = VelesPairingCore()
+
+        core.close(Handle(1L))
+
+        assertFalse(
+            "a stale or already-finished close must not resolve VelesCrypto",
+            isInitialized(VelesCrypto::class.java),
+        )
+    }
+
     /**
      * [sun.misc.Unsafe.shouldBeInitialized] is the only JDK API that reports class
      * initialization without triggering it; [Class.forName] with `initialize=false`
      * cannot tell the difference. Reached reflectively so no import of an internal
-     * JDK class appears in the source.
+     * JDK class appears in the source. Depends on the pinned JDK 21 (`.java-version`);
+     * there is no supported standard-library alternative.
      */
     private fun isInitialized(type: Class<*>): Boolean {
         val unsafeClass = Class.forName("sun.misc.Unsafe")

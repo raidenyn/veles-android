@@ -74,10 +74,18 @@ class VelesPairingCore : PairingCore {
         } finally {
             command.fill(0)
         }
-        if (payload.size != HANDLE_BYTES + POINT_BYTES) {
+        if (payload.size < HANDLE_BYTES) {
             throw PairingCoreException("pairing core start returned ${payload.size} bytes")
         }
-        val handle = Handle(readHandle(payload))
+        // The core allocated the handle before answering. Read it first so any
+        // malformed response shape closes it instead of leaking a live execution.
+        val bits = readHandle(payload)
+        if (payload.size != HANDLE_BYTES + POINT_BYTES) {
+            if (bits != 0L) sendClose(Handle(bits))
+            throw PairingCoreException("pairing core start returned ${payload.size} bytes")
+        }
+        if (bits == 0L) throw PairingCoreException("pairing core start returned a zero handle")
+        val handle = Handle(bits)
         synchronized(lock) { handles.add(handle.bits) }
         return Started(handle, payload.copyOfRange(HANDLE_BYTES, payload.size))
     }
@@ -111,7 +119,15 @@ class VelesPairingCore : PairingCore {
     }
 
     override fun close(handle: Handle) {
-        forget(handle)
+        // An untracked handle was already consumed by finish/close (or never
+        // belonged to this wrapper). Returning without invoking the core keeps
+        // cleanup paths from loading the native library for nothing, which also
+        // keeps Robolectric cleanup safe.
+        if (!forget(handle)) return
+        sendClose(handle)
+    }
+
+    private fun sendClose(handle: Handle) {
         val command = command(OP_CLOSE, handle, EMPTY_BODY)
         try {
             unwrap(OPERATION_CLOSE, invoke(command))
@@ -151,21 +167,19 @@ class VelesPairingCore : PairingCore {
         val status = response.firstOrNull()?.toInt()?.and(U8_MASK)
             ?: throw PairingCoreException("pairing core $operation returned no status")
         if (status == STATUS_OK) return response.copyOfRange(1, response.size)
-        throw PairingCoreException(failureMessage(operation, status))
-    }
-
-    private fun failureMessage(operation: String, status: Int): String = when (status) {
-        STATUS_GENERIC -> "pairing core $operation failed"
-        STATUS_ENTROPY -> "pairing core $operation failed: entropy unavailable"
-        STATUS_CAPACITY -> "pairing core $operation failed: handle capacity reached"
-        else -> "pairing core $operation failed with status $status"
+        throw PairingCoreException(
+            when (status) {
+                STATUS_GENERIC -> "pairing core $operation failed"
+                STATUS_ENTROPY -> "pairing core $operation failed: entropy unavailable"
+                STATUS_CAPACITY -> "pairing core $operation failed: handle capacity reached"
+                else -> "pairing core $operation failed with status $status"
+            },
+        )
     }
 
     private fun invoke(command: ByteArray): ByteArray = crypto.pairingCommand(command)
 
-    private fun forget(handle: Handle) {
-        synchronized(lock) { handles.remove(handle.bits) }
-    }
+    private fun forget(handle: Handle): Boolean = synchronized(lock) { handles.remove(handle.bits) }
 
     private fun writeHandle(handle: Handle, command: ByteArray) {
         var bits = handle.bits
