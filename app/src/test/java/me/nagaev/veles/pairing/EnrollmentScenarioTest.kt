@@ -133,6 +133,7 @@ class EnrollmentScenarioTest : PairingTestBase() {
         }
     }
 
+    @Suppress("LargeClass") // One trace harness: fixture walk, host drop model, machine probes and assertions.
     private inner class TraceRun(private val fixture: TraceFixture) {
         var now = 0L
             private set
@@ -141,6 +142,17 @@ class EnrollmentScenarioTest : PairingTestBase() {
         private val admission = PairingAdmission(PairingLimits(), { now })
         private val live = LinkedHashMap<String, Live>()
         private val machines = mutableListOf<PhonePairingMachine>()
+
+        /**
+         * The generation a verified `activation_ack` ended: the host drops it from [live], but
+         * the fixture's trailing record needs the same machine object (see the adaptation
+         * documented on [EXECUTED_PHONE_TRACES]). The peer stays open until teardown so its
+         * enrollment keys can seal that record.
+         */
+        private var endedAfterActivation: Live? = null
+
+        /** The generation label the ack ended; the fixture's trailing step omits `connection`. */
+        private var endedConnection: String? = null
         private val connIds = HashMap<String, Long>()
         private val paGrants = HashMap<String, Int>()
         private val paGrantTimes = mutableListOf<Long>()
@@ -227,7 +239,8 @@ class EnrollmentScenarioTest : PairingTestBase() {
                     "enroll_identity" -> onEnrollIdentity(index, step)
                     "activation_commit" -> onActivationCommit(index, step)
                     "activation_ack" -> onActivationAck(index)
-                    "protected_record" -> onUnauthorizedRecord(index, step)
+                    "protected_record" ->
+                        if (step.connection in live) onUnauthorizedRecord(index, step) else onProtectedRecordAfterGenerationEnd(index, step)
                     "cancel_pairing" -> onCancel()
                     "inactivity_timeout" -> onInactivity()
                     else -> error("${fixture.id} has no mapping for ${step.event}")
@@ -246,6 +259,8 @@ class EnrollmentScenarioTest : PairingTestBase() {
             machines.clear()
             live.values.forEach { it.peer.close() }
             live.clear()
+            endedAfterActivation?.peer?.close()
+            endedAfterActivation = null
             code.fill(0)
         }
 
@@ -569,7 +584,8 @@ class EnrollmentScenarioTest : PairingTestBase() {
             // to the machine, which already erased its own enrollment state.
             terminated = true
             live.remove(connection)
-            current.peer.close()
+            endedAfterActivation = current
+            endedConnection = connection
             observe("record_active_by_ack")
             observe("record_activated_by_ack")
             observe("erase_enrollment_keys")
@@ -592,6 +608,64 @@ class EnrollmentScenarioTest : PairingTestBase() {
             observe("erase_enrollment_keys")
             closeIfDisconnected(connection, outgoing)
             observe("close_enrollment_connection")
+        }
+
+        /**
+         * The frozen fixture `st-enrollment-full-success-then-no-otp-on-enrollment-connection`
+         * ends with a `protected_record` (0x0200) step after its `activation_ack`. The v1
+         * fixture is not edited for a code change, so the runner absorbs that trailing step as
+         * the adaptation documented on [EXECUTED_PHONE_TRACES]:
+         *
+         * 1. host path: the verified ack ended the enrollment generation (`Outgoing.Disconnect`),
+         *    so the generation table no longer holds it and `SessionHost`'s record lookup drops
+         *    the frame — no machine, no core call, no handle, nothing on the wire;
+         * 2. machine guard: the same `PhonePairingMachine` (state `ACTIVE`, enrollment keys
+         *    already erased by activation) still refuses the record with the generic
+         *    `preauth_reject` plus `Disconnect` and returns idle without spending a malformed
+         *    budget, leaving the activated durable record `active` — the fixture's original
+         *    `durable_phone_record:main=active;phone_pairing:main=idle` and
+         *    `reject_unauthorized_enrollment_record`.
+         */
+        private suspend fun onProtectedRecordAfterGenerationEnd(index: Int, step: TraceStep) {
+            // The fixture omits `connection` on the trailing step: it is the enrollment
+            // connection the ack ended, not [TraceStep]'s "main" default.
+            val connection = endedConnection
+                ?: error("${fixture.id} step $index: no generation ended on activation")
+            val ended = endedAfterActivation
+                ?: error("${fixture.id} step $index: no generation ended on activation")
+            assertEquals("${fixture.id} step $index: the probed machine is the acked one", ended.machine, machines.last())
+            assertNull("${fixture.id} step $index: the ack ended generation '$connection'", live[connection])
+            assertEquals("${fixture.id} step $index: the machine is ACTIVE before the probe", PairingState.ACTIVE, ended.machine.state)
+            assertNull("${fixture.id} step $index: activation erased the enrollment keys", ended.machine.enrollmentKeysForTest())
+            val type = step.simulate.getValue("record_type").removePrefix("0x").toInt(16)
+            val frame = ended.peer.recordFrame(type)
+
+            // (1) The host path: the generation lookup misses, so the frame is dropped.
+            val callsBefore = recording.totalCalls()
+            val handlesBefore = recording.openHandles()
+            val wireBefore = wireLog.size
+            assertNull(
+                "${fixture.id} step $index: the host can no longer deliver the record",
+                deliverToMachine(index, connection, frame, violationOnDrop = false),
+            )
+            assertEquals("${fixture.id} step $index: the host took the generation-gone drop path", index, droppedSteps.last())
+            assertEquals("${fixture.id} step $index: the drop spends no core call", callsBefore, recording.totalCalls())
+            assertEquals("${fixture.id} step $index: the drop opens no handle", handlesBefore, recording.openHandles())
+            assertEquals("${fixture.id} step $index: the drop puts nothing on the wire", wireBefore, wireLog.size)
+
+            // (2) The machine guard: an ACTIVE machine still refuses an OTP record.
+            val malformedBefore = admission.malformedConnectionsForTest()
+            val outgoing = ended.machine.onFrame(frame)
+            assertEquals("${fixture.id} step $index: an OTP record is refused generically", PREAUTH_REJECT, frameType(outgoing))
+            assertTrue("${fixture.id} step $index: the refusal closes the connection", outgoing.contains(Outgoing.Disconnect))
+            observe("reject_unauthorized_enrollment_record")
+            assertEquals(
+                "${fixture.id} step $index: the refusal is not a pairing failure",
+                malformedBefore,
+                admission.malformedConnectionsForTest(),
+            )
+            assertEquals("${fixture.id} step $index: the machine returns idle", PairingState.IDLE, ended.machine.state)
+            assertEquals("${fixture.id} step $index: the activated record stays active", "active", durableState())
         }
 
         private suspend fun onCancel() {
@@ -701,13 +775,22 @@ class EnrollmentScenarioTest : PairingTestBase() {
          * when it left the session table, the record is dropped before any engine or
          * pairing call. The step counters captured at dispatch time prove that the drop
          * spent no core call and no handle; [droppedSteps] records that the delivery model
-         * really took that path.
+         * really took that path. A drop is a trace violation by default; the documented
+         * post-activation adaptation passes `violationOnDrop = false` because there the drop
+         * is the expected host behavior and the machine guard is probed separately.
          */
-        private suspend fun deliverToMachine(index: Int, connection: String, frame: ByteArray?): List<Outgoing>? {
+        private suspend fun deliverToMachine(
+            index: Int,
+            connection: String,
+            frame: ByteArray?,
+            violationOnDrop: Boolean = true,
+        ): List<Outgoing>? {
             val current = live[connection]
             if (current == null) {
                 droppedSteps += index
-                recordViolation(index, ViolationStage.TRANSITION, "a frame arrived for generation '$connection' after it ended")
+                if (violationOnDrop) {
+                    recordViolation(index, ViolationStage.TRANSITION, "a frame arrived for generation '$connection' after it ended")
+                }
                 return null
             }
             if (frame == null) {
@@ -1256,6 +1339,21 @@ class EnrollmentScenarioTest : PairingTestBase() {
          * The activation rows (`st-enrollment-full-success-...`,
          * `st-en-prepare-sent-after-persist-pairing`) stay deferred to the activation tasks,
          * and the client-role rows to Task 8.
+         *
+         * One deliberate, runner-recorded adaptation: the v1 fixture
+         * `st-enrollment-full-success-then-no-otp-on-enrollment-connection` ends with a
+         * `protected_record` (0x0200) step at t=7000 *after* its `activation_ack`, and its
+         * `final_state`/effects require that record to be refused (`phone_pairing:main=idle`,
+         * `reject_unauthorized_enrollment_record`). The frozen fixture is kept byte-identical
+         * to 74305fb: a version-1 fixture is protocol data, not a place to absorb a code
+         * change. Because the verified ack ends the generation with `Outgoing.Disconnect`
+         * (OTP2-STA-010b), the host can no longer deliver that frame, so
+         * [onProtectedRecordAfterGenerationEnd] splits the step: it proves the host drop
+         * (no core call, no handle, nothing on the wire) and then feeds the record straight
+         * into the same `PhonePairingMachine`, whose `ACTIVE` guard answers
+         * `preauth_reject` + `Disconnect` and returns the machine to idle. The fixture's
+         * original `durable_phone_record:main=active;phone_pairing:main=idle` therefore holds
+         * without weakening the fixture.
          */
         val EXECUTED_PHONE_TRACES = setOf(
             "st-en-attempts-five-ok-sixth-rejected",

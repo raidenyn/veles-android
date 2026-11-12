@@ -1142,12 +1142,22 @@
               "phone_pairing:main": "active",
               "durable_phone_record:main": "active"
             }
+          },
+          {
+            "t_ms": 7000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0200",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
           }
         ]
       },
       "expected": {
         "accepted": true,
-        "final_state": "durable_phone_record:main=active;phone_pairing:main=active",
+        "final_state": "durable_phone_record:main=active;phone_pairing:main=idle",
         "effects": {
           "require": [
             "consume_attempt",
@@ -1161,7 +1171,8 @@
             "record_activated_by_ack",
             "erase_enrollment_remnants",
             "erase_enrollment_keys",
-            "close_enrollment_connection"
+            "close_enrollment_connection",
+            "reject_unauthorized_enrollment_record"
           ]
         }
       }
