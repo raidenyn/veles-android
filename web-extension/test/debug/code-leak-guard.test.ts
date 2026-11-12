@@ -21,7 +21,7 @@ function walk(dir: string, base = ''): string[] {
 
 /** Sinks that could carry the six-digit code outside the on-screen readout. */
 const KOTLIN_SINK =
-    /(?:VelesLog|logger\.[dweiv]|logger?\b|Log\.[dweiv]|println|print\s*\(|setResultData|\bresult\s*\(|Notification(?:Compat|Manager)?|putExtra)/;
+    /(?:VelesLog|logger\.[dweiv]|\blogger?\b|Log\.[dweiv]|println|print\s*\(|setResultData|\bresult\s*\(|Notification(?:Compat|Manager)?|putExtra)/;
 const TYPESCRIPT_SINK =
     /(?:console\.[a-z]+|diagnostics?\.push|DiagnosticRing|textContent\s*=|setResultData|\bresult\s*\(|\blog\s*\()/i;
 
@@ -35,20 +35,22 @@ function code(line: string): string {
 }
 
 /**
- * Strip single/double-quoted text (not template substitutions) before looking for a code
- * expression under a sink, so UI copy such as "Enter a six-digit code" is not a hit.
+ * Strip quoted UI copy before looking for a code expression under a sink, so
+ * "Enter a six-digit code" is not a hit. Kotlin double-quoted strings can interpolate with
+ * `$`, so they are never stripped for `.kt` lines; TypeScript double quotes cannot.
  */
-function expressions(line: string): string {
-    return line.replace(/'[^']*'|"[^"]*"/g, "''");
+function expressions(line: string, kotlin: boolean): string {
+    return kotlin ? line.replace(/'[^']*'/g, "''") : line.replace(/'[^']*'|"[^"]*"/g, "''");
 }
 
 /**
  * The pure grep predicate, exported for the negative-control test. A sink combined with a
  * code-bearing value is a leak even when the line never names the `PairingCode` type:
- * `logger.d(tag, state.value.code)` and `textContent = `${peer.code}`` must both hit.
+ * `logger.d(tag, state.value.code)`, `"code=${state.value.code}"` and
+ * `textContent = `${peer.code}`` must all hit.
  */
-export function leakIn(line: string): boolean {
-    const source = expressions(code(line));
+export function leakIn(file: string, line: string): boolean {
+    const source = expressions(code(line), file.endsWith('.kt'));
     if (source.trim().length === 0) return false;
     const value = CODE_VALUE.test(source) || GENERIC_CODE.test(source);
     if (!value) return false;
@@ -63,7 +65,7 @@ describe('pairing code logger guard', () => {
                 if (!/\.(?:kt|ts)$/.test(rel)) continue;
                 const lines = readFileSync(join(root, rel), 'utf8').split('\n');
                 lines.forEach((line, index) => {
-                    if (leakIn(line)) hits.push(`${root}/${rel}:${index + 1}: ${line.trim()}`);
+                    if (leakIn(rel, line)) hits.push(`${root}/${rel}:${index + 1}: ${line.trim()}`);
                 });
             }
         }
@@ -72,26 +74,46 @@ describe('pairing code logger guard', () => {
 
     it('negative_controls_hit_every_real_leak_shape', () => {
         // Known-leaky lines: these must hit even though none names the PairingCode type.
-        const leaks = [
-            'logger.d(PAIRING_TAG, PairingDebugHooks.state.value.code.orEmpty())',
-            'VelesLog.d(PROBE_TAG, PairingDebugHooks.state.value.codeBytes().toString())',
-            'logger.d(PAIRING_TAG, PairingDebugState(open = true, code = text))',
-            'result(String(PairingDebugHooks.state.value.codeBytes(), Charsets.US_ASCII))',
-            'elements.status.textContent = code;',
-            'elements.status.textContent = `${peer.code}`;',
-            'console.log("pairing", code);',
-            'diagnostics.push({ code });',
+        const leaks: [string, string][] = [
+            [
+                'PairingDebugReceiver.kt',
+                'logger.d(PAIRING_TAG, PairingDebugHooks.state.value.code.orEmpty())',
+            ],
+            ['PairingDebugReceiver.kt', 'logger.d(PAIRING_TAG, "code=${state.value.code}")'],
+            [
+                'PairingDebugReceiver.kt',
+                'VelesLog.d(PROBE_TAG, PairingDebugHooks.state.value.codeBytes().toString())',
+            ],
+            [
+                'PairingDebugReceiver.kt',
+                'logger.d(PAIRING_TAG, PairingDebugState(open = true, code = text))',
+            ],
+            [
+                'PairingDebugReceiver.kt',
+                'result(String(PairingDebugHooks.state.value.codeBytes(), Charsets.US_ASCII))',
+            ],
+            ['pairing-panel.ts', 'elements.status.textContent = code;'],
+            ['pairing-panel.ts', 'elements.status.textContent = `${peer.code}`;'],
+            ['pairing-panel.ts', 'console.log("pairing", code);'],
+            ['pairing-panel.ts', 'diagnostics.push({ code });'],
         ];
-        for (const line of leaks) expect(leakIn(line), line).toBe(true);
+        for (const [file, line] of leaks) expect(leakIn(file, line), `${file}: ${line}`).toBe(true);
 
         // Safe lines: declarations, machine calls and quoted UI copy are not sinks.
-        const safe = [
-            'logger.d(PAIRING_TAG, "pairing window open")',
-            'elements.status.textContent = "Enter a six-digit code and choose a phone";',
-            'elements.status.textContent = `State: ${value.phase}`;',
-            'deps.start(deviceHandle, code);',
-            'val code = String(PairingDebugHooks.state.value.codeBytes(), Charsets.US_ASCII)',
+        const safe: [string, string][] = [
+            ['PairingDebugReceiver.kt', 'logger.d(PAIRING_TAG, "pairing window open")'],
+            ['PairingDebugReceiver.kt', 'dialog(code);'],
+            [
+                'pairing-panel.ts',
+                'elements.status.textContent = "Enter a six-digit code and choose a phone";',
+            ],
+            ['pairing-panel.ts', 'elements.status.textContent = `State: ${value.phase}`;'],
+            ['pairing-panel.ts', 'deps.start(deviceHandle, code);'],
+            [
+                'PairingDebugReceiver.kt',
+                'val code = String(PairingDebugHooks.state.value.codeBytes(), Charsets.US_ASCII)',
+            ],
         ];
-        for (const line of safe) expect(leakIn(line), line).toBe(false);
+        for (const [file, line] of safe) expect(leakIn(file, line), `${file}: ${line}`).toBe(false);
     });
 });

@@ -51,12 +51,13 @@ jobs:
         run: |
           fail=0
           # The pairing code may exist only as the on-screen readout and the in-process
-          # StateFlow. No debug logger, broadcast result or renderer may receive it.
-          if grep -rniE "(VelesLog|logger|Log\.[dweiv]|println|print\(|setResultData|result\(|Notification|putExtra)" app/src/debug web-extension/src/debug --include=*.kt --include=*.ts | grep -iE "PairingCode|pairingCode"; then
-            echo "::error::PairingCode reaches a logger, broadcast result or notification in a debug surface."
+          # StateFlow. These greps mirror the Vitest negative controls: a sink combined
+          # with a code-bearing value is a leak even when the line never names PairingCode.
+          if grep -rnE "(VelesLog|logger\.[dweiv]|\blogger?\b|Log\.[dweiv]|println|print\s*\(|setResultData|\bresult\s*\(|Notification|putExtra)" app/src/debug --include=*.kt | grep -E "(PairingCode|\.code\b|codeBytes|\bdigits\b|PairingDebugState|\bcode\b)"; then
+            echo "::error::A pairing-code value reaches a logger, broadcast result or notification in the Android debug surface."
             fail=1
           fi
-          if grep -rnE "(console\.[a-z]+|DiagnosticRing|diagnostics\.push|textContent\s*=)[^;]*\b(code|pairingCode)\b" web-extension/src/debug --include=*.ts; then
+          if grep -rnE "(console\.[a-z]+|DiagnosticRing|diagnostics\.push|textContent\s*=|\bresult\s*\(|\blog\s*\()[^;]*(PairingCode|\.code\b|codeBytes|\bdigits\b|PairingDebugState|\bcode\b)" web-extension/src/debug --include=*.ts; then
             echo "::error::The pairing code reaches a log, DiagnosticRing or rendered text in the Chrome debug surface."
             fail=1
           fi
