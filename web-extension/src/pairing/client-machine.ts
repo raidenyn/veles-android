@@ -765,10 +765,15 @@ export class ClientMachine {
     }
 
     #rejectUnauthorized(): Uint8Array[] {
+        // The active-family mirror and its public fingerprint survive a record
+        // refused after activation; every pre-active unauthorized record is a
+        // failed pairing and clears it.
+        const keepFingerprint = this.#state === 'active';
         this.#eraseLive();
         this.#state = 'idle';
         this.#failure = true;
         this.#closed = true;
+        if (!keepFingerprint) this.#fingerprint = undefined;
         return [];
     }
 

@@ -439,6 +439,7 @@ describe('client enrollment machine', () => {
             await run.machine.cancel();
 
             expect(run.machine.state).toBe('idle');
+            expect(run.machine.closed).toBe(true);
             expect(run.machine.fingerprint()).toBeUndefined();
             expect(run.machine.enrollmentKeysForTest()).toBeNull();
             expect(openHandleCount()).toBe(0);
@@ -510,6 +511,56 @@ describe('client enrollment machine', () => {
         }
     });
 
+    it('link_abandon_keeps_pending_and_reports_end_once', async () => {
+        const clock = new SessionClock();
+        const trust = await createTestTrust(clock);
+        const transport = new FakeTransport();
+        const phone = await PhonePeer.create({ code: '000042' });
+        let ended = 0;
+        let framesSentAtConnect: number | null = null;
+        const link = await PairingLink.start({
+            controller: transport,
+            repo: trust.repository,
+            code: '000042',
+            clock: clock.now,
+            deviceHandle: 'device-3',
+            tickIntervalMs: 0,
+            onConnected: () => {
+                framesSentAtConnect = transport.sent.length;
+            },
+            onEnded: () => {
+                ended += 1;
+            },
+        });
+        try {
+            expect(framesSentAtConnect).toBe(0);
+            const offer = phone.offerFor(transport.sent[0]);
+            await link.receive(offer);
+            const cA = phone.acceptPoint(transport.sent[1]);
+            await link.receive(caFrame(cA));
+            await phone.acceptConfirmB(transport.sent[2]);
+            const identity = await phone.identityFrame();
+            await link.receive(identity);
+            await phone.acceptClientIdentity(transport.sent[3]);
+            expect(await trust.repository.peers()).toHaveLength(1);
+
+            // A connection loss while the connector document lives closes the
+            // handle but preserves the durable pending record (OTP2-STA-010d).
+            await link.abandon();
+
+            expect(await trust.repository.peers()).toHaveLength(1);
+            expect(openHandleCount()).toBe(0);
+            expect(link.machine.state).toBe('idle');
+            expect(ended).toBe(1);
+            // The real tab teardown still deletes the record the dead link kept.
+            await link.dispose();
+            expect(await trust.repository.peers()).toEqual([]);
+            expect(ended).toBe(1);
+        } finally {
+            phone.close();
+        }
+    });
+
     it('fingerprint_only_after_both_authenticated', async () => {
         const run = await setup();
         try {
@@ -534,6 +585,25 @@ describe('client enrollment machine', () => {
 
             await run.machine.cancel();
             expect(run.machine.fingerprint()).toBeUndefined();
+        } finally {
+            run.phone.close();
+        }
+    });
+
+    it('unauthorized_record_before_active_clears_fingerprint', async () => {
+        const run = await setup();
+        try {
+            await toAwaitingPrepare(run);
+            expect(run.machine.fingerprint()).toBeDefined();
+            const out = await run.machine.onFrame(await run.phone.strayPushFrame());
+            expect(out).toEqual([]);
+            expect(run.machine.state).toBe('idle');
+            expect(run.machine.failed).toBe(true);
+            expect(run.machine.closed).toBe(true);
+            expect(run.machine.fingerprint()).toBeUndefined();
+            // Only the active-family mirror survives a post-activation refusal;
+            // this pre-active refusal keeps the pending record for recovery.
+            expect(await run.repo.peers()).toHaveLength(1);
         } finally {
             run.phone.close();
         }

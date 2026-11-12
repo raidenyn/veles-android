@@ -255,6 +255,7 @@ export class ConnectorApp {
     private readonly recoveryEpochs = new Map<string, number>();
     private trackedConnections = new Map<string, TrackedConnection>();
     private pairingLink: PairingLink | null = null;
+    private pairingEnded = false;
     // An enrollment connection is not a session: its disappearance must never
     // schedule reconnect recovery.
     private pairingHandles = new Set<string>();
@@ -398,32 +399,57 @@ export class ConnectorApp {
         }
         await this.teardownPairing();
         if (this.disposed) return false;
+        this.pairingEnded = false;
         try {
-            this.pairingLink = await PairingLink.start({
+            const link = await PairingLink.start({
                 controller: this.controller,
                 repo: repository,
                 code,
                 deviceHandle,
+                // Register the handle from the connected event, before the first
+                // send: a link lost during start must never look like a session.
+                onConnected: (connectionHandle) => {
+                    this.pairingHandles.add(connectionHandle);
+                },
+                onEnded: () => {
+                    this.pairingEnded = true;
+                },
             });
-            this.pairingHandles.add(this.pairingLink.connectionHandle);
+            this.pairingLink = link;
             return true;
         } catch {
+            this.pairingEnded = true;
             this.applyFailure(synthesizeAuthenticationFailed());
             return false;
         }
+    }
+
+    /** True once the current enrollment link stopped (success, failure or cancel). */
+    get pairingFinished(): boolean {
+        return this.pairingEnded;
     }
 
     /** User cancel of the current enrollment attempt. */
     async cancelPairing(): Promise<void> {
         const link = this.pairingLink;
         this.pairingLink = null;
+        this.pairingEnded = true;
         if (link !== null) await link.cancel();
     }
 
     private teardownPairing(): Promise<void> {
         const link = this.pairingLink;
         this.pairingLink = null;
+        this.pairingEnded = true;
         return link === null ? Promise.resolve() : link.dispose();
+    }
+
+    private abandonPairing(): Promise<void> {
+        // Keep the link: a later real tab teardown must still delete the pending
+        // record this dead link could not remove.
+        const link = this.pairingLink;
+        this.pairingEnded = true;
+        return link === null ? Promise.resolve() : link.abandon();
     }
 
     dispose(): void {
@@ -872,9 +898,11 @@ export class ConnectorApp {
 
     private handleClose(close: ConnectorClose): void {
         if (this.disposed) return;
-        // The enrollment link is owned by this connector document; a port death
-        // closes its core handle and deletes the connector-context pending record.
-        void this.teardownPairing();
+        // A native-host port death is not connector-context loss: OTP2-STA-010d
+        // deletes a genuinely-pending client record only when the document/tab
+        // ends. Close the core handle and keep the durable pending record so a
+        // later recovery session can resume; the real tab teardown still deletes it.
+        void this.abandonPairing();
         // Every port death/replacement invalidates pending readiness and
         // recovery reads from the previous generation, including an ignored
         // user close used to restart the host.

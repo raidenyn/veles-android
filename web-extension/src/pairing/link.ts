@@ -52,6 +52,10 @@ export interface PairingLinkDeps {
     setInterval?: (fn: () => void, ms: number) => unknown;
     clearInterval?: (handle: unknown) => void;
     init?: () => Promise<void>;
+    /** Called immediately after connect, before the first pairing frame is sent. */
+    onConnected?: (connectionHandle: string) => void;
+    /** Called once when the link stops, whatever the reason. */
+    onEnded?: () => void;
 }
 
 function defaultClock(): number {
@@ -65,9 +69,12 @@ export class PairingLink {
 
     private readonly controller: PairingTransport;
     private readonly clearIntervalFn: (handle: unknown) => void;
+    private readonly onEnded: (() => void) | undefined;
     private unsubscribe: (() => void) | null = null;
     private timer: unknown = null;
     private disposed = false;
+    private stopped = false;
+    private ended = false;
     private queue: Promise<unknown> = Promise.resolve();
 
     private constructor(
@@ -75,11 +82,13 @@ export class PairingLink {
         connectionHandle: string,
         machine: ClientMachine,
         clearIntervalFn: (handle: unknown) => void,
+        onEnded: (() => void) | undefined,
     ) {
         this.controller = controller;
         this.connectionHandle = connectionHandle;
         this.machine = machine;
         this.clearIntervalFn = clearIntervalFn;
+        this.onEnded = onEnded;
     }
 
     /**
@@ -88,9 +97,8 @@ export class PairingLink {
      */
     static async start(deps: PairingLinkDeps): Promise<PairingLink> {
         await (deps.init ?? initPairingCore)();
-        const connected = await deps.controller.connect({ deviceHandle: deps.deviceHandle });
-        if (!connected.ok) throw new Error('pairing connect failed');
-        const handle = connected.event.connection_handle;
+        // Construct (and validate the code/caps) before opening a link: a bad
+        // request can never leave a connected BLE link without an owner.
         const machine = new ClientMachine({
             core: deps.core ?? PairingExecution,
             repo: deps.repo,
@@ -101,11 +109,19 @@ export class PairingLink {
             ...(deps.nonce === undefined ? {} : { nonce: deps.nonce }),
             ...(deps.identityNonce === undefined ? {} : { identityNonce: deps.identityNonce }),
         });
+        const connected = await deps.controller.connect({ deviceHandle: deps.deviceHandle });
+        if (!connected.ok) throw new Error('pairing connect failed');
+        const handle = connected.event.connection_handle;
+        // The connector owns the recovery ledger. Register the enrollment handle
+        // before the first send, so a link that disappears during start can never
+        // be mistaken for a lost session.
+        deps.onConnected?.(handle);
         const link = new PairingLink(
             deps.controller,
             handle,
             machine,
             deps.clearInterval ?? ((timer) => globalThis.clearInterval(timer as never)),
+            deps.onEnded,
         );
         link.unsubscribe = deps.controller.onRecord((record) => {
             if (record.connectionHandle !== handle) return;
@@ -132,7 +148,7 @@ export class PairingLink {
     /** Processes one record or pairing frame from this link's connection. */
     receive(bytes: Uint8Array): Promise<void> {
         const next = this.queue.then(async () => {
-            if (this.disposed) return;
+            if (this.disposed || this.stopped) return;
             try {
                 const frames = await this.machine.onFrame(bytes);
                 for (const frame of frames) await this.send(frame);
@@ -153,18 +169,42 @@ export class PairingLink {
 
     /** User cancel: deletes the pending record and disconnects. */
     async cancel(): Promise<void> {
+        if (this.disposed) return;
+        this.stopped = true;
         await this.machine.cancel();
         await this.stop();
     }
 
-    /** Connector tab teardown: close the handle, delete the pending record, disconnect. */
+    /**
+     * Connector-context loss (tab teardown): close the handle, delete this
+     * enrollment's pending record per OTP2-STA-010d, and disconnect.
+     */
     async dispose(): Promise<void> {
         if (this.disposed) return;
         this.disposed = true;
+        this.stopped = true;
         this.clearTimer();
         this.unsubscribe?.();
         this.unsubscribe = null;
+        // Even after `abandon()` closed a dead link, tab teardown still deletes the
+        // connector-context pending record.
         await this.machine.cancel();
+        await this.stop();
+    }
+
+    /**
+     * Connection loss while the connector document still lives (for example a
+     * native-host port death). OTP2-STA-010d ties pending-record deletion to
+     * connector-context loss, so this closes the handle and erases live material
+     * but keeps the durable pending record for the recovery protocol.
+     */
+    async abandon(): Promise<void> {
+        if (this.disposed || this.stopped) return;
+        this.stopped = true;
+        this.clearTimer();
+        this.unsubscribe?.();
+        this.unsubscribe = null;
+        await this.machine.onDisconnect();
         await this.stop();
     }
 
@@ -186,6 +226,17 @@ export class PairingLink {
             await this.controller.disconnect(this.connectionHandle);
         } catch {
             // A dead port has already ended the link; nothing is left to close.
+        }
+        this.notifyEnded();
+    }
+
+    private notifyEnded(): void {
+        if (this.ended) return;
+        this.ended = true;
+        try {
+            this.onEnded?.();
+        } catch {
+            // A completion subscriber must not break teardown.
         }
     }
 

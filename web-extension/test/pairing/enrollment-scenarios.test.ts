@@ -50,8 +50,14 @@ interface Fixture {
     expected: JsonObject;
 }
 
+interface EngineEffect {
+    terminate: boolean;
+    erase: boolean;
+    deliver: boolean;
+}
+
 interface InventoryEntry {
-    'engine-effect': { terminate: boolean; erase: boolean; deliver: boolean };
+    'engine-effect': EngineEffect;
 }
 
 function loadFixtures(): Fixture[] {
@@ -103,7 +109,7 @@ const finalStateOf = (fixture: Fixture): Record<string, string> => {
     );
 };
 
-function engineEffectOf(entry: unknown): InventoryEntry['engine-effect'] | null {
+function engineEffectOf(entry: unknown): EngineEffect | null {
     if (typeof entry !== 'object' || entry === null) return null;
     const effect = (entry as InventoryEntry)['engine-effect'];
     if (typeof effect !== 'object' || effect === null) return null;
@@ -198,7 +204,6 @@ class TraceRun {
     private recordEverPersisted = false;
     private persistAttempted = false;
     private identityPublicKey: Uint8Array | null = null;
-    private recordDeleted = false;
 
     readonly observations: string[] = [];
     readonly sequence: string[] = [];
@@ -206,13 +211,30 @@ class TraceRun {
     accepted = true;
     stage: string | null = null;
     noStateMutation = false;
-    private engineEffect: InventoryEntry['engine-effect'] | null = null;
+    private observedEffect: EngineEffect | null = null;
 
     constructor(readonly fixture: Fixture) {}
 
     private observe(name: string): void {
         if (!this.observations.includes(name)) this.observations.push(name);
         this.sequence.push(name);
+    }
+
+    private keysErased(): boolean {
+        const keys = this.machine.enrollmentKeysForTest();
+        return keys === null || isEnrollmentKeysWiped(keys);
+    }
+
+    private observeErasePairingState(): void {
+        if (this.keysErased()) this.observe('erase_pairing_state');
+    }
+
+    private observeCloseConnection(): void {
+        if (this.machine.closed) this.observe('close_enrollment_connection');
+    }
+
+    private observePairingFailed(): void {
+        if (this.machine.failed) this.observe('pairing_failed_generic');
     }
 
     private async prepare(): Promise<void> {
@@ -312,7 +334,7 @@ class TraceRun {
             await this.phone.acceptConfirmB(out[0]);
             return;
         }
-        this.observe('pairing_failed_generic');
+        this.observePairingFailed();
     }
 
     private async onEnrollIdentity(index: number, step: Step): Promise<void> {
@@ -349,16 +371,25 @@ class TraceRun {
                 `${this.fixture.id} persist reached the store`,
             ).toBe(1);
             expect(await this.repository.peers()).toEqual([]);
+            expect(this.machine.state, `${this.fixture.id}: persist failure returns idle`).toBe(
+                'idle',
+            );
+            expect(this.keysErased(), `${this.fixture.id}: persist failure erases keys`).toBe(true);
+            expect(this.machine.closed, `${this.fixture.id}: persist failure closes`).toBe(true);
             this.observe('persist_failed_no_usable_record_published');
-            this.observe('erase_pairing_state');
-            this.observe('close_enrollment_connection');
+            this.observeErasePairingState();
+            this.observeCloseConnection();
             this.persistAttempted = true;
-            this.recordDeleted = true;
             return;
         }
-        this.observe('pairing_failed_generic');
-        this.observe('erase_pairing_state');
-        this.observe('close_enrollment_connection');
+        expect(this.machine.failed, `${this.fixture.id}: rejected identity is a failure`).toBe(
+            true,
+        );
+        expect(this.keysErased(), `${this.fixture.id}: rejected identity erases keys`).toBe(true);
+        expect(this.machine.closed, `${this.fixture.id}: rejected identity closes`).toBe(true);
+        this.observePairingFailed();
+        this.observeErasePairingState();
+        this.observeCloseConnection();
     }
 
     private async onProtectedRecord(step: Step): Promise<void> {
@@ -388,11 +419,18 @@ class TraceRun {
             const out = await this.machine.onFrame(frame);
             expect(out).toEqual([]);
             if (before === 'awaiting_phone_identity') {
-                this.observe('reject_out_of_order_prepare');
-                this.observe('erase_pairing_state');
-                this.observe('close_enrollment_connection');
-                expect(this.machine.state).toBe('idle');
+                expect(this.machine.state, `${this.fixture.id}: early prepare returns idle`).toBe(
+                    'idle',
+                );
+                expect(this.machine.failed, `${this.fixture.id}: early prepare fails`).toBe(true);
+                expect(this.keysErased(), `${this.fixture.id}: early prepare erases keys`).toBe(
+                    true,
+                );
+                expect(this.machine.closed, `${this.fixture.id}: early prepare closes`).toBe(true);
                 expect(await this.repository.peers()).toEqual([]);
+                if (this.machine.failed) this.observe('reject_out_of_order_prepare');
+                this.observeErasePairingState();
+                this.observeCloseConnection();
                 return;
             }
             if (before === 'awaiting_prepare') {
@@ -400,15 +438,23 @@ class TraceRun {
                     this.observe('verify_enrollment_prepare');
                     return;
                 }
-                this.observe('activation_mac_failure');
-                if ((await this.repository.peers()).length === 0) {
-                    this.observe('erase_pending_record');
-                    this.recordDeleted = true;
-                }
-                if (this.machine.enrollmentKeysForTest() === null) {
-                    this.observe('erase_incomplete_materials');
-                }
-                this.observe('close_enrollment_connection');
+                expect(this.machine.failed, `${this.fixture.id}: prepare mismatch fails`).toBe(
+                    true,
+                );
+                expect(
+                    await this.repository.peers(),
+                    `${this.fixture.id}: prepare mismatch deletes the pending record`,
+                ).toEqual([]);
+                expect(this.keysErased(), `${this.fixture.id}: prepare mismatch erases keys`).toBe(
+                    true,
+                );
+                expect(this.machine.closed, `${this.fixture.id}: prepare mismatch closes`).toBe(
+                    true,
+                );
+                if (this.machine.failed) this.observe('activation_mac_failure');
+                this.observe('erase_pending_record');
+                this.observe('erase_incomplete_materials');
+                this.observeCloseConnection();
                 return;
             }
             throw new Error(`${this.fixture.id} prepare arrived in ${before}`);
@@ -418,18 +464,23 @@ class TraceRun {
         const frame = await this.phone.strayPushFrame();
         const out = await this.machine.onFrame(frame);
         expect(out).toEqual([]);
-        this.observe('reject_unauthorized_enrollment_record');
-        this.observe('close_enrollment_connection');
         expect(this.machine.rxSequenceForTest()).toBe(rxBefore);
         expect(this.machine.state).toBe('idle');
+        expect(this.machine.failed, `${this.fixture.id}: the unauthorized record fails`).toBe(true);
+        expect(this.machine.closed, `${this.fixture.id}: the unauthorized record closes`).toBe(
+            true,
+        );
         expect(await this.repository.peers()).toEqual(peersBefore);
+        if (this.machine.failed && this.machine.state === 'idle') {
+            this.observe('reject_unauthorized_enrollment_record');
+        }
+        this.observeCloseConnection();
     }
 
     private async onCommit(): Promise<void> {
         const entry = INVENTORY[this.fixture.id];
         const effect = engineEffectOf(entry);
         if (effect !== null) {
-            this.engineEffect = effect;
             const before = await this.snapshot();
             let frame: Uint8Array | null = null;
             try {
@@ -437,11 +488,20 @@ class TraceRun {
             } catch {
                 frame = null;
             }
-            expect(frame, `${this.fixture.id}: awaiting_prepare never emits a commit`).toBeNull();
-            expect(await this.snapshot()).toEqual(before);
+            const observed: EngineEffect = {
+                terminate: this.machine.closed,
+                erase: this.keysErased(),
+                deliver: frame !== null,
+            };
+            this.observedEffect = observed;
+            expect(observed, `${this.fixture.id}: engine-effect from real state`).toEqual(effect);
+            this.noStateMutation = false;
+            expect(await this.snapshot(), `${this.fixture.id}: no state mutation`).toEqual(before);
             this.noStateMutation = true;
-            this.accepted = false;
-            this.stage = 'transition';
+            // A commit that actually reached the wire is the positive outcome of
+            // this negative trace and must fail the fixture's `accepted:false`.
+            this.accepted = frame !== null;
+            this.stage = frame === null ? 'transition' : null;
             return;
         }
         const frame = await this.machine.commit();
@@ -482,24 +542,30 @@ class TraceRun {
 
     private async onConnectionLost(): Promise<void> {
         await this.machine.onDisconnect();
-        this.observe('pairing_failed_generic');
+        expect(this.machine.state, `${this.fixture.id}: link loss returns idle`).toBe('idle');
+        expect(this.machine.failed, `${this.fixture.id}: link loss is a failure`).toBe(true);
+        expect(this.keysErased(), `${this.fixture.id}: link loss erases keys`).toBe(true);
+        expect(this.machine.closed, `${this.fixture.id}: link loss closes`).toBe(true);
+        this.observePairingFailed();
         this.observe('connection_lost');
-        if (this.machine.enrollmentKeysForTest() === null) {
-            this.observe('erase_incomplete_materials');
-        }
-        this.observe('close_enrollment_connection');
+        if (this.keysErased()) this.observe('erase_incomplete_materials');
+        this.observeCloseConnection();
     }
 
     private async onCancel(): Promise<void> {
         const hadRecord = (await this.repository.peers()).length > 0;
         await this.machine.cancel();
-        this.observe('pairing_cancelled');
-        this.observe('erase_pairing_state');
+        expect(this.machine.state, `${this.fixture.id}: cancel returns idle`).toBe('idle');
+        expect(this.keysErased(), `${this.fixture.id}: cancel erases keys`).toBe(true);
+        expect(this.machine.closed, `${this.fixture.id}: cancel closes`).toBe(true);
+        if (this.machine.state === 'idle' && this.machine.closed) {
+            this.observe('pairing_cancelled');
+        }
+        this.observeErasePairingState();
         if (hadRecord && (await this.repository.peers()).length === 0) {
             this.observe('erase_incomplete_materials');
-            this.recordDeleted = true;
         }
-        this.observe('close_enrollment_connection');
+        this.observeCloseConnection();
     }
 
     private async snapshot(): Promise<unknown> {
@@ -509,6 +575,9 @@ class TraceRun {
             rx: this.machine.rxSequenceForTest().toString(),
             handles: openHandleCount(),
             peers: await this.repository.peers(),
+            closed: this.machine.closed,
+            failed: this.machine.failed,
+            keysWiped: this.keysErased(),
         };
     }
 
@@ -522,8 +591,15 @@ class TraceRun {
                   ? 'active_activation_pending'
                   : 'active';
         }
-        if (this.recordDeleted || this.recordEverPersisted || this.persistAttempted)
+        // `recordEverPersisted` is set only after a real `peers()` read showed the
+        // matching pending record; `persistAttempted` only after asserting that the
+        // store call happened. Neither is a flag set by the code path itself.
+        if (
+            this.recordEverPersisted ||
+            (this.persistAttempted && this.repository.addPendingCalls === 1)
+        ) {
             return 'deleted';
+        }
         return 'absent';
     }
 
@@ -540,8 +616,8 @@ class TraceRun {
         this.expectedCompleteMac?.fill(0);
     }
 
-    get observedEngineEffect(): InventoryEntry['engine-effect'] | null {
-        return this.engineEffect;
+    get observedEngineEffect(): EngineEffect | null {
+        return this.observedEffect;
     }
 }
 
