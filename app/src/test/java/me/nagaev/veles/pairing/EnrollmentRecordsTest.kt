@@ -113,17 +113,42 @@ class EnrollmentRecordsTest {
     @Test
     fun bad_record_fingerprint_stores_nothing() {
         val good = EnrollmentRecords.encode(record(DeviceType.PHONE), IdentityRole.PHONE)
+        val validated = mutableListOf<ByteArray>()
         val stored = mutableListOf<IdentityRecord>()
-        EnrollmentRecords.decodeVerified(good, IdentityRole.PHONE) { stored += it }
+        EnrollmentRecords.decodeForStorage(
+            good,
+            IdentityRole.PHONE,
+            validatePoint = { validated += it },
+            store = { stored += it },
+        )
+        assertEquals(1, validated.size)
         assertEquals(1, stored.size)
 
         val bad = good.copyOf().also { it[it.size - 17] = (it[it.size - 17] + 1).toByte() }
+        val validatedAfterBad = mutableListOf<ByteArray>()
         val afterBad = mutableListOf<IdentityRecord>()
         assertThrows(EnrollmentReject::class.java) {
-            EnrollmentRecords.decodeVerified(bad, IdentityRole.PHONE) { afterBad += it }
+            EnrollmentRecords.decodeForStorage(
+                bad,
+                IdentityRole.PHONE,
+                validatePoint = { validatedAfterBad += it },
+                store = { afterBad += it },
+            )
         }
+        assertTrue("a bad fingerprint must not reach point validation", validatedAfterBad.isEmpty())
         assertTrue("a bad fingerprint must store nothing", afterBad.isEmpty())
         assertEquals(1, stored.size)
+
+        val afterInvalidPoint = mutableListOf<IdentityRecord>()
+        assertThrows(IllegalArgumentException::class.java) {
+            EnrollmentRecords.decodeForStorage(
+                good,
+                IdentityRole.PHONE,
+                validatePoint = { throw IllegalArgumentException("invalid point") },
+                store = { afterInvalidPoint += it },
+            )
+        }
+        assertTrue("an invalid point must store nothing", afterInvalidPoint.isEmpty())
     }
 
     @Test
@@ -148,8 +173,7 @@ class EnrollmentRecordsTest {
     @Test
     fun keys_zeroed_after_use() {
         val keys = EnrollmentSchedule.derive(ByteArray(16) { 0x11 }, ByteArray(32) { 0x22 })
-        val before = keys.aToBAesKey.toHex()
-        assertFalse("a key holder must never print key material", keys.toString().contains(before))
+        assertEquals("a key holder must never print key material", "EnrollmentKeys(wiped=false)", keys.toString())
         assertFalse(keys.isWiped)
 
         val observed = keys.use { holder ->
@@ -158,16 +182,24 @@ class EnrollmentRecordsTest {
         }
         assertEquals(32, observed.size)
         assertTrue(keys.isWiped)
+        assertEquals("EnrollmentKeys(wiped=true)", keys.toString())
         for (field in keys.fields()) {
             assertTrue("every derived field must be zeroed", field.all { it == 0.toByte() })
         }
         keys.wipe()
+
+        var reuseRan = false
+        assertThrows("a wiped holder must not be usable", EnrollmentReject::class.java) {
+            keys.use { reuseRan = true }
+        }
+        assertFalse("the block must not run on a wiped holder", reuseRan)
 
         val failing = EnrollmentSchedule.derive(ByteArray(16) { 0x33 }, ByteArray(32) { 0x44 })
         assertThrows(IllegalStateException::class.java) {
             failing.use { error("caller failure") }
         }
         assertTrue("use() must wipe on the failure path too", failing.isWiped)
+        assertEquals("EnrollmentKeys(wiped=true)", failing.toString())
     }
 
     @Test

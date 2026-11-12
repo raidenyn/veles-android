@@ -1,6 +1,7 @@
 package me.nagaev.veles.pairing
 
 import me.nagaev.veles.session.Hkdf
+import me.nagaev.veles.session.SessionReject
 import java.nio.ByteBuffer
 import java.security.GeneralSecurityException
 import java.security.MessageDigest
@@ -45,15 +46,21 @@ object EnrollmentSchedule {
         requireContext(context)
         if (shared.size != KE_BYTES) reject()
         val prk = Hkdf.extract(salt(context), shared)
+        val produced = mutableListOf<ByteArray>()
         try {
+            fun expand(labelText: String, size: Int): ByteArray = Hkdf.expand(prk, label(labelText), size).also { produced += it }
+
             return EnrollmentKeys(
-                aToBAesKey = Hkdf.expand(prk, label(A_TO_B_AES_LABEL), AES_KEY_BYTES),
-                aToBNoncePrefix = Hkdf.expand(prk, label(A_TO_B_NONCE_LABEL), NONCE_PREFIX_BYTES),
-                phoneActivationKey = Hkdf.expand(prk, label(A_CONFIRMATION_LABEL), AES_KEY_BYTES),
-                bToAAesKey = Hkdf.expand(prk, label(B_TO_A_AES_LABEL), AES_KEY_BYTES),
-                bToANoncePrefix = Hkdf.expand(prk, label(B_TO_A_NONCE_LABEL), NONCE_PREFIX_BYTES),
-                clientActivationKey = Hkdf.expand(prk, label(B_CONFIRMATION_LABEL), AES_KEY_BYTES),
+                aToBAesKey = expand(A_TO_B_AES_LABEL, AES_KEY_BYTES),
+                aToBNoncePrefix = expand(A_TO_B_NONCE_LABEL, NONCE_PREFIX_BYTES),
+                phoneActivationKey = expand(A_CONFIRMATION_LABEL, AES_KEY_BYTES),
+                bToAAesKey = expand(B_TO_A_AES_LABEL, AES_KEY_BYTES),
+                bToANoncePrefix = expand(B_TO_A_NONCE_LABEL, NONCE_PREFIX_BYTES),
+                clientActivationKey = expand(B_CONFIRMATION_LABEL, AES_KEY_BYTES),
             )
+        } catch (failure: SessionReject) {
+            produced.forEach { it.fill(0) }
+            throw failure
         } finally {
             prk.fill(0)
         }
@@ -116,10 +123,13 @@ class EnrollmentKeys internal constructor(
 
     val isWiped: Boolean get() = wiped
 
-    fun <T> use(block: (EnrollmentKeys) -> T): T = try {
-        block(this)
-    } finally {
-        wipe()
+    fun <T> use(block: (EnrollmentKeys) -> T): T {
+        if (wiped) throw EnrollmentReject()
+        return try {
+            block(this)
+        } finally {
+            wipe()
+        }
     }
 
     fun wipe() {

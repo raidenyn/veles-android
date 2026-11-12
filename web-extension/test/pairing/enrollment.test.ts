@@ -6,12 +6,14 @@ import {
     EnrollmentReject,
     IdentityRole,
     decodeIdentityRecord,
-    decodeVerifiedIdentityRecord,
+    decodeIdentityRecordForStorage,
+    decodeFingerprintVerifiedIdentityRecord,
     deriveEnrollmentKeys,
     encodeIdentityRecord,
     enrollmentNonce,
     enrollmentSessionPrefix,
     fingerprintDisplay,
+    isEnrollmentKeysWiped,
     pairFingerprint,
     recordFingerprint,
     transcript,
@@ -138,11 +140,21 @@ describe('enrollment schedule', () => {
 
     it('zeroes every derived field after use, including the failure path', async () => {
         const keys = await deriveEnrollmentKeys(ke, context);
+        expect(isEnrollmentKeysWiped(keys)).toBe(false);
         const observed = await withEnrollmentKeys(keys, (holder) => holder.aToBAesKey.slice());
         expect(observed).toHaveLength(32);
+        expect(isEnrollmentKeysWiped(keys)).toBe(true);
         for (const field of Object.values(keys) as Uint8Array[]) {
             expect(field.every((byte) => byte === 0)).toBe(true);
         }
+
+        let reuseRan = false;
+        await expect(
+            withEnrollmentKeys(keys, () => {
+                reuseRan = true;
+            }),
+        ).rejects.toBeInstanceOf(EnrollmentReject);
+        expect(reuseRan).toBe(false);
 
         const failing = await deriveEnrollmentKeys(ke, context);
         await expect(
@@ -150,6 +162,7 @@ describe('enrollment schedule', () => {
                 throw new Error('caller failure');
             }),
         ).rejects.toThrow('caller failure');
+        expect(isEnrollmentKeysWiped(failing)).toBe(true);
         for (const field of Object.values(failing) as Uint8Array[]) {
             expect(field.every((byte) => byte === 0)).toBe(true);
         }
@@ -271,27 +284,58 @@ describe('identity records', () => {
         ).rejects.toBeInstanceOf(EnrollmentReject);
     });
 
-    it('stores nothing when the own-record fingerprint does not verify', async () => {
+    it('stores nothing until the fingerprint and the point validator both pass', async () => {
         const good = encodeIdentityRecord(
             await recordFor(IdentityRole.PHONE, DeviceType.PHONE),
             IdentityRole.PHONE,
         );
+        const validated: Uint8Array[] = [];
         const stored: IdentityRecord[] = [];
-        await decodeVerifiedIdentityRecord(good, IdentityRole.PHONE, (record) =>
-            stored.push(record),
+        await decodeIdentityRecordForStorage(
+            good,
+            IdentityRole.PHONE,
+            (point) => {
+                validated.push(point);
+            },
+            (record) => stored.push(record),
         );
+        expect(validated).toHaveLength(1);
         expect(stored).toHaveLength(1);
 
         const bad = good.slice();
         bad[bad.length - 17] = (bad[bad.length - 17] + 1) & 0xff;
+        const validatedBad: Uint8Array[] = [];
         const afterBad: IdentityRecord[] = [];
         await expect(
-            decodeVerifiedIdentityRecord(bad, IdentityRole.PHONE, (record) =>
-                afterBad.push(record),
+            decodeIdentityRecordForStorage(
+                bad,
+                IdentityRole.PHONE,
+                (point) => {
+                    validatedBad.push(point);
+                },
+                (record) => afterBad.push(record),
             ),
         ).rejects.toBeInstanceOf(EnrollmentReject);
+        expect(validatedBad).toHaveLength(0);
         expect(afterBad).toHaveLength(0);
         expect(stored).toHaveLength(1);
+
+        const afterInvalidPoint: IdentityRecord[] = [];
+        await expect(
+            decodeIdentityRecordForStorage(
+                good,
+                IdentityRole.PHONE,
+                () => {
+                    throw new Error('invalid point');
+                },
+                (record) => afterInvalidPoint.push(record),
+            ),
+        ).rejects.toThrow('invalid point');
+        expect(afterInvalidPoint).toHaveLength(0);
+
+        await expect(
+            decodeFingerprintVerifiedIdentityRecord(good, IdentityRole.PHONE),
+        ).resolves.toBeDefined();
     });
 
     it('rejects enroll_identity in every reconnect session class', () => {

@@ -105,6 +105,8 @@ export interface EnrollmentKeys {
     clientActivationKey: Uint8Array;
 }
 
+const wipedHolders = new WeakSet<EnrollmentKeys>();
+
 /** Generic enrollment failure. It carries no message and never a record or key value. */
 export class EnrollmentReject extends Error {
     constructor() {
@@ -208,45 +210,49 @@ export async function deriveEnrollmentKeys(
     requireSized(ke, KE_BYTES);
     requireContext(context);
     const prk = await hkdfExtract(await enrollmentSalt(context), ke);
+    const produced: Uint8Array[] = [];
+    const produce = async (labelText: string, size: number): Promise<Uint8Array> => {
+        const value = await hkdfExpand(prk, label(labelText), size);
+        produced.push(value);
+        return value;
+    };
     try {
-        const [
-            aToBAesKey,
-            aToBNoncePrefix,
-            phoneActivationKey,
-            bToAAesKey,
-            bToANoncePrefix,
-            clientActivationKey,
-        ] = await Promise.all([
-            hkdfExpand(prk, label(A_TO_B_AES_LABEL), AES_KEY_BYTES),
-            hkdfExpand(prk, label(A_TO_B_NONCE_LABEL), NONCE_PREFIX_BYTES),
-            hkdfExpand(prk, label(A_CONFIRMATION_LABEL), AES_KEY_BYTES),
-            hkdfExpand(prk, label(B_TO_A_AES_LABEL), AES_KEY_BYTES),
-            hkdfExpand(prk, label(B_TO_A_NONCE_LABEL), NONCE_PREFIX_BYTES),
-            hkdfExpand(prk, label(B_CONFIRMATION_LABEL), AES_KEY_BYTES),
-        ]);
         return {
-            aToBAesKey,
-            aToBNoncePrefix,
-            phoneActivationKey,
-            bToAAesKey,
-            bToANoncePrefix,
-            clientActivationKey,
+            aToBAesKey: await produce(A_TO_B_AES_LABEL, AES_KEY_BYTES),
+            aToBNoncePrefix: await produce(A_TO_B_NONCE_LABEL, NONCE_PREFIX_BYTES),
+            phoneActivationKey: await produce(A_CONFIRMATION_LABEL, AES_KEY_BYTES),
+            bToAAesKey: await produce(B_TO_A_AES_LABEL, AES_KEY_BYTES),
+            bToANoncePrefix: await produce(B_TO_A_NONCE_LABEL, NONCE_PREFIX_BYTES),
+            clientActivationKey: await produce(B_CONFIRMATION_LABEL, AES_KEY_BYTES),
         };
+    } catch (failure) {
+        for (const field of produced) field.fill(0);
+        throw failure;
     } finally {
         prk.fill(0);
     }
 }
 
+/** True once `wipeEnrollmentKeys` has zeroed this holder. */
+export function isEnrollmentKeysWiped(keys: EnrollmentKeys): boolean {
+    return wipedHolders.has(keys);
+}
+
 /** Zeros every derived field. The holder is unusable afterwards. */
 export function wipeEnrollmentKeys(keys: EnrollmentKeys): void {
     for (const field of Object.values(keys)) field.fill(0);
+    wipedHolders.add(keys);
 }
 
-/** Runs `block` and wipes the holder on both the success and the failure path. */
+/**
+ * Runs `block` and wipes the holder on both the success and the failure path. A wiped
+ * holder is rejected before the block runs, so an all-zero key set can never be used.
+ */
 export async function withEnrollmentKeys<T>(
     keys: EnrollmentKeys,
     block: (keys: EnrollmentKeys) => T | Promise<T>,
 ): Promise<T> {
+    if (wipedHolders.has(keys)) reject();
     try {
         return await block(keys);
     } finally {
@@ -339,19 +345,35 @@ export function decodeIdentityRecord(body: Uint8Array, role: IdentityRole): Iden
 }
 
 /**
- * Decodes and verifies the own-record fingerprint before returning. A mismatch throws
- * `EnrollmentReject`, so a caller can never persist the record; when a `store` callback is
- * supplied it is invoked only after the fingerprint verified.
+ * Decodes and verifies the own-record fingerprint before returning. This proves the
+ * OTP2-REC-011a binding only; it is NOT a full authentication: the point is still only
+ * format-checked. Callers that persist must use `decodeIdentityRecordForStorage` with a
+ * point validator.
  */
-export async function decodeVerifiedIdentityRecord(
+export async function decodeFingerprintVerifiedIdentityRecord(
     body: Uint8Array,
     role: IdentityRole,
-    store?: (record: IdentityRecord) => void,
 ): Promise<IdentityRecord> {
     const record = decodeIdentityRecord(body, role);
     const expected = await recordFingerprint(record, role);
     // OTP2-REC-011a: constant-time comparison, never a direct equality.
     if (!equalConstantTime(expected, record.fingerprint)) reject();
+    return record;
+}
+
+/**
+ * Decode, verify the own-record fingerprint, run `validatePoint` on the identity public key,
+ * and only then invoke `store`. Task 8 passes `requireValidPoint` here; a bad fingerprint or an
+ * invalid point invokes neither the later validation nor the store.
+ */
+export async function decodeIdentityRecordForStorage(
+    body: Uint8Array,
+    role: IdentityRole,
+    validatePoint: (point: Uint8Array) => void | Promise<void>,
+    store?: (record: IdentityRecord) => void,
+): Promise<IdentityRecord> {
+    const record = await decodeFingerprintVerifiedIdentityRecord(body, role);
+    await validatePoint(record.identityPubkey);
     store?.(record);
     return record;
 }

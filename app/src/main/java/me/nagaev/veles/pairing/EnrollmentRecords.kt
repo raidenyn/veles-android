@@ -48,7 +48,7 @@ class IdentityRecord(
  * The body is `installation_id[16] || label_len u16be || label || device_type u8 ||
  * identity_pubkey[65] || fingerprint[32] || nonce[16]`, 132..164 bytes. Decoding validates
  * the body structure, the role-bound device type, the point format and the OTP2-ENC-003 safe
- * text; [decodeVerified] additionally recomputes the own-record fingerprint and rejects before
+ * text; [decodeFingerprintVerified] additionally recomputes the own-record fingerprint and rejects before
  * a caller can store anything. Full P-256 point validation belongs to the session layer
  * (`P256.requireValidPoint`) when the identity is authenticated.
  */
@@ -73,7 +73,6 @@ object EnrollmentRecords {
     private const val HEX_BYTE_CHARS = 2
     private const val HEX_RADIX = 16
     private const val CONFIRM_BYTES = 32
-    private const val POINT_BYTES = 65
     private const val HASH_BYTES = 32
 
     private const val RECORD_FINGERPRINT_LABEL = "Veles enrollment record fingerprint v1"
@@ -138,18 +137,29 @@ object EnrollmentRecords {
     }
 
     /**
-     * Decodes and verifies the own-record fingerprint before returning. A mismatch throws
-     * [EnrollmentReject], so a caller can never persist the record.
+     * Decodes and verifies the own-record fingerprint before returning. This proves the
+     * OTP2-REC-011a binding only; it is NOT a full authentication: the point is still only
+     * format-checked. Callers that persist must use [decodeForStorage] with a validator.
      */
-    fun decodeVerified(body: ByteArray, role: IdentityRole): IdentityRecord {
+    fun decodeFingerprintVerified(body: ByteArray, role: IdentityRole): IdentityRecord {
         val record = decode(body, role)
         verifyOwnFingerprint(record, role)
         return record
     }
 
-    /** Verifies first, then invokes [store]; a bad fingerprint invokes nothing. */
-    fun decodeVerified(body: ByteArray, role: IdentityRole, store: (IdentityRecord) -> Unit): IdentityRecord {
-        val record = decodeVerified(body, role)
+    /**
+     * Decode, verify the own-record fingerprint, run [validatePoint] on the identity public
+     * key, and only then invoke [store]. Task 7 passes `P256::requireValidPoint` here; a bad
+     * fingerprint or an invalid point invokes neither the later validation nor the store.
+     */
+    fun decodeForStorage(
+        body: ByteArray,
+        role: IdentityRole,
+        validatePoint: (ByteArray) -> Unit,
+        store: (IdentityRecord) -> Unit,
+    ): IdentityRecord {
+        val record = decodeFingerprintVerified(body, role)
+        validatePoint(record.identityPubkey)
         store(record)
         return record
     }
@@ -266,7 +276,7 @@ object EnrollmentRecords {
     }
 
     private fun requirePoint(point: ByteArray) {
-        requireSized(point, POINT_BYTES)
+        requireSized(point, PUBKEY_BYTES)
         if ((point[0].toInt() and U8_MASK) != POINT_TAG) reject()
     }
 
