@@ -171,12 +171,13 @@ export class PairingLink {
         return next;
     }
 
-    /** User cancel: deletes the pending record and disconnects. */
-    async cancel(): Promise<void> {
-        if (this.disposed) return;
+    /** User cancel: deletes the pending record and disconnects. False means cleanup failed. */
+    async cancel(): Promise<boolean> {
+        if (this.disposed) return true;
         this.stopped = true;
-        await this.machine.cancel();
+        const cleaned = await this.machine.cancel();
         await this.stop();
+        return cleaned;
     }
 
     /**

@@ -50,7 +50,7 @@ import { ActivationEngine } from './pairing/activation';
 import { initPairingCore } from './pairing/core';
 import { PairingLink } from './pairing/link';
 import { ProofRegistry } from './pairing/proofs';
-import { bytes } from './trust/model';
+import { bytes, type TrustedPeer } from './trust/model';
 import { normalizeLowS } from './session/ecdsa';
 import { IndexedDbIdentityStore } from './trust/identity';
 import { ChromeLocalStore, trustLock } from './trust/storage';
@@ -261,6 +261,7 @@ export class ConnectorApp {
     private readonly suppressedPeerIds = new Set<string>();
     private readonly recoveryEpochs = new Map<string, number>();
     private trackedConnections = new Map<string, TrackedConnection>();
+    private devices: readonly { handle: string; label: string }[] = [];
     private pairingLink: PairingLink | null = null;
     private pairingEnded = false;
     // An enrollment connection is not a session: its disappearance must never
@@ -446,12 +447,41 @@ export class ConnectorApp {
         return this.pairingEnded;
     }
 
-    /** User cancel of the current enrollment attempt. */
-    async cancelPairing(): Promise<void> {
+    /** The debug panel's state readout; never contains the six-digit code. */
+    get pairingState(): { phase: string; finished: boolean; fingerprint?: string } {
+        if (this.pairingLink === null) return { phase: 'idle', finished: this.pairingEnded };
+        const machine = this.pairingLink.machine;
+        const fingerprint = machine.fingerprint();
+        return {
+            phase: machine.state,
+            finished: this.pairingEnded,
+            ...(fingerprint === undefined ? {} : { fingerprint }),
+        };
+    }
+
+    /** Discovered phones for the debug panel; the extension-owned search fills this. */
+    get pairingDevices(): readonly { handle: string; label: string }[] {
+        return this.devices;
+    }
+
+    /** Every trust record, for the debug Clear control (design D5). */
+    async pairingPeers(): Promise<readonly TrustedPeer[]> {
+        return this.repository === null ? [] : this.repository.peers();
+    }
+
+    /** Clear a stranded or injected record with `repository.revoke`; no revocation protocol. */
+    async clearPairingPeer(peerId: string): Promise<void> {
+        const repository = this.repository;
+        if (repository === null) throw new Error('trust store unavailable');
+        await repository.revoke(peerId);
+    }
+
+    /** User cancel of the current enrollment attempt; false when its cleanup failed. */
+    async cancelPairing(): Promise<boolean> {
         const link = this.pairingLink;
         this.pairingLink = null;
         this.pairingEnded = true;
-        if (link !== null) await link.cancel();
+        return link === null ? true : link.cancel();
     }
 
     private teardownPairing(): Promise<void> {
@@ -915,6 +945,7 @@ export class ConnectorApp {
 
     private handleClose(close: ConnectorClose): void {
         if (this.disposed) return;
+        this.devices = [];
         // A native-host port death is not connector-context loss: OTP2-STA-010d
         // deletes a genuinely-pending client record only when the document/tab
         // ends. Close the core handle and keep the durable pending record so a
@@ -985,6 +1016,10 @@ export class ConnectorApp {
 
     private handleChange(snapshot: ConnectorSnapshot): void {
         if (this.disposed) return;
+        this.devices = snapshot.devices.map((device) => ({
+            handle: device.handle,
+            label: device.label,
+        }));
         const next = new Map(
             snapshot.connections.map((connection) => [
                 connection.handle,
@@ -1497,6 +1532,22 @@ async function bootstrapOwnedConnector(): Promise<ConnectorApp | null> {
     });
     if (probe !== null && app.sessions !== null) {
         probe.install(app, app.sessions, controller);
+    }
+    if (__VELES_CHANNEL__ === 'development') {
+        // The second compile-time-guarded dynamic import keeps the pairing panel in its own
+        // development-only chunk; a production build folds both guards and emits neither.
+        const { mountPairingPanel } = await import('./debug/pairing-panel');
+        mountPairingPanel(document.body, {
+            devices: () => app.pairingDevices,
+            status: () => app.pairingState,
+            trust: {
+                peers: () => app.pairingPeers(),
+                revoke: (peerId: string) => app.clearPairingPeer(peerId),
+            },
+            start: (deviceHandle: string, code: string) => app.startPairing(deviceHandle, code),
+            cancel: () => app.cancelPairing(),
+            onChange: (listener: () => void) => controller.onChange(() => listener()),
+        });
     }
     const copyStatus = document.getElementById('synthetic-copy-status');
     const copyButton = document.getElementById('synthetic-copy-button');

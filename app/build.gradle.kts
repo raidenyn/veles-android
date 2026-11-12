@@ -188,6 +188,17 @@ val releaseHookForbidden = listOf(
     "me.nagaev.veles.debug.",
     "INJECT_PEER",
     "REVOKE_PEER",
+    // OTP-10 D5 debug pairing surface: the package path survives R8 renaming in the DEX
+    // descriptor, and the action/screen strings survive in the manifest and resources.
+    "me/nagaev/veles/debugpairing",
+    "me.nagaev.veles.debugpairing.START",
+    "me.nagaev.veles.debugpairing.CANCEL",
+    "VelesPairingDebug",
+    "Veles pairing debug",
+    "Pairing code",
+    "Start pairing window",
+    "Cancel pairing window",
+    "Clear incomplete record",
 )
 
 /** First byte offset of [needle] in this array, or -1. */

@@ -32,16 +32,22 @@ describe('dist/ contents (post-build artifact)', () => {
         const files = walk(DIST).sort();
         const wasm = files.filter((file) => /^assets\/veles_crypto_bg-[^/]+\.wasm$/.test(file));
         expect(wasm).toHaveLength(1);
-        expect(files.filter((file) => !wasm.includes(file))).toEqual([
+        // The connector module chunk embeds the hashed WASM asset name, so its own hash
+        // changes with every Rust build; match it by pattern like the WASM asset.
+        const connectorChunks = files.filter((file) => /^chunks\/connector-[^/]+\.js$/.test(file));
+        expect(connectorChunks).toHaveLength(1);
+        expect(
+            files.filter((file) => !wasm.includes(file) && !connectorChunks.includes(file)),
+        ).toEqual([
             'background.js',
             'chunks/clipboard-DE1lG-x_.js',
             'chunks/modulepreload-polyfill-DaKOjhqt.js',
             'chunks/ownership-BOcJ26Iv.js',
-            'chunks/probe-BoZGVkp6.js',
-            'chunks/repository-FtdCOb-V.js',
+            'chunks/pairing-panel-BWIaYGNA.js',
+            'chunks/probe-BXD-9UJ6.js',
+            'chunks/repository-wKCuwgFE.js',
             'chunks/storage-DOMCF8BZ.js',
             'connector.html',
-            'connector.js',
             'content.js',
             'manifest.json',
             'offscreen.html',
@@ -59,13 +65,14 @@ describe('dist/ contents (post-build artifact)', () => {
         const wasm = files.filter((file) => /^assets\/veles_crypto_bg-[^/]+\.wasm$/.test(file));
         expect(wasm).toHaveLength(1);
         const asset = basename(wasm[0]);
+        const connectorChunks = files.filter((file) => /^chunks\/connector-[^/]+\.js$/.test(file));
 
-        // The connector entry references the emitted asset; it is the only
+        // The connector tab's module chunk references the emitted asset; it is the only
         // script that may do so.
         const referencing = files
             .filter((file) => file.endsWith('.js'))
             .filter((file) => readFileSync(join(DIST, file), 'utf8').includes(asset));
-        expect(referencing).toEqual(['connector.js']);
+        expect(referencing).toEqual(connectorChunks);
 
         // The MV3 service worker (background.js) and its chunks never load it.
         const background = readFileSync(join(DIST, 'background.js'), 'utf8');
@@ -82,7 +89,9 @@ describe('dist/ contents (post-build artifact)', () => {
         const files = walk(DIST);
         expect(files.filter((file) => /harness|fixture|browser-connector/.test(file))).toEqual([]);
 
-        const connector = readFileSync(join(DIST, 'connector.js'), 'utf8');
+        const connectorChunks = files.filter((file) => /^chunks\/connector-[^/]+\.js$/.test(file));
+        expect(connectorChunks).toHaveLength(1);
+        const connector = readFileSync(join(DIST, connectorChunks[0]), 'utf8');
         expect(connector).toContain('connectNative');
         expect(connector).not.toContain('__velesConnectorHarness');
         expect(connector).not.toContain('SimulatedNativePort');
@@ -94,7 +103,21 @@ describe('dist/ contents (post-build artifact)', () => {
 // no debug hook global, synthetic probe marker or debug readout test id. The
 // `dist/` assertions above stay on the ordinary development build.
 describe('guard bundle excludes the debug probe', () => {
-    const FORBIDDEN = ['velesDebug', 'Veles synthetic', 'veles-debug-readout'];
+    const FORBIDDEN = [
+        'velesDebug',
+        'Veles synthetic',
+        'veles-debug-readout',
+        // OTP-10 pairing panel surface (D5). The panel chunk is a dynamic import behind
+        // the build-time `__VELES_CHANNEL__` guard, so the production build folds it
+        // away entirely; these strings prove a regression would be caught.
+        'veles-pairing-debug',
+        'Veles pairing debug',
+        'Pairing code',
+        'Start pairing',
+        'Cancel pairing',
+        'Clear incomplete record',
+        'Phone to pair',
+    ];
 
     it('is a production-channel build with the expected inventory shape', () => {
         expect(statSync(GUARD).isDirectory()).toBe(true);
@@ -116,5 +139,22 @@ describe('guard bundle excludes the debug probe', () => {
             }
         }
         expect(hits).toEqual([]);
+    });
+
+    it('panel_absent_from_production_bundle', () => {
+        const files = walk(GUARD);
+        // A tree-shaken dynamic import leaves no chunk behind.
+        expect(files.filter((file) => /pairing-panel/.test(file))).toEqual([]);
+        const leaks: string[] = [];
+        for (const file of files) {
+            const bytes = readFileSync(join(GUARD, file));
+            const utf8 = bytes.toString('utf8');
+            const utf16 = utf16leText(bytes);
+            for (const needle of FORBIDDEN) {
+                if (utf8.includes(needle) || utf16.includes(needle))
+                    leaks.push(`${file}: ${needle}`);
+            }
+        }
+        expect(leaks).toEqual([]);
     });
 });

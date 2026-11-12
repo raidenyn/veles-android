@@ -451,6 +451,59 @@ describe('client enrollment machine', () => {
         }
     });
 
+    it('cancel_keeps_recovered_active_record', async () => {
+        const run = await setup();
+        try {
+            await toAwaitingPrepare(run);
+            const [pending] = await run.repo.peers();
+            // A recovery session on the same connector store authenticates the pending
+            // record while this abandoned link still holds its id.
+            run.trust.bindVerifier(async () => true);
+            await run.trust.repository.confirm(
+                pending.installationId,
+                'complete',
+                new Uint8Array(32),
+            );
+            expect((await run.repo.peers())[0].state).toBe('active_activation_pending');
+
+            expect(await run.machine.cancel()).toBe(true);
+
+            expect(run.machine.state).toBe('idle');
+            const remaining = await run.repo.peers();
+            expect(remaining.map((peer) => peer.installationId)).toEqual([pending.installationId]);
+            expect(remaining[0].state).toBe('active_activation_pending');
+        } finally {
+            run.phone.close();
+        }
+    });
+
+    it('cancel_cleanup_failure_is_visible', async () => {
+        const clock = new SessionClock();
+        const base = await createTestTrust(clock);
+        const failing: ClientTrustRepository = {
+            identity: () => base.repository.identity(),
+            peers: () => base.repository.peers(),
+            addPending: (peer) => base.repository.addPending(peer),
+            confirm: (peerId, stage, proof) => base.repository.confirm(peerId, stage, proof),
+            revoke: async () => {
+                throw new Error('trust store unavailable');
+            },
+        };
+        const run = await setup({ repo: failing });
+        try {
+            await toAwaitingPrepare(run);
+            expect(await run.repo.peers()).toHaveLength(1);
+
+            expect(await run.machine.cancel()).toBe(false);
+
+            expect(run.machine.state).toBe('idle');
+            expect(run.machine.closed).toBe(true);
+            expect(openHandleCount()).toBe(0);
+        } finally {
+            run.phone.close();
+        }
+    });
+
     it('tab_teardown_closes_handle_and_deletes_pending', async () => {
         const clock = new SessionClock();
         const trust = await createTestTrust(clock);

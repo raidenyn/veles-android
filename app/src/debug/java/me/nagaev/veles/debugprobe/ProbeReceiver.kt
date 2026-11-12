@@ -117,17 +117,19 @@ internal class ProbeCommands(
         }
     }
 
-    suspend fun revokePeer(id: String) {
+    suspend fun revokePeer(id: String): Boolean {
         if (sessions.hasOpenSession(id)) {
             // Never the OTP-11 live revocation: refusal is the debug contract.
             log("revoke refused peer=${id.take(LOG_PREFIX_CHARS)} session_open=true")
-            return
+            return false
         }
-        try {
+        return try {
             repository.revoke(id)
             log("revoked peer=${id.take(LOG_PREFIX_CHARS)}")
+            true
         } catch (_: TrustException) {
             log("revoke refused peer=${id.take(LOG_PREFIX_CHARS)}")
+            false
         }
     }
 
@@ -142,6 +144,27 @@ internal class ProbeCommands(
 internal interface DebugProbeEntryPoint {
     fun velesLog(): VelesLog
 }
+
+/**
+ * The one debug command wiring used by the adb receiver and the pairing screen's Clear
+ * control, so both paths share the existing `REVOKE_PEER` refusal and log behavior.
+ */
+internal fun debugProbeCommands(
+    context: Context,
+    log: (String) -> Unit,
+    result: (String) -> Unit = {},
+): ProbeCommands = ProbeCommands(
+    sessions = DebugProbeRuntime.host?.let(::SessionProbeSessions) ?: NoSessions,
+    repository = createAndroidTrustRepository(context, debugRejectAllVerifier),
+    injector = DebugTrustInjector(
+        storage = RoomTrustStorage(TrustDatabase.open(context)),
+        elapsedMillis = System::currentTimeMillis,
+        wallMillis = System::currentTimeMillis,
+    ),
+    handler = DebugProbeRuntime.eventSource ?: ProbeReceiver.EMPTY_EVENT_SOURCE,
+    log = log,
+    result = result,
+)
 
 class ProbeReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
@@ -172,20 +195,7 @@ class ProbeReceiver : BroadcastReceiver() {
     ) {
         val logger = EntryPointAccessors.fromApplication(context, DebugProbeEntryPoint::class.java).velesLog()
         val log: (String) -> Unit = { logger.d(PROBE_TAG, it) }
-        val repository = createAndroidTrustRepository(context, debugRejectAllVerifier)
-        val injector = DebugTrustInjector(
-            storage = RoomTrustStorage(TrustDatabase.open(context)),
-            elapsedMillis = System::currentTimeMillis,
-            wallMillis = System::currentTimeMillis,
-        )
-        val commands = ProbeCommands(
-            sessions = DebugProbeRuntime.host?.let(::SessionProbeSessions) ?: NoSessions,
-            repository = repository,
-            injector = injector,
-            handler = DebugProbeRuntime.eventSource ?: EMPTY_EVENT_SOURCE,
-            log = log,
-            result = result,
-        )
+        val commands = debugProbeCommands(context, log, result)
         when (action) {
             ACTION_EXPORT_IDENTITY -> commands.exportIdentity()
             ACTION_INJECT_PEER -> if (id != null && pub != null) commands.injectPeer(id, pub) else log("inject refused")
@@ -202,7 +212,7 @@ class ProbeReceiver : BroadcastReceiver() {
         const val EXTRA_ID = "id"
         const val EXTRA_PUB = "pub"
 
-        private val EMPTY_EVENT_SOURCE = ProbeEventSource { _ ->
+        internal val EMPTY_EVENT_SOURCE = ProbeEventSource { _ ->
             SyntheticEvent(code = "", eventId = ByteArray(0), body = ByteArray(0))
         }
 

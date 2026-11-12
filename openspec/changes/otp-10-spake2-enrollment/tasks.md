@@ -51,10 +51,10 @@
 
 ## 6. Debug harness
 
-- [ ] 6.1 Android debug source-set screen (Start, Cancel, on-screen code, Clear), `PairingDebugHooks` `StateFlow`, non-echoing start/cancel broadcasts, Clear reusing `REVOKE_PEER`; tests for the broadcast result not echoing the code and for clear-then-re-pair
-- [ ] 6.2 Chrome debug panel (code entry, phone selection, state, fingerprint, Cancel, Clear via `repository.revoke`) behind `__VELES_CHANNEL__` and a dynamic import
-- [ ] 6.3 Put the debug pairing code under a package or name matched by `releaseHookForbidden` (R8 renames classes, so also match strings), add the entries, extend `bundle.test.ts` for the production bundle, and run `./gradlew :app:releaseHookGuard` (needs the NDK)
-- [ ] 6.4 Logger guard: extend the raw `android.util.Log` check and a code-leak grep to `app/src/debug` and `web-extension/src/debug`, fail if `PairingCode` reaches a logger, and check that the code never reaches `DiagnosticRing` or view-model snapshots
+- [x] 6.1 Android debug source-set screen (Start, Cancel, on-screen code, Clear), `PairingDebugHooks` `StateFlow`, non-echoing start/cancel broadcasts, Clear reusing `REVOKE_PEER`; tests for the broadcast result not echoing the code and for clear-then-re-pair
+- [x] 6.2 Chrome debug panel (code entry, phone selection, state, fingerprint, Cancel, Clear via `repository.revoke`) behind `__VELES_CHANNEL__` and a dynamic import
+- [x] 6.3 Put the debug pairing code under a package or name matched by `releaseHookForbidden` (R8 renames classes, so also match strings), add the entries, extend `bundle.test.ts` for the production bundle, and run `./gradlew :app:releaseHookGuard` (needs the NDK)
+- [x] 6.4 Logger guard: extend the raw `android.util.Log` check and a code-leak grep to `app/src/debug` and `web-extension/src/debug`, fail if `PairingCode` reaches a logger, and check that the code never reaches `DiagnosticRing` or view-model snapshots
 
 ## 7. Evidence
 

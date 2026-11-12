@@ -37,13 +37,27 @@ jobs:
         run: |
           fail=0
           # Catch fully-qualified references and wildcard imports of android.util.Log
-          if grep -rn "android.util.Log\|import android.util\.\*" app/src/main --include=*.kt | grep -v "LogSink.kt"; then
+          if grep -rn "android.util.Log\|import android.util\.\*" app/src/main app/src/debug --include=*.kt | grep -v "LogSink.kt"; then
             echo "::error::Raw android.util.Log usage or wildcard import found outside LogSink.kt. Use VelesLog instead."
             fail=1
           fi
           # Catch bare Log.d/w/e/i/v calls (reachable via wildcard import) outside LogSink.kt
-          if grep -rnE "Log\.[dweiv]\(" app/src/main --include=*.kt | grep -v "LogSink.kt"; then
+          if grep -rnE "Log\.[dweiv]\(" app/src/main app/src/debug --include=*.kt | grep -v "LogSink.kt"; then
             echo "::error::Bare Log.d/w/e/i/v call found outside LogSink.kt. Use VelesLog instead."
+            fail=1
+          fi
+          exit $fail
+      - name: Guard against pairing-code logging in the debug surfaces
+        run: |
+          fail=0
+          # The pairing code may exist only as the on-screen readout and the in-process
+          # StateFlow. No debug logger, broadcast result or renderer may receive it.
+          if grep -rniE "(VelesLog|logger|Log\.[dweiv]|println|print\(|setResultData|result\(|Notification|putExtra)" app/src/debug web-extension/src/debug --include=*.kt --include=*.ts | grep -iE "PairingCode|pairingCode"; then
+            echo "::error::PairingCode reaches a logger, broadcast result or notification in a debug surface."
+            fail=1
+          fi
+          if grep -rnE "(console\.[a-z]+|DiagnosticRing|diagnostics\.push|textContent\s*=)[^;]*\b(code|pairingCode)\b" web-extension/src/debug --include=*.ts; then
+            echo "::error::The pairing code reaches a log, DiagnosticRing or rendered text in the Chrome debug surface."
             fail=1
           fi
           exit $fail

@@ -1,3 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Veles (debug)</string>
+
+    <!-- OTP-10 D5 debug-only pairing screen. Every value is a forbidden release string. -->
+    <string name="pairing_debug_title">Veles pairing debug</string>
+    <string name="pairing_debug_code">Pairing code: %1$s</string>
+    <string name="pairing_debug_closed">No pairing window. Press Start pairing window.</string>
+    <string name="pairing_debug_id">Pairing id: %1$s</string>
+    <string name="pairing_debug_start">Start pairing window</string>
+    <string name="pairing_debug_cancel">Cancel pairing window</string>
+    <string name="pairing_debug_peer">Peer installation id</string>
+    <string name="pairing_debug_clear">Clear incomplete record</string>
+    <string name="pairing_debug_cleared">Record cleared</string>
+    <string name="pairing_debug_clear_failed">Clear failed or refused</string>
+    <string name="pairing_debug_service_off">Start Bluetooth sharing first; the window belongs to the running service.</string>
 </resources>

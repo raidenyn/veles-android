@@ -3,11 +3,13 @@ package me.nagaev.veles.session
 import android.content.Context
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.runBlocking
+import me.nagaev.veles.debugpairing.PairingDebugHooks
 import me.nagaev.veles.debugprobe.DebugProbeEntryPoint
 import me.nagaev.veles.debugprobe.DebugProbeRuntime
 import me.nagaev.veles.debugprobe.PROBE_TAG
 import me.nagaev.veles.debugprobe.ProbeReceiver
 import me.nagaev.veles.debugprobe.SyntheticProbeHandler
+import me.nagaev.veles.sharing.PairingEndpoint
 import me.nagaev.veles.sharing.SessionHost
 import me.nagaev.veles.trust.ActivationVerifier
 import me.nagaev.veles.trust.TrustEncoding
@@ -44,5 +46,14 @@ object BuildSessionExtensions {
 
     fun attach(host: SessionHost) {
         DebugProbeRuntime.host = host
+    }
+
+    /** OTP-10 D5: expose the production window to the debug screen and broadcasts. */
+    internal fun attachPairing(pairing: PairingEndpoint) {
+        PairingDebugHooks.attach(pairing.window)
+    }
+
+    internal fun detachPairing() {
+        PairingDebugHooks.detach()
     }
 }

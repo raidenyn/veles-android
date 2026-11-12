@@ -329,8 +329,12 @@ export class ClientMachine {
         return this.#serial(() => this.#commit());
     }
 
-    /** User cancel: deletes this enrollment's pending record and erases all material. */
-    cancel(): Promise<void> {
+    /**
+     * User cancel: deletes this enrollment's still-pending record and erases all material.
+     * Resolves false when the pending-record cleanup could not be completed, so the debug
+     * caller can report it. A record already recovered to the active family is never revoked.
+     */
+    cancel(): Promise<boolean> {
         return this.#serial(() => this.#cancel());
     }
 
@@ -738,7 +742,7 @@ export class ClientMachine {
         }
     }
 
-    async #cancel(): Promise<void> {
+    async #cancel(): Promise<boolean> {
         const peerId = this.#pendingPeerId;
         this.#eraseLive();
         this.#state = 'idle';
@@ -746,13 +750,23 @@ export class ClientMachine {
         this.#closed = true;
         this.#fingerprint = undefined;
         this.#pendingPeerId = null;
-        if (peerId !== null) {
-            try {
-                await this.#repo.revoke(peerId);
-            } catch {
-                // Local state is erased; a store failure leaves only an inactive
-                // record, never a live key or an open connection.
-            }
+        if (peerId === null) return true;
+        try {
+            // A later tab teardown or startPairing can reach an abandoned link whose
+            // pending record a recovery session has since authenticated. Revoke only the
+            // record this enrollment still owns in `pending`; an active-family record is
+            // a legitimately recovered peer.
+            const current = (await this.#repo.peers()).find(
+                (peer) => peer.installationId === peerId,
+            );
+            if (current?.state !== 'pending') return true;
+            await this.#repo.revoke(peerId);
+            return true;
+        } catch {
+            // Local state is erased; a store failure leaves only an inactive
+            // record, never a live key or an open connection. The Boolean lets the
+            // debug caller surface the cleanup failure.
+            return false;
         }
     }
 

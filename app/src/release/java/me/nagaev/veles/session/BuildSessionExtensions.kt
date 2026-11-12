@@ -1,6 +1,7 @@
 package me.nagaev.veles.session
 
 import android.content.Context
+import me.nagaev.veles.sharing.PairingEndpoint
 import me.nagaev.veles.sharing.SessionHost
 
 /**
@@ -14,4 +15,10 @@ object BuildSessionExtensions {
 
     @Suppress("UnusedParameter")
     fun attach(host: SessionHost) = Unit
+
+    /** Release builds can never open a pairing window (design D5). */
+    @Suppress("UnusedParameter")
+    internal fun attachPairing(pairing: PairingEndpoint) = Unit
+
+    internal fun detachPairing() = Unit
 }
