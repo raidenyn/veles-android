@@ -1,0 +1,71 @@
+## 1. Core wiring: host-built native library
+
+- [ ] 1.1 Add the `host-jni` cargo feature to `rust/veles-crypto` (optional `jni =0.22.4` under `cfg(not(target_os = "android"))`, edit the `#[cfg]` at `lib.rs:19` in place). Build the Android `.so` and the WASM package before and after and compare hashes; confirm `Cargo.lock` is unchanged and that the wasm32 build, `rustLint` and `generate-sboms.sh` (`--all-features`) still resolve. If any hash or the lockfile changes, stop and escalate to the user before continuing; flag the diff for the core's external reviewer
+- [ ] 1.2 Add the `rustHostJni` Gradle task (locked toolchain, explicit remap flags, `panic=unwind`, separate `CARGO_TARGET_DIR` under `build/rust/…`) and a host clippy run with `--features host-jni`; make `clean` and `rust/scripts/assert-clean.sh` cover the output
+- [ ] 1.3 Set `java.library.path` for `testDebugUnitTest` and `:app:protocolJvmTest`, and add `dependsOn rustHostJni` to both; pass a library-path environment variable from `sessionLoopbackCheck` to the child JVM spawn in `web-extension/test/session/loopback.test.ts`, with `sessionLoopbackCheck` depending on `rustHostJni` and `rustWasm`
+- [ ] 1.4 Bundle `rust-wasm/pkg` into the extension with Vite (connector tab only, never the service worker); add the `core.ts` loader with a clear missing-package error; make `rustWasm` precede build, package, typecheck, Vitest and Playwright, and add `dependsOn rustWasm` to `protocolWebTest` and the other Gradle tasks that run the TS client
+- [ ] 1.5 Update `bundle.test.ts` to match the WASM asset by pattern, and add a bundle check that the service worker never references the WASM core
+- [ ] 1.6 CI, Android and protocol side: add Rust toolchain, cache and `rustHostJni`/`rustWasm` steps to `check-protocol.yml`, the `check-android.yml` unit-tests job and `check-rust.yml` `jni-integration` (including its `assert-clean` step)
+- [ ] 1.7 CI, extension side: add Rust toolchain, cache and `rustWasm` steps to `check-web-extension.yml` (lint, unit, browser) and `build-web-extension.yml`; update `verify/test/workflow-contracts.test.mjs` and run it
+- [ ] 1.8 Confirm `verify-apk-jni.sh` and the package file-set checks still fail on a host library, run `python3 -I scripts/components.py check`, and run `verify/verify-supply-chain.sh` (needs Node 26.8.1 / npm 11.19.0, `npm ci --ignore-scripts --prefix verify` and `./gradlew installCargoDeny` first); note the bundled crate in the SBOM docs
+- [ ] 1.9 Update docs: `docs/reproducible-builds.md`, `docs/ci.md`, `BUILD.md`, and in `CLAUDE.md` the extension commands, the `rustHostJni` command and the package table (`pairing/`)
+
+## 2. Shared protocol data and the Kotlin core seam
+
+- [ ] 2.1 Add the malformed-pairing-connection (20 per 60 s) and `pairing_request` (10 per 60 s) limits to `protocol/v1/limits.json` with `origin: "builder_choice"`; update `protocolCheck` consumers and generated constants. `protocol/` is owned by android, web-extension and installer, so note the installer bump
+- [ ] 2.2 Create `protocol/conformance/otp-10-scenarios.json` listing every OTP-10 scenario id (the enrollment traces that exercise a phone or client machine, the `st-rec-*`/recovery scenarios in `records.json` and `reconnect.json`, and the ten former `deferred:OTP-10` ids), each marked deferred with the task that will execute it. Keep the five fixture self-check traces (`st-neg-unknown-event`, `-nonmonotonic-time`, `-timeout-early`, `-unknown-machine`, `-step-expect-wrong`) in the OTP-02 runner. Each implementing task flips its own ids to executed; remove the OTP-10 deferrals from `otp-09-scenarios.json` only when 7.6 passes
+- [ ] 2.3 Add the Kotlin `PairingCore` interface with lazy production resolution (`SharingService` and `SessionHost` resolve only when a window opens or a `pairing_request` arrives), the test base class asserting no open core handles, and the guard test that fails if `VelesCrypto` initializes under Robolectric
+- [ ] 2.4 Add the Kotlin pairing-frame codec and its own frame-type enum (0x01–0x05, `preauth_reject`) and the TypeScript pairing-frame codec; leave the reconnect `FrameType` untouched
+- [ ] 2.5 Add consumer tests on both endpoints for the enrollment crypto vectors in `crypto.json` (`veles-enrollment-schedule`, `veles-pairing-code-*`, `veles-neg-wrong-code`, `-context-mismatch`, `-role-swap`, `-role-mismatch` and the point negatives), running on the real core
+
+## 3. Phone pairing window and admission (Kotlin, `me.nagaev.veles.pairing`)
+
+- [ ] 3.1 `PairingWindow`: single window, injectable monotonic clock, 128-bit `pairing_id`, rejection-sampled six-digit `PairingCode` that redacts in `toString`; tests for expiry, second-window refusal and process death
+- [ ] 3.2 `PairingExecution`: one core handle, closed on every exit path
+- [ ] 3.3 `PairingAdmission` budgets: per-ID and rolling attempt budgets, one-in-flight slot, fresh-`pA` limits, atomic charge, malformed-connection and request-rate budgets. Order: framing/`pairing_id` → deadline → `P256.requireValidPoint` → charge → `exchange`. Tests: non-refund, no charge on `pA`-only connections, 299 999/300 000 ms boundary, invalid point not charged, atomic charge versus cancel/deadline, zero core calls on `pA` rejection, twenty-first malformed connection, eleventh request (checked before the `pA` limit), reconnect traffic not using the pairing budget
+- [ ] 3.4 `PhonePairingMachine` (§11.1 table): 30 s inactivity, deadline checks, generic `preauth_reject` plus disconnect, cancel behavior, role-mismatch frame rejection; test that failures from exhausted budget, bad point, closed window and wrong code produce identical bytes
+- [ ] 3.5 `SessionHost` per-connection dispatcher choosing the pairing machine or the reconnect engine from the first frame; cleanup in `SessionHost.onDisconnected` and `SharingService.shutdownSessions()`; test the reconnect engine's frame set is unchanged, and that with no open window `pairing_request` is rejected generically (a JVM test with the production wiring, since CI runs only `testDebugUnitTest`)
+- [ ] 3.6 Execute the window, admission and deadline traces from `enrollment.json` on the phone machine against the real host core, and flip those ids in `otp-10-scenarios.json`
+
+## 4. Enrollment exchange on both endpoints
+
+- [ ] 4.1 Android `EnrollmentSchedule`/`EnrollmentRecords`: §5.1 HKDF labels, `enroll_identity` codec with role-bound `device_type` and length checks, `ET`, per-record and pair fingerprints, zeroable key holder
+- [ ] 4.2 Android `EnrollmentSession` over `RecordCodec` with the OTP2-CRY-020a allow-list and `cB`-before-release order; persist-first and prepare gate; duplicate-ID check before `addPending` with protected `enrollment_rejected`; cancel deleting the current enrollment's pending record; hint-does-not-select-identity test
+- [ ] 4.3 Chrome `core.ts` wrapper (close on every exit, including tab teardown), `enrollment.ts` (schedule, records, `ET`, both fingerprints) and the connector path that runs the pairing flow over the link outside `SessionManager`
+- [ ] 4.4 Chrome `client-machine.ts` (§11.2 table, client timeouts, `cA`-before-`cB` and key-derivation order, persist-first, handling of `enrollment_rejected`, cancel deleting the pending record)
+- [ ] 4.5 Fingerprint gating (shown only after both records are authenticated) and sensitive-state erasure tests for success, failure and cancel on both sides
+- [ ] 4.6 Constant-time MAC comparison helpers on both endpoints, enforced by a grep or detekt/eslint rule that fails on direct MAC comparisons
+- [ ] 4.7 Execute the remaining phone-side and all client-side enrollment traces on the real cores and flip their ids in `otp-10-scenarios.json`
+
+## 5. Activation, expiry and recovery
+
+- [ ] 5.1 Android: session-bound proof registry and `ActivationEngine` over the OTP-04 repository; replace the reject-all verifier in `SharingService` only (the debug `BuildSessionExtensions` and `ProbeReceiver` repositories stay reject-all, with a test)
+- [ ] 5.2 Chrome: `activation.ts` and the proof registry over the OTP-05 repository; combine `manager.verifier` with the registry for the `complete` stage
+- [ ] 5.3 Extend handler hooks on both engines with session context (class, peer ID, `ET`, `peer_state`, recovery keys) and unprompted send on `Authenticated`; compose the activation handler with the debug probe handler in `main`; test an activation record with no handler registered
+- [ ] 5.4 Derive the OTP2-CRY-019f recovery keys in `ReconnectKeySchedule.derive` on both engines whenever the record carries `ET`; extend both peer lookups with `ET`; erase when the class is `full`; consume the `k_rec_client`/`k_rec_phone` vectors
+- [ ] 5.5 Android OTP2-STA-010b steps 0, 5 and 6: step-0 prepare, ack-loss path, recovery class never upgrades; phone `confirm` accepts duplicate `COMMIT` on `ACTIVE` as a no-op after the MAC verifies (`st-rec-full-pending-peer-commit-duplicate-no-regression`)
+- [ ] 5.6 Chrome OTP2-STA-010b: step-5 ack for active-family clients, pending-client re-commit, recovery session started with an explicit installation ID; `authenticated()` for `pending` verifies, checks `pendingContext` and writes nothing
+- [ ] 5.7 Pending expiry with injected clocks (phone 86 400 s boot-scoped, Chrome connector-scoped), boot-continuity-loss and Chrome-mirror-survives-restart scenarios
+- [ ] 5.8 Interruption tests at every activation message: resume, expiry and no-record outcomes, one-sided pending, replayed recovery records, incomplete records authorizing no OTP data; multi-peer test (two desktops pair sequentially and both reconnect without a code)
+- [ ] 5.9 Flip the activation and recovery ids in `otp-10-scenarios.json` to executed
+
+## 6. Debug harness
+
+- [ ] 6.1 Android debug source-set screen (Start, Cancel, on-screen code, Clear), `PairingDebugHooks` `StateFlow`, non-echoing start/cancel broadcasts, Clear reusing `REVOKE_PEER`; tests for the broadcast result not echoing the code and for clear-then-re-pair
+- [ ] 6.2 Chrome debug panel (code entry, phone selection, state, fingerprint, Cancel, Clear via `repository.revoke`) behind `__VELES_CHANNEL__` and a dynamic import
+- [ ] 6.3 Put the debug pairing code under a package or name matched by `releaseHookForbidden` (R8 renames classes, so also match strings), add the entries, extend `bundle.test.ts` for the production bundle, and run `./gradlew :app:releaseHookGuard` (needs the NDK)
+- [ ] 6.4 Logger guard: extend the raw `android.util.Log` check and a code-leak grep to `app/src/debug` and `web-extension/src/debug`, fail if `PairingCode` reaches a logger, and check that the code never reaches `DiagnosticRing` or view-model snapshots
+
+## 7. Evidence
+
+- [ ] 7.1 Extend `sessionLoopbackCheck` with an enrollment scenario (Kotlin phone on the host library, TS client on WASM) and an interrupted-activation recovery scenario
+- [ ] 7.2 Instrumented test driving the pairing machine on the device `.so` with a Kotlin test client (`connectedDebugAndroidTest`)
+- [ ] 7.3 Full local gate, with `rustWasm` and `rustHostJni` run first: `./gradlew spotlessCheck detekt lintDebug` (after `spotlessApply`, inspect, rerun on a format failure) plus the raw `android.util.Log` guard; `./gradlew protocolCheck testDebugUnitTest rustFormat rustLint rustTest rustJni`; `verify-apk-jni.sh`; `./gradlew :app:releaseHookGuard`; extension `format:check`, `lint`, `typecheck`, `test`, `test:browser`, `package`, `test:bundle`; `node --test verify/test/workflow-contracts.test.mjs`; `python3 -I scripts/components.py check`; `./gradlew clean` then `rust/scripts/assert-clean.sh`
+- [ ] 7.4 Physical run on Windows. Build the debug fixture with `--init-script config/android_keys/fixture-signing.gradle` and compare certificate fingerprints before `adb install -r`; never uninstall or clear app data. Clear injected trust on the phone and in Chrome with the debug Clear controls, pair, reconnect (first selected, which upgrades the Chrome record from `active_activation_pending` to `active`; second automatic), and run an interrupted activation with the connector tab open. Needs real devices and the user. Record observed values only in `docs/`
+- [ ] 7.5 Physical run on macOS with the same procedure, recorded in `docs/` (platforms, fingerprints seen, observed SPAKE2 time)
+- [ ] 7.6 Assert that no scenario is deferred to OTP-10, and remove the OTP-10 deferrals from `otp-09-scenarios.json`
+
+## 8. Process
+
+- [ ] 8.1 Use Conventional Commits for the commits and the PR title and body (`pr-title` check); `feat` for the pairing work, with the `protocol/` limits change noted
+- [ ] 8.2 After verification, sync the delta specs to `openspec/specs/` and archive the change
