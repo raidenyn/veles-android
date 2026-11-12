@@ -167,6 +167,25 @@ class PairingAdmissionTest {
     }
 
     @Test
+    fun window_close_drops_the_per_window_counters() {
+        val ids = (1..limits.rollingAttemptsMax).map { index -> ByteArray(16) { index.toByte() } }
+        ids.forEach { assertEquals(Decision.Allow, admission.chargeAttempt(it)) }
+        assertEquals(Decision.Allow, admission.paAllowed(CONN_ONE))
+        assertEquals("the connection already holds its pA", Decision.Reject, admission.paAllowed(CONN_ONE))
+        assertEquals(1, admission.attemptsChargedForTest(ids.first()))
+
+        admission.onWindowClosed()
+
+        assertEquals("the closed window's per-id attempt counters are dropped", 0, admission.attemptsChargedForTest(ids.first()))
+        assertEquals("the per-connection pA counters are dropped with the window", Decision.Allow, admission.paAllowed(CONN_ONE))
+        assertEquals(
+            "the rolling attempt budget survives the window close",
+            Decision.Reject,
+            admission.chargeAttempt(ByteArray(16) { 0x7F }),
+        )
+    }
+
+    @Test
     fun limits_match_limits_json() {
         val json = Json.parseToJsonElement(
             checkNotNull(javaClass.getResourceAsStream("/limits.json")) { "missing /limits.json" }

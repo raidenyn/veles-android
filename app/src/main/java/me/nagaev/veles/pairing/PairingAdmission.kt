@@ -33,8 +33,8 @@ sealed interface Outgoing {
  *
  * The rolling deques are pruned on every use and capped at one entry past their
  * ceiling, so a flood inside one rolling window cannot grow them without bound. The
- * per-`pairing_id` counter and the per-connection `pA` counter are kept for the process
- * lifetime: ids and connections are one-shot, so each costs one small entry.
+ * per-`pairing_id` counter and the per-connection `pA` counter are dropped when the window
+ * closes: a closed id can never be charged again and connection ids are one-shot.
  */
 class PairingAdmission(
     val limits: PairingLimits = PairingLimits(),
@@ -127,6 +127,17 @@ class PairingAdmission(
     /** Releases the in-flight slot; a machine releases exactly the slot it took. */
     fun endOp() = synchronized(lock) {
         if (operations > 0) operations--
+    }
+
+    /**
+     * Drops the per-window counters when the window closes (one-use code consumed or cancel).
+     * A closed `pairing_id` can never be charged again and every connection id is one-shot, so
+     * both maps would otherwise hold one dead entry per window/connection for the process
+     * lifetime. The rolling deques stay: their budgets span windows.
+     */
+    fun onWindowClosed() = synchronized(lock) {
+        attempts.clear()
+        paConnections.clear()
     }
 
     /** Test observation of the non-refundable consumption rule. */

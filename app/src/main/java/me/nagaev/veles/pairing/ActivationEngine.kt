@@ -154,6 +154,8 @@ private class SessionActivation(
         return try {
             trust.confirm(peerId, step, body.copyOf())
             true
+        } catch (cancellation: CancellationException) {
+            throw cancellation
         } catch (_: Exception) {
             proofs.revoke(sessionId)
             false
