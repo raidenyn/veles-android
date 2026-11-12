@@ -234,31 +234,33 @@ class ActivationEngineTest {
     @Test
     fun debug_repositories_stay_reject_all() = runTest {
         val proofs = ProofRegistry()
-        val repository = repository(debugRejectAllVerifier)
-        val peer = TrustEncoding.hex(CLIENT_INSTALLATION_ID)
-        repository.addPending(
-            PendingPeer(
-                installationId = peer,
-                publicKey = TrustEncoding.hex(TestIdentity.generate().publicKey),
-                label = "Desktop",
-                deviceType = 1,
-                enrollmentTranscript = TrustEncoding.hex(et),
-            ),
+        // First show the proof is valid for the production-style registry verifier.
+        val registryRepository = repository(
+            ActivationVerifier { peer, step, proof ->
+                proofs.consume(peer, step, proof)
+            },
         )
-        // A proof that the production registry would accept is still refused by the exact
-        // debug verifier the two debug call sites install.
-        proofs.register("debug", listOf(ActivationProof(peer, ActivationStep.COMMIT, SEED_COMMIT)))
+        val peer = seed(registryRepository, proofs, TrustState.PENDING, CLIENT_INSTALLATION_ID, TestIdentity.generate().publicKey)
+        proofs.register("production", listOf(ActivationProof(peer, ActivationStep.COMMIT, SEED_COMMIT)))
+        registryRepository.confirm(peer, ActivationStep.COMMIT, SEED_COMMIT)
+        assertEquals(TrustState.COMMITTED_WAITING_ACK, registryRepository.peers().single().state)
 
-        assertFalse("the debug verifier rejects a registered proof", debugRejectAllVerifier.verify(repository.peers().single(), ActivationStep.COMMIT, SEED_COMMIT))
+        // The exact debug verifier rejects the same proof, and the debug call sites pass that
+        // verifier as the createAndroidTrustRepository argument (not merely declare it).
+        val debugRepository = repository(debugRejectAllVerifier)
+        val debugPeer = seed(debugRepository, ProofRegistry(), TrustState.PENDING, CLIENT_INSTALLATION_ID, TestIdentity.generate().publicKey)
+        assertFalse(
+            "the debug verifier rejects the production-valid proof",
+            debugRejectAllVerifier.verify(debugRepository.peers().single(), ActivationStep.COMMIT, SEED_COMMIT),
+        )
         try {
-            repository.confirm(peer, ActivationStep.COMMIT, SEED_COMMIT)
+            debugRepository.confirm(debugPeer, ActivationStep.COMMIT, SEED_COMMIT)
             fail("the debug repositories must keep the reject-all verifier")
         } catch (_: Exception) {
             // Expected: the reject-all verifier never accepts a session proof.
         }
-        assertEquals(TrustState.PENDING, repository.peers().single().state)
+        assertEquals(TrustState.PENDING, debugRepository.peers().single().state)
 
-        // Both debug call sites install that exact value, never the production registry.
         val files = listOf(
             "src/debug/java/me/nagaev/veles/session/BuildSessionExtensions.kt",
             "src/debug/java/me/nagaev/veles/debugprobe/ProbeReceiver.kt",
@@ -267,7 +269,10 @@ class ActivationEngineTest {
             val source = File(path).takeIf { it.exists() }
                 ?: File("app/$path").takeIf { it.exists() }
                 ?: error("missing debug source $path")
-            assertTrue("$path must install debugRejectAllVerifier", source.readText().contains("debugRejectAllVerifier"))
+            assertTrue(
+                "$path must pass debugRejectAllVerifier to the repository",
+                source.readText().contains("createAndroidTrustRepository(context, debugRejectAllVerifier)"),
+            )
         }
     }
 

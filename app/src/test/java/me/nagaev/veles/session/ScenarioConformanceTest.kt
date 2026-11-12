@@ -1124,13 +1124,20 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
         return emptyList()
     }
 
-    private fun processLoad(peer: PhoneSession, step: ScenarioStep): List<SessionEffect> {
+    private suspend fun processLoad(peer: PhoneSession, step: ScenarioStep): List<SessionEffect> {
         peer.engine = null
         peer.authenticated = false
         peer.sessionClass = null
-        if (step.simulate["continuity_token_matches"] == "false" && run.storeStates[peer.name] == "pending") {
-            run.storeStates[peer.name] = "deleted"
-            peer.deletedIncomplete = true
+        if (step.simulate["continuity_token_matches"] == "false") {
+            // OTP2-STA-010c: continuity loss deletes only incomplete records, through the same
+            // real repository the lookup reads, so a later refresh cannot resurrect them.
+            if (refreshStore(peer) == "pending") {
+                peer.repository?.revoke(TrustEncoding.hex(peer.peer.installationId))
+                peer.repository = null
+                peer.activation = null
+                run.storeStates[peer.name] = "deleted"
+                peer.deletedIncomplete = true
+            }
         }
         return emptyList()
     }
@@ -1462,7 +1469,6 @@ private object Effects {
             "enrollment_prepare_sent" -> steps.any { it.sentTypes.contains(RecordType.ENROLLMENT_PREPARE.wire) }
             // The phone never receives a prepare; a client prepare is not an engine event here.
             "enrollment_prepare_processed" -> false
-            "pull_blocked_reported" -> false
             "prepare_peer_reported_below_active" ->
                 steps.any { it.sentTypes.contains(RecordType.ENROLLMENT_PREPARE.wire) }
             "reconnect_confirm_sent_peer_state_below_active" ->
@@ -1543,6 +1549,8 @@ private object Effects {
     }
 
     @Suppress("MaxLineLength") // ktlint keeps this expression body on one line.
+    // Single-peer fixtures: the runner reads the sole durable_phone_record entry; multi-peer
+    // ordering belongs to the deferred 9e scenario.
     private fun storeStateOf(step: StepOutcome): String? =
         step.stateSnapshot.entries.firstOrNull { it.key.startsWith("durable_phone_record:") }?.value
 
