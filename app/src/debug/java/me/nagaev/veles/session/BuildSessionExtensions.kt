@@ -14,6 +14,13 @@ import me.nagaev.veles.trust.TrustEncoding
 import me.nagaev.veles.trust.createAndroidTrustRepository
 
 /**
+ * The debug build type's activation verifier. Debug repositories are never the production
+ * session repository (OTP-10 plan 9d): they stay reject-all, and this exact value is what both
+ * debug call sites install and the unit test exercises.
+ */
+internal val debugRejectAllVerifier: ActivationVerifier = ActivationVerifier { _, _, _ -> false }
+
+/**
  * Debug build type of the session extension point: the synthetic probe (design D5).
  * The release build type keeps the null handler and the no-op attach.
  */
@@ -23,7 +30,7 @@ object BuildSessionExtensions {
             context.applicationContext,
             DebugProbeEntryPoint::class.java,
         ).velesLog()
-        val repository = createAndroidTrustRepository(context, ActivationVerifier { _, _, _ -> false })
+        val repository = createAndroidTrustRepository(context, debugRejectAllVerifier)
         val identity = runBlocking { repository.identity() }
         val handler = SyntheticProbeHandler(
             localInstallationId = TrustEncoding.bytes(identity.installationId),

@@ -20,7 +20,7 @@ fun composeApplicationHandlers(vararg handlers: ApplicationHandler?): Applicatio
 private class CompositeApplicationHandler(
     private val handlers: List<ApplicationHandler>,
 ) : ApplicationHandler {
-    private var sessionHandlers: List<ApplicationHandler> = handlers
+    private val sessionHandlers: List<ApplicationHandler> = handlers
 
     override fun handles(type: Int): Boolean = sessionHandlers.any { it.handles(type) }
 

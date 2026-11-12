@@ -994,12 +994,14 @@ class ClientScenario {
 
     private async send(type: number, step: Step): Promise<SessionEffect[]> {
         const { harness, handler } = this.live();
-        // The activation handler already emitted these: the fixture step only pins that the
-        // send happened (OTP2-STA-010b steps 1 and 5).
-        if (
-            (type === RecordType.ACTIVATION_COMMIT || type === RecordType.ACTIVATION_ACK) &&
-            this.activationSends.has(type)
-        ) {
+        // COMMIT/ACK are observations, never fabricated: the activation handler must already
+        // have emitted them (OTP2-STA-010b steps 1 and 5).
+        if (type === RecordType.ACTIVATION_COMMIT || type === RecordType.ACTIVATION_ACK) {
+            if (!this.activationSends.has(type)) {
+                throw new Error(
+                    `${this.fixture.id}: the fixture observes a ${type.toString(16)} send the activation handler never made`,
+                );
+            }
             return [];
         }
         const count = Number(step.simulate.event_count ?? 0);
@@ -1012,11 +1014,7 @@ class ClientScenario {
                     ? ackBody(harness.phone.installationId, handler, true)
                     : type === RecordType.PHONE_POLICY_STATE
                       ? policyBody(step.simulate.pull_response === 'true')
-                      : type === RecordType.ACTIVATION_COMMIT
-                        ? await this.activationMac(RecordType.ACTIVATION_COMMIT, 1)
-                        : type === RecordType.ACTIVATION_ACK
-                          ? await this.activationMac(RecordType.ACTIVATION_ACK, 3)
-                          : new Uint8Array(0);
+                      : new Uint8Array(0);
         return harness.engine.sendApplication(type, body);
     }
 
@@ -1203,16 +1201,6 @@ const CLIENT_EFFECTS: Record<string, (run: RunObservations) => boolean> = {
                 step.snapshot.get('durable_client_record:main') === 'active_activation_pending',
         ),
     activation_pending_flag_set: (run) =>
-        run.steps.some(
-            (step) =>
-                step.snapshot.get('durable_client_record:main') === 'active_activation_pending',
-        ),
-    record_committed: (run) =>
-        run.steps.some(
-            (step) =>
-                step.snapshot.get('durable_client_record:main') === 'active_activation_pending',
-        ),
-    record_activated_by_ack: (run) =>
         run.steps.some(
             (step) =>
                 step.snapshot.get('durable_client_record:main') === 'active_activation_pending',

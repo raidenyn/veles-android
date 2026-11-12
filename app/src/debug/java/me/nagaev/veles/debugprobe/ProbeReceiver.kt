@@ -16,9 +16,9 @@ import kotlinx.coroutines.launch
 import me.nagaev.veles.common.VelesLog
 import me.nagaev.veles.session.RecordType
 import me.nagaev.veles.session.SessionClass
+import me.nagaev.veles.session.debugRejectAllVerifier
 import me.nagaev.veles.sharing.ConnectionGeneration
 import me.nagaev.veles.sharing.SessionHost
-import me.nagaev.veles.trust.ActivationVerifier
 import me.nagaev.veles.trust.InstallationTrustRepository
 import me.nagaev.veles.trust.RoomTrustStorage
 import me.nagaev.veles.trust.TrustDatabase
@@ -172,7 +172,7 @@ class ProbeReceiver : BroadcastReceiver() {
     ) {
         val logger = EntryPointAccessors.fromApplication(context, DebugProbeEntryPoint::class.java).velesLog()
         val log: (String) -> Unit = { logger.d(PROBE_TAG, it) }
-        val repository = createAndroidTrustRepository(context, ActivationVerifier { _, _, _ -> false })
+        val repository = createAndroidTrustRepository(context, debugRejectAllVerifier)
         val injector = DebugTrustInjector(
             storage = RoomTrustStorage(TrustDatabase.open(context)),
             elapsedMillis = System::currentTimeMillis,

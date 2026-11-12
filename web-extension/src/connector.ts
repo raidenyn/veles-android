@@ -324,6 +324,7 @@ export class ConnectorApp {
                 },
                 () => deps.controller.portGeneration,
                 timers,
+                (sessionId) => this.proofs.revoke(sessionId),
             );
             holder.verify = manager.verifier;
             this.repository = repository;

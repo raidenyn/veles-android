@@ -167,6 +167,7 @@ internal class SharingService : Service() {
             repository,
             SystemClock::elapsedRealtime,
             pairingFactory = { gen -> pairing.connection(gen.serial) },
+            onSessionClosed = { sessionId -> proofs.revoke(sessionId) },
         )
         this.pairing = pairing
         this.host = host

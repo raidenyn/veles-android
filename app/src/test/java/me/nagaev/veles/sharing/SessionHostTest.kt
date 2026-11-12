@@ -30,12 +30,14 @@ import me.nagaev.veles.session.SignatureFrame
 import me.nagaev.veles.session.TestClient
 import me.nagaev.veles.session.TestIdentity
 import me.nagaev.veles.session.TestPeers
+import me.nagaev.veles.session.UnpromptedApplication
 import me.nagaev.veles.session.openPhoneRecord
 import me.nagaev.veles.trust.ActivationStep
 import me.nagaev.veles.trust.InstallationIdentity
 import me.nagaev.veles.trust.InstallationTrustRepository
 import me.nagaev.veles.trust.PendingPeer
 import me.nagaev.veles.trust.TrustEncoding
+import me.nagaev.veles.trust.TrustException
 import me.nagaev.veles.trust.TrustedPeer
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -51,6 +53,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * current, open generation's [me.nagaev.veles.session.SessionEffect.Authenticated] effect.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("LargeClass") // One class per adapter surface keeps the generation tests together.
 class SessionHostTest {
     private val phone = TestIdentity.generate()
     private val clock = FakeClock()
@@ -61,8 +64,16 @@ class SessionHostTest {
         transport: SessionTransport = wire,
         repository: InstallationTrustRepository = trust,
         now: () -> Long = { clock.now },
+        onSessionClosed: (String) -> Unit = {},
         factory: (ConnectionGeneration) -> PhoneSessionEngine,
-    ): SessionHost = SessionHost(backgroundScope, transport, factory, repository, now)
+    ): SessionHost = SessionHost(
+        backgroundScope,
+        transport,
+        factory,
+        repository,
+        now,
+        onSessionClosed = onSessionClosed,
+    )
 
     private fun engine(
         client: TestClient,
@@ -109,6 +120,7 @@ class SessionHostTest {
         gen: ConnectionGeneration,
         client: TestClient,
         transport: RecordingTransport = wire,
+        peerState: Int = TestClient.PEER_STATE_ACTIVE,
     ) {
         host.onRecord(gen, client.helloFrame.copyOf(), admission())
         runCurrent()
@@ -123,10 +135,85 @@ class SessionHostTest {
         host.onRecord(gen, client.signatureFrame(), admission())
         runCurrent()
         val token = requireNotNull(transport.sent.last().token) { "the phone reconnect_confirm must be tokened" }
-        host.onRecord(gen, client.confirmRecord(), admission())
+        host.onRecord(gen, client.confirmRecord(peerState), admission())
         runCurrent()
         host.onSendComplete(gen, token, true)
         runCurrent()
+    }
+
+    @Test
+    fun unpromptedRecordIsSentOnlyAfterMarkAuthenticated() = runTest {
+        val client = TestClient()
+        val body = ByteArray(32) { 0x11 }
+        val events = mutableListOf<String>()
+        val transport = RecordingTransport(events = events)
+        val trust = RecordingTrust(events = events)
+        val host = host(transport = transport, repository = trust) {
+            engine(client, state = LocalRecordState.PENDING, handler = FixedUnpromptedHandler(body))
+        }
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+
+        authenticate(host, gen, client, transport, peerState = TestClient.PEER_STATE_BELOW_ACTIVE)
+
+        val prepareSends = transport.sent.filter { wireTypeOf(it.bytes) == RecordType.ENROLLMENT_PREPARE.wire }
+        assertEquals("the owed prepare reached the transport", 1, prepareSends.size)
+        val mark = events.indexOf("mark")
+        val send = events.indexOf("send:260")
+        assertTrue("the authentication mark happened", mark >= 0)
+        assertTrue("the prepare send happened", send >= 0)
+        assertTrue("the prepare is sent only after markAuthenticated", mark < send)
+        assertTrue("the handler's body is erased after the send", body.all { it == 0.toByte() })
+    }
+
+    @Test
+    fun unpromptedRecordIsNotSentWhenMarkAuthenticatedFails() = runTest {
+        val client = TestClient()
+        val body = ByteArray(32) { 0x22 }
+        val transport = RecordingTransport()
+        val trust = RecordingTrust(failMark = true)
+        val host = host(transport = transport, repository = trust) {
+            engine(client, state = LocalRecordState.PENDING, handler = FixedUnpromptedHandler(body))
+        }
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+
+        authenticate(host, gen, client, transport, peerState = TestClient.PEER_STATE_BELOW_ACTIVE)
+
+        assertTrue(
+            "a failed authentication mark sends nothing",
+            transport.sent.none { wireTypeOf(it.bytes) == RecordType.ENROLLMENT_PREPARE.wire },
+        )
+        assertArrayEquals("the unsent body is zeroed", ByteArray(32), body)
+        assertTrue("the failed generation is torn down", transport.calls.any { it is Wire.Closed })
+    }
+
+    private class FixedUnpromptedHandler(private val body: ByteArray) : ApplicationHandler {
+        override fun handles(type: Int): Boolean = false
+
+        override suspend fun handle(
+            type: Int,
+            body: ByteArray,
+            reply: suspend (type: Int, body: ByteArray) -> Unit,
+        ) = Unit
+
+        override fun unprompted(): List<UnpromptedApplication> = listOf(UnpromptedApplication(RecordType.ENROLLMENT_PREPARE.wire, body))
+    }
+
+    @Test
+    fun sessionTeardownRevokesItsProofs() = runTest {
+        val client = TestClient()
+        val revoked = mutableListOf<String>()
+        val host = host(onSessionClosed = { revoked += it }) { engine(client) }
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+        authenticate(host, gen, client)
+
+        host.onDisconnected(gen)
+        runCurrent()
+
+        assertEquals("the session's proofs are revoked once on teardown", 1, revoked.size)
+        assertEquals("the revocation is keyed by the 8-byte session prefix", 16, revoked.single().length)
     }
 
     @Test
@@ -749,6 +836,11 @@ class SessionHostTest {
     private companion object {
         /** One more than the worker queue capacity: the last attempt must be refused at admission. */
         const val SATURATION_ATTEMPTS = 33
+
+        fun wireTypeOf(bytes: ByteArray): Int? {
+            if (bytes.size < 5) return null
+            return ((bytes[3].toInt() and 0xFF) shl 8) or (bytes[4].toInt() and 0xFF)
+        }
     }
 
     private object SessionEffectBytes {
@@ -760,12 +852,16 @@ class SessionHostTest {
         data class Closed(val gen: ConnectionGeneration) : Wire
     }
 
-    private class RecordingTransport(var accept: Boolean = true) : SessionTransport {
+    private class RecordingTransport(
+        var accept: Boolean = true,
+        private val events: MutableList<String>? = null,
+    ) : SessionTransport {
         val calls = mutableListOf<Wire>()
         val sent get() = calls.filterIsInstance<Wire.Sent>()
 
         override fun send(gen: ConnectionGeneration, bytes: ByteArray, token: Long?): Boolean {
             calls += Wire.Sent(gen, bytes.copyOf(), token)
+            events?.add("send:${wireTypeOf(bytes)}")
             return accept
         }
 
@@ -774,7 +870,10 @@ class SessionHostTest {
         }
     }
 
-    private class RecordingTrust : InstallationTrustRepository {
+    private class RecordingTrust(
+        private val events: MutableList<String>? = null,
+        private val failMark: Boolean = false,
+    ) : InstallationTrustRepository {
         val marked = mutableListOf<String>()
 
         override suspend fun identity(): InstallationIdentity = error("not used by the adapter")
@@ -784,6 +883,8 @@ class SessionHostTest {
         override suspend fun confirm(peerId: String, step: ActivationStep, proof: ByteArray) = error("not used by the adapter")
         override suspend fun revoke(peerId: String) = error("not used by the adapter")
         override suspend fun markAuthenticated(peerId: String) {
+            if (failMark) throw TrustException()
+            events?.add("mark")
             marked += peerId
         }
     }

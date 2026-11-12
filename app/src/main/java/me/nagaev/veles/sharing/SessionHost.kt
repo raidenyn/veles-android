@@ -110,6 +110,8 @@ class SessionHost(
      * gets the unchanged reconnect behavior without production wiring.
      */
     private val pairingFactory: (ConnectionGeneration) -> PairingConnection = { RejectingPairingConnection() },
+    /** Session-bound proof cleanup when a generation is torn down (OTP-10 plan 9d). */
+    private val onSessionClosed: (String) -> Unit = {},
 ) : ConnectionListener {
     private class OwnedRecord(val bytes: ByteArray, val admission: RecordAdmission)
 
@@ -648,6 +650,7 @@ class SessionHost(
         live.sessionClass = null
         live.peerId?.fill(0)
         live.peerId = null
+        live.sessionIdPrefix?.let { onSessionClosed(TrustEncoding.hex(it)) }
         live.sessionIdPrefix?.fill(0)
         live.sessionIdPrefix = null
         synchronized(registry) {

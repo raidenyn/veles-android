@@ -15,6 +15,7 @@ import me.nagaev.veles.session.TestIdentity
 import me.nagaev.veles.session.TestPeers
 import me.nagaev.veles.session.completeHandshake
 import me.nagaev.veles.session.composeApplicationHandlers
+import me.nagaev.veles.session.debugRejectAllVerifier
 import me.nagaev.veles.session.openPhoneRecord
 import me.nagaev.veles.trust.ActivationStep
 import me.nagaev.veles.trust.ActivationVerifier
@@ -164,6 +165,37 @@ class ActivationEngineTest {
     }
 
     @Test
+    fun committed_phone_duplicate_commit_re_sends_complete() = runTest {
+        val client = TestClient()
+        // The phone is already committed (activation_complete was lost); the client reported
+        // 0x02, so step 0 still sends a fresh prepare and the duplicate commit must re-send a
+        // fresh activation_complete without moving the record.
+        val harness = harness(TrustState.COMMITTED_WAITING_ACK, client)
+        val authenticated = harness.open(client, peerState = BELOW_ACTIVE)
+        assertEquals(RecordType.ENROLLMENT_PREPARE.wire, authenticated.unprompted.single().type)
+
+        val prepareSend = harness.engine.sendApplication(
+            authenticated.unprompted.single().type,
+            authenticated.unprompted.single().body,
+        ).single() as SessionEffect.Send
+        client.openPhoneRecord(prepareSend.bytes, 1uL)
+        val commitEffects = harness.engine.onInbound(
+            client.record(
+                RecordType.ACTIVATION_COMMIT.wire,
+                1uL,
+                mac(client.recovery().kRecClient, STAGE_COMMIT),
+            ),
+        )
+        val complete = commitEffects.filterIsInstance<SessionEffect.Send>().single()
+        assertArrayEquals(
+            mac(client.recovery().kRecPhone, STAGE_COMPLETE),
+            client.openPhoneRecord(complete.bytes, 2uL).body,
+        )
+        assertEquals(TrustState.COMMITTED_WAITING_ACK, harness.peers().single().state)
+        assertTrue(commitEffects.any { it is SessionEffect.Deliver })
+    }
+
+    @Test
     fun recovery_class_never_upgrades() = runTest {
         val client = TestClient()
         val harness = harness(TrustState.PENDING, client)
@@ -198,10 +230,11 @@ class ActivationEngineTest {
         }
     }
 
+    @Suppress("MaxLineLength") // The behavioral assertion names the exact debug verifier.
     @Test
     fun debug_repositories_stay_reject_all() = runTest {
         val proofs = ProofRegistry()
-        val repository = repository(ActivationVerifier { _, _, _ -> false })
+        val repository = repository(debugRejectAllVerifier)
         val peer = TrustEncoding.hex(CLIENT_INSTALLATION_ID)
         repository.addPending(
             PendingPeer(
@@ -212,17 +245,20 @@ class ActivationEngineTest {
                 enrollmentTranscript = TrustEncoding.hex(et),
             ),
         )
-        proofs.register("debug", listOf(ActivationProof(peer, ActivationStep.COMMIT, byteArrayOf(1))))
+        // A proof that the production registry would accept is still refused by the exact
+        // debug verifier the two debug call sites install.
+        proofs.register("debug", listOf(ActivationProof(peer, ActivationStep.COMMIT, SEED_COMMIT)))
 
+        assertFalse("the debug verifier rejects a registered proof", debugRejectAllVerifier.verify(repository.peers().single(), ActivationStep.COMMIT, SEED_COMMIT))
         try {
-            repository.confirm(peer, ActivationStep.COMMIT, byteArrayOf(1))
+            repository.confirm(peer, ActivationStep.COMMIT, SEED_COMMIT)
             fail("the debug repositories must keep the reject-all verifier")
         } catch (_: Exception) {
             // Expected: the reject-all verifier never accepts a session proof.
         }
         assertEquals(TrustState.PENDING, repository.peers().single().state)
 
-        // The debug source sets are the only places that construct a reject-all repository.
+        // Both debug call sites install that exact value, never the production registry.
         val files = listOf(
             "src/debug/java/me/nagaev/veles/session/BuildSessionExtensions.kt",
             "src/debug/java/me/nagaev/veles/debugprobe/ProbeReceiver.kt",
@@ -231,10 +267,7 @@ class ActivationEngineTest {
             val source = File(path).takeIf { it.exists() }
                 ?: File("app/$path").takeIf { it.exists() }
                 ?: error("missing debug source $path")
-            assertTrue(
-                "$path must build its own reject-all verifier",
-                source.readText().contains(REJECT_ALL),
-            )
+            assertTrue("$path must install debugRejectAllVerifier", source.readText().contains("debugRejectAllVerifier"))
         }
     }
 
@@ -420,7 +453,6 @@ class ActivationEngineTest {
         const val ACTIVE = 0x01
         const val HMAC = "HmacSHA256"
         const val BOOT_TOKEN = "boot-a"
-        const val REJECT_ALL = "ActivationVerifier { _, _, _ -> false }"
         val CLIENT_INSTALLATION_ID = ByteArray(16) { (0x30 + it).toByte() }
         val SEED_COMMIT = byteArrayOf(0x01)
         val SEED_ACK = byteArrayOf(0x02)

@@ -68,6 +68,7 @@ class SessionActivation implements ApplicationHandler {
     readonly #sessionId: string;
     readonly #et: Uint8Array | null;
     readonly #recovery: RecoveryKeys | null;
+    #commitSent = false;
 
     constructor(trust: ActivationTrustRepository, proofs: ProofRegistry, context: SessionContext) {
         this.#trust = trust;
@@ -118,6 +119,7 @@ class SessionActivation implements ApplicationHandler {
             const commit = await activationMac(recovery.kRecClient, et, STAGE_COMMIT);
             try {
                 await reply(RecordType.ACTIVATION_COMMIT, commit);
+                this.#commitSent = true;
             } finally {
                 commit.fill(0);
             }
@@ -125,6 +127,11 @@ class SessionActivation implements ApplicationHandler {
         }
         if (type !== RecordType.ACTIVATION_COMPLETE) throw new SessionReject();
         await this.#verify(recovery.kRecPhone, et, STAGE_COMPLETE, body);
+        // OTP2-STA-010b step 3: a still-pending client validates complete only after it sent
+        // this session's commit. An active-family mirror owes the ack, not a commit.
+        if ((await this.#localState()) === 'pending' && !this.#commitSent) {
+            throw new SessionReject();
+        }
         if (this.#context.sessionClass === SessionClass.ACTIVATION_RECOVERY) {
             this.#proofs.register(this.#sessionId, [
                 { peerId: this.#context.peerId, stage: 'complete', proof: body.slice() },
@@ -185,7 +192,7 @@ export function composeHandlers(
 
 class CompositeHandler implements ApplicationHandler {
     readonly #handlers: ApplicationHandler[];
-    #sessionHandlers: ApplicationHandler[];
+    readonly #sessionHandlers: ApplicationHandler[];
 
     constructor(handlers: ApplicationHandler[]) {
         this.#handlers = handlers;

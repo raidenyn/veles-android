@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { SESSION_QUEUE_LIMIT, QueueOverflow, SerialQueue } from '../../src/session/queue';
 import { SESSION_TICK_MS, SessionManager } from '../../src/connector/sessions';
 import { decodeFrame } from '../../src/session/frames';
+import type { ApplicationHandler } from '../../src/session/engine';
 import { Direction, FrameType, RecordType } from '../../src/session/wire';
 import type { TrustedPeer } from '../../src/trust/model';
 import { HANDLE_CONNECTION, HANDLE_CONNECTION_2, HANDLE_DEVICE, HANDLE_DEVICE_2 } from './fixtures';
@@ -481,6 +482,50 @@ describe('session deadlines, pipeline and verifier negatives', () => {
                 .entries()
                 .some((entry) => entry.type === 'session_terminated'),
         ).toBe(false);
+    });
+
+    it('sends the owed activation ack only after authenticated', async () => {
+        const ackBody = new Uint8Array(32).fill(0x33);
+        const handler: ApplicationHandler = {
+            handles: () => false,
+            handle: async () => undefined,
+            unprompted: () => [{ type: RecordType.ACTIVATION_ACK, body: ackBody }],
+        };
+        const fixture = await createManagerFixture({ state: 'active', handler });
+        const events: string[] = [];
+        const controller = fixture.controller as unknown as {
+            send: typeof fixture.controller.send;
+        };
+        const originalSend = fixture.controller.send.bind(fixture.controller);
+        controller.send = (handle, record) => {
+            const type = record.length >= 5 ? (record[3] << 8) | record[4] : -1;
+            events.push(`send:${type}`);
+            return originalSend(handle, record);
+        };
+        const repository = fixture.trust.repository;
+        const originalAuthenticated = repository.authenticated.bind(repository);
+        repository.authenticated = async (...args: Parameters<typeof originalAuthenticated>) => {
+            events.push('authenticated');
+            return originalAuthenticated(...args);
+        };
+
+        await connectForSession(fixture);
+        const opened = fixture.manager.open(HANDLE_CONNECTION, fixture.peerId);
+        await answerHandshake(fixture, {
+            phone: fixture.phone,
+            peerState: PEER_STATE_BELOW_ACTIVE,
+        });
+        await expect(opened).resolves.toEqual({
+            result: 'authenticated',
+            peerId: fixture.peerId,
+        });
+        await flush(100);
+
+        const mark = events.indexOf('authenticated');
+        const ack = events.indexOf(`send:${RecordType.ACTIVATION_ACK}`);
+        expect(mark).toBeGreaterThanOrEqual(0);
+        expect(ack).toBeGreaterThanOrEqual(0);
+        expect(mark, 'the ack is sent only after the metadata write').toBeLessThan(ack);
     });
 
     it('coarse tick closes a silent handshake and an idle session', async () => {
