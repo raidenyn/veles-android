@@ -132,6 +132,19 @@ export class ChromeTrustRepository {
         });
     }
 
+    /**
+     * Cancel's conditional revoke: one locked read-modify-write. A concurrent recovery
+     * confirm that already moved the record to the active family is left untouched.
+     */
+    revokePending(peerId: string): Promise<boolean> {
+        return this.update((s) => {
+            const peer = s.peers.find((p) => p.installationId === peerId);
+            if (peer?.state !== 'pending') return false;
+            s.peers = s.peers.filter((p) => p.installationId !== peerId);
+            return true;
+        });
+    }
+
     /** Explicit user recovery discards all trust; never invoked automatically on errors. */
     async reset(): Promise<void> {
         try {

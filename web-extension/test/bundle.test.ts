@@ -32,20 +32,24 @@ describe('dist/ contents (post-build artifact)', () => {
         const files = walk(DIST).sort();
         const wasm = files.filter((file) => /^assets\/veles_crypto_bg-[^/]+\.wasm$/.test(file));
         expect(wasm).toHaveLength(1);
-        // The connector module chunk embeds the hashed WASM asset name, so its own hash
-        // changes with every Rust build; match it by pattern like the WASM asset.
-        const connectorChunks = files.filter((file) => /^chunks\/connector-[^/]+\.js$/.test(file));
-        expect(connectorChunks).toHaveLength(1);
+        // Rollup/Node combinations disagree on whether the HTML entry module stays
+        // `connector.js` or becomes a shared `chunks/connector-<hash>.js`. Both are the
+        // connector tab module; a hash-named one embeds the WASM asset name, so match it
+        // by pattern like the WASM asset.
+        const connectorModules = files.filter(
+            (file) => file === 'connector.js' || /^chunks\/connector-[^/]+\.js$/.test(file),
+        );
+        expect(connectorModules).toHaveLength(1);
         expect(
-            files.filter((file) => !wasm.includes(file) && !connectorChunks.includes(file)),
+            files.filter((file) => !wasm.includes(file) && !connectorModules.includes(file)),
         ).toEqual([
             'background.js',
             'chunks/clipboard-DE1lG-x_.js',
             'chunks/modulepreload-polyfill-DaKOjhqt.js',
             'chunks/ownership-BOcJ26Iv.js',
-            'chunks/pairing-panel-BWIaYGNA.js',
-            'chunks/probe-BXD-9UJ6.js',
-            'chunks/repository-wKCuwgFE.js',
+            'chunks/pairing-panel-DkoXOaO7.js',
+            'chunks/probe-6-96fGg2.js',
+            'chunks/repository-Dd2amz8z.js',
             'chunks/storage-DOMCF8BZ.js',
             'connector.html',
             'content.js',
@@ -65,14 +69,16 @@ describe('dist/ contents (post-build artifact)', () => {
         const wasm = files.filter((file) => /^assets\/veles_crypto_bg-[^/]+\.wasm$/.test(file));
         expect(wasm).toHaveLength(1);
         const asset = basename(wasm[0]);
-        const connectorChunks = files.filter((file) => /^chunks\/connector-[^/]+\.js$/.test(file));
+        const connectorModules = files.filter(
+            (file) => file === 'connector.js' || /^chunks\/connector-[^/]+\.js$/.test(file),
+        );
 
-        // The connector tab's module chunk references the emitted asset; it is the only
+        // The connector tab's module references the emitted asset; it is the only
         // script that may do so.
         const referencing = files
             .filter((file) => file.endsWith('.js'))
             .filter((file) => readFileSync(join(DIST, file), 'utf8').includes(asset));
-        expect(referencing).toEqual(connectorChunks);
+        expect(referencing).toEqual(connectorModules);
 
         // The MV3 service worker (background.js) and its chunks never load it.
         const background = readFileSync(join(DIST, 'background.js'), 'utf8');
@@ -89,9 +95,11 @@ describe('dist/ contents (post-build artifact)', () => {
         const files = walk(DIST);
         expect(files.filter((file) => /harness|fixture|browser-connector/.test(file))).toEqual([]);
 
-        const connectorChunks = files.filter((file) => /^chunks\/connector-[^/]+\.js$/.test(file));
-        expect(connectorChunks).toHaveLength(1);
-        const connector = readFileSync(join(DIST, connectorChunks[0]), 'utf8');
+        const connectorModules = files.filter(
+            (file) => file === 'connector.js' || /^chunks\/connector-[^/]+\.js$/.test(file),
+        );
+        expect(connectorModules).toHaveLength(1);
+        const connector = readFileSync(join(DIST, connectorModules[0]), 'utf8');
         expect(connector).toContain('connectNative');
         expect(connector).not.toContain('__velesConnectorHarness');
         expect(connector).not.toContain('SimulatedNativePort');

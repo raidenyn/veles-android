@@ -11,7 +11,8 @@
         <activity
             android:name="me.nagaev.veles.debugpairing.PairingDebugScreen"
             android:exported="true"
-            android:label="@string/pairing_debug_title" />
+            android:label="@string/pairing_debug_title"
+            android:permission="android.permission.DUMP" />
 
         <receiver
             android:name="me.nagaev.veles.debugpairing.PairingDebugReceiver"

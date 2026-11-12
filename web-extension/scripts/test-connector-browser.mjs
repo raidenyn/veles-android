@@ -1,4 +1,4 @@
-/* global document, window, chrome, Event */
+/* global document, window, chrome, crypto, Event */
 // Packaged-browser evidence for OTP-07.
 //
 // This loads the built extension in Chromium. One page exercises the real
@@ -31,7 +31,7 @@ const CONNECTION_B = 'c000000000000002';
 const CONNECTION_C = 'c000000000000003';
 const VELES_SERVICE_UUID = '8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51';
 
-for (const required of ['connector.html', 'connector.js', 'manifest.json']) {
+for (const required of ['connector.html', 'manifest.json']) {
     if (!existsSync(join(dist, required))) {
         console.error(
             `Missing dist/${required}. Run "npm run build" before "npm run test:connector-browser".`,
@@ -58,6 +58,14 @@ const syncRemote = () =>
 
 async function nextPost(page) {
     return page.evaluate(() => window.__velesConnectorHarness.nextPosted());
+}
+
+/** Next posted message of [type], skipping OTP-09 session hello/records in between. */
+async function nextPostOfType(page, type) {
+    for (;;) {
+        const message = await nextPost(page);
+        if (message.type === type) return message;
+    }
 }
 
 async function emit(page, event) {
@@ -120,6 +128,35 @@ function message(connectionHandle, recordBase64) {
     };
 }
 
+/**
+ * Seeds one active trust peer. The production connector's `intendedPeer` needs exactly one
+ * active-family record before it will post a transport connect.
+ */
+async function seedTrust(page) {
+    return page.evaluate(async () => {
+        const { ChromeTrustRepository } = await import(chrome.runtime.getURL('trust.js'));
+        const repo = new ChromeTrustRepository(undefined, undefined, undefined, async () => true);
+        await repo.identity();
+        const keys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+            'sign',
+            'verify',
+        ]);
+        const raw = new Uint8Array(await crypto.subtle.exportKey('raw', keys.publicKey));
+        const publicKey = Array.from(raw, (byte) => byte.toString(16).padStart(2, '0')).join('');
+        const installationId = 'b0000000000000000000000000000001';
+        await repo.addPending({
+            installationId,
+            publicKey,
+            label: 'Phone A',
+            deviceType: 0,
+            enrollmentTranscript: 'ab'.repeat(32),
+        });
+        await repo.confirm(installationId, 'complete', new Uint8Array([1]));
+        await repo.confirm(installationId, 'phone_active', new Uint8Array([1]));
+        return installationId;
+    });
+}
+
 async function waitForHarness(page) {
     await page.waitForFunction(() => (window.__velesConnectorHarness?.portCount() ?? 0) > 0, null, {
         timeout: 15_000,
@@ -128,8 +165,7 @@ async function waitForHarness(page) {
 
 async function connectViaUi(page, deviceRow, deviceHandle, connectionHandle, expectedRows) {
     await page.click(`#device-list li:nth-child(${deviceRow}) button`);
-    const request = await nextPost(page);
-    assert.equal(request.type, 'connect');
+    const request = await nextPostOfType(page, 'connect');
     assert.equal(request.device_handle, deviceHandle);
     assert.equal(request.api_version, 1);
     await emit(page, connected(request.request_id, connectionHandle));
@@ -168,11 +204,19 @@ try {
     });
 
     const connectorHtml = await readFile(join(extension, 'connector.html'), 'utf8');
-    const productionScript = '<script type="module" crossorigin src="/connector.js"></script>';
+    // Vite may leave the HTML entry module as `connector.js` or as a shared
+    // `chunks/connector-<hash>.js`; resolve whichever tag the built HTML actually loads.
+    const moduleScripts = [
+        ...connectorHtml.matchAll(/<script type="module"[^>]*src="([^"]+)"[^>]*><\/script>/g),
+    ];
+    const connectorTag = moduleScripts.find((match) =>
+        /(?:^|\/)connector(?:-[^/]+)?\.js$/.test(match[1]),
+    );
     assert(
-        connectorHtml.includes(productionScript),
+        connectorTag !== undefined,
         'built connector.html is missing the production connector module',
     );
+    const productionScript = connectorTag[0];
     // Leave the packaged connector.html untouched for the real-runtime test.
     // The harness page is an ephemeral copy with the test-only module inserted
     // before the unchanged production entry.
@@ -252,6 +296,7 @@ try {
     const page = await context.newPage();
     await page.goto(`chrome-extension://${extensionId}/connector.html`);
     await waitForHarness(page);
+    await seedTrust(page);
 
     const hello = await nextPost(page);
     assert.equal(hello.type, 'hello');
@@ -329,7 +374,7 @@ try {
     // Disconnect routing is checked in the real DOM too: row C must post C's
     // handle and leave A/B connected.
     await page.click('#connection-list li:nth-child(3) button');
-    const disconnectRequest = await nextPost(page);
+    const disconnectRequest = await nextPostOfType(page, 'disconnect');
     assert.equal(disconnectRequest.type, 'disconnect');
     assert.equal(disconnectRequest.connection_handle, CONNECTION_C);
     await emit(page, {
@@ -370,11 +415,16 @@ try {
     );
     const oversized = Buffer.alloc(4097, 0x44).toString('base64');
     await emit(page, message(CONNECTION_A, oversized));
-    await waitForText(page, '#error-banner', 'unexpected or correlated-invalid');
-    assert.equal(
-        await page.evaluate(() => document.querySelector('#search-button')?.disabled),
-        true,
+    // OTP-09: the exact-boundary record is routed to SessionManager, whose fake
+    // unauthenticated session fails closed; the visible result is still the
+    // generic authentication failure. The 4097-byte record must add no
+    // diagnostic and must leave the connector closed.
+    await waitForText(page, '#error-banner', 'Could not authenticate');
+    assert.doesNotMatch(
+        (await page.locator('#diagnostics-list').textContent()) ?? '',
+        /bytes=4097/,
     );
+    assert.equal(await page.evaluate(() => document.querySelector('#error-banner')?.hidden), false);
 
     // 3. API overlap rejection is visible and performs no BLE post.
     await page.reload();

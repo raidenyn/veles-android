@@ -10,14 +10,17 @@ import me.nagaev.veles.trust.TrustEncoding
  * The debug screen's view of the phone's single pairing window. [code] is the only copy of
  * the six-digit code outside [PairingWindow]; it exists for the on-screen readout and the
  * instrumented tests and is never written to a log, broadcast result, notification or view
- * model. It is replaced with the closed state (and the previous state becomes unreachable
- * from the flow) as soon as the window closes.
+ * model. [toString] is redacted because a debug dump or an accidental string interpolation
+ * must not reveal it. The closed state replaces it on the next refresh or debug action; the
+ * screen refreshes once a second.
  */
 data class PairingDebugState(
     val open: Boolean = false,
     val pairingId: String? = null,
     val code: String? = null,
-)
+) {
+    override fun toString(): String = "PairingDebugState(open=$open, pairingId=$pairingId, code=REDACTED)"
+}
 
 /**
  * In-process debug hook (design D5). The production service attaches its window through the
@@ -60,26 +63,30 @@ object PairingDebugHooks {
 
     /** Re-reads the lazily expiring window so an expired window reaches the StateFlow. */
     fun refresh() {
-        val current = synchronized(lock) { window }
-        if (current == null || !current.isOpen()) {
-            mutable.value = PairingDebugState()
-            return
+        synchronized(lock) {
+            // Everything, including publishing, happens under the attach/detach lock: a
+            // refresh that raced detach() can never republish an open state afterwards.
+            val current = window
+            if (current == null || !current.isOpen()) {
+                mutable.value = PairingDebugState()
+                return
+            }
+            val digits = try {
+                current.codeBytes()
+            } catch (_: IllegalStateException) {
+                mutable.value = PairingDebugState()
+                return
+            }
+            val code = try {
+                String(digits, Charsets.US_ASCII)
+            } finally {
+                digits.fill(0)
+            }
+            mutable.value = PairingDebugState(
+                open = true,
+                pairingId = TrustEncoding.hex(current.pairingId),
+                code = code,
+            )
         }
-        val digits = try {
-            current.codeBytes()
-        } catch (_: IllegalStateException) {
-            mutable.value = PairingDebugState()
-            return
-        }
-        val code = try {
-            String(digits, Charsets.US_ASCII)
-        } finally {
-            digits.fill(0)
-        }
-        mutable.value = PairingDebugState(
-            open = true,
-            pairingId = TrustEncoding.hex(current.pairingId),
-            code = code,
-        )
     }
 }

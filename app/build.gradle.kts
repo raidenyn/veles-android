@@ -199,6 +199,11 @@ val releaseHookForbidden = listOf(
     "Start pairing window",
     "Cancel pairing window",
     "Clear incomplete record",
+    "Peer installation id",
+    "Record cleared",
+    "Clear failed or refused",
+    "Pairing id:",
+    "Start Bluetooth sharing first",
 )
 
 /** First byte offset of [needle] in this array, or -1. */

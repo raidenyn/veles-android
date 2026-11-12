@@ -305,6 +305,22 @@ describe('Chrome trust repository', () => {
         expect(s.get().peers).toHaveLength(1);
     });
 
+    it('revokePending is conditional under the trust lock', async () => {
+        const s = setup();
+        const repo = s.make();
+        const pending = await candidate();
+        await repo.addPending(pending);
+        expect(await repo.revokePending(pending.installationId)).toBe(true);
+        expect(await repo.revokePending(pending.installationId)).toBe(false);
+        expect(await repo.peers()).toEqual([]);
+
+        const recovered = await candidate();
+        await repo.addPending(recovered);
+        await repo.confirm(recovered.installationId, 'complete', new Uint8Array([1]));
+        expect(await repo.revokePending(recovered.installationId)).toBe(false);
+        expect((await repo.peers())[0].state).toBe('active_activation_pending');
+    });
+
     it('requires explicit reset after key loss and never trusts old peers with a new identity', async () => {
         const s = setup();
         const repo = s.make();

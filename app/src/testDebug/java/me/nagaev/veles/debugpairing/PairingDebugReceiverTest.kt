@@ -40,6 +40,17 @@ class PairingDebugReceiverTest {
     }
 
     @Test
+    fun debug_state_to_string_redacts_code() {
+        PairingDebugHooks.attach(PairingWindow({ 1_000L }))
+        receiver.dispatch(PairingDebugReceiver.ACTION_PAIRING_START, {}, {})
+
+        val state = PairingDebugHooks.state.value
+        val code = requireNotNull(state.code)
+        assertFalse("the data-class toString never carries the code", state.toString().contains(code))
+        assertTrue("the redacted field is explicit", state.toString().contains("REDACTED"))
+    }
+
+    @Test
     fun broadcast_cancel_closes_window_without_echoing_code() {
         PairingDebugHooks.attach(PairingWindow({ 1_000L }))
         receiver.dispatch(PairingDebugReceiver.ACTION_PAIRING_START, {}, {})

@@ -66,6 +66,14 @@ export interface ClientTrustRepository {
     addPending(peer: PendingPeer): Promise<void>;
     confirm(peerId: string, stage: 'complete' | 'phone_active', proof: Uint8Array): Promise<void>;
     revoke(peerId: string): Promise<void>;
+    /**
+     * Conditional revoke used by cancel: removes the record only while it is still
+     * `pending`, under the store's own lock. Returns true when the record was pending
+     * and is now deleted; false when it was already recovered/absent. Repositories that
+     * cannot implement the conditional write omit it and the caller falls back to a
+     * read-then-revoke.
+     */
+    revokePending?(peerId: string): Promise<boolean>;
 }
 
 export interface ClientMachineDeps {
@@ -752,6 +760,15 @@ export class ClientMachine {
         this.#pendingPeerId = null;
         if (peerId === null) return true;
         try {
+            const conditional = this.#repo.revokePending;
+            if (conditional !== undefined) {
+                // The conditional write runs entirely under the trust store's lock, so a
+                // concurrent recovery confirm cannot turn a just-read `pending` record
+                // into active between the read and the delete. A non-pending record is
+                // nothing to clean up, not a cancel failure.
+                await conditional.call(this.#repo, peerId);
+                return true;
+            }
             // A later tab teardown or startPairing can reach an abandoned link whose
             // pending record a recovery session has since authenticated. Revoke only the
             // record this enrollment still owns in `pending`; an active-family record is

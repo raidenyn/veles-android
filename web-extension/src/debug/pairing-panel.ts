@@ -59,10 +59,9 @@ interface PanelElements {
     peers: HTMLUListElement;
 }
 
-function button(document: Document, id: string, label: string): HTMLButtonElement {
+function button(document: Document, label: string): HTMLButtonElement {
     const element = document.createElement('button');
     element.type = 'button';
-    element.id = id;
     element.textContent = label;
     return element;
 }
@@ -89,8 +88,10 @@ function createElements(document: Document): PanelElements {
     const deviceSelect = document.createElement('select');
     deviceSelect.setAttribute('aria-label', 'Phone to pair');
 
-    const start = button(document, 'pairing-debug-start', 'Start pairing');
-    const cancel = button(document, 'pairing-debug-cancel', 'Cancel pairing');
+    const start = button(document, 'Start pairing');
+    start.setAttribute('id', 'pairing-debug-start');
+    const cancel = button(document, 'Cancel pairing');
+    cancel.setAttribute('id', 'pairing-debug-cancel');
 
     const peers = document.createElement('ul');
     peers.setAttribute('aria-label', 'Known pairing records');
@@ -132,7 +133,9 @@ function renderPeers(
         const item = document.createElement('li');
         const label = document.createElement('span');
         label.textContent = `${peer.label} · ${peer.state}`;
-        const clearButton = button(document, 'pairing-debug-clear', 'Clear incomplete record');
+        const clearButton = button(document, 'Clear incomplete record');
+        // One per peer row: no shared DOM id, and the peer id stays out of the label.
+        clearButton.setAttribute('data-action', 'clear-incomplete-record');
         clearButton.addEventListener('click', () => clear(peer.installationId));
         item.append(label, clearButton);
         return item;
