@@ -100,6 +100,18 @@ export class PairingExecution {
             'start',
         );
         if (response.length !== HANDLE_BYTES + PUBLIC_POINT_BYTES) {
+            // The core allocated a handle before answering, and only eight handles exist.
+            // The payload is unusable, so release what it allocated before throwing; a
+            // failed cleanup must not mask the malformed answer.
+            if (response.length >= HANDLE_BYTES) {
+                try {
+                    pairing_command(
+                        new Uint8Array([1, OP_CLOSE, ...response.slice(0, HANDLE_BYTES)]),
+                    );
+                } catch {
+                    // Ignored on purpose: the handle is unreachable either way.
+                }
+            }
             throw new Error(`pairing core start returned ${response.length} bytes`);
         }
         const handle = response.slice(0, HANDLE_BYTES);

@@ -49,4 +49,35 @@ describe('pairing core', () => {
             initPairingCore(new URL('./missing-package/veles_crypto_bg.wasm', import.meta.url)),
         ).rejects.toThrow(/rustWasm/);
     });
+
+    it('start_closes_the_allocated_handle_when_the_payload_is_malformed', async () => {
+        // The core allocated a handle before answering; an unusable payload must not leak it
+        // (only eight handles exist, and every exit path must close the one it allocated).
+        const handle = [1, 2, 3, 4, 5, 6, 7, 8];
+        const pairingCommand = vi.fn((command: Uint8Array) => {
+            if (command[1] === 1) return Uint8Array.from([0, ...handle]);
+            return Uint8Array.from([0]);
+        });
+        vi.doMock('../../rust-wasm/pkg/veles_crypto.js', () => ({
+            default: async () => Promise.resolve(),
+            pairing_command: pairingCommand,
+        }));
+        vi.resetModules();
+        try {
+            const { PairingExecution, openHandleCount } = await import('../../src/pairing/core');
+            expect(() => PairingExecution.start('000042', pairingContext())).toThrow(
+                /start returned 8 bytes/,
+            );
+            expect(pairingCommand.mock.calls.map((call) => Array.from(call[0]))).toEqual([
+                // start: protocol version, OP_START, role B, six code bytes, context
+                expect.arrayContaining([1, 1, 2]),
+                // close: protocol version, OP_CLOSE, the leaked handle
+                [1, 5, ...handle],
+            ]);
+            expect(openHandleCount()).toBe(0);
+        } finally {
+            vi.doUnmock('../../rust-wasm/pkg/veles_crypto.js');
+            vi.resetModules();
+        }
+    });
 });
