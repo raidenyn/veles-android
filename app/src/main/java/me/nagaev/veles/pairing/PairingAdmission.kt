@@ -137,6 +137,9 @@ class PairingAdmission(
     /** Test observation of the single in-flight slot. */
     internal fun operationsInFlightForTest(): Int = synchronized(lock) { operations }
 
+    /** Test observation of the malformed-connection budget. */
+    internal fun malformedConnectionsForTest(): Int = synchronized(lock) { malformedConnections.size }
+
     /**
      * Drops entries at or before [cutoff] and keeps one entry past the ceiling so the
      * over-limit comparison stays exact without letting a flood grow the deque.

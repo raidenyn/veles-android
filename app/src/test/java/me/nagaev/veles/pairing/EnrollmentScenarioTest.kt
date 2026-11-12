@@ -69,8 +69,9 @@ class EnrollmentScenarioTest : PairingTestBase() {
         assertEquals("the observed stage must equal the fixture's", fixture.stage, run.stage)
         assertTrue("the invalid point terminated the connection", run.terminated)
         assertEquals("the execution is erased", 0, run.openHandlesAtEnd)
-        assertTrue("the second frame arrived on a connection the machine no longer owns", run.violatingConnectionClosed)
+        assertTrue("the second frame took the host's drop path", run.droppedSteps.isNotEmpty())
         assertEquals("the never-read frame calls no core operation", 0, run.violatingCoreCalls)
+        assertEquals("the never-read frame opens no handle", 0, run.violatingHandles)
         assertTrue("the never-read frame puts nothing on the wire", run.violatingFrames.isEmpty())
         assertTrue("the rejected trace mutates no state", run.noStateMutation)
     }
@@ -143,8 +144,11 @@ class EnrollmentScenarioTest : PairingTestBase() {
             private set
         var violatingCoreCalls = 0
             private set
-        var violatingConnectionClosed = false
+        var violatingHandles = 0
             private set
+
+        /** Steps whose frame took the host's "generation already gone" drop path. */
+        val droppedSteps = mutableListOf<Int>()
         var noStateMutation = false
             private set
         var confirmationVerified = false
@@ -156,6 +160,8 @@ class EnrollmentScenarioTest : PairingTestBase() {
         private val wireLog = mutableListOf<Pair<Int, String>>()
         private var violation: Violation? = null
         private var stepFingerprint = ""
+        private var stepCalls = 0
+        private var stepHandles = 0
         private var nextNonce = 0
 
         val accepted: Boolean get() = violation == null
@@ -167,6 +173,8 @@ class EnrollmentScenarioTest : PairingTestBase() {
                 if (violation != null) return
                 now = step.tMs
                 stepFingerprint = fingerprint()
+                stepCalls = recording.totalCalls()
+                stepHandles = recording.openHandles()
                 when (step.event) {
                     "enable_pairing" -> {
                         window.open()
@@ -239,9 +247,8 @@ class EnrollmentScenarioTest : PairingTestBase() {
                         inFlightBefore > 0 -> observe("reject_second_concurrent_request")
                         grantsBefore > 0 -> observe("reject_pa_per_connection")
                         rollingGrantsBefore >= FRESH_PA_ROLLING_MAX -> observe("reject_pa_rolling")
-                        else -> violation(
+                        else -> recordViolation(
                             index,
-                            connection,
                             ViolationStage.TRANSITION,
                             "unattributed request refusal open=$openBefore inFlight=$inFlightBefore " +
                                 "grants=$grantsBefore rolling=$rollingGrantsBefore window=${window.isOpen()} " +
@@ -255,19 +262,15 @@ class EnrollmentScenarioTest : PairingTestBase() {
         }
 
         private suspend fun onPoint(index: Int, connection: String, simulate: Map<String, String>) {
-            val current = live[connection]
-                ?: return violation(index, connection, ViolationStage.TRANSITION, "pairing_client_point on a dead connection")
             val valid = simulate["pB_point_valid"] != "false"
-            val point = if (valid) {
-                current.peer.point() ?: return violation(index, connection, ViolationStage.TRANSITION, "no client point")
-            } else {
-                INVALID_POINT
-            }
+            val point = if (valid) live[connection]?.peer?.point() else INVALID_POINT
             val idBefore = window.pairingId
             val chargedBefore = admission.attemptsChargedForTest(idBefore)
-            val stateBefore = current.machine.state
+            val stateBefore = live[connection]?.machine?.state
+            val outgoing = deliverToMachine(index, connection, point?.let { PairingFrames.encode(PairingFrameType.PB, it) })
+                ?: return
+            val current = live.getValue(connection)
 
-            val outgoing = current.machine.onFrame(PairingFrames.encode(PairingFrameType.PB, point))
             when (frameType(outgoing)) {
                 CONFIRM_A -> {
                     recordWire(index, outgoing)
@@ -297,15 +300,14 @@ class EnrollmentScenarioTest : PairingTestBase() {
         }
 
         private suspend fun onConfirmB(index: Int, connection: String, simulate: Map<String, String>) {
-            val current = live[connection]
-                ?: return violation(index, connection, ViolationStage.TRANSITION, "pairing_confirm_b on a dead connection")
-            val confirmation = current.peer.confirmationB()
-                ?: return violation(index, connection, ViolationStage.TRANSITION, "no client confirmation")
-            val sent = if (simulate["cB_mac_ok"] == "false") flip(confirmation) else confirmation
+            val confirmation = live[connection]?.peer?.confirmationB()
+            val sent = confirmation?.let { if (simulate["cB_mac_ok"] == "false") flip(it) else it }
             val confirmsBefore = recording.count("confirm")
-            val stateBefore = current.machine.state
+            val stateBefore = live[connection]?.machine?.state
+            val outgoing = deliverToMachine(index, connection, sent?.let { PairingFrames.encode(PairingFrameType.CB, it) })
+                ?: return
+            val current = live.getValue(connection)
 
-            val outgoing = current.machine.onFrame(PairingFrames.encode(PairingFrameType.CB, sent))
             when {
                 current.machine.state == PairingState.ENROLLMENT_PROTECTED -> {
                     // §11.1 awaiting_cB -> enrollment_protected declares `derive_enrollment_keys`
@@ -336,10 +338,12 @@ class EnrollmentScenarioTest : PairingTestBase() {
         }
 
         private suspend fun onDirectionViolation(index: Int, connection: String) {
-            val current = live[connection]
-                ?: return violation(index, connection, ViolationStage.TRANSITION, "pairing_confirm_a on a dead connection")
-            val stateBefore = current.machine.state
-            val outgoing = current.machine.onFrame(PairingFrames.encode(PairingFrameType.CA, ByteArray(CONFIRMATION_BYTES)))
+            val stateBefore = live[connection]?.machine?.state
+            val outgoing = deliverToMachine(
+                index,
+                connection,
+                PairingFrames.encode(PairingFrameType.CA, ByteArray(CONFIRMATION_BYTES)),
+            ) ?: return
             if (frameType(outgoing) != PREAUTH_REJECT) error("${fixture.id} step $index: direction mismatch accepted")
             recordWire(index, outgoing)
             observe("preauth_reject")
@@ -381,26 +385,35 @@ class EnrollmentScenarioTest : PairingTestBase() {
         }
 
         /**
-         * A frame on a connection the machine already closed is never read: `SessionHost`
-         * drops a record whose generation left the session table before any engine or
-         * pairing call, so it cannot reach the machine, spend a core call or touch the
-         * wire. The trace is then an invalid transition and nothing may mutate.
+         * Models `SessionHost.onRecord` for one step: the generation is looked up once and,
+         * when it left the session table, the record is dropped before any engine or
+         * pairing call. The step counters captured at dispatch time prove that the drop
+         * spent no core call and no handle; [droppedSteps] records that the delivery model
+         * really took that path.
          */
-        private fun violation(
-            index: Int,
-            connection: String,
-            violationStage: ViolationStage,
-            detail: String,
-        ) {
+        private suspend fun deliverToMachine(index: Int, connection: String, frame: ByteArray?): List<Outgoing>? {
+            val current = live[connection]
+            if (current == null) {
+                droppedSteps += index
+                recordViolation(index, ViolationStage.TRANSITION, "a frame arrived for generation '$connection' after it ended")
+                return null
+            }
+            if (frame == null) {
+                recordViolation(index, ViolationStage.TRANSITION, "no frame for a live generation")
+                return null
+            }
+            val outgoing = current.machine.onFrame(frame)
+            recordWire(index, outgoing)
+            return outgoing
+        }
+
+        /** Compares the step counters captured before dispatch with the state after it. */
+        private fun recordViolation(index: Int, violationStage: ViolationStage, detail: String) {
             violation = Violation(violationStage, detail)
-            val callsBefore = recording.totalCalls()
-            val handlesBefore = recording.openHandles()
-            violatingConnectionClosed = live.keys.none { it == connection }
-            violatingCoreCalls = recording.totalCalls() - callsBefore
+            violatingCoreCalls = recording.totalCalls() - stepCalls
+            violatingHandles = recording.openHandles() - stepHandles
             violatingFrames = wireLog.filter { it.first == index }.map { it.second }
-            noStateMutation = fingerprint() == stepFingerprint &&
-                violatingCoreCalls == 0 &&
-                recording.openHandles() == handlesBefore
+            noStateMutation = fingerprint() == stepFingerprint && violatingCoreCalls == 0 && violatingHandles == 0
         }
 
         private fun recordWire(index: Int, outgoing: List<Outgoing>) {
@@ -424,6 +437,8 @@ class EnrollmentScenarioTest : PairingTestBase() {
             charges.size,
             paGrants.values.sum(),
             admission.attemptsChargedForTest(window.pairingId),
+            admission.malformedConnectionsForTest(),
+            admission.operationsInFlightForTest(),
             recording.openHandles(),
         ).joinToString(":")
     }

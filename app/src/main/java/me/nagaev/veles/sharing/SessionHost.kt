@@ -454,10 +454,12 @@ class SessionHost(
      * the accepted boundary: the machine never sees such a frame.
      */
     private fun isPairingFrame(bytes: ByteArray): Boolean {
-        if (bytes.size < PAIRING_FRAME_HEADER) return false
+        if (bytes.isEmpty()) return false
         val type = bytes[0].toInt() and U8_MASK
-        if (type in PAIRING_FIRST_FRAME_MIN..PAIRING_FIRST_FRAME_MAX) return true
-        if (type != PAIRING_REQUEST_TYPE) return false
+        // The type is enough for `0x02`-`0x05`: even a one-byte frame is pairing traffic
+        // and must reach the machine so it counts as a malformed pairing connection.
+        if (type != PAIRING_REQUEST_TYPE) return type in PAIRING_FIRST_FRAME_MIN..PAIRING_FIRST_FRAME_MAX
+        if (bytes.size < PAIRING_FRAME_HEADER) return false
         val length = ((bytes[1].toInt() and U8_MASK) shl BITS_PER_BYTE) or (bytes[2].toInt() and U8_MASK)
         return length == bytes.size - PAIRING_FRAME_HEADER
     }

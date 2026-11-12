@@ -134,6 +134,37 @@ class SessionHostRoutingTest {
     }
 
     @Test
+    fun one_byte_0x03_first_frame_counts_as_a_malformed_pairing_connection() = runTest {
+        val endpoint = PairingEndpoint({ clock.now }, { core })
+        val host = host(pairing = { gen -> endpoint.connection(gen.serial) })
+
+        // A single-byte `pairing_client_point`: no envelope, but still `0x03` pairing traffic.
+        repeat(MALFORMED_PAIRING_FRAMES) { index ->
+            val gen = ConnectionGeneration("short$index", index.toLong() + 1)
+            deliver(host, gen, byteArrayOf(0x03))
+            assertEquals(
+                "short generation ${index + 1} is rejected generically",
+                listOf("0f0000"),
+                wire.sent.filter { it.gen == gen }.map { hex(it.bytes) },
+            )
+        }
+
+        endpoint.window.open()
+        val gen = ConnectionGeneration("pairing", PAIRING_GENERATION)
+        deliver(host, gen, requestFrame())
+
+        assertEquals(
+            "twenty one-byte 0x03 frames block the next request",
+            listOf("0f0000"),
+            wire.sent.filter { it.gen == gen }.map { hex(it.bytes) },
+        )
+        assertTrue("no offer is emitted", wire.sent.filter { it.gen == gen }.none { it.bytes[0].toInt() == OFFER })
+
+        host.shutdown()
+        endpoint.shutdown()
+    }
+
+    @Test
     fun no_window_pairing_request_rejected_generically() = runTest {
         val endpoint = PairingEndpoint({ clock.now }, { core })
         val host = host(pairing = { gen -> endpoint.connection(gen.serial) })
