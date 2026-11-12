@@ -103,6 +103,32 @@ internal object TestPeers {
     private const val POINT_TAG = 0x04
 }
 
+/**
+ * Captures the session context the engine hands its handler at the authentication gate
+ * (OTP-10 plan 9b) and delegates the record surface to an optional handler.
+ */
+internal class ContextCapturingHandler(
+    private val delegate: ApplicationHandler? = null,
+) : ApplicationHandler {
+    var context: SessionContext? = null
+        private set
+
+    override fun handles(type: Int): Boolean = delegate?.handles(type) ?: false
+
+    override suspend fun handle(
+        type: Int,
+        body: ByteArray,
+        reply: suspend (type: Int, body: ByteArray) -> Unit,
+    ) {
+        delegate?.handle(type, body, reply)
+    }
+
+    override fun forSession(context: SessionContext): ApplicationHandler {
+        this.context = context
+        return this
+    }
+}
+
 /** A trust lookup whose record can be deleted between handshake steps. */
 internal class MutablePeerLookup(var record: PeerRecord?) : PeerLookup {
     override suspend fun find(installationId: ByteArray): PeerRecord? = record?.takeIf { it.installationId.contentEquals(installationId) }

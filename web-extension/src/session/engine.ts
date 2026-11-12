@@ -78,6 +78,23 @@ const STAGE_UNHANDLED = 'unhandled';
 const STAGE_SEQUENCE = 'sequence';
 const STAGE_DEPENDENCY = 'dependency';
 
+/** The fixed facts of one authenticated session (OTP-10 plan 9b). */
+export interface SessionContext {
+    sessionIdPrefix: Uint8Array;
+    sessionClass: SessionClass;
+    /** The peer installation id, hex-encoded exactly as the trust store spells it. */
+    peerId: string;
+    /** The public enrollment transcript the record carried, or null. */
+    et: Uint8Array | null;
+    /** The `peer_state` the peer reported in its `reconnect_confirm`. */
+    peerState: number;
+    /**
+     * The live OTP2-CRY-019f recovery holder for a non-full class, or null when the record
+     * carried no `ET` and whenever the class is `full` (its holder has just been zeroed).
+     */
+    recovery: RecoveryKeys | null;
+}
+
 /** Application records that have a handler. An authorized record without one fails closed. */
 export interface ApplicationHandler {
     handles(type: number): boolean;
@@ -86,6 +103,15 @@ export interface ApplicationHandler {
         body: Uint8Array,
         reply: (type: number, body: Uint8Array) => Promise<void>,
     ): Promise<void>;
+    /**
+     * Optional per-session hook: the engine asks once, when the class is fixed, and uses only
+     * the returned instance for this session's records. The default keeps the same instance.
+     *
+     * A handler receives the context on `authenticated`; the session is open at that point, so
+     * its owner may send an unprompted record through `sendApplication` without any inbound
+     * record (OTP-10 plan 9b).
+     */
+    forSession?(context: SessionContext): ApplicationHandler;
 }
 
 /** Effects that a session host turns into transport writes, host callbacks and teardown. */
@@ -109,9 +135,7 @@ export interface ClientEngineDeps {
     expectedPeerId: string;
     /** Generation fence, checked immediately before `upgradeMirror`. */
     isCurrent(): boolean;
-    lookupPhone(
-        id: string,
-    ): Promise<{ publicKey: Uint8Array; state: PhoneRecordState; et?: Uint8Array } | undefined>;
+    lookupPhone(id: string): Promise<PhoneRecord | undefined>;
     /** Wraps `repository.confirm(peerId, 'phone_active', proof)` with a session-bound verifier. */
     upgradeMirror(peerId: string, proof: Uint8Array): Promise<void>;
     now(): number;
@@ -172,6 +196,8 @@ interface EngineState {
     /** True only between that verification and the fixed session class. */
     phoneConfirmFinalizing: boolean;
     authenticated: boolean;
+    /** The session-scoped handler, derived once the session id prefix is fixed. */
+    handler: ApplicationHandler | null;
     nextToken: number;
     outboundSequence: bigint;
     inboundSequence: bigint;
@@ -207,6 +233,7 @@ function freshState(phase: Phase): EngineState {
         verifiedPhoneConfirm: null,
         phoneConfirmFinalizing: false,
         authenticated: false,
+        handler: null,
         nextToken: 0,
         outboundSequence: 0n,
         inboundSequence: 0n,
@@ -556,14 +583,6 @@ export class ClientSessionEngine {
         return this.#state.phase === 'closed' && this.#state.keys === null;
     }
 
-    /**
-     * Test-only OTP2-CRY-019f observation: the live recovery holder of the
-     * derived keys. Its bytes are zeroed once the session class is `full`.
-     */
-    get _recoveryKeys(): RecoveryKeys | null {
-        return this.#state.keys?.recovery ?? null;
-    }
-
     /** Test-only read of the next expected inbound sequence (Task 10 effect observations). */
     get _inboundSequence(): bigint {
         return this.#state.inboundSequence;
@@ -599,7 +618,7 @@ export class ClientSessionEngine {
         if (hexOf(hello.installationId) !== this.#deps.expectedPeerId) {
             return this.#failPreAuth();
         }
-        let record: { publicKey: Uint8Array; state: PhoneRecordState; et?: Uint8Array } | undefined;
+        let record: PhoneRecord | undefined;
         try {
             record = await this.#deps.lookupPhone(this.#deps.expectedPeerId);
         } catch {
@@ -889,8 +908,8 @@ export class ClientSessionEngine {
         if (!authorized(opened.type, Direction.PHONE_TO_CLIENT, sessionClass)) {
             return this.#terminate(STAGE_AUTHORIZATION);
         }
-        const handler = this.#deps.handler;
-        if (handler === undefined || !handler.handles(opened.type)) {
+        const handler = state.handler;
+        if (handler === null || !handler.handles(opened.type)) {
             return await this.#terminateUnhandled(state);
         }
 
@@ -1133,6 +1152,23 @@ export class ClientSessionEngine {
         state.authenticated = true;
         state.phase = 'open';
         state.lastActivityAt = this.#deps.now();
+        // OTP-10 plan 9b: the handler gets the fixed session facts once, here, before the
+        // authenticated effect and any inbound record. A full class hands out no recovery keys.
+        const handler = this.#deps.handler;
+        state.handler =
+            handler === undefined
+                ? null
+                : (handler.forSession?.({
+                      sessionIdPrefix: prefix.slice(),
+                      sessionClass,
+                      peerId,
+                      et: record.et?.slice() ?? null,
+                      peerState: state.peerState,
+                      recovery:
+                          sessionClass === SessionClass.FULL
+                              ? null
+                              : (state.keys?.recovery ?? null),
+                  }) ?? handler);
         return [
             {
                 kind: 'authenticated',
@@ -1242,6 +1278,7 @@ function eraseState(state: EngineState): void {
     state.verifiedPhoneConfirm = null;
     state.phoneConfirmFinalizing = false;
     state.authenticated = false;
+    state.handler = null;
     state.peerState = 0;
     state.nextToken = 0;
     state.outboundSequence = 0n;

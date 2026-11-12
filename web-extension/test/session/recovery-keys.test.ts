@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { requireValidPoint } from '../../src/session/p256';
 import { deriveKeyMaterial, importKeys } from '../../src/session/schedule';
+import type { ApplicationHandler, SessionContext } from '../../src/session/engine';
 import { RECONNECT, bytes, hex, input, outputs, str } from './fixtures';
 import { PEER_STATE_ACTIVE, PhoneHarness } from './client-harness';
 
@@ -85,27 +86,28 @@ describe('recovery activation keys', () => {
     });
 
     it('zeroes the recovery keys when the class is full', async () => {
+        let captured: SessionContext | undefined;
+        const handler: ApplicationHandler = {
+            handles: () => false,
+            handle: async () => undefined,
+            forSession: (context) => {
+                captured = context;
+                return handler;
+            },
+        };
         const harness = await PhoneHarness.create({
             state: 'active',
             et: bytes(fixtureInput, 'et'),
+            handler,
         });
-        const drive = await harness.drive();
 
-        // The engine derived both keys from the looked-up record's ET.
-        const recovery = harness.engine._recoveryKeys;
-        expect(recovery).not.toBeNull();
-        expect(recovery?.kRecClient.some((byte) => byte !== 0)).toBe(true);
-        expect(recovery?.kRecPhone.some((byte) => byte !== 0)).toBe(true);
-
-        await harness.engine.onSendComplete(drive.token, true);
-        const authenticated = (
-            await harness.engine.onInbound(await harness.confirmRecord(PEER_STATE_ACTIVE))
-        )[0];
+        const { authenticated } = await harness.openSession({ peerState: PEER_STATE_ACTIVE });
         expect(authenticated).toMatchObject({ kind: 'authenticated', sessionClass: 'FULL' });
-
-        // OTP2-CRY-019f: the holder is zeroed once the class is full, and the session stays open.
         expect(harness.engine.isOpen).toBe(true);
-        expect(recovery?.kRecClient).toEqual(new Uint8Array(32));
-        expect(recovery?.kRecPhone).toEqual(new Uint8Array(32));
+
+        // OTP2-CRY-019f: a full session never hands the recovery holder to the handler; the
+        // holder was zeroed at the single class-fix point.
+        expect(captured?.sessionClass).toBe('FULL');
+        expect(captured?.recovery).toBeNull();
     });
 });

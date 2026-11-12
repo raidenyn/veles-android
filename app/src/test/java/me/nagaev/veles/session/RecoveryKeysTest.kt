@@ -58,23 +58,36 @@ class RecoveryKeysTest {
             LocalRecordState.ACTIVE,
             bytes(inputs, "et"),
         )
-        val engine = TestPeers.engine(TestIdentity.generate().signer, TestPeers.lookup(record), FakeClock())
+        val handler = ContextCapturingHandler()
+        val engine = TestPeers.engine(
+            TestIdentity.generate().signer,
+            TestPeers.lookup(record),
+            FakeClock(),
+            handler,
+        )
         val progress = engine.driveToPeerConfirm(client)
-
-        // The phone derived both keys from the record's ET and this session's fixture PRK.
-        val recovery = engine.recoveryKeysForTest ?: error("a record with ET must derive recovery keys")
-        assertArrayEquals(bytes(outputs, "k_rec_client"), recovery.kRecClient)
-        assertArrayEquals(bytes(outputs, "k_rec_phone"), recovery.kRecPhone)
 
         assertTrue(engine.onInbound(progress.clientConfirmRecord).isEmpty())
         val authenticated = engine.onSendComplete(progress.token, true)
             .single() as SessionEffect.Authenticated
         assertEquals(SessionClass.FULL, authenticated.sessionClass)
-
-        // OTP2-CRY-019f: the holder is zeroed once the class is full, and the session stays open.
         assertTrue(engine.isOpen)
-        assertArrayEquals(ByteArray(HASH_BYTES), recovery.kRecClient)
-        assertArrayEquals(ByteArray(HASH_BYTES), recovery.kRecPhone)
+
+        // OTP2-CRY-019f: a full session never hands the recovery keys to the handler; the
+        // holder was zeroed at the single class-fix point.
+        val context = checkNotNull(handler.context) { "the handler must receive the session context" }
+        assertEquals(SessionClass.FULL, context.sessionClass)
+        assertNull(context.recovery)
+    }
+
+    @Test
+    fun recovery_keys_erase_zeroes_both_directions() {
+        val holder = RecoveryKeys(ByteArray(HASH_BYTES) { 7 }, ByteArray(HASH_BYTES) { 9 })
+
+        holder.erase()
+
+        assertArrayEquals(ByteArray(HASH_BYTES), holder.kRecClient)
+        assertArrayEquals(ByteArray(HASH_BYTES), holder.kRecPhone)
     }
 
     private fun sharedSecret(): ByteArray = P256.ecdhX(

@@ -26,6 +26,25 @@ sealed interface SessionEffect {
 }
 
 /**
+ * The fixed facts of one authenticated session (OTP-10 plan 9b): the class and reported
+ * `peer_state` are final at the `Authenticated` gate, and the recovery keys are the live
+ * holder the activation rows use.
+ *
+ * [et] is the public enrollment transcript the record carried, or null. [recovery] is null
+ * when the record carried no `ET` AND whenever the class is `full`, because the engine zeroes
+ * the holder when it fixes that class (OTP2-CRY-019f); a full session must never hand out
+ * recovery keys.
+ */
+data class SessionContext(
+    val sessionIdPrefix: ByteArray,
+    val sessionClass: SessionClass,
+    val peerId: String,
+    val et: ByteArray?,
+    val peerState: Int,
+    val recovery: RecoveryKeys?,
+)
+
+/**
  * Application records that have a handler. An authorized record without a handler fails
  * closed (OTP2 protected-record-session "Authorized records without a handler fail closed").
  */
@@ -37,6 +56,10 @@ interface ApplicationHandler {
      * Optional per-session context: the engine asks for the handler instance of one
      * authenticated session once, when the class is fixed, and uses only that instance for
      * the session's records. The default keeps this same instance.
+     *
+     * The handler receives [context] on the `Authenticated` effect. From that point the
+     * session is open, so the owner may send an unprompted application record through
+     * `sendApplication` without waiting for an inbound record (OTP-10 plan 9b).
      */
-    fun forSession(sessionIdPrefix: ByteArray): ApplicationHandler = this
+    fun forSession(context: SessionContext): ApplicationHandler = this
 }

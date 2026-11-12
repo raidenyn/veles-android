@@ -187,13 +187,6 @@ class PhoneSessionEngine(
     @VisibleForTesting
     val keysErasedForTest: Boolean get() = state == State.CLOSED && keys == null
 
-    /**
-     * Test-only OTP2-CRY-019f observation: the live recovery holder of the derived keys. Its
-     * bytes are zeroed once the session class resolves to `full`.
-     */
-    @VisibleForTesting
-    val recoveryKeysForTest: RecoveryKeys? get() = keys?.recovery
-
     @Suppress("ReturnCount") // Each validation failure rejects before any state is applied.
     private suspend fun onClientHello(bytes: ByteArray): List<SessionEffect> {
         val frame = decodeFrame(bytes) ?: return rejectPreAuth()
@@ -527,8 +520,35 @@ class PhoneSessionEngine(
         authenticated = true
         state = State.OPEN
         lastActivityAt = clock()
-        sessionHandler = handler?.forSession(prefix.copyOf())
+        sessionHandler = handler?.forSession(sessionContext(cls, installationId, prefix, record))
         listOf(SessionEffect.Authenticated(cls, installationId.copyOf(), prefix.copyOf()))
+    }
+
+    /**
+     * OTP-10 plan 9b: the fixed session facts a handler may need. The recovery holder is shared
+     * with the engine's live keys for every non-full class; a full session hands out null
+     * because its holder has just been erased.
+     */
+    private fun sessionContext(
+        cls: SessionClass,
+        installationId: ByteArray,
+        prefix: ByteArray,
+        record: PeerRecord,
+    ): SessionContext = SessionContext(
+        sessionIdPrefix = prefix.copyOf(),
+        sessionClass = cls,
+        peerId = hexOf(installationId),
+        et = record.et?.copyOf(),
+        peerState = peerState,
+        recovery = if (cls == SessionClass.FULL) null else keys?.recovery,
+    )
+
+    private fun hexOf(value: ByteArray): String = buildString(value.size * 2) {
+        for (byte in value) {
+            val unsigned = byte.toInt() and U8_MASK
+            append(HEX_DIGITS[unsigned ushr HEX_BITS])
+            append(HEX_DIGITS[unsigned and HEX_MASK])
+        }
     }
 
     private fun selectClass(record: PeerRecord, confirmedPeerState: Int): SessionClass = when (record.state) {
@@ -722,6 +742,9 @@ class PhoneSessionEngine(
         const val SESSION_PREFIX_BYTES = 8
         const val UNCOMPRESSED_TAG = 0x04
         const val U8_MASK = 0xFF
+        const val HEX_BITS = 4
+        const val HEX_MASK = 0x0F
+        const val HEX_DIGITS = "0123456789abcdef"
         const val PEER_STATE_ACTIVE = 0x01
         const val PEER_STATE_BELOW_ACTIVE = 0x02
         const val CONFIRM_SEQUENCE: ULong = 0uL
