@@ -80,8 +80,8 @@ internal class EnrollmentSession private constructor(
             rxSequence,
             record,
         )
-        val type = RecordType.fromWire(opened.type) ?: throw EnrollmentReject()
-        if (type !in ALLOWED_TYPES) {
+        val type = RecordType.fromWire(opened.type)
+        if (type == null || type !in ALLOWED_TYPES) {
             opened.body.fill(0)
             throw EnrollmentReject()
         }

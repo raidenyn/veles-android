@@ -288,8 +288,6 @@ class PhonePairingMachine(
         } catch (_: Exception) {
             return reject()
         }
-        // The handle is consumed by `finish`; a later reject must not close it twice.
-        execution = null
         enrollment = session
         state = PairingState.ENROLLMENT_PROTECTED
         lastActivity = clock()
@@ -310,6 +308,8 @@ class PhonePairingMachine(
         val ctx = context
         if (pts == null || peer == null || ca == null || cb == null || ctx == null) throw EnrollmentReject()
         val shared = current.finish()
+        // The handle is consumed by `finish`; clear it before any later throw can try to close it.
+        execution = null
         return try {
             EnrollmentSession.create(
                 shared = shared,

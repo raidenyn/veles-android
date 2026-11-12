@@ -29,6 +29,7 @@ import me.nagaev.veles.trust.TrustedPeer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.security.MessageDigest
@@ -256,6 +257,14 @@ class EnrollmentScenarioTest : PairingTestBase() {
             return if (recordDeleted || recordEverPersisted || persistAttempted) "deleted" else "absent"
         }
 
+        /** True once the window holds no code; a code read is the only public observation. */
+        private fun codeErased(): Boolean = try {
+            window.codeBytes()
+            false
+        } catch (_: IllegalStateException) {
+            true
+        }
+
         /** The phone pairing state for the trace's `phone_pairing:main` machine. */
         fun state(): String = when {
             machines.any { it.state == PairingState.AWAITING_COMMIT } -> "awaiting_commit"
@@ -388,6 +397,7 @@ class EnrollmentScenarioTest : PairingTestBase() {
             val sent = confirmation?.let { if (simulate["cB_mac_ok"] == "false") flip(it) else it }
             val confirmsBefore = recording.count("confirm")
             val stateBefore = live[connection]?.machine?.state
+            val windowOpenBefore = window.isOpen()
             val outgoing = deliverToMachine(index, connection, sent?.let { PairingFrames.encode(PairingFrameType.CB, it) })
                 ?: return
             val current = live.getValue(connection)
@@ -398,6 +408,9 @@ class EnrollmentScenarioTest : PairingTestBase() {
                     // and send_enroll_identity: both are real here. The client finishes its
                     // execution for the same Ke and authenticates the phone's record before it
                     // releases its own.
+                    assertTrue("${fixture.id} step $index: the window was open before cB", windowOpenBefore)
+                    assertFalse("${fixture.id} step $index: the verified cB closes the window", window.isOpen())
+                    assertTrue("${fixture.id} step $index: the verified cB erases the code", codeErased())
                     observe("pairing_code_consumed_one_use")
                     observe("close_pairing_window")
                     observe("derive_enrollment_keys")
@@ -432,10 +445,7 @@ class EnrollmentScenarioTest : PairingTestBase() {
             val connection = step.explicitConnection ?: live.keys.lastOrNull() ?: "main"
             val current = live[connection]
                 ?: error("${fixture.id} step $index: no live connection for the client identity")
-            if (step.simulate["persist_ok"] == "false") {
-                trust.failPersist = true
-                persistAttempted = true
-            }
+            if (step.simulate["persist_ok"] == "false") trust.failPersist = true
             val frame = current.peer.clientIdentityFrame(step.simulate, duplicateId)
             val outgoing = deliverToMachine(index, connection, frame)
                 ?: return
@@ -443,16 +453,27 @@ class EnrollmentScenarioTest : PairingTestBase() {
                 ?.takeIf { it.size >= RecordCodec.HEADER + RecordCodec.TAG && it[0].toInt() == 1 && it[1].toInt() == 1 }
             when {
                 protectedRecord != null && recordTypeOf(protectedRecord) == PREPARE_TYPE -> {
-                    observe("compute_et")
-                    observe("persist_pending_record")
-                    observe("send_enrollment_prepare")
-                    observe("record_persisted_pending")
-                    recordEverPersisted = true
+                    // The prepare may only follow a durable pending record carrying the same
+                    // ET. Capture the durable state at the instant the frame is returned, so a
+                    // machine that sent first or persisted another transcript cannot pass.
+                    val expectedEt = current.peer.expectedTranscript()
+                    val persisted = runBlocking { repository.peers() }.firstOrNull()
+                    val durablePending = persisted?.state == TrustState.PENDING
+                    if (durablePending && persisted?.enrollmentTranscript == hex(expectedEt)) {
+                        observe("compute_et")
+                        observe("persist_pending_record")
+                        recordEverPersisted = true
+                    }
+                    expectedEt.fill(0)
                     current.peer.verifyPrepare(protectedRecord)
+                    observe("send_enrollment_prepare")
+                    if (durablePending) observe("record_persisted_pending")
                 }
                 protectedRecord != null && recordTypeOf(protectedRecord) == ERROR_TYPE -> {
                     observe("reject_duplicate_installation")
                     observe("send_app_error_enrollment_rejected")
+                    assertEquals("${fixture.id} step $index: the duplicate refusal terminates", PairingState.IDLE, current.machine.state)
+                    assertNull("${fixture.id} step $index: the keys are erased", current.machine.enrollmentKeysForTest())
                     observe("erase_pairing_state")
                     val existing = seededPeer
                     assertNotNull("${fixture.id} step $index: a seeded record must exist", existing)
@@ -466,10 +487,20 @@ class EnrollmentScenarioTest : PairingTestBase() {
                 }
                 frameType(outgoing) == PREAUTH_REJECT -> {
                     if (step.simulate["persist_ok"] == "false") {
+                        // The failure is only the persist path if the machine really reached
+                        // the store and published nothing.
+                        assertEquals("${fixture.id} step $index: the persist attempt reached the store", 1, trust.addPendingCalls)
+                        assertTrue(
+                            "${fixture.id} step $index: no usable record was published",
+                            runBlocking { repository.peers() }.isEmpty(),
+                        )
                         observe("persist_failed_no_usable_record_published")
+                        persistAttempted = true
                         recordDeleted = true
                     }
                     if (step.simulate["device_type_ok"] == "false") observe("reject_client_device_type")
+                    assertEquals("${fixture.id} step $index: the failure returns idle", PairingState.IDLE, current.machine.state)
+                    assertNull("${fixture.id} step $index: the keys are erased", current.machine.enrollmentKeysForTest())
                     observe("erase_pairing_state")
                     observe("close_enrollment_connection")
                     closeIfDisconnected(connection, outgoing)
@@ -480,24 +511,30 @@ class EnrollmentScenarioTest : PairingTestBase() {
         }
 
         private suspend fun onCancel() {
-            val current = live.values.lastOrNull() ?: return
+            val entry = live.entries.lastOrNull() ?: return
+            val current = entry.value
+            val durableBefore = durableState()
+            val hadIncomplete = durableBefore == "pending" || durableBefore == "committed_waiting_ack"
+
+            val outgoing = current.machine.cancel()
+
+            assertTrue("${fixture.id}: cancel tears the connection down", outgoing.contains(Outgoing.Disconnect))
+            assertEquals("${fixture.id}: cancel returns the machine to idle", PairingState.IDLE, current.machine.state)
+            assertNull("${fixture.id}: cancel erases the enrollment keys", current.machine.enrollmentKeysForTest())
+            assertFalse("${fixture.id}: cancel closes the window", window.isOpen())
+            assertTrue("${fixture.id}: cancel erases the code", codeErased())
             observe("pairing_cancelled")
             observe("erase_pairing_state")
             observe("close_pairing_window")
-            if (durableState() == "pending" || durableState() == "committed_waiting_ack") {
+            if (hadIncomplete) {
+                assertEquals("${fixture.id}: cancel deletes through revocation", listOf(hex(CLIENT_INSTALLATION)), trust.revoked)
+                assertTrue("${fixture.id}: the pending record is gone", runBlocking { repository.peers() }.isEmpty())
                 observe("erase_incomplete_materials")
                 recordDeleted = true
             }
-            val outgoing = current.machine.cancel()
-            if (recordDeleted) {
-                assertEquals("${fixture.id}: cancel deletes through revocation", listOf(hex(CLIENT_INSTALLATION)), trust.revoked)
-                assertTrue("${fixture.id}: the pending record is gone", runBlocking { repository.peers() }.isEmpty())
-            }
-            if (outgoing.any { it == Outgoing.Disconnect }) {
-                terminated = true
-                live.remove(live.entries.last { it.value === current }.key)
-                current.peer.close()
-            }
+            terminated = true
+            live.remove(entry.key)
+            current.peer.close()
         }
 
         private suspend fun onInactivity() {
@@ -750,10 +787,20 @@ class EnrollmentScenarioTest : PairingTestBase() {
             return frame
         }
 
+        /** `ET` over the two canonical bodies and the complete SPAKE2 exchange. */
+        fun expectedTranscript(): ByteArray = EnrollmentRecords.transcript(
+            checkNotNull(context),
+            checkNotNull(phonePoint),
+            checkNotNull(point),
+            checkNotNull(confirmationA),
+            checkNotNull(confirmationB),
+            checkNotNull(phoneIdentityBody),
+            checkNotNull(clientIdentityBody),
+        )
+
         /** OTP2-CRY-019a: the prepare MAC must be over the same `ET` under the client-derived key. */
         fun verifyPrepare(frame: ByteArray) {
             val derived = keys ?: error("${fixture.id}: enrollment keys missing")
-            val ctx = context ?: error("${fixture.id}: no context")
             val opened = RecordCodec.open(
                 derived.aToBAesKey,
                 derived.aToBNoncePrefix,
@@ -762,15 +809,7 @@ class EnrollmentScenarioTest : PairingTestBase() {
                 1uL,
                 frame,
             )
-            val et = EnrollmentRecords.transcript(
-                ctx,
-                checkNotNull(phonePoint),
-                checkNotNull(point),
-                checkNotNull(confirmationA),
-                checkNotNull(confirmationB),
-                checkNotNull(phoneIdentityBody),
-                checkNotNull(clientIdentityBody),
-            )
+            val et = expectedTranscript()
             val expected = try {
                 Mac.getInstance("HmacSHA256").run {
                     init(SecretKeySpec(derived.phoneActivationKey, "HmacSHA256"))

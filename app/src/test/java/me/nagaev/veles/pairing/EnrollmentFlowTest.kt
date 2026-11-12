@@ -26,9 +26,12 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.security.interfaces.ECPublicKey
+import javax.crypto.Cipher
 import javax.crypto.Mac
+import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
@@ -154,56 +157,51 @@ class EnrollmentFlowTest : PairingTestBase() {
 
     @Test
     fun early_or_mismatched_prepare_erases() = runBlocking {
-        val h = Harness()
+        // `enrollment_prepare` is phone→client only (§11.1). A wire-valid client→phone record
+        // with that type is a direction violation: it must be refused generically, the keys
+        // erased, the machine returned to idle, and a previously persisted pending record kept
+        // for the recovery path. It is sealed by hand because `RecordCodec.seal` itself refuses
+        // the type/direction combination.
+        val awaiting = Harness()
         try {
-            h.runToCb()
-            val keys = checkNotNull(h.machine.enrollmentKeysForTest())
+            awaiting.runToCb()
+            awaiting.sendClientIdentity()
+            assertEquals(PairingState.AWAITING_COMMIT, awaiting.machine.state)
+            val keys = checkNotNull(awaiting.machine.enrollmentKeysForTest())
+            val prepare = sealClientPrepare(awaiting.clientKeys, awaiting.clientPrefix, 1uL)
 
-            // An enrollment_prepare is phone→client only. A client→phone record with that
-            // type, and the same record sealed in the phone→client direction, are both
-            // direction violations that must erase the protected session.
-            val sealed = RecordCodec.seal(
-                h.clientKeys.bToAAesKey,
-                h.clientKeys.bToANoncePrefix,
-                h.clientPrefix,
-                Direction.CLIENT_TO_PHONE,
-                RecordType.APP_ERROR.wire,
-                0uL,
-                errorBody(AppErrorCode.PROTOCOL_VIOLATION),
-            )
-            val miswired = sealed.copyOf().also {
-                it[3] = (PREPARE_TYPE ushr 8).toByte()
-                it[4] = PREPARE_TYPE.toByte()
-            }
+            val outgoing = awaiting.machine.onFrame(prepare)
 
-            val first = h.machine.onFrame(miswired)
-            assertEquals("a client-sent prepare is a direction violation", PREAUTH_REJECT_TYPE, frameType(first))
-            assertEquals(PairingState.IDLE, h.machine.state)
-            assertTrue("the protected session is erased", keys.isWiped)
+            assertEquals("a client-sent prepare is a direction violation", PREAUTH_REJECT_TYPE, frameType(outgoing))
+            assertEquals(PairingState.IDLE, awaiting.machine.state)
             assertTrue("every key field is zero", wiped(keys))
-            assertEquals("the window stays consumed", false, h.window.isOpen())
-
-            val second = Harness()
-            try {
-                second.runToCb()
-                val mismatched = RecordCodec.seal(
-                    second.clientKeys.aToBAesKey,
-                    second.clientKeys.aToBNoncePrefix,
-                    second.clientPrefix,
-                    Direction.PHONE_TO_CLIENT,
-                    RecordType.ENROLLMENT_PREPARE.wire,
-                    0uL,
-                    ByteArray(32),
-                )
-                val refusal = second.machine.onFrame(mismatched)
-                assertEquals("a phone-direction prepare on the client stream is refused", PREAUTH_REJECT_TYPE, frameType(refusal))
-                assertEquals(PairingState.IDLE, second.machine.state)
-                assertNull("no protected session survives", second.machine.enrollmentKeysForTest())
-            } finally {
-                second.close()
-            }
+            assertFalse("the window stays consumed", awaiting.window.isOpen())
+            assertEquals(
+                "the persisted pending record survives the direction violation",
+                TrustState.PENDING,
+                awaiting.trust.peers().single().state,
+            )
         } finally {
-            h.close()
+            awaiting.close()
+        }
+
+        // The same record before the client identity is equally a direction violation and
+        // publishes nothing.
+        val protected = Harness()
+        try {
+            protected.runToCb()
+            assertEquals(PairingState.ENROLLMENT_PROTECTED, protected.machine.state)
+            val keys = checkNotNull(protected.machine.enrollmentKeysForTest())
+            val prepare = sealClientPrepare(protected.clientKeys, protected.clientPrefix, 0uL)
+
+            val outgoing = protected.machine.onFrame(prepare)
+
+            assertEquals("an early prepare is refused", PREAUTH_REJECT_TYPE, frameType(outgoing))
+            assertEquals(PairingState.IDLE, protected.machine.state)
+            assertTrue("every key field is zero", wiped(keys))
+            assertTrue("nothing is persisted", protected.trust.peers().isEmpty())
+        } finally {
+            protected.close()
         }
     }
 
@@ -215,6 +213,9 @@ class EnrollmentFlowTest : PairingTestBase() {
             h.sendClientIdentity()
             assertEquals(TrustState.PENDING, h.trust.peers().single().state)
             val keys = checkNotNull(h.machine.enrollmentKeysForTest())
+            // A window opened after the consumed cB must be closed by cancel as well.
+            h.window.open()
+            assertTrue("the post-cB window is open before cancel", h.window.isOpen())
 
             val outgoing = h.machine.cancel()
 
@@ -275,7 +276,10 @@ class EnrollmentFlowTest : PairingTestBase() {
             val peer = h.trust.peers().single()
             assertEquals("the peer id is the client value", TrustEncoding.hex(hinted), peer.installationId)
             assertTrue("the local identity is unchanged", MessageDigest.isEqual(own, h.phoneInstallationId()))
-            assertTrue("no prepare is bound to the hinted id", sawRecord(outputsOf(outgoing), PREPARE_TYPE))
+            assertTrue(
+                "a prepare follows the client record persisted under the hinted peer id",
+                sawRecord(outputsOf(outgoing), PREPARE_TYPE),
+            )
         } finally {
             h.close()
         }
@@ -633,6 +637,12 @@ class EnrollmentFlowTest : PairingTestBase() {
         const val PAIRING_ID_BYTES = 16
         const val POINT_BYTES = 65
         const val CONFIRMATION_BYTES = 32
+        const val PREPARE_BODY_BYTES = 32
+        const val SEQUENCE_OFFSET = 5
+        const val LENGTH_OFFSET = 13
+        const val SESSION_OFFSET = 15
+        const val NONCE_PREFIX_BYTES = 4
+        const val GCM_TAG_BITS = 128
         const val REQUEST_FIXED = NONCE_BYTES + 4
         const val VERSION_OFFSET = NONCE_BYTES
         const val CAPS_LEN_OFFSET = NONCE_BYTES + 2
@@ -679,7 +689,40 @@ class EnrollmentFlowTest : PairingTestBase() {
             ByteArray(0)
         }
 
-        fun errorBody(code: AppErrorCode): ByteArray = byteArrayOf(code.wire.toByte(), 0, 0)
+        /**
+         * A wire-valid client→phone `enrollment_prepare`: the §7 header (direction `0x01`,
+         * type `0x0104`) with a correct AES-256-GCM tag under the client's B-to-A key. The
+         * codec itself refuses this type/direction combination, so the record is sealed here.
+         */
+        fun sealClientPrepare(keys: EnrollmentKeys, prefix: ByteArray, sequence: ULong): ByteArray {
+            val body = ByteArray(PREPARE_BODY_BYTES) { 0x5a }
+            val header = ByteArray(RecordCodec.HEADER)
+            header[0] = 1
+            header[1] = 1
+            header[2] = Direction.CLIENT_TO_PHONE.wire.toByte()
+            header[3] = (RecordType.ENROLLMENT_PREPARE.wire ushr BITS_PER_BYTE).toByte()
+            header[4] = RecordType.ENROLLMENT_PREPARE.wire.toByte()
+            ByteBuffer.wrap(header).putLong(SEQUENCE_OFFSET, sequence.toLong())
+            header[LENGTH_OFFSET] = (body.size ushr BITS_PER_BYTE).toByte()
+            header[LENGTH_OFFSET + 1] = body.size.toByte()
+            prefix.copyInto(header, SESSION_OFFSET)
+            val nonce = ByteArray(NONCE_PREFIX_BYTES + Long.SIZE_BYTES)
+            keys.bToANoncePrefix.copyInto(nonce, 0)
+            ByteBuffer.wrap(nonce).putLong(NONCE_PREFIX_BYTES, sequence.toLong())
+            val ciphertext = try {
+                Cipher.getInstance("AES/GCM/NoPadding").run {
+                    init(Cipher.ENCRYPT_MODE, SecretKeySpec(keys.bToAAesKey, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
+                    updateAAD(header)
+                    doFinal(body)
+                }
+            } catch (failure: Exception) {
+                fail("AES-GCM unavailable: $failure")
+                ByteArray(0)
+            } finally {
+                body.fill(0)
+            }
+            return header + ciphertext
+        }
 
         fun pointFrame(point: ByteArray): ByteArray = PairingFrames.encode(PairingFrameType.PB, point)
 
