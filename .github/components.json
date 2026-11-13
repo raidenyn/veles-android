@@ -259,6 +259,9 @@
         "cliff.toml",
         "verify/test/"
       ],
+      "ci-paths": [
+        "verify/check-root-aliases.sh"
+      ],
       "jobs": [
         "unit-tests"
       ]

@@ -165,6 +165,13 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual({n for n, v in a.items() if v}, {"tooling"})
         self.assertEqual(unaccounted([".github/components.json"], CMAP), [])
 
+    def test_root_alias_script_selects_tooling(self):
+        script = "verify/check-root-aliases.sh"
+        self.assertIn(script, CMAP["nodes"]["tooling"]["ci-paths"])
+        self.assertIn("tooling", owner_nodes(script, CMAP))
+        self.assertTrue(affected([script], CMAP)["tooling"])
+        self.assertEqual(unaccounted([script], CMAP), [])
+
     def test_editorconfig_selects_prettier_and_ktlint_consumers(self):
         self.assertEqual(owner_nodes(".editorconfig", CMAP), {"android", "web-extension", "bridge-scaffold"})
         a = affected([".editorconfig"], CMAP)

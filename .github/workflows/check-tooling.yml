@@ -32,6 +32,12 @@ jobs:
           distribution: temurin
           java-version-file: .java-version
       - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - name: Resolve every documented root alias with a Gradle dry run
+        run: sh verify/check-root-aliases.sh
+      - name: Prove the alias check fails on an unresolved alias
+        run: sh verify/check-root-aliases.sh --self-test
+      - name: Test the MAC comparison guard
+        run: node --test scripts/check-mac-comparisons.test.mjs
       - name: Assert system Python version
         run: python3 --version && python3 -c 'import sys; assert sys.version_info >= (3, 8), sys.version'
       - run: ./gradlew scriptsTest

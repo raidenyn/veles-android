@@ -909,6 +909,34 @@ def check_schema(schema_text):
     return errors
 
 
+# --------------------------------------------------------------------------- Android layout
+
+# Task 15: the Android app lives in the independent android/ build, so the release and JNI producers read
+# android/app/build/... and the Rust clean contract runs the root alias rather than the removed :app: task.
+ANDROID_RELEASE_APK = "android/app/build/outputs/apk/release/app-release-unsigned.apk"
+ANDROID_RELEASE_MAPPING = "android/app/build/outputs/mapping/release/mapping.txt"
+ANDROID_DEBUG_APK = "android/app/build/outputs/apk/debug/app-debug.apk"
+
+
+def check_android_artifacts(build_android, check_rust):
+    """The relocated artifact paths and the root assembleDebug alias."""
+    errors = []
+    build = strip_yaml_comments(build_android)
+    for path in (ANDROID_RELEASE_APK, ANDROID_RELEASE_MAPPING):
+        if path not in build:
+            errors.append("build-android.yml does not read %s" % path)
+    if re.search(r"(?<!android/)app/build/outputs", build):
+        errors.append("build-android.yml still reads the pre-move app/build/outputs paths")
+    rust = strip_yaml_comments(check_rust)
+    if ":app:assembleDebug" in rust:
+        errors.append("check-rust.yml still calls the removed :app:assembleDebug project task")
+    if rust.count("./gradlew assembleDebug") != 2:
+        errors.append("check-rust.yml must build the debug APK twice through the root assembleDebug alias")
+    if rust.count(ANDROID_DEBUG_APK) != 2:
+        errors.append("check-rust.yml must verify both rebuilt debug APKs at %s" % ANDROID_DEBUG_APK)
+    return errors
+
+
 # --------------------------------------------------------------------------- tests
 
 
@@ -1607,6 +1635,35 @@ class WindowsHelperScripts(unittest.TestCase):
             for forbidden in ("Invoke-WebRequest", "Invoke-RestMethod", "curl", "wget", "Invoke-Expression", "iex ", "Start-BitsTransfer", "http://", "https://"):
                 self.assertNotIn(forbidden, body, "%s uses %s" % (name, forbidden))
             self.assertNotRegex(body, r"\|\|\s*true|-ErrorAction\s+SilentlyContinue", name)
+
+
+class AndroidLayoutArtifacts(unittest.TestCase):
+    """Task 15: the producers read the APK from the independent android/ build."""
+
+    BUILD = ".github/workflows/build-android.yml"
+    RUST = ".github/workflows/check-rust.yml"
+
+    def check(self, build=None, rust=None):
+        return check_android_artifacts(build or read(self.BUILD), rust or read(self.RUST))
+
+    def test_the_repository_producers_read_the_relocated_artifact(self):
+        self.assertEqual(self.check(), [])
+
+    def test_the_pre_move_paths_and_project_task_are_rejected(self):
+        build = read(self.BUILD)
+        rust = read(self.RUST)
+        for label, mutated in (
+            ("release APK", build.replace(ANDROID_RELEASE_APK, "app/build/outputs/apk/release/app-release-unsigned.apk")),
+            ("mapping", build.replace(ANDROID_RELEASE_MAPPING, "app/build/outputs/mapping/release/mapping.txt")),
+        ):
+            self.assertNotEqual(mutated, build, label)
+            self.assertNotEqual(self.check(build=mutated), [], label)
+        for label, mutated in (
+            ("project task", rust.replace("./gradlew assembleDebug", "./gradlew :app:assembleDebug")),
+            ("debug APK path", rust.replace(ANDROID_DEBUG_APK, "app/build/outputs/apk/debug/app-debug.apk")),
+        ):
+            self.assertNotEqual(mutated, rust, label)
+            self.assertNotEqual(self.check(rust=mutated), [], label)
 
 
 if __name__ == "__main__":

@@ -51,7 +51,13 @@ jobs:
       - run: npm run lint
         working-directory: web-extension
       - name: Guard against direct MAC comparisons outside the constant-time helpers
-        run: node scripts/check-mac-comparisons.mjs
+        run: node scripts/check-mac-comparisons.mjs --scan web-extension/src
+      - name: Guard against pairing-code logging in the Chrome debug surface
+        run: |
+          if grep -rnE "(console\.[a-z]+|DiagnosticRing|diagnostics\.push|textContent\s*=|\bresult\s*\(|\blog\s*\()[^;]*(PairingCode|\.code\b|codeBytes|\bdigits\b|PairingDebugState|\bcode\b)" web-extension/src/debug --include=*.ts; then
+            echo "::error::The pairing code reaches a log, DiagnosticRing or rendered text in the Chrome debug surface."
+            exit 1
+          fi
       - run: npm run typecheck
         working-directory: web-extension
 
