@@ -234,7 +234,10 @@ export class ClientMachine {
     readonly #repo: ClientTrustRepository;
     readonly #proofs: ProofRegistry | undefined;
     readonly #clock: () => number;
-    readonly #code: string;
+    // Dropped once the core owns the code bytes and on every terminal path:
+    // the immutable JS string cannot be zeroed, so releasing the reference is
+    // the best effort the sensitive-state erasure rule allows.
+    #code: string;
     readonly #label: string;
     readonly #deviceType: DeviceType;
     readonly #caps: Uint8Array;
@@ -309,6 +312,11 @@ export class ClientMachine {
     /** The current inbound sequence, observed by the trace runner's `advance_rx_sequence` guard. */
     rxSequenceForTest(): bigint {
         return this.#rxSequence;
+    }
+
+    /** True once the machine released its reference to the six-digit code. */
+    codeErasedForTest(): boolean {
+        return this.#code.length === 0;
     }
 
     /** Builds the one `pairing_request` frame; legal only from `idle`. */
@@ -433,6 +441,9 @@ export class ClientMachine {
             // SPAKE2 is started only after the offer's public point passed OTP2-CRY-005a.
             void (await requireValidPoint(offer.point));
             const started = this.#core.start(this.#code, context);
+            // The core holds the code bytes for the SPAKE2 exchange; the JS
+            // string reference is no longer needed for this attempt.
+            this.#code = '';
             if (started.point.length !== POINT_BYTES || started.point[0] !== 0x04) {
                 started.execution.close();
                 throw new ClientReject();
@@ -830,6 +841,9 @@ export class ClientMachine {
     }
 
     #eraseLive(): void {
+        // Every terminal path (success, failure, timeout, disconnect, cancel)
+        // passes through here, so the code reference never outlives the attempt.
+        this.#code = '';
         this.#execution?.close();
         this.#execution = null;
         if (this.#keys !== null) {

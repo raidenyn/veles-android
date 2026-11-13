@@ -264,6 +264,11 @@ export class ConnectorApp {
     private devices: readonly { handle: string; label: string }[] = [];
     private pairingLink: PairingLink | null = null;
     private pairingEnded = false;
+    // Invalidates an enrollment startup still awaiting its transport. A cancel,
+    // a tab/host teardown and a replacement start each advance this generation,
+    // so a startup that resolves later disposes its link instead of installing a
+    // link nobody owns.
+    private pairingAttempt = 0;
     // An enrollment connection is not a session: its disappearance must never
     // schedule reconnect recovery.
     private pairingHandles = new Set<string>();
@@ -414,8 +419,14 @@ export class ConnectorApp {
             this.applyFailure(synthesizeAuthenticationFailed());
             return false;
         }
+        // Own this attempt before the teardown await: a cancel, teardown or
+        // replacement that runs during it must make this startup stale.
+        const attempt = this.nextPairingAttempt();
         await this.teardownPairing();
-        if (this.disposed) return false;
+        if (!this.isPairingAttemptLive(attempt)) {
+            if (attempt === this.pairingAttempt) this.pairingEnded = true;
+            return false;
+        }
         this.pairingEnded = false;
         try {
             const link = await PairingLink.start({
@@ -430,16 +441,50 @@ export class ConnectorApp {
                     this.pairingHandles.add(connectionHandle);
                 },
                 onEnded: () => {
-                    this.pairingEnded = true;
+                    // A superseded attempt must not end the current one.
+                    if (attempt === this.pairingAttempt) this.pairingEnded = true;
                 },
             });
+            if (!this.isPairingAttemptLive(attempt)) {
+                // Cancelled, torn down or replaced while starting: never install
+                // a link for an attempt the connector no longer owns.
+                if (attempt === this.pairingAttempt) this.pairingEnded = true;
+                await link.dispose();
+                // A disconnect that already left the controller snapshot was
+                // consumed by `handleChange`; otherwise keep the registration so a
+                // later removal of an ambiguous link never schedules recovery.
+                if (
+                    !this.controller
+                        .snapshot()
+                        .connections.some(
+                            (connection) => connection.handle === link.connectionHandle,
+                        )
+                ) {
+                    this.pairingHandles.delete(link.connectionHandle);
+                }
+                return false;
+            }
             this.pairingLink = link;
             return true;
         } catch {
-            this.pairingEnded = true;
-            this.applyFailure(synthesizeAuthenticationFailed());
+            if (this.isPairingAttemptLive(attempt)) {
+                this.pairingEnded = true;
+                this.applyFailure(synthesizeAuthenticationFailed());
+            } else if (attempt === this.pairingAttempt) {
+                this.pairingEnded = true;
+            }
             return false;
         }
+    }
+
+    /** Starts a new enrollment generation, invalidating every pending startup. */
+    private nextPairingAttempt(): number {
+        this.pairingAttempt += 1;
+        return this.pairingAttempt;
+    }
+
+    private isPairingAttemptLive(attempt: number): boolean {
+        return attempt === this.pairingAttempt && !this.disposed && !this.shuttingDown;
     }
 
     /** True once the current enrollment link stopped (success, failure or cancel). */
@@ -478,6 +523,8 @@ export class ConnectorApp {
 
     /** User cancel of the current enrollment attempt; false when its cleanup failed. */
     async cancelPairing(): Promise<boolean> {
+        // Cancel also invalidates a startup that has not installed its link yet.
+        this.nextPairingAttempt();
         const link = this.pairingLink;
         this.pairingLink = null;
         this.pairingEnded = true;
@@ -492,6 +539,8 @@ export class ConnectorApp {
     }
 
     private abandonPairing(): Promise<void> {
+        // A port death also invalidates a startup still awaiting its transport.
+        this.nextPairingAttempt();
         // Keep the link: a later real tab teardown must still delete the pending
         // record this dead link could not remove.
         const link = this.pairingLink;
@@ -502,6 +551,7 @@ export class ConnectorApp {
     dispose(): void {
         if (this.disposed) return;
         this.disposed = true;
+        this.nextPairingAttempt();
         this.session += 1;
         this.reconnect.dispose();
         void this.teardownPairing();

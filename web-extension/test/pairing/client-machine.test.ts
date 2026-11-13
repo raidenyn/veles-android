@@ -1,6 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
+import {
+    ConnectorApp,
+    type ConnectorControllerLike,
+    type ConnectorView,
+} from '../../src/connector';
+import { ConnectorState } from '../../src/connector/state';
+import type { ConnectorResult } from '../../src/connector/port';
+import type { WireEvent } from '../../src/connector/protocol';
+import { synthesizePortClosed } from '../../src/connector/errors';
 import { ClientMachine, type ClientTrustRepository } from '../../src/pairing/client-machine';
 import type { PairingCore } from '../../src/pairing/core';
 import { PairingFrameType, encodePairingFrame } from '../../src/pairing/frames';
@@ -14,7 +23,12 @@ import { PairingLink, type PairingTransport } from '../../src/pairing/link';
 import { RecordType } from '../../src/session/wire';
 import { bytes } from '../../src/trust/model';
 import type { ChromeTrustRepository } from '../../src/trust/repository';
-import { SessionClock, createTestTrust, flush } from '../connector/session-harness';
+import {
+    SessionClock,
+    createTestTrust,
+    flush,
+    sessionEngineDeps,
+} from '../connector/session-harness';
 import { PACKAGE_BYTES, PhonePeer, hexOf, openPhoneHandleCount } from './enrollment-harness';
 
 beforeAll(async () => {
@@ -234,6 +248,180 @@ class FakeTransport implements PairingTransport {
     emit(bytes: Uint8Array): void {
         for (const listener of this.listeners) listener({ connectionHandle: 'c1', bytes });
     }
+}
+
+type ConnectedEvent = Extract<WireEvent, { type: 'connected' }>;
+type SentEvent = Extract<WireEvent, { type: 'sent' }>;
+type DisconnectedEvent = Extract<WireEvent, { type: 'disconnected' }>;
+type ScanStateEvent = Extract<WireEvent, { type: 'scan_state' }>;
+type ReadyEvent = Extract<WireEvent, { type: 'ready' }>;
+type ShutdownCompleteEvent = Extract<WireEvent, { type: 'shutdown_complete' }>;
+
+interface PendingConnect {
+    readonly handle: string;
+    resolve(result: ConnectorResult<ConnectedEvent>): void;
+}
+
+/**
+ * A controller whose transport `connect` stays pending until the test settles it,
+ * so a pairing startup can be observed mid-flight. `close` is deliberately inert:
+ * it lets `dispose()` race a connect that later resolves successfully.
+ */
+class DeferredPairingController implements ConnectorControllerLike {
+    readonly state = new ConnectorState();
+    readonly connects: PendingConnect[] = [];
+    readonly sent: Uint8Array[] = [];
+    readonly disconnected: string[] = [];
+    portGeneration = 0;
+    private nextHandle = 1;
+
+    connect(): Promise<ConnectorResult<ConnectedEvent>> {
+        const handle = `link-${this.nextHandle}`;
+        this.nextHandle += 1;
+        return new Promise<ConnectorResult<ConnectedEvent>>((resolve) => {
+            this.connects.push({ handle, resolve });
+        });
+    }
+
+    /** Settles a pending connect with a successful transport link. */
+    acceptConnect(index: number): void {
+        const pending = this.connects[index];
+        if (pending === undefined) throw new Error(`connect ${index} was not issued`);
+        pending.resolve({
+            ok: true,
+            event: {
+                type: 'connected',
+                envelope_version: 1,
+                api_version: 1,
+                request_id: `connect-${index}`,
+                connection_handle: pending.handle,
+            },
+        });
+    }
+
+    async send(handle: string, record: Uint8Array): Promise<ConnectorResult<SentEvent>> {
+        this.sent.push(record.slice());
+        return {
+            ok: true,
+            event: {
+                type: 'sent',
+                envelope_version: 1,
+                api_version: 1,
+                request_id: `send-${this.sent.length}`,
+                connection_handle: handle,
+            },
+        };
+    }
+
+    async disconnect(handle: string): Promise<ConnectorResult<DisconnectedEvent>> {
+        this.disconnected.push(handle);
+        return {
+            ok: true,
+            event: {
+                type: 'disconnected',
+                envelope_version: 1,
+                api_version: 1,
+                connection_handle: handle,
+            },
+        };
+    }
+
+    onRecord(): () => void {
+        return () => undefined;
+    }
+    onChange(): () => void {
+        return () => undefined;
+    }
+    onClose(): () => void {
+        return () => undefined;
+    }
+    onFailure(): () => void {
+        return () => undefined;
+    }
+    onWireError(): () => void {
+        return () => undefined;
+    }
+    isOpen(): boolean {
+        return true;
+    }
+    snapshot() {
+        return this.state.snapshot();
+    }
+    open(): void {
+        // The deferred controller is always open; pairing never reopens the port.
+    }
+    close(): Promise<void> {
+        return Promise.resolve();
+    }
+    hello(): Promise<ConnectorResult<ReadyEvent>> {
+        return Promise.resolve({
+            ok: true,
+            event: {
+                type: 'ready',
+                envelope_version: 1,
+                api_version: 1,
+                request_id: 'hello',
+                bridge_version: '1.0.0',
+                platform: 'windows',
+                capabilities: [],
+            },
+        });
+    }
+    startScan(): Promise<ConnectorResult<ScanStateEvent>> {
+        return Promise.resolve({
+            ok: false,
+            source: 'local',
+            error: synthesizePortClosed('start_scan'),
+        });
+    }
+    stopScan(): Promise<ConnectorResult<ScanStateEvent>> {
+        return Promise.resolve({
+            ok: false,
+            source: 'local',
+            error: synthesizePortClosed('stop_scan'),
+        });
+    }
+    shutdown(): Promise<ConnectorResult<ShutdownCompleteEvent>> {
+        return Promise.resolve({
+            ok: false,
+            source: 'local',
+            error: synthesizePortClosed('shutdown'),
+        });
+    }
+}
+
+class SilentView implements ConnectorView {
+    render(): void {
+        // The pairing race tests assert on the machine and transport, not the view.
+    }
+    onAction(): () => void {
+        return () => undefined;
+    }
+}
+
+/** A real trust repository and one connector app over the deferred controller. */
+async function createPairingApp(): Promise<{
+    app: ConnectorApp;
+    controller: DeferredPairingController;
+    trust: Awaited<ReturnType<typeof createTestTrust>>;
+}> {
+    const clock = new SessionClock();
+    const trust = await createTestTrust(clock);
+    const controller = new DeferredPairingController();
+    const app = new ConnectorApp({
+        controller,
+        view: new SilentView(),
+        session: {
+            createRepository(verifier) {
+                trust.bindVerifier(verifier);
+                return trust.repository;
+            },
+            createEngineDeps(handle, peer, localInstallationId) {
+                return sessionEngineDeps(trust, clock, localInstallationId)(handle, peer);
+            },
+        },
+    });
+    return { app, controller, trust };
 }
 
 describe('client enrollment machine', () => {
@@ -741,6 +929,135 @@ describe('client enrollment machine', () => {
             expect(await run.repo.peers()).toEqual(before);
         } finally {
             run.phone.close();
+        }
+    });
+
+    it('cancel_during_pairing_startup_disposes_the_stale_link', async () => {
+        const { app, controller, trust } = await createPairingApp();
+        try {
+            const pairing = app.startPairing('device-1', '000042');
+            await flush();
+            expect(controller.connects).toHaveLength(1);
+
+            // The user cancels while the transport connect is still pending: the
+            // startup has no `pairingLink` to cancel yet, so only the generation
+            // can make it stale.
+            expect(await app.cancelPairing()).toBe(true);
+            controller.acceptConnect(0);
+
+            expect(await pairing).toBe(false);
+            // The resolved link really became live (it sent its pairing_request),
+            // then was disposed instead of being installed.
+            expect(controller.sent).toHaveLength(1);
+            expect(controller.disconnected).toEqual(['link-1']);
+            expect(app.pairingState).toEqual({ phase: 'idle', finished: true });
+            expect(openHandleCount()).toBe(0);
+            expect(await trust.repository.peers()).toEqual([]);
+        } finally {
+            app.dispose();
+        }
+    });
+
+    it('dispose_during_pairing_startup_disposes_the_stale_link', async () => {
+        const { app, controller, trust } = await createPairingApp();
+        const pairing = app.startPairing('device-1', '000042');
+        await flush();
+        expect(controller.connects).toHaveLength(1);
+
+        app.dispose();
+        // The tab teardown is inert for the pending transport, which then resolves
+        // successfully; the startup must still not install that link.
+        controller.acceptConnect(0);
+
+        expect(await pairing).toBe(false);
+        expect(controller.sent).toHaveLength(1);
+        expect(controller.disconnected).toEqual(['link-1']);
+        expect(app.pairingState.finished).toBe(true);
+        expect(openHandleCount()).toBe(0);
+        expect(await trust.repository.peers()).toEqual([]);
+    });
+
+    it('replacement_start_while_pending_leaves_exactly_one_owned_link', async () => {
+        const { app, controller, trust } = await createPairingApp();
+        try {
+            const first = app.startPairing('device-1', '000042');
+            await flush();
+            expect(controller.connects).toHaveLength(1);
+
+            const second = app.startPairing('device-2', '000043');
+            await flush();
+            expect(controller.connects).toHaveLength(2);
+
+            // The first startup resolves after being replaced: it must be disposed.
+            controller.acceptConnect(0);
+            expect(await first).toBe(false);
+            expect(controller.disconnected).toEqual(['link-1']);
+            expect(app.pairingState).toEqual({ phase: 'idle', finished: false });
+
+            // The second startup owns the one live link.
+            controller.acceptConnect(1);
+            expect(await second).toBe(true);
+            expect(app.pairingState).toEqual({ phase: 'awaiting_offer', finished: false });
+            expect(controller.sent).toHaveLength(2);
+            expect(controller.disconnected).toEqual(['link-1']);
+
+            expect(await app.cancelPairing()).toBe(true);
+            expect(controller.disconnected).toEqual(['link-1', 'link-2']);
+            expect(openHandleCount()).toBe(0);
+            expect(await trust.repository.peers()).toEqual([]);
+        } finally {
+            app.dispose();
+        }
+    });
+
+    it('code_reference_released_on_every_terminal_path', async () => {
+        const success = await setup();
+        try {
+            // The machine holds the code until the offer lets the core own it.
+            expect(success.machine.codeErasedForTest()).toBe(false);
+            await toAwaitingPrepare(success);
+            expect(success.machine.codeErasedForTest()).toBe(true);
+            expect(await success.machine.onFrame(await success.phone.prepareFrame())).toEqual([]);
+            await success.machine.commit();
+            // The repository verifier is the production activation gate; accept the
+            // complete-stage proof this enrollment connection just verified.
+            success.trust.bindVerifier(async () => true);
+            const ack = await success.machine.onFrame(await success.phone.completeFrame());
+            expect(ack).toHaveLength(1);
+            expect(success.machine.state).toBe('active');
+            expect(success.machine.codeErasedForTest()).toBe(true);
+        } finally {
+            success.phone.close();
+        }
+
+        const wrongCode = await setup({ phoneCode: '111111' });
+        try {
+            const cA = await toAwaitingCa(wrongCode);
+            expect(wrongCode.machine.codeErasedForTest()).toBe(true);
+            await wrongCode.machine.onFrame(caFrame(cA));
+            expect(wrongCode.machine.failed).toBe(true);
+            expect(wrongCode.machine.codeErasedForTest()).toBe(true);
+        } finally {
+            wrongCode.phone.close();
+        }
+
+        const timedOut = await setup();
+        try {
+            timedOut.machine.start();
+            timedOut.clock.advance(30_000);
+            expect(await timedOut.machine.onTick()).toBe(true);
+            expect(timedOut.machine.codeErasedForTest()).toBe(true);
+        } finally {
+            timedOut.phone.close();
+        }
+
+        const cancelled = await setup();
+        try {
+            cancelled.machine.start();
+            expect(await cancelled.machine.cancel()).toBe(true);
+            expect(cancelled.machine.codeErasedForTest()).toBe(true);
+        } finally {
+            cancelled.phone.close();
         }
     });
 
