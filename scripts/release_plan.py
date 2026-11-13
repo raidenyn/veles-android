@@ -7,6 +7,10 @@ the pinned git-cliff over the component's release paths (`components.release_pat
 components start at `initial-version` with notes limited to `<since>..HEAD` (git-cliff is never asked
 for `--bumped-version` without a tag; cliff.toml has no `initial_tag`).
 
+A component may declare `legacy-release` (`paths` plus an `epoch-path`): commits whose tree lacks
+the epoch path are planned with the legacy paths in a second pass, with the new-layout commits
+passed as `--skip-commit`, and merged back by commit id.
+
 A component is RELEASE when its next version differs from its current one (an untagged component is
 RELEASE at its initial-version); otherwise CARRY. Fails closed on shallow repositories and on tags
 that no published combined release manifest accounts for (newer than listed, or not listed at all).
@@ -154,6 +158,39 @@ def _include_args(paths):
     return args
 
 
+def _tree_has(repo: Path, sha: str, path: str) -> bool:
+    """Whether the commit's tree contains `path` (`git cat-file -e <sha>:<path>`)."""
+    result = subprocess.run(
+        ["git", "cat-file", "-e", "%s:%s" % (sha, path)],
+        cwd=str(repo), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
+def _range_commits(repo: Path, lower: Optional[str]) -> List[str]:
+    """Commit ids in `<lower>..HEAD` (all reachable when lower is None)."""
+    span = "%s..HEAD" % lower if lower else "HEAD"
+    return [line for line in _git(repo, "rev-list", span).splitlines() if line]
+
+
+def legacy_commits(repo: Path, tag: Optional[str], epoch_path: str) -> List[str]:
+    """Old-layout commits in `<tag>..HEAD`: those whose tree lacks `epoch_path`.
+
+    `tag` is the lower bound of the range (the component tag or the map's `since`); without it
+    every commit reachable from HEAD is in the old-layout epoch.
+    """
+    return [sha for sha in _range_commits(repo, tag) if not _tree_has(repo, sha, epoch_path)]
+
+
+def legacy_skip_args(repo: Path, tag: Optional[str], epoch_path: str) -> List[str]:
+    """`--skip-commit` for every new-layout commit in `<tag>..HEAD`, so only old ones remain."""
+    args = []  # type: List[str]
+    for sha in _range_commits(repo, tag):
+        if _tree_has(repo, sha, epoch_path):
+            args += ["--skip-commit", sha]
+    return args
+
+
 def _expected_bump(current: str, reasons: Dict[str, int]) -> str:
     major, minor, patch = _semver(current)
     if reasons.get("breaking"):
@@ -165,15 +202,33 @@ def _expected_bump(current: str, reasons: Dict[str, int]) -> str:
     return current
 
 
+def _commit_groups(context_text: str) -> Dict[str, str]:
+    """Commit id -> git-cliff group from a `--context` payload; first occurrence wins."""
+    groups = {}  # type: Dict[str, str]
+    for release in json.loads(context_text or "[]"):
+        for commit in release.get("commits") or []:
+            cid = commit.get("id")
+            if cid and cid not in groups:
+                groups[cid] = commit.get("group")
+    return groups
+
+
 def _reasons(context_text: str) -> Dict[str, int]:
     counts = {}  # type: Dict[str, int]
-    data = json.loads(context_text or "[]")
-    for release in data:
-        for commit in release.get("commits") or []:
-            reason = REASONS.get(commit.get("group"))
-            if reason:
-                counts[reason] = counts.get(reason, 0) + 1
+    for group in _commit_groups(context_text).values():
+        reason = REASONS.get(group)
+        if reason:
+            counts[reason] = counts.get(reason, 0) + 1
     return {k: counts[k] for k in REASON_ORDER if k in counts}
+
+
+def _merge_reasons(first: Dict[str, int], second: Dict[str, int]) -> Dict[str, int]:
+    """Union of two reason counts, in the canonical reason order."""
+    return {
+        key: first.get(key, 0) + second.get(key, 0)
+        for key in REASON_ORDER
+        if first.get(key) or second.get(key)
+    }
 
 
 def make_plan(
@@ -224,8 +279,36 @@ def make_plan(
         else:
             span = "%s..HEAD" % cmap["since"]
         notes = _cliff(cliff, repo, common + ["--unreleased", "--strip", "all", span]).strip()
-        reasons = _reasons(_cliff(cliff, repo, common + ["--unreleased", "--context", span]))
-        if tag:
+        context = _cliff(cliff, repo, common + ["--unreleased", "--context", span])
+        main_commits = _commit_groups(context)
+        reasons = _reasons(context)
+        # Legacy pass: old-layout commits keep their attribution while the component moves.
+        legacy_added = False
+        legacy = node.get("legacy-release")
+        lower = tag if tag else cmap["since"]
+        if legacy:
+            old = legacy_commits(repo, lower, legacy["epoch-path"])
+            if old:
+                old_ids = set(old)
+                skip_args = legacy_skip_args(repo, lower, legacy["epoch-path"])
+                # Deduplicate by commit id: commits the main pass already matched are skipped here.
+                for cid in main_commits:
+                    if cid in old_ids:
+                        skip_args += ["--skip-commit", cid]
+                legacy_common = _include_args(legacy["paths"]) + skip_args + [
+                    "--tag-pattern", "^%s[0-9]+\\.[0-9]+\\.[0-9]+$" % re.escape(prefix),
+                ]
+                legacy_context = _cliff(
+                    cliff, repo, legacy_common + ["--unreleased", "--context", span]
+                )
+                if _commit_groups(legacy_context):
+                    legacy_added = True
+                    legacy_notes = _cliff(
+                        cliff, repo, legacy_common + ["--unreleased", "--strip", "all", span]
+                    ).strip()
+                    notes = "\n".join(part for part in (notes, legacy_notes) if part)
+                    reasons = _merge_reasons(reasons, _reasons(legacy_context))
+        if tag and not legacy_added:
             bumped = _cliff(cliff, repo, common + ["--bumped-version"]).strip()
             if not bumped.startswith(prefix):
                 raise PlanError("%s: unexpected git-cliff --bumped-version output %r" % (name, bumped))
@@ -236,6 +319,9 @@ def make_plan(
                     "%s: git-cliff bumped %s to %s but the commits since %s imply %s"
                     % (name, current, nxt, tag, expected)
                 )
+        elif tag:
+            # The legacy pass contributed commits, which --bumped-version cannot see.
+            nxt = _expected_bump(current, reasons)
         else:
             nxt = node["initial-version"]
         # Untagged components (never released) start at initial-version; tagged ones are in the manifest.

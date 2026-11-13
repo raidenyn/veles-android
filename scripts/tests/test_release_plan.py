@@ -7,12 +7,14 @@ import unittest
 from contextlib import redirect_stdout
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SCRIPTS)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import gitfixture  # noqa: E402
+import release_plan  # noqa: E402
 from gitfixture import cliff_path, make_repo, requires_cliff  # noqa: E402
 from release_plan import (  # noqa: E402
     PlanError,
@@ -51,6 +53,10 @@ def tagged(test):
     for c in COMPONENTS:
         repo.tag("%s-v0.1.0" % c)
     return repo
+
+
+def planned(repo, previous=ALL_010):
+    return comps(make_plan(repo.path, repo.cmap(), TODAY, ["2026.11.09"], previous, cliff_path()))
 
 
 @requires_cliff
@@ -317,6 +323,134 @@ class PlannerTest(unittest.TestCase):
             "--out", str(work / "plan.json"), "--today", "2026-11-20", "--github-output", str(work / "o"),
         ])
         self.assertEqual(code, 1)
+
+
+@requires_cliff
+class LegacyReleaseTest(unittest.TestCase):
+    """Old-layout commits keep their Android attribution through `legacy-release`."""
+
+    def test_unreleased_feat_app_before_move_still_bumps_android(self):
+        repo = tagged(self)
+        repo.commit("feat(app): camera zoom", touching="app/a.kt")
+        c = planned(repo)
+        self.assertEqual(
+            (c["android"].current, c["android"].next, c["android"].action),
+            ("0.1.0", "0.2.0", "RELEASE"),
+        )
+        self.assertEqual(c["android"].reasons, {"feat": 1})
+        self.assertIn("camera zoom", c["android"].notes)
+        self.assertEqual(c["web-extension"].action, "CARRY")
+        self.assertEqual(c["installer"].action, "CARRY")
+
+    def test_root_only_feat_after_move_does_not_bump_android_but_bumps_web_extension_and_installer(self):
+        repo = tagged(self)
+        repo.migrate()
+        repo.commit("feat(build): root wiring", touching="build.gradle.kts")
+        c = planned(repo)
+        self.assertEqual(
+            (c["android"].current, c["android"].next, c["android"].action),
+            ("0.1.0", "0.1.0", "CARRY"),
+        )
+        self.assertEqual(c["android"].reasons, {})
+        self.assertEqual((c["web-extension"].next, c["web-extension"].action), ("0.2.0", "RELEASE"))
+        self.assertEqual((c["installer"].next, c["installer"].action), ("0.2.0", "RELEASE"))
+
+    def test_squash_migration_counts_through_normal_pass(self):
+        repo = tagged(self)
+        repo.migrate("feat(android): move the app to android/")
+        c = planned(repo)
+        self.assertEqual((c["android"].next, c["android"].action), ("0.2.0", "RELEASE"))
+        self.assertEqual(c["android"].reasons, {"feat": 1})
+        self.assertEqual(c["android"].notes.count("move the app to android/"), 1)
+
+    def test_revert_and_reapply_keeps_old_epoch_attribution(self):
+        repo = tagged(self)
+        migration = repo.migrate()
+        repo.git("revert", "--no-edit", migration)
+        repo.commit("feat(app): mid-revert feature", touching="app/a.kt")
+        repo.migrate("refactor(android): reapply the android layout")
+        c = planned(repo)
+        self.assertEqual((c["android"].next, c["android"].action), ("0.2.0", "RELEASE"))
+        self.assertEqual(c["android"].reasons, {"feat": 1})
+        self.assertEqual(c["android"].notes.count("mid-revert feature"), 1)
+
+    def test_commit_matching_both_passes_counted_once(self):
+        repo = tagged(self)
+        repo.commit("feat(android): shared change", touching=["rust/a.rs", "app/a.kt"])
+        c = planned(repo)
+        self.assertEqual((c["android"].next, c["android"].action), ("0.2.0", "RELEASE"))
+        self.assertEqual(c["android"].reasons, {"feat": 1})
+        self.assertEqual(c["android"].notes.count("- shared change ("), 1)
+
+    def test_legacy_pass_inert_after_new_tag(self):
+        repo = tagged(self)
+        old_feat = repo.commit("feat(app): pre-move feature", touching="app/a.kt")
+        repo.migrate()
+        repo.tag("android-v0.2.0")
+        repo.commit("fix(android): post-tag fix", touching="android/app/a.kt")
+        previous = manifest({"android": "0.2.0", "web-extension": "0.1.0", "installer": "0.1.0"})
+        c = planned(repo, previous)
+        self.assertEqual(
+            (c["android"].current, c["android"].next, c["android"].action),
+            ("0.2.0", "0.2.1", "RELEASE"),
+        )
+        self.assertEqual(c["android"].reasons, {"fix": 1})
+        # The pre-move feature is old-layout but lies before the new tag, so it is out of range.
+        self.assertEqual(release_plan.legacy_commits(repo.path, "android-v0.2.0", "android/"), [])
+        self.assertEqual(release_plan.legacy_commits(repo.path, "android-v0.1.0", "android/"), [old_feat])
+
+    def test_untagged_component_keeps_initial_version_with_legacy_commits(self):
+        repo = make_repo(self)
+        repo.commit("feat(app): before onboarding", touching="app/a.kt")
+        since = repo.commit("chore: onboard", touching="app/a.kt")
+        repo.commit("feat(app): late feature", touching="app/a.kt")
+        c = comps(make_plan(repo.path, repo.cmap(since=since), TODAY, [], None, cliff_path()))
+        self.assertEqual(
+            (c["android"].current, c["android"].next, c["android"].action),
+            (None, "0.1.0", "RELEASE"),
+        )
+        self.assertEqual(c["android"].reasons, {"feat": 1})
+        self.assertIn("late feature", c["android"].notes)
+        self.assertNotIn("before onboarding", c["android"].notes)
+
+    def test_config_detekt_gains_no_attribution(self):
+        repo = tagged(self)
+        repo.commit("fix(detekt): stricter rules", touching="config/detekt/detekt.yml")
+        cmap = repo.cmap()
+        c = comps(make_plan(repo.path, cmap, TODAY, ["2026.11.09"], ALL_010, cliff_path()))
+        self.assertEqual((c["android"].next, c["android"].action), ("0.1.0", "CARRY"))
+        self.assertEqual(c["android"].reasons, {})
+        node = cmap["nodes"]["android"]
+        self.assertNotIn("config/detekt/", node["paths"])
+        self.assertNotIn("config/detekt/", node["legacy-release"]["paths"])
+        self.assertEqual(cmap["retired-paths"]["config/detekt/"], ["android"])
+
+    def test_refactor_migration_leaves_earlier_attribution_unchanged(self):
+        repo = tagged(self)
+        repo.commit("feat(android): pre-move feature", touching="app/a.kt")
+        before = planned(repo)
+        repo.migrate()
+        after = planned(repo)
+        for name in COMPONENTS:
+            self.assertEqual(before[name].next, after[name].next, name)
+            self.assertEqual(before[name].action, after[name].action, name)
+            self.assertEqual(before[name].reasons, after[name].reasons, name)
+        self.assertEqual(before["android"].notes, after["android"].notes)
+
+    def test_bumped_version_crosscheck_kept_without_legacy_commits(self):
+        repo = tagged(self)
+        repo.migrate()
+        calls = []
+        real = release_plan._cliff
+
+        def recording(cliff, repo_path, args):
+            calls.append(list(args))
+            return real(cliff, repo_path, args)
+
+        with mock.patch.object(release_plan, "_cliff", side_effect=recording):
+            planned(repo)
+        self.assertTrue(any("--bumped-version" in args for args in calls))
+        self.assertFalse(any("app/**" in args for args in calls))
 
 
 class PlannerWithoutCliffTest(unittest.TestCase):
