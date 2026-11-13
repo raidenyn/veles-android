@@ -171,10 +171,10 @@
 
 **Files:** scratch only (outside the repo); results recorded in the PR body.
 
-- [ ] **Step 1: Real-build spike**: copy the repo to a scratch directory, apply the include layout (`includeBuild("android")`, `includeBuild("rust")`, android including `../rust`) on the real app build with AGP 9.3, KSP, Hilt and protobuf; run `./gradlew assembleDebug` from the root and from `android/`. Expected: both build. On failure, adopt the script fallback of design D5 and record it.
-- [ ] **Step 2: Shim spike**: run `cd android && ./gradlew --version` on Linux and `gradlew.bat --version` on a Windows checkout (use the `homepc` skill for the Windows machine), then a debug build there (`gradlew.bat assembleDebug` from `android/`, or `gradlew.bat help` if that machine has no Android SDK; report which). Expected: both report Gradle 9.5.0.
-- [ ] **Step 3: Version spike**: `cd android && ./gradlew -q :app:androidGitVersion` must print the same version name and code as the old layout on the same commit.
-- [ ] **Step 4: git-cliff spike** (pinned 2.14.2) on a scratch repository: 500 repeated `--skip-commit`, `--include-path` and `--context` together. If it fails, plan the planner-side commit filter for Task 17.
+- [x] **Step 1: Real-build spike**: copy the repo to a scratch directory, apply the include layout (`includeBuild("android")`, `includeBuild("rust")`, android including `../rust`) on the real app build with AGP 9.3, KSP, Hilt and protobuf; run `./gradlew assembleDebug` from the root and from `android/`. Expected: both build. On failure, adopt the script fallback of design D5 and record it.
+- [x] **Step 2: Shim spike**: run `cd android && ./gradlew --version` on Linux and `gradlew.bat --version` on a Windows checkout (use the `homepc` skill for the Windows machine), then a debug build there (`gradlew.bat assembleDebug` from `android/`, or `gradlew.bat help` if that machine has no Android SDK; report which). Expected: both report Gradle 9.5.0.
+- [x] **Step 3: Version spike**: `cd android && ./gradlew -q :app:androidGitVersion` must print the same version name and code as the old layout on the same commit.
+- [x] **Step 4: git-cliff spike** (pinned 2.14.2) on a scratch repository: 500 repeated `--skip-commit`, `--include-path` and `--context` together. If it fails, plan the planner-side commit filter for Task 17.
 
 ## Task 10: Rust build extraction in the old layout [tasks 4.5-4.9]
 
