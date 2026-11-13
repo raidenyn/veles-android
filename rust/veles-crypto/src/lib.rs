@@ -174,3 +174,5 @@ mod api_tests;
 mod spake2;
 #[cfg(test)]
 mod spake2_tests;
+
+// Last-green selection demo (PR 143): shared Rust change.
