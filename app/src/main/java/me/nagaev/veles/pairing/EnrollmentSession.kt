@@ -53,6 +53,13 @@ internal class EnrollmentSession private constructor(
     /** The session id the proof registry binds this enrollment's activation MACs to. */
     val sessionIdHex: String get() = TrustEncoding.hex(sessionIdPrefix)
 
+    /**
+     * OTP2-REC-011: the shared pair fingerprint display, available only once this enrollment
+     * persisted the client identity (both identities are then authenticated). Null before that.
+     */
+    var pairFingerprintDisplay: String? = null
+        private set
+
     /** The enrollment key holder, exposed only for the erasure assertions. */
     internal val keysForTest: EnrollmentKeys get() = keys
 
@@ -126,10 +133,17 @@ internal class EnrollmentSession private constructor(
             deviceType = client.deviceType.wire,
             enrollmentTranscript = TrustEncoding.hex(transcript),
         )
+        // Computed from public values only and exposed only after the durable write succeeds.
+        val fingerprint = try {
+            computePairFingerprintDisplay(client.identityPubkey)
+        } catch (_: EnrollmentReject) {
+            null
+        }
         return try {
             trust.addPending(pending)
             persistedPeerId = peerId
             this.transcript = transcript.copyOf()
+            pairFingerprintDisplay = fingerprint
             PersistResult.PERSISTED
         } catch (cancellation: CancellationException) {
             throw cancellation
@@ -228,9 +242,21 @@ internal class EnrollmentSession private constructor(
         clientConfirm.fill(0)
         transcript?.fill(0)
         transcript = null
+        pairFingerprintDisplay = null
         persistedPeerId = null
         rxSequence = 0uL
         txSequence = 0uL
+    }
+
+    /** Derives the public pair fingerprint display from the enrolled phone identity body. */
+    private fun computePairFingerprintDisplay(clientIdentityPubkey: ByteArray): String {
+        val phone = EnrollmentRecords.decode(phoneIdentityBody, IdentityRole.PHONE)
+        val pair = EnrollmentRecords.pairFingerprint(phone.identityPubkey, clientIdentityPubkey)
+        return try {
+            EnrollmentRecords.displayFingerprint(pair)
+        } finally {
+            pair.fill(0)
+        }
     }
 
     /** The outcome of [persist]; duplicate and storage failure take different wire paths. */

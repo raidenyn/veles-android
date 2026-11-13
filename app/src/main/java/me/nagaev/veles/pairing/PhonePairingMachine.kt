@@ -108,6 +108,11 @@ class PhonePairingMachine(
     private val label: () -> String = { DEVICE_LABEL },
     private val identityNonce: () -> ByteArray = { ByteArray(IDENTITY_NONCE_BYTES).also(SecureRandom()::nextBytes) },
     private val proofs: ProofRegistry,
+    /**
+     * OTP2-REC-011: the shared pair fingerprint display, published exactly once after both
+     * identities are authenticated and the pending record is durable.
+     */
+    private val onPairFingerprint: (String) -> Unit = {},
 ) : PairingConnection {
     private val mutex = Mutex()
     private var execution: PairingExecution? = null
@@ -466,8 +471,12 @@ class PhonePairingMachine(
         return reject()
     }
 
-    @Suppress("ReturnCount") // Distinct outcomes: bad record, duplicate, persist failure, prepare.
+    @Suppress("ReturnCount") // Distinct outcomes: state guard, bad record, duplicate, persist failure, prepare.
     private suspend fun onClientIdentity(session: EnrollmentSession, body: ByteArray): List<Outgoing> {
+        // A client identity is accepted only in the state the machine enters after a verified
+        // cB and exactly once: a second identity would persist another peer and regress the
+        // activation machine while the earlier record stayed behind.
+        if (state != PairingState.ENROLLMENT_PROTECTED) return reject()
         // OTP2-REC-010/011a and OTP2-CRY-005a: structure, role-bound device type, own-record
         // fingerprint and the full P-256 point check all run before any store is touched.
         val client = try {
@@ -503,6 +512,9 @@ class PhonePairingMachine(
                 }
                 EnrollmentSession.PersistResult.FAILED -> reject()
                 EnrollmentSession.PersistResult.PERSISTED -> {
+                    // OTP2-REC-011: both identities are authenticated and durable now, so the
+                    // public pair fingerprint may reach the UI layer exactly once.
+                    session.pairFingerprintDisplay?.let(onPairFingerprint)
                     // A prepare failure after the durable write keeps the pending record with no
                     // prepare sent. That is intentional: the signed recovery path (OTP2-STA-010b)
                     // is exactly the continuation for a pending record whose connection ended

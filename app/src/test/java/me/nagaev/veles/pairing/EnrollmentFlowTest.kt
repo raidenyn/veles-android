@@ -22,6 +22,7 @@ import me.nagaev.veles.trust.TrustStorage
 import me.nagaev.veles.trust.TrustedPeer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -94,6 +95,113 @@ class EnrollmentFlowTest : PairingTestBase() {
             assertTrue("the existing record is still active", h.trust.peers().single().state == TrustState.ACTIVE)
         } finally {
             h.close()
+        }
+    }
+
+    @Test
+    fun duplicate_identity_after_persist_rejected_in_awaiting_commit() = runBlocking {
+        val h = Harness()
+        try {
+            h.runToCb()
+            h.sendClientIdentity()
+            assertEquals(PairingState.AWAITING_COMMIT, h.machine.state)
+            val firstPeer = h.trust.peers().single()
+            assertEquals("one pending record after the first identity", TrustState.PENDING, firstPeer.state)
+            assertEquals("the fingerprint was published once", 1, h.fingerprints.size)
+
+            val second = ByteArray(16) { (0x50 + it).toByte() }
+            val outgoing = h.sendClientIdentity(installationId = second, sequence = 1uL)
+
+            assertEquals("a second identity is the generic failure", PREAUTH_REJECT_TYPE, frameType(outgoing))
+            assertTrue("the connection is closed", outgoing.contains(Outgoing.Disconnect))
+            assertNotEquals("the machine never becomes active", PairingState.ACTIVE, h.machine.state)
+            assertEquals("no second record is created", 1, h.trust.peers().size)
+            assertEquals("the first record still owns the store", firstPeer, h.trust.peers().single())
+            val storedSecond = h.trust.peers().count { it.installationId == TrustEncoding.hex(second) }
+            assertEquals("the second installation id was never stored", 0, storedSecond)
+            assertEquals("the store still saw exactly one addPending", 1, h.trust.addPendingCalls)
+            assertEquals("a rejected duplicate identity publishes no fingerprint", 1, h.fingerprints.size)
+            assertNull("the enrollment keys are erased", h.machine.enrollmentKeysForTest())
+        } finally {
+            h.close()
+        }
+    }
+
+    @Test
+    fun duplicate_identity_after_commit_rejected_in_committed_waiting_ack() = runBlocking {
+        val h = Harness()
+        try {
+            h.runToCb()
+            h.sendClientIdentity()
+            h.sendCommit()
+            assertEquals(PairingState.COMMITTED_WAITING_ACK, h.machine.state)
+            val committed = h.trust.peers().single()
+            assertEquals("the commit moves the durable record", TrustState.COMMITTED_WAITING_ACK, committed.state)
+
+            val second = ByteArray(16) { (0x60 + it).toByte() }
+            val outgoing = h.sendClientIdentity(installationId = second, sequence = 2uL)
+
+            assertEquals("a second identity is the generic failure", PREAUTH_REJECT_TYPE, frameType(outgoing))
+            assertTrue("the connection is closed", outgoing.contains(Outgoing.Disconnect))
+            assertNotEquals("the machine never becomes active", PairingState.ACTIVE, h.machine.state)
+            assertEquals("no second record is created", 1, h.trust.peers().size)
+            assertEquals("the committed record survives unchanged", committed, h.trust.peers().single())
+            val storedSecond = h.trust.peers().count { it.installationId == TrustEncoding.hex(second) }
+            assertEquals("the second installation id was never stored", 0, storedSecond)
+            assertEquals("the store still saw exactly one addPending", 1, h.trust.addPendingCalls)
+        } finally {
+            h.close()
+        }
+    }
+
+    @Test
+    fun pair_fingerprint_published_once_after_identity_persist() = runBlocking {
+        val h = Harness()
+        try {
+            h.runToCb()
+            assertTrue("nothing is published before the client identity", h.fingerprints.isEmpty())
+
+            h.sendClientIdentity()
+
+            assertEquals("one publish after the durable identity", 1, h.fingerprints.size)
+            assertEquals("the published value is the shared pair fingerprint", h.expectedPairFingerprint(), h.fingerprints.single())
+            assertTrue(
+                "the display is XXXX XXXX XXXX",
+                h.fingerprints.single().matches(Regex("[0-9A-F]{4} [0-9A-F]{4} [0-9A-F]{4}")),
+            )
+        } finally {
+            h.close()
+        }
+    }
+
+    @Test
+    fun pair_fingerprint_not_published_without_a_successful_identity_persist() = runBlocking {
+        val duplicate = Harness()
+        try {
+            duplicate.seedActive(duplicate.clientInstallationHex)
+            duplicate.runToCb()
+            duplicate.sendClientIdentity()
+            assertTrue("a duplicate identity publishes no fingerprint", duplicate.fingerprints.isEmpty())
+        } finally {
+            duplicate.close()
+        }
+
+        val invalid = Harness()
+        try {
+            invalid.runToCb()
+            invalid.sendClientIdentity(deviceType = DeviceType.PHONE)
+            assertTrue("a role-invalid identity publishes no fingerprint", invalid.fingerprints.isEmpty())
+        } finally {
+            invalid.close()
+        }
+
+        val failed = Harness(failPersist = true)
+        try {
+            failed.runToCb()
+            failed.sendClientIdentity()
+            assertTrue("a failed persist publishes no fingerprint", failed.fingerprints.isEmpty())
+        } finally {
+            failed.close()
         }
     }
 
@@ -369,8 +477,11 @@ class EnrollmentFlowTest : PairingTestBase() {
             ActivationVerifier { _, _, _ -> true },
         )
         val trust = RecordingTrust(repository)
+        val fingerprints = mutableListOf<String>()
         lateinit var machine: PhonePairingMachine
         var phoneRecord: ByteArray = ByteArray(0)
+            private set
+        var lastClientBody: ByteArray = ByteArray(0)
             private set
 
         lateinit var context: ByteArray
@@ -412,6 +523,7 @@ class EnrollmentFlowTest : PairingTestBase() {
             { "Phone" },
             { ByteArray(16) { 0x2a } },
             ProofRegistry(),
+            onPairFingerprint = { fingerprint -> fingerprints += fingerprint },
         )
 
         fun requestFrame(): ByteArray = requestFrame(clientNonce)
@@ -464,6 +576,7 @@ class EnrollmentFlowTest : PairingTestBase() {
         fun sendClientIdentity(
             installationId: ByteArray? = null,
             deviceType: DeviceType = DeviceType.DESKTOP,
+            sequence: ULong = 0uL,
         ): List<Outgoing> {
             val record = EnrollmentRecords.create(
                 installationId ?: CLIENT_INSTALLATION,
@@ -473,6 +586,7 @@ class EnrollmentFlowTest : PairingTestBase() {
                 ByteArray(16) { 0x33 },
             )
             val body = EnrollmentRecords.encode(record, if (deviceType == DeviceType.PHONE) IdentityRole.PHONE else IdentityRole.CLIENT)
+            lastClientBody = body.copyOf()
             if (installationId != null) clientInstallationHex = TrustEncoding.hex(installationId)
             val frame = RecordCodec.seal(
                 clientKeys.bToAAesKey,
@@ -480,10 +594,46 @@ class EnrollmentFlowTest : PairingTestBase() {
                 clientPrefix,
                 Direction.CLIENT_TO_PHONE,
                 RecordType.ENROLL_IDENTITY.wire,
-                0uL,
+                sequence,
                 body,
             )
             return runBlocking { machine.onFrame(frame) }
+        }
+
+        /** Sends a verified `activation_commit` for this enrollment at the next client sequence. */
+        fun sendCommit(sequence: ULong = 1uL) {
+            val et = expectedTranscript(lastClientBody)
+            val body = try {
+                activationMac(clientKeys.clientActivationKey, et, STAGE_COMMIT)
+            } finally {
+                et.fill(0)
+            }
+            val frame = try {
+                RecordCodec.seal(
+                    clientKeys.bToAAesKey,
+                    clientKeys.bToANoncePrefix,
+                    clientPrefix,
+                    Direction.CLIENT_TO_PHONE,
+                    RecordType.ACTIVATION_COMMIT.wire,
+                    sequence,
+                    body,
+                )
+            } finally {
+                body.fill(0)
+            }
+            runBlocking { machine.onFrame(frame) }
+        }
+
+        /** OTP2-REC-011 display of the pair fingerprint both authenticated identities define. */
+        fun expectedPairFingerprint(): String {
+            val phone = TrustEncoding.bytes(phonePublicKey)
+            val client = TestPeers.uncompressed(clientIdentityKey.public as ECPublicKey)
+            val pair = EnrollmentRecords.pairFingerprint(phone, client)
+            return try {
+                EnrollmentRecords.displayFingerprint(pair)
+            } finally {
+                pair.fill(0)
+            }
         }
 
         fun expectedTranscript(clientBody: ByteArray): ByteArray = EnrollmentRecords.transcript(
@@ -655,6 +805,7 @@ class EnrollmentFlowTest : PairingTestBase() {
         const val ERROR_TYPE = 0x0003
         const val PREPARE_TYPE = 0x0104
         const val PHONE_TO_CLIENT = 0x02
+        const val STAGE_COMMIT: Byte = 0x01
         const val CONN_ONE = 1L
         const val CONN_TWO = 2L
         const val CONN_THREE = 3L
@@ -684,6 +835,16 @@ class EnrollmentFlowTest : PairingTestBase() {
             Mac.getInstance("HmacSHA256").run {
                 init(SecretKeySpec(key, "HmacSHA256"))
                 doFinal(et + byteArrayOf(0))
+            }
+        } catch (_: Exception) {
+            fail("HMAC unavailable")
+            ByteArray(0)
+        }
+
+        fun activationMac(key: ByteArray, et: ByteArray, stage: Byte): ByteArray = try {
+            Mac.getInstance("HmacSHA256").run {
+                init(SecretKeySpec(key, "HmacSHA256"))
+                doFinal(et + byteArrayOf(stage))
             }
         } catch (_: Exception) {
             fail("HMAC unavailable")
