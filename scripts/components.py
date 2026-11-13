@@ -243,7 +243,7 @@ def _select_nodes(cmap, files, node_head, bases, notes, cwd):
     for node in cmap["nodes"]:
         note = notes.get(node)
         if note is not None:
-            result[node] = True
+            result[node] = affected_for_node(node, files, cmap)
             reasons[node] = ("none", note)
             continue
         if bases is None or node not in bases:

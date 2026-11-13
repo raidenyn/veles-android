@@ -515,6 +515,49 @@ class PerNodeSelectionTest(unittest.TestCase):
                 summary_rows(summary)["android"], ["skip", parent, "unchanged since " + parent]
             )
 
+    def test_evidence_note_uses_full_diff_selection(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as state:
+            git(tmp, "init", "-q")
+            base = commit_file(tmp, "app/base.kt", "class Base\n", "base")
+            docs_head = commit_file(tmp, "docs/ci.md", "docs\n", "docs")
+            bases = write_json(state, "bases.json", {n: base for n in NODES})
+            notes = write_json(
+                state, "notes.json", {"android": "never passed", "web-extension": "incompatible map"}
+            )
+
+            out = os.path.join(state, "out")
+            summary = os.path.join(state, "summary.md")
+            rc = main(
+                [
+                    "changed", "--base", base, "--head", docs_head, "--node-bases", bases,
+                    "--evidence-notes", notes, "--github-output", out, "--summary-out", summary,
+                ],
+                cwd=tmp,
+            )
+            self.assertEqual(rc, 0)
+            self.assertFalse(any(read_outputs(out).values()))
+            rows = summary_rows(summary)
+            self.assertEqual(rows["android"], ["skip", "none", "never passed"])
+            self.assertEqual(rows["web-extension"], ["skip", "none", "incompatible map"])
+
+            app_head = commit_file(tmp, "app/feature.kt", "class Feature\n", "feature")
+            out = os.path.join(state, "out-app")
+            summary = os.path.join(state, "summary-app.md")
+            rc = main(
+                [
+                    "changed", "--base", base, "--head", app_head, "--node-bases", bases,
+                    "--evidence-notes", notes, "--github-output", out, "--summary-out", summary,
+                ],
+                cwd=tmp,
+            )
+            self.assertEqual(rc, 0)
+            outputs = read_outputs(out)
+            self.assertTrue(outputs["android"])
+            self.assertFalse(outputs["web-extension"])
+            rows = summary_rows(summary)
+            self.assertEqual(rows["android"], ["run", "none", "never passed"])
+            self.assertEqual(rows["web-extension"], ["skip", "none", "incompatible map"])
+
     def test_node_without_base_uses_full_diff(self):
         with tempfile.TemporaryDirectory() as tmp:
             git(tmp, "init", "-q")
@@ -655,8 +698,8 @@ class PerNodeSelectionTest(unittest.TestCase):
             rows = summary_rows(summary)
             self.assertEqual(rows["android"], ["run", base, "changed since " + base])
             self.assertEqual(rows["rust"], ["skip", base, "unchanged since " + base])
-            self.assertEqual(rows["web-extension"], ["run", "none", "incompatible map"])
-            self.assertEqual(rows["installer"], ["run", "none", "never passed"])
+            self.assertEqual(rows["web-extension"], ["skip", "none", "incompatible map"])
+            self.assertEqual(rows["installer"], ["skip", "none", "never passed"])
 
             fallback = write_json(tmp, "fallback.json", {"android": "2" * 40, "rust": base})
             rc = main(
