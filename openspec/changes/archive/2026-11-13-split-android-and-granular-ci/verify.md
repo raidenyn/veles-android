@@ -108,6 +108,33 @@ New code follows the existing patterns: stdlib-only Python with `unittest`, Node
 Vitest suites, shell acceptance scripts with explicit failure messages, workflow contracts that
 derive from the source, and the existing component-map/planner structure. No significant deviations.
 
+## Schema verification bookkeeping
+
+1. **Structural validation:** `openspec validate --all --json` reports 13/13 items
+   passed, 0 failed (13 spec items, 0 active changes). The remaining warnings are the
+   pre-existing long-requirement text and TBD purposes in unrelated specs; the two new
+   specs have authored purposes.
+2. **Task completion:** apply iteration 4; 55/57 at verification. The two incomplete
+   tasks are 7.1 (this verification/archive action, completed by the archive) and 7.2
+   (the plan's explicit non-blocking follow-up). After the archive, 7.1 is checked and
+   7.2 remains deferred.
+3. **Delta spec sync state:** before the archive all four deltas needed sync; the
+   archive synced them. Post-sync: `android-standalone-build` ✓ synced (new spec),
+   `pr-last-green-selection` ✓ synced (new spec), `ci-pipeline` ✓ synced,
+   `component-versioning` ✓ synced. Every delta requirement matches its main-spec block,
+   all main-only requirements and scenarios are preserved, and no delta operation
+   headers remain.
+4. **Design/specs coherence:** D1-D8 spot-checked against the requirements; the two
+   owner-approved deviations (fixture assets under `android/config/android_keys/`,
+   release identity CI-only) are recorded, and no drift was found.
+5. **Implementation signal:** all implementation changes are committed in the four
+   merged PRs (`5ca8bfa`, `8de11f6`, `146b054`, `cd36a47`); the worktree was clean when
+   the archive ran. The verification, finalize and archive receipts are committed on
+   `verify/final` at `1d15ea8..1ce4451`.
+
+**Verification outcome:** PASS_WITH_WARNINGS (no critical implementation issues;
+release-certificate parity and the D5 fallback are not verified).
+
 ## Issues
 
 ### CRITICAL

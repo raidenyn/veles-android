@@ -46,8 +46,11 @@ this receipt branch has no PR of its own.
 
 - **Baseline status at finish**: `passing`
 
-The merged head `cd36a47` passed every CI node; the final local gates (layout
-acceptance, contracts, scripts, components check, clean contract) also passed. See
+At the finalize snapshot (20:57) the post-merge master CI run 43505730991 on
+`cd36a47` was still completing: every node except `rust / jni-integration` had
+succeeded, and that job was still in progress. This receipt does not claim a
+completed all-node master run; the PR-head CI and the final local gates (layout
+acceptance, contracts, scripts, components check, clean contract) passed. See
 `verify.md` for the detailed evidence and the two unverified contingencies
 (release-certificate parity reserved to CI, D5 fallback unexercised).
 
