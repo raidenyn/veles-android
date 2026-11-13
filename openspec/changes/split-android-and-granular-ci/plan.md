@@ -150,10 +150,10 @@
 
 ## Task 7: Open PR 1 [tasks 2.10, 2.11]
 
-- [ ] **Step 1:** Run `./gradlew spotlessCheck detekt lintDebug`, the raw `android.util.Log` guard commands from `check-android.yml`, `./gradlew scriptsTest`, `node --test verify/test/workflow-contracts.test.mjs`. Expected: all succeed (stop and report if any cannot run).
-- [ ] **Step 2:** Write the squash message to a file and run `python3 -I scripts/commitlint.py --file <file>` (title `feat(ci): skip unchanged nodes using per-node last-green runs`). Expected: exit 0.
-- [ ] **Step 3:** Push the branch, `gh pr create` with the body listing the map cleanups, the kill switch and rollback (`CI_LAST_GREEN=off` or revert), ending with the PR attribution line; link the PR.
-- [ ] **Step 4: Scratch PR demonstration**: a scratch PR with an Android-only change, a docs-only follow-up push, then a Rust push; expected summaries `android: unchanged since <sha>` after the docs push and `android: changed since <sha>` after the Rust push; attach them to PR 1.
+- [x] **Step 1:** Run `./gradlew spotlessCheck detekt lintDebug`, the raw `android.util.Log` guard commands from `check-android.yml`, `./gradlew scriptsTest`, `node --test verify/test/workflow-contracts.test.mjs`. Expected: all succeed (stop and report if any cannot run).
+- [x] **Step 2:** Write the squash message to a file and run `python3 -I scripts/commitlint.py --file <file>` (title `feat(ci): skip unchanged nodes using per-node last-green runs`). Expected: exit 0.
+- [x] **Step 3:** Push the branch, `gh pr create` with the body listing the map cleanups, the kill switch and rollback (`CI_LAST_GREEN=off` or revert), ending with the PR attribution line; link the PR.
+- [x] **Step 4: Scratch PR demonstration**: a scratch PR with an Android-only change, a docs-only follow-up push, then a Rust push; expected summaries `android: unchanged since <sha>` after the docs push and `android: changed since <sha>` after the Rust push; attach them to PR 1.
 
 ## Task 8: PR 1b - move the protocol spec [tasks 3.1-3.6]
 
