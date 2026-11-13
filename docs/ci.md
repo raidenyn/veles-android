@@ -128,13 +128,19 @@ The rules for each changed path:
 | `unowned` (`docs/`, `openspec/`, `README.md`, ...) | nothing |
 | nothing above (unaccounted) | every node, and `changes` fails after writing the outputs |
 
+Current overrides: `.github/components.json` selects `tooling`; `.github/workflows/check-android.yml` and
+`.github/workflows/build-android.yml` select `android`, `tooling` and `installer`.
+
 Every node also declares `jobs`, its expected job display names without the `<node> / ` prefix; the
 workflow contract suite derives them from the reusable workflow each caller invokes and fails on drift,
 on a matrix job and on any shape it cannot derive.
 
-Because every workflow file is under `.github/`, any workflow edit runs the whole tree, including
-`native-host / build-contract` and `installer / scripts-tests`, which own the two Python build-contract
-suites.
+Because every workflow file is under `.github/`, a workflow edit selects every node unless a
+`global-overrides` entry names it. The two Android workflows select only `android`, `tooling` and
+`installer`, because the tooling workflow contract suite and the installer `scripts-tests` read them.
+Every other workflow, such as `ci.yml`, `check-rust.yml`, `build-rust.yml` and `publish-release.yml`,
+stays global and still selects every node, including `native-host / build-contract` and
+`installer / scripts-tests`, which own the two Python build-contract suites.
 
 Node jobs use `if: !cancelled() && needs.changes.outputs.<node> == 'true'`, so when `changes` writes its
 outputs and then fails (an unaccounted path), the selected nodes still run and `ci-ok` still fails.

@@ -128,11 +128,44 @@ class SelectionTest(unittest.TestCase):
     def test_global_selects_all(self):
         for path in (
             "gradle/wrapper/gradle-wrapper.properties",
-            ".github/workflows/check-android.yml",
+            ".github/workflows/ci.yml",
             ".java-version",
         ):
             with self.subTest(path=path):
                 self.assertTrue(all(affected([path], CMAP).values()), path)
+
+    def test_check_android_workflow_selects_android_tooling_installer(self):
+        path = ".github/workflows/check-android.yml"
+        self.assertEqual(
+            sorted(CMAP["global-overrides"][path]), ["android", "installer", "tooling"]
+        )
+        self.assertEqual(owner_nodes(path, CMAP), {"android", "installer", "tooling"})
+        a = affected([path], CMAP)
+        self.assertEqual({n for n, v in a.items() if v}, {"android", "installer", "tooling"})
+        self.assertEqual(unaccounted([path], CMAP), [])
+
+    def test_build_android_workflow_selects_android_tooling_installer(self):
+        path = ".github/workflows/build-android.yml"
+        self.assertEqual(
+            sorted(CMAP["global-overrides"][path]), ["android", "installer", "tooling"]
+        )
+        self.assertEqual(owner_nodes(path, CMAP), {"android", "installer", "tooling"})
+        a = affected([path], CMAP)
+        self.assertEqual({n for n, v in a.items() if v}, {"android", "installer", "tooling"})
+        self.assertEqual(unaccounted([path], CMAP), [])
+
+    def test_other_workflows_stay_global(self):
+        for path in (
+            ".github/workflows/ci.yml",
+            ".github/workflows/check-rust.yml",
+            ".github/workflows/build-rust.yml",
+            ".github/workflows/publish-release.yml",
+        ):
+            with self.subTest(path=path):
+                self.assertNotIn(path, CMAP["global-overrides"])
+                self.assertIsNone(owner_nodes(path, CMAP))
+                self.assertTrue(all(affected([path], CMAP).values()), path)
+                self.assertEqual(unaccounted([path], CMAP), [])
 
     def test_root_build_file_selects_every_node_but_android(self):
         for path in ("build.gradle.kts", "settings.gradle.kts", "gradle.properties"):
