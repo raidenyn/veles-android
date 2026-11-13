@@ -90,6 +90,14 @@ export interface ClientMachineDeps {
     nonce?: () => Uint8Array;
     /** The 16-byte nonce of the client's own `enroll_identity`; tests inject it. */
     identityNonce?: () => Uint8Array;
+    /**
+     * Attempt cancellation, owned by the connector's attempt generation. Every
+     * asynchronous transition rechecks it before further core progress or an
+     * outbound frame, so a cancel is never lost inside an await.
+     */
+    isCancelled?: () => boolean;
+    /** Test-only point-validation hook; the production default is `requireValidPoint`. */
+    validatePoint?: (point: Uint8Array) => Promise<unknown>;
 }
 
 /** Generic client pairing rejection. It carries no code, record or key value. */
@@ -243,6 +251,8 @@ export class ClientMachine {
     readonly #caps: Uint8Array;
     readonly #nonce: () => Uint8Array;
     readonly #identityNonce: () => Uint8Array;
+    readonly #isCancelled: () => boolean;
+    readonly #validatePoint: (point: Uint8Array) => Promise<unknown>;
 
     #state: ClientState = 'idle';
     #failure = false;
@@ -281,6 +291,8 @@ export class ClientMachine {
         this.#nonce = deps.nonce ?? (() => crypto.getRandomValues(new Uint8Array(NONCE_BYTES)));
         this.#identityNonce =
             deps.identityNonce ?? (() => crypto.getRandomValues(new Uint8Array(NONCE_BYTES)));
+        this.#isCancelled = deps.isCancelled ?? (() => false);
+        this.#validatePoint = deps.validatePoint ?? requireValidPoint;
         if (!/^[0-9]{6}$/.test(this.#code)) throw new ClientReject();
         if (!validCaps(this.#caps)) throw new ClientReject();
     }
@@ -351,7 +363,7 @@ export class ClientMachine {
      * caller can report it. A record already recovered to the active family is never revoked.
      */
     cancel(): Promise<boolean> {
-        return this.#serial(() => this.#cancel());
+        return this.#serial(() => this.#cancel(), true);
     }
 
     /** Link loss: erases material and returns to `idle`, keeping a durable pending record. */
@@ -362,7 +374,7 @@ export class ClientMachine {
             this.#failure = true;
             this.#closed = true;
             this.#fingerprint = undefined;
-        });
+        }, true);
     }
 
     /** The §11.2 client timeout; returns true when the attempt was abandoned. */
@@ -378,16 +390,39 @@ export class ClientMachine {
             this.#closed = true;
             this.#fingerprint = undefined;
             return true;
-        });
+        }, true);
     }
 
-    #serial<T>(operation: () => T | Promise<T>): Promise<T> {
-        const next = this.#queue.then(() => operation());
+    /**
+     * Serializes one operation. Processing operations are fenced here too: an
+     * operation that was queued before a cancel must not start after it.
+     */
+    #serial<T>(operation: () => T | Promise<T>, allowCancelled = false): Promise<T> {
+        const next = this.#queue.then(() => {
+            if (!allowCancelled) this.#assertNotCancelled();
+            return operation();
+        });
         this.#queue = next.then(
             () => undefined,
             () => undefined,
         );
         return next;
+    }
+
+    /**
+     * Fences one asynchronous transition against a cancellation that landed while
+     * it was awaiting. Any cancellation after an await stops further core progress
+     * and outbound frames; the link's queued `cancel` still owns the pending-record
+     * cleanup (the id is deliberately preserved by `#eraseLive`).
+     */
+    #assertNotCancelled(): void {
+        if (!this.#isCancelled()) return;
+        this.#eraseLive();
+        this.#state = 'idle';
+        this.#failure = true;
+        this.#closed = true;
+        this.#fingerprint = undefined;
+        throw new ClientReject();
     }
 
     async #onFrame(bytes: Uint8Array): Promise<Uint8Array[]> {
@@ -396,7 +431,11 @@ export class ClientMachine {
         try {
             if (PROTECTED_STATES.has(this.#state)) return await this.#onProtected(bytes);
             return await this.#onPlain(bytes);
-        } catch {
+        } catch (error) {
+            // A cancellation that landed mid-transition already erased the machine;
+            // it must not become a pre-authentication reject frame (the link drops
+            // the attempt instead).
+            if (this.#isCancelled()) throw error;
             return preAuth ? this.#failPreAuthentication() : this.#failPostAuthentication();
         }
     }
@@ -439,7 +478,14 @@ export class ClientMachine {
         );
         try {
             // SPAKE2 is started only after the offer's public point passed OTP2-CRY-005a.
-            void (await requireValidPoint(offer.point));
+            void (await this.#validatePoint(offer.point));
+        } catch {
+            return this.#failPreAuthentication();
+        }
+        // Point validation is asynchronous: a cancel that landed while it ran must
+        // stop the core from starting and `pB` from ever being released.
+        this.#assertNotCancelled();
+        try {
             const started = this.#core.start(this.#code, context);
             // The core holds the code bytes for the SPAKE2 exchange; the JS
             // string reference is no longer needed for this attempt.
@@ -490,6 +536,9 @@ export class ClientMachine {
         } finally {
             shared.fill(0);
         }
+        // Key derivation is asynchronous: a cancel that landed meanwhile must
+        // release neither `cB` nor any live enrollment key.
+        this.#assertNotCancelled();
         this.#phoneConfirm = payload.slice();
         this.#clientConfirm = confirmation.slice();
         this.#rxSequence = 0n;
@@ -520,6 +569,9 @@ export class ClientMachine {
         } catch {
             return this.#failPostAuthentication();
         }
+        // Opening the record is asynchronous; a cancel that landed meanwhile must
+        // not advance the sequence or dispatch the record.
+        this.#assertNotCancelled();
         this.#rxSequence += 1n;
         if (
             this.#state === 'awaiting_phone_identity' &&
@@ -561,6 +613,7 @@ export class ClientMachine {
         } catch {
             return this.#failPostAuthentication();
         }
+        this.#assertNotCancelled();
         let own: IdentityRecord;
         let ownBody: Uint8Array;
         let phoneBody: Uint8Array;
@@ -591,6 +644,9 @@ export class ClientMachine {
         } catch {
             return this.#failPostAuthentication();
         }
+        // Identity creation and the transcript are asynchronous: a cancel that
+        // landed meanwhile must not write a durable pending record.
+        this.#assertNotCancelled();
         try {
             // OTP2-STA-010a: the COMPLETE public pending record is durable before the
             // client's own identity is released. A duplicate installation ID throws
@@ -608,15 +664,18 @@ export class ClientMachine {
             et.fill(0);
             return this.#failPostAuthentication();
         }
+        // The record is durable from here on: remember its id before any further
+        // await so a cancellation can still delete exactly this enrollment's record.
+        this.#pendingPeerId = hex(phone.installationId);
         this.#phoneBody = phoneBody;
         this.#clientBody = ownBody;
         this.#et = et;
-        this.#pendingPeerId = hex(phone.installationId);
+        let frame: Uint8Array;
         try {
             this.#fingerprint = fingerprintDisplay(
                 await pairFingerprint(phone.identityPubkey, own.identityPubkey),
             );
-            const frame = await sealRecord(
+            frame = await sealRecord(
                 this.#requiredKey(this.#bToAKey),
                 this.#requiredKeys().bToANoncePrefix,
                 this.#requiredPrefix(),
@@ -625,13 +684,16 @@ export class ClientMachine {
                 this.#txSequence,
                 ownBody,
             );
-            this.#txSequence += 1n;
-            this.#state = 'awaiting_prepare';
-            this.#lastActivity = this.#clock();
-            return [frame];
         } catch {
             return this.#failPostAuthentication();
         }
+        // The fingerprint and sealed record are asynchronous: a cancel that landed
+        // meanwhile must not release the client identity frame.
+        this.#assertNotCancelled();
+        this.#txSequence += 1n;
+        this.#state = 'awaiting_prepare';
+        this.#lastActivity = this.#clock();
+        return [frame];
     }
 
     async #onPrepare(body: Uint8Array): Promise<Uint8Array[]> {
@@ -652,6 +714,9 @@ export class ClientMachine {
             return this.#failPostAuthentication();
         }
         expected.fill(0);
+        // The MAC comparison is asynchronous; a cancel that landed meanwhile must
+        // not leave the machine ready to commit.
+        this.#assertNotCancelled();
         this.#state = 'verified_prepare_ready';
         this.#lastActivity = this.#clock();
         return [];
@@ -676,6 +741,9 @@ export class ClientMachine {
             return this.#failPostAuthentication();
         }
         expected.fill(0);
+        // The MAC is asynchronous; a cancel that landed meanwhile must not reach
+        // the trust store or activate anything.
+        this.#assertNotCancelled();
         const peerId = this.#pendingPeerId;
         const prefix = this.#prefix;
         if (peerId === null || prefix === null) return this.#failPostAuthentication();
@@ -690,13 +758,17 @@ export class ClientMachine {
             this.#proofs?.revoke(hex(prefix));
             return this.#failPostAuthentication();
         }
+        // The confirmation is asynchronous; a cancel that landed meanwhile must
+        // not release the activation ack.
+        this.#assertNotCancelled();
         this.#pendingPeerId = null;
+        let frame: Uint8Array;
         try {
             const ack = await hmacSha256(
                 this.#requiredKeys().clientActivationKey,
                 concat(this.#requiredEt(), Uint8Array.of(3)),
             );
-            const frame = await sealRecord(
+            frame = await sealRecord(
                 this.#requiredKey(this.#bToAKey),
                 this.#requiredKeys().bToANoncePrefix,
                 this.#requiredPrefix(),
@@ -706,17 +778,20 @@ export class ClientMachine {
                 ack,
             );
             ack.fill(0);
-            this.#txSequence += 1n;
-            // OTP2-CRY-019e: the client erases every enrollment key immediately
-            // after sending the ack; only the public fingerprint remains.
-            this.#eraseLive();
-            this.#state = 'active';
-            this.#closed = true;
-            this.#lastActivity = this.#clock();
-            return [frame];
         } catch {
             return this.#failPostAuthentication();
         }
+        // The ack and its record are asynchronous; a cancel that landed meanwhile
+        // must not send the ack or mark the enrollment active.
+        this.#assertNotCancelled();
+        this.#txSequence += 1n;
+        // OTP2-CRY-019e: the client erases every enrollment key immediately
+        // after sending the ack; only the public fingerprint remains.
+        this.#eraseLive();
+        this.#state = 'active';
+        this.#closed = true;
+        this.#lastActivity = this.#clock();
+        return [frame];
     }
 
     async #onAppError(body: Uint8Array): Promise<Uint8Array[]> {
@@ -747,6 +822,9 @@ export class ClientMachine {
                 mac,
             );
             mac.fill(0);
+            // The MAC and its sealed record are asynchronous; a cancel that landed
+            // meanwhile must not send the commit.
+            this.#assertNotCancelled();
             this.#txSequence += 1n;
             this.#state = 'awaiting_complete';
             this.#lastActivity = this.#clock();

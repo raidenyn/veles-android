@@ -1044,6 +1044,70 @@ describe('client enrollment machine', () => {
         }
     });
 
+    it('cancel_during_point_validation_never_starts_the_core_or_releases_pb', async () => {
+        const clock = new SessionClock();
+        const trust = await createTestTrust(clock);
+        const phone = await PhonePeer.create({ code: '000042' });
+        const transport = new FakeTransport();
+        let cancelled = false;
+        let coreStarts = 0;
+        let releaseValidation!: () => void;
+        const validation = new Promise<void>((resolve) => {
+            releaseValidation = resolve;
+        });
+        // Count every core start, so a post-cancel start is observable even though
+        // disposal eventually closes the handle.
+        const core: PairingCore = {
+            start(code, context) {
+                coreStarts += 1;
+                return PairingExecution.start(code, context);
+            },
+        };
+        try {
+            const link = await PairingLink.start({
+                controller: transport,
+                repo: trust.repository,
+                core,
+                code: '000042',
+                deviceHandle: 'device-1',
+                clock: clock.now,
+                tickIntervalMs: 0,
+                isCancelled: () => cancelled,
+                // Hold the offer inside its asynchronous point validation, the
+                // exact window in which a cancel used to be lost.
+                validatePoint: () => validation,
+            });
+            expect(transport.sent.map((frame) => frame[0])).toEqual([PairingFrameType.REQUEST]);
+
+            // The offer enters processing and pauses before `#core.start`.
+            transport.emit(phone.offerFor(transport.sent[0]));
+            await flush();
+            expect(transport.sent.map((frame) => frame[0])).toEqual([PairingFrameType.REQUEST]);
+            expect(openHandleCount()).toBe(0);
+            expect(coreStarts).toBe(0);
+
+            // The user cancels while validation is still pending; the pending
+            // validation then resolves and must not let the offer complete.
+            cancelled = true;
+            const cancelling = link.cancel();
+            releaseValidation();
+            await cancelling;
+            await link.settled();
+
+            expect(coreStarts).toBe(0);
+            expect(transport.sent.map((frame) => frame[0])).toEqual([PairingFrameType.REQUEST]);
+            expect(openHandleCount()).toBe(0);
+            expect(transport.disconnected).toBe(true);
+            expect(await trust.repository.peers()).toEqual([]);
+            expect(link.machine.state).not.toBe('awaiting_ca');
+            expect(link.machine.state).not.toBe('active');
+            expect(link.machine.closed || link.machine.failed).toBe(true);
+            expect(link.machine.enrollmentKeysForTest()).toBeNull();
+        } finally {
+            phone.close();
+        }
+    });
+
     it('dispose_during_pairing_startup_aborts_before_the_first_frame', async () => {
         const { app, controller, trust } = await createPairingApp();
         const pairing = app.startPairing('device-1', '000042');

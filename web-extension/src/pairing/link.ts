@@ -61,6 +61,8 @@ export interface PairingLinkDeps {
      * turns true, so a cancelled attempt never releases `pB` or processes a frame.
      */
     isCancelled?: () => boolean;
+    /** Test-only point-validation hook forwarded to the client machine. */
+    validatePoint?: (point: Uint8Array) => Promise<unknown>;
     /** Called immediately after connect, before the first pairing frame is sent. */
     onConnected?: (connectionHandle: string) => void;
     /** Called once when the link stops, whatever the reason. */
@@ -134,6 +136,10 @@ export class PairingLink {
             ...(deps.deviceType === undefined ? {} : { deviceType: deps.deviceType }),
             ...(deps.nonce === undefined ? {} : { nonce: deps.nonce }),
             ...(deps.identityNonce === undefined ? {} : { identityNonce: deps.identityNonce }),
+            // A record already in flight when the attempt is cancelled must not
+            // complete the machine's asynchronous work either.
+            isCancelled,
+            ...(deps.validatePoint === undefined ? {} : { validatePoint: deps.validatePoint }),
         });
         const connected = await deps.controller.connect({ deviceHandle: deps.deviceHandle });
         if (!connected.ok) throw new Error('pairing connect failed');
@@ -201,14 +207,31 @@ export class PairingLink {
             }
             try {
                 const frames = await this.machine.onFrame(bytes);
+                if (this.isCancelled()) {
+                    // The machine was fenced mid-transition: drop the link and this
+                    // enrollment's pending record instead of sending its frames.
+                    await this.dispose();
+                    return;
+                }
                 for (const frame of frames) await this.send(frame);
                 // A verified prepare authorizes the activation commit, and the link
                 // owns that step: `onFrame` deliberately returns no frame for it.
                 if (this.machine.state === 'verified_prepare_ready') {
+                    if (this.isCancelled()) {
+                        await this.dispose();
+                        return;
+                    }
                     await this.send(await this.machine.commit());
                 }
                 if (this.machine.closed || this.machine.failed) await this.stop();
             } catch {
+                if (this.isCancelled()) {
+                    // Cancelled while the machine was doing asynchronous work: the
+                    // attempt is over, so delete its pending record rather than
+                    // treating this as a link loss.
+                    await this.dispose();
+                    return;
+                }
                 // A transport failure tears the link down; erasure keeps any durable
                 // pending record for the recovery path, exactly like link loss.
                 await this.machine.onDisconnect();
@@ -270,6 +293,9 @@ export class PairingLink {
     }
 
     private async send(frame: Uint8Array): Promise<void> {
+        // No outbound frame may leave once the attempt is cancelled, even when the
+        // machine returned it just before cancellation was observed.
+        if (this.isCancelled()) throw new PairingCancelled();
         const result = await this.controller.send(this.connectionHandle, frame);
         if (!result.ok) throw new Error('pairing send failed');
     }
