@@ -3240,6 +3240,53 @@ test('check-android runs Gradle from android and guards from the root', async ()
   }
 });
 
+const NDK_EXPORT = 'echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"';
+const NDK_SDKMANAGER_INSTALL = '"$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"';
+
+// GitHub's ubuntu-latest image presets ANDROID_NDK_HOME to its own NDK, and the Rust build
+// resolves ANDROID_NDK_HOME first. A job that installs the pinned NDK but leaves the preset
+// in place resolves the runner default and fails requireNdkVersion, so every install step
+// must both run sdkmanager and export the installed path through $GITHUB_ENV.
+function assertPinnedNdkExports(source, name) {
+  const installs = [];
+  for (const [job, block] of Object.entries(workflowJobBlocks(executableYaml(source)))) {
+    for (const step of steps(block)) {
+      const stepName = step.map(mappingEntry).find((entry) => entry?.key === 'name')?.value.trim();
+      if (stepName !== 'Install pinned Android NDK') continue;
+      installs.push(job);
+      const commands = stepRunText(step).split('\n').map((line) => line.trim());
+      const installAt = commands.indexOf(NDK_SDKMANAGER_INSTALL);
+      assert.notEqual(installAt, -1, `${name}/${job} must install the pinned NDK with sdkmanager`);
+      const exportAt = commands.indexOf(NDK_EXPORT);
+      assert.notEqual(exportAt, -1, `${name}/${job} must export ANDROID_NDK_HOME to $GITHUB_ENV`);
+      assert.ok(exportAt > installAt, `${name}/${job} must export ANDROID_NDK_HOME after installing it`);
+    }
+  }
+  assert.ok(installs.length > 0, `${name} must install the pinned Android NDK`);
+  return installs;
+}
+
+test('every pinned Android NDK install exports the installed path to $GITHUB_ENV', async () => {
+  // Job counts: the install happens once per NDK-using job, and no job may lose the export.
+  const expectedInstalls = {
+    'check-android.yml': 2,
+    'check-rust.yml': 3,
+    'build-android.yml': 1,
+    'build-rust.yml': 1,
+  };
+  for (const [name, count] of Object.entries(expectedInstalls)) {
+    const source = await workflow(name);
+    assert.equal(assertPinnedNdkExports(source, name).length, count, `${name} must install the pinned NDK in every NDK-using job`);
+    // Dropping the export from the first install step must fail, even when other steps keep it.
+    const dropped = source.replace(`          ${NDK_EXPORT}\n`, '');
+    assert.notEqual(dropped, source, `removing the $GITHUB_ENV export must change ${name}`);
+    assert.throws(() => assertPinnedNdkExports(dropped, name), `the contract must reject ${name} without the $GITHUB_ENV export`);
+    const replaced = source.replace(NDK_EXPORT, 'echo "ANDROID_NDK_HOME=/usr/local/lib/android/sdk/ndk/27.3.13750724" >> "$GITHUB_ENV"');
+    assert.notEqual(replaced, source, `changing the exported path must change ${name}`);
+    assert.throws(() => assertPinnedNdkExports(replaced, name), `the contract must reject ${name} exporting an unpinned NDK path`);
+  }
+});
+
 function assertWebExtensionGuards(source) {
   const lint = workflowJobBlocks(executableYaml(source)).lint;
   const mac = stepContaining(lint, 'check-mac-comparisons');
