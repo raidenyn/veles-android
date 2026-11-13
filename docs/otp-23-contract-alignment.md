@@ -31,7 +31,7 @@ exists, so M-03 stays `BLOCKED`.
 ## 1. Sources read and the pre-edit inventory
 
 Read in full before editing: `desktop-ble-poc.md`, `windows-ble-poc.md`,
-`otp-23-windows.md`, `otp-06-transport.md`, `protocol/veles-v1.md` (section 9 and
+`otp-23-windows.md`, `otp-06-transport.md`, `protocol/docs/veles-v1.md` (section 9 and
 every cross-reference), the RFC (OTP-23/24/25 and the bridge sections), both PoC
 reviews (`windows-ble-poc-opus.md`, `desktop-ble-poc-macos-opus.md`), `protocol/v1/`,
 `native-bridge/feasibility/`, the production `native-bridge/src-tauri` and the
@@ -407,7 +407,7 @@ extension npm checks (see the evidence README) predate nothing that changed here
 
 The first actual review (`claude-opus-5-5`, session `1b23a799-1730-4b2d-905a-bd912cde7ef3`, raw copy
 `evidence/fresh-2026-10-26/opus-initial-review.json`) found no CRITICAL issue and four IMPORTANT ones;
-the disposition is [`protocol/reviews/otp-23-contract-alignment-opus.md`](protocol/reviews/otp-23-contract-alignment-opus.md).
+the disposition is [`protocol/docs/reviews/otp-23-contract-alignment-opus.md`](../protocol/docs/reviews/otp-23-contract-alignment-opus.md).
 Implementation model for the fixes: `claude-sonnet-5-5`. *(Historical status at that phase: the review was not yet passed; the later outcome is in section 14.)*
 
 * **I1 (Android) — CORRECTED by section 13:** the text below covered only writes above 512 bytes; the

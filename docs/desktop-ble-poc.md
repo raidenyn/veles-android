@@ -159,8 +159,8 @@ binary claim is made.
   Code **`claude-sonnet-5-5`**; CLI result metadata confirms the model. Mac-only
   signing and command execution were delegated to the Aqua user context.
 - Whole-change review uses Claude Code **Opus 5.5**; see
-  [the Mac review disposition](protocol/reviews/desktop-ble-poc-macos-opus.md) and
-  [the Windows review](protocol/reviews/windows-ble-poc-opus.md).
+  [the Mac review disposition](../protocol/docs/reviews/desktop-ble-poc-macos-opus.md) and
+  [the Windows review](../protocol/docs/reviews/windows-ble-poc-opus.md).
 
 ## Boundaries for the production session
 

@@ -156,7 +156,7 @@ needs separate production validation; do not infer it from a warmed-up run.
   explicitly has `OTP23_POC = false`; the isolated debug build has it true.
 - Driver checks: three Node tests, eight pure trace-parser checks, and 25 Python
   background regression tests passed; these do not replace physical evidence.
-- [Opus 5.5 review and disposition](protocol/reviews/windows-ble-poc-opus.md)
+- [Opus 5.5 review and disposition](../protocol/docs/reviews/windows-ble-poc-opus.md)
   records the model identity, addressed findings and deferred experimental notes.
 
 The counts above come from actual test result lines. Earlier prose totals in
