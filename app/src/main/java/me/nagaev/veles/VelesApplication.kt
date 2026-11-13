@@ -15,3 +15,5 @@ class VelesApplication : Application() {
         logger.d("VelesApplication", "Veles started")
     }
 }
+
+// Last-green selection demo (PR 143): Android-only change.
