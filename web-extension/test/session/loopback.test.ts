@@ -757,6 +757,8 @@ class LoopbackPairingTransport implements PairingTransport {
     readonly connectionHandle = 'loopback-enrollment';
     /** Drops the next inbound frame (the interrupted-activation cut). */
     dropNext = false;
+    /** Observes each outbound record before the phone can answer it. */
+    onSend: ((record: Uint8Array) => void) | null = null;
     private readonly listeners = new Set<
         (record: { connectionHandle: string; bytes: Uint8Array }) => void
     >();
@@ -784,6 +786,9 @@ class LoopbackPairingTransport implements PairingTransport {
 
     async send(_handle: string, record: Uint8Array): Promise<ConnectorResult<SentEvent>> {
         this.phone.send(0, record);
+        // Runs before the phone's asynchronous answer can reach the reader, so a cut
+        // armed here never races the client's own commit.
+        this.onSend?.(record);
         return {
             ok: true,
             event: {
@@ -1176,12 +1181,14 @@ if (CLASSPATH === '' && REQUIRED) {
                         core: PairingExecution,
                     });
 
-                    // The fixed code in the window must verify the SPAKE2 confirmation.
+                    // The fixed code in the window must verify the SPAKE2 confirmation,
+                    // and the production link itself must send the activation commit: no
+                    // manual `machine.commit()` here. `awaiting_complete` is only reached
+                    // once that commit is on the wire.
                     await waitFor(
-                        () => link.machine.state === 'verified_prepare_ready',
-                        'a verified enrollment prepare',
+                        () => link.machine.state === 'awaiting_complete' || link.machine.closed,
+                        'the link to send the activation commit',
                     );
-                    await transport.send(link.connectionHandle, await link.machine.commit());
                     await link.settled();
                     await waitFor(() => link.machine.closed, 'the enrollment connection to close');
                     expect(link.machine.failed).toBe(false);
@@ -1259,14 +1266,12 @@ if (CLASSPATH === '' && REQUIRED) {
                         core: PairingExecution,
                     });
 
-                    await waitFor(
-                        () => link.machine.state === 'verified_prepare_ready',
-                        'a verified enrollment prepare',
-                    );
-                    // The phone verifies the commit and releases activation_complete; the link
-                    // drops that record, so the connection dies mid-activation.
-                    transport.dropNext = true;
-                    await transport.send(link.connectionHandle, await link.machine.commit());
+                    // The link itself sends the commit once the prepare verifies. The
+                    // phone verifies that commit and releases activation_complete; the
+                    // link drops that record, so the connection dies mid-activation.
+                    transport.onSend = () => {
+                        if (link.machine.state === 'awaiting_complete') transport.dropNext = true;
+                    };
                     await waitFor(
                         () => link.machine.state === 'awaiting_complete',
                         'the client to wait for activation_complete',

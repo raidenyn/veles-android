@@ -11,6 +11,7 @@ import {
 } from '../../src/pairing/enrollment';
 import { initPairingCore, openHandleCount, PairingExecution } from '../../src/pairing/core';
 import { PairingLink, type PairingTransport } from '../../src/pairing/link';
+import { RecordType } from '../../src/session/wire';
 import { bytes } from '../../src/trust/model';
 import type { ChromeTrustRepository } from '../../src/trust/repository';
 import { SessionClock, createTestTrust, flush } from '../connector/session-harness';
@@ -92,6 +93,11 @@ async function toAwaitingComplete(run: Run): Promise<Uint8Array> {
     const commit = await run.machine.commit();
     expect(run.machine.state).toBe('awaiting_complete');
     return commit;
+}
+
+/** The record type from the plaintext §7 header (type is the u16 at offset 3). */
+function recordTypeOf(record: Uint8Array): number {
+    return ((record[3] & 0xff) << 8) | (record[4] & 0xff);
 }
 
 function recordingCore(): { core: PairingCore; calls: string[] } {
@@ -610,6 +616,47 @@ describe('client enrollment machine', () => {
             expect(await trust.repository.peers()).toEqual([]);
             expect(ended).toBe(1);
         } finally {
+            phone.close();
+        }
+    });
+
+    it('link_sends_the_activation_commit_after_a_verified_prepare', async () => {
+        const clock = new SessionClock();
+        const trust = await createTestTrust(clock);
+        const transport = new FakeTransport();
+        const phone = await PhonePeer.create({ code: '000042' });
+        const link = await PairingLink.start({
+            controller: transport,
+            repo: trust.repository,
+            code: '000042',
+            clock: clock.now,
+            deviceHandle: 'device-4',
+            tickIntervalMs: 0,
+        });
+        try {
+            const offer = phone.offerFor(transport.sent[0]);
+            await link.receive(offer);
+            const cA = phone.acceptPoint(transport.sent[1]);
+            await link.receive(caFrame(cA));
+            await phone.acceptConfirmB(transport.sent[2]);
+            const identity = await phone.identityFrame();
+            await link.receive(identity);
+            await phone.acceptClientIdentity(transport.sent[3]);
+            expect(transport.sent).toHaveLength(4);
+
+            // No manual `machine.commit()`: a verified prepare must make the link send
+            // the one activation commit itself.
+            await link.receive(await phone.prepareFrame());
+
+            const commits = transport.sent.filter(
+                (record) => recordTypeOf(record) === RecordType.ACTIVATION_COMMIT,
+            );
+            expect(commits).toHaveLength(1);
+            expect(transport.sent).toHaveLength(5);
+            expect(transport.sent[4]).toBe(commits[0]);
+            expect(link.machine.state).toBe('awaiting_complete');
+        } finally {
+            await link.dispose();
             phone.close();
         }
     });

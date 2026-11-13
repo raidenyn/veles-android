@@ -156,6 +156,11 @@ export class PairingLink {
             try {
                 const frames = await this.machine.onFrame(bytes);
                 for (const frame of frames) await this.send(frame);
+                // A verified prepare authorizes the activation commit, and the link
+                // owns that step: `onFrame` deliberately returns no frame for it.
+                if (this.machine.state === 'verified_prepare_ready') {
+                    await this.send(await this.machine.commit());
+                }
                 if (this.machine.closed || this.machine.failed) await this.stop();
             } catch {
                 // A transport failure tears the link down; erasure keeps any durable
