@@ -208,7 +208,7 @@ still supplies the required independent reviews and user acceptance.
 - Consumers (`rust/veles-crypto/tests/protocol_fixtures.rs`,
   `web-extension/test/protocol-fixtures.test.ts`,
   `native-bridge/test/protocol-fixtures.test.ts`,
-  `app/src/test/java/me/nagaev/veles/protocol/ProtocolFixturesTest.kt`) run
+  `android/app/src/test/java/me/nagaev/veles/protocol/ProtocolFixturesTest.kt`) run
   in host mode only; no JNI, WASM, browser, or device runtime is required.
 - All validation code is test-only and is never imported by product code.
 - Fixtures use synthetic identities and OTPs only.

@@ -296,7 +296,7 @@ installs with `npm ci --ignore-scripts`, executing only from
 
 | Image | Pinned by | Asserts |
 |---|---|---|
-| `verify/Dockerfile` (Android) | `.java-version`, `gradle/libs.versions.toml` (NDK), `rust/rust-toolchain.toml` | JDK 21, Android SDK/NDK, Rust 1.98.0 |
+| `verify/Dockerfile` (Android) | `.java-version`, `rust/ndk-version` (NDK), `rust/rust-toolchain.toml` | JDK 21, Android SDK/NDK, Rust 1.98.0 |
 | `verify/Dockerfile.web` | digest-pinned `node:26.8.1-bookworm-slim` | Node 26.8.1, npm 11.19.0 |
 | `verify/Dockerfile.rust` | digest-pinned base + committed archive hashes | JDK 21, Android SDK/NDK, Rust 1.98.0, cargo-ndk 4.1.2, wasm-pack 0.15.0, wasm-bindgen-cli 0.2.127, Node 26.8.1 |
 
@@ -386,7 +386,7 @@ build/rust                  build/rust-tools
 web-extension/dist          web-extension/rust-wasm/pkg
 native-bridge/src-tauri/target   native-bridge/dist
 native-bridge/host/target        native-bridge/host/build
-app/build/generated/jniLibs      app/build/outputs/apk
+build/rust/jniLibs  android/app/build/outputs/apk
 ```
 
 ## Pinned toolchain
@@ -394,7 +394,8 @@ app/build/generated/jniLibs      app/build/outputs/apk
 | Tool | Pinned in |
 |---|---|
 | Gradle | `gradle/wrapper/gradle-wrapper.properties` |
-| AGP, Kotlin, KSP, plugins, libraries | `gradle/libs.versions.toml` |
+| AGP, Kotlin, KSP, plugins, libraries | `android/gradle/libs.versions.toml` |
+| Android NDK | `rust/ndk-version` |
 | JDK (Temurin) | `.java-version` — must match the base image in `verify/Dockerfile` (`verify.sh` enforces this) |
 | Android cmdline-tools, platform, build-tools | `verify/Dockerfile` |
 | Docker base image | `verify/Dockerfile` (digest-pinned) |
@@ -402,7 +403,7 @@ app/build/generated/jniLibs      app/build/outputs/apk
 | Rust compiler/components/targets | `rust/rust-toolchain.toml` |
 | Rust dependencies | `rust/Cargo.lock` plus exact direct pins in crate manifests |
 | Rust auxiliary CLIs | `rust/toolchain-tools.toml` (`cargo install --locked`) |
-| Android NDK | `gradle/libs.versions.toml` `ndk`, propagated to AGP and `verify/Dockerfile` |
+| Android NDK | `rust/ndk-version` (read by the Android build's `ndkVersion` and by the Rust build; no catalog entry) |
 | Native-bridge Tauri CLI & TS tooling | `native-bridge/package.json` (exact-pinned) + committed `package-lock.json` |
 | Native-bridge Rust crate & deps | `native-bridge/src-tauri/Cargo.toml` + committed `Cargo.lock` |
 | Verification cargo tools (cargo-cyclonedx, cargo-deny) | `verify/cargo-tools.toml` (`cargo install --locked --version`) |
@@ -423,9 +424,10 @@ The 1d verification cargo tools (`cargo-cyclonedx`, `cargo-deny`) install the sa
 Generated output boundaries are intentionally narrow:
 
 - **Android JNI**: `./gradlew rustJni` builds exactly the three ABI filters declared in
-  `app/build.gradle.kts` (`arm64-v8a`, `armeabi-v7a`, `x86_64`) into
-  `app/build/generated/jniLibs/<abi>/libveles_crypto.so`. This is the *only* JNI output
-  path; `:app:assembleDebug`/`assembleRelease` depend on `rustJni` so a clean build always
+  `android/app/build.gradle.kts` (`arm64-v8a`, `armeabi-v7a`, `x86_64`) into the repository-root
+  `build/rust/jniLibs/<abi>/libveles_crypto.so`. This is the *only* JNI output path; the Android
+  build consumes that directory directly as a `jniLibs` source (`android/app/build.gradle.kts`),
+  and `:app:assembleDebug`/`assembleRelease` depend on `rustJni` so a clean build always
   regenerates it.
 - **Rust package**: `./gradlew rustPackage` stages the three JNI libraries and the
   complete WASM package into `build/rust-package/` with a `SHA256SUMS` manifest.
@@ -438,7 +440,7 @@ Generated output boundaries are intentionally narrow:
 - **Local caches**: `build/rust/target` (the Cargo build cache) and `build/rust-tools`
   (the auxiliary-CLI install cache) live under the top-level `build/` directory, which is
   already gitignored; `rust/scripts/assert-clean.sh` asserts none of these generated paths
-  (nor `app/build/generated/jniLibs`, nor `app/build/outputs/apk`) survive `./gradlew clean`.
+  (nor `build/rust/jniLibs`, nor `android/app/build/outputs/apk`) survive `./gradlew clean`.
 
 The web-extension's npm dependencies are exact-pinned in `web-extension/package.json`
 (no `^`/`~`) and resolved via the committed `package-lock.json`. The deterministic

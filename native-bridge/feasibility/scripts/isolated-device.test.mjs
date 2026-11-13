@@ -15,7 +15,7 @@ test('isolated init script only adds the .otp23 suffix to the debug build type',
 
 test('app no longer defines or reads a cap-only OTP23_POC flag', () => {
     const root = new URL('../../../', import.meta.url);
-    for (const file of ['app/build.gradle.kts', 'app/src/main/java/me/nagaev/veles/sharing/SharingGattServer.kt', 'app/src/main/java/me/nagaev/veles/sharing/GattTransport.kt']) {
+    for (const file of ['android/app/build.gradle.kts', 'android/app/src/main/java/me/nagaev/veles/sharing/SharingGattServer.kt', 'android/app/src/main/java/me/nagaev/veles/sharing/GattTransport.kt']) {
         assert.doesNotMatch(readFileSync(new URL(file, root), 'utf8'), /OTP23_POC/, file);
     }
 });

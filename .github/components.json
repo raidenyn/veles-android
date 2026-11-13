@@ -2,9 +2,6 @@
   "since": "e98c371881aef547fc842207f44cb24b31ddcfae",
   "global": [
     ".github/",
-    "build.gradle.kts",
-    "settings.gradle.kts",
-    "gradle.properties",
     "gradle/",
     "gradlew",
     "gradlew.bat",
@@ -40,20 +37,29 @@
       "tag-prefix": "android-v",
       "initial-version": "0.1.0",
       "paths": [
-        "app/",
+        "android/",
         "rust/",
         "protocol/"
       ],
       "ci-paths": [
-        "config/detekt/",
-        ".editorconfig"
+        ".githooks/install-hooks.gradle.kts"
       ],
       "jobs": [
         "lint",
         "unit-tests",
         "release-hook-guard",
         "instrumented-tests"
-      ]
+      ],
+      "legacy-release": {
+        "paths": [
+          "app/",
+          "build.gradle.kts",
+          "settings.gradle.kts",
+          "gradle.properties",
+          "gradle/libs.versions.toml"
+        ],
+        "epoch-path": "android/"
+      }
     },
     "web-extension": {
       "release": true,
@@ -63,7 +69,10 @@
         "web-extension/",
         "rust/",
         "protocol/",
-        "verify/lib/"
+        "verify/lib/",
+        "build.gradle.kts",
+        "settings.gradle.kts",
+        "gradle.properties"
       ],
       "ci-paths": [
         ".editorconfig"
@@ -79,7 +88,10 @@
       "tag-prefix": "installer-v",
       "initial-version": "0.1.0",
       "paths": [
-        "native-bridge/installer/"
+        "native-bridge/installer/",
+        "build.gradle.kts",
+        "settings.gradle.kts",
+        "gradle.properties"
       ],
       "ci-paths": [
         "native-bridge/host/rust-toolchain.toml",
@@ -118,7 +130,10 @@
       "release": false,
       "paths": [
         "rust/",
-        "protocol/"
+        "protocol/",
+        "build.gradle.kts",
+        "settings.gradle.kts",
+        "gradle.properties"
       ],
       "jobs": [
         "lint",
@@ -131,7 +146,7 @@
       "paths": [
         "protocol/",
         "rust/",
-        "app/",
+        "android/",
         "web-extension/",
         "native-bridge/host/",
         "native-bridge/installer/",
@@ -147,7 +162,10 @@
         "native-bridge/scripts/",
         "native-bridge/src/",
         "native-bridge/src-tauri/",
-        "native-bridge/test/"
+        "native-bridge/test/",
+        "build.gradle.kts",
+        "settings.gradle.kts",
+        "gradle.properties"
       ],
       "jobs": [
         "contract-tests"
@@ -164,7 +182,10 @@
         "verify/check-remote-code.mjs",
         "verify/generate-sboms.sh",
         "verify/verify-sboms.mjs",
-        "verify/verify-supply-chain.sh"
+        "verify/verify-supply-chain.sh",
+        "build.gradle.kts",
+        "settings.gradle.kts",
+        "gradle.properties"
       ],
       "jobs": [
         "lint",
@@ -193,7 +214,10 @@
         "native-bridge/src-tauri/",
         "native-bridge/test/",
         "verify/lib/",
-        "protocol/"
+        "protocol/",
+        "build.gradle.kts",
+        "settings.gradle.kts",
+        "gradle.properties"
       ],
       "ci-paths": [
         ".editorconfig"
@@ -243,7 +267,10 @@
         "native-bridge/installer/src/",
         "native-bridge/installer/scripts/",
         "native-bridge/installer/windows/",
-        "native-bridge/installer/macos/"
+        "native-bridge/installer/macos/",
+        "build.gradle.kts",
+        "settings.gradle.kts",
+        "gradle.properties"
       ],
       "jobs": [
         "build"
@@ -255,11 +282,25 @@
         "scripts/",
         ".githooks/",
         "cliff.toml",
-        "verify/test/"
+        "verify/test/",
+        "build.gradle.kts",
+        "settings.gradle.kts",
+        "gradle.properties"
+      ],
+      "ci-paths": [
+        "verify/check-root-aliases.sh"
       ],
       "jobs": [
         "unit-tests"
       ]
     }
+  },
+  "retired-paths": {
+    "app/": [
+      "android"
+    ],
+    "config/detekt/": [
+      "android"
+    ]
   }
 }

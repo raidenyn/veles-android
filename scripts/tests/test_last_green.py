@@ -784,7 +784,7 @@ class IntegrationTest(unittest.TestCase):
         root = new_repo(self)
         base = git(root, "rev-parse", "HEAD")
         git(root, "checkout", "-q", "-b", "pr")
-        green = commit_file(root, "app/feature.kt", "class Feature\n", "feature")
+        green = commit_file(root, "protocol/v1/limits.json", "{}\n", "feature")
         head = commit_file(root, "docs/ci.md", "docs\n", "docs only")
         api_root = record(
             self,

@@ -1,9 +1,7 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
-import com.android.build.api.variant.ApplicationAndroidComponentsExtension
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
-import java.util.Properties
 import org.gradle.api.tasks.Delete
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.Sync
@@ -21,42 +19,91 @@ import javax.inject.Inject
 
 plugins {
     base
-    alias(libs.plugins.android.application) apply false
-    alias(libs.plugins.compose) apply false
-    alias(libs.plugins.ksp) apply false
-    alias(libs.plugins.hilt) apply false
-    alias(libs.plugins.protobuf) apply false
-    alias(libs.plugins.spotless)
-    alias(libs.plugins.detekt) apply false
 }
 
-spotless {
-    kotlin {
-        target("**/*.kt")
-        targetExclude("**/build/**", "**/.gradle/**", "**/.kotlin/**")
-        ktlint().editorConfigOverride(
-            mapOf(
-                // Compose @Composable functions are PascalCase by convention.
-                "ktlint_standard_function-naming" to "disabled",
-                // `_foo` backing properties for StateFlow are idiomatic in Compose VMs.
-                "ktlint_standard_backing-property-naming" to "disabled",
-                // Singleton `INSTANCE` is the idiomatic Room DB pattern.
-                "ktlint_standard_property-naming" to "disabled",
-                // detekt enforces MaxLineLength separately; long string literals
-                // (regex patterns, notification text) would otherwise need wrapping.
-                "ktlint_standard_max-line-length" to "disabled",
-            ),
-        )
-        trimTrailingWhitespace()
-        endWithNewline()
+// ---- Included builds ------------------------------------------------------------------
+// Android and Rust are independent builds (design D4). The root only orchestrates: no project of
+// this build is an Android module, so every Android entry point is an included-build task.
+val androidBuild = gradle.includedBuild("android")
+// Every Rust task is defined once, in the included `rust` build. The root tasks below
+// keep the historical names working from the repository root (CI, rust/scripts/*, docs)
+// and only depend on the included task, so a root invocation executes each shared Rust
+// task exactly once.
+val rustBuild = gradle.includedBuild("rust")
+
+listOf(
+    "rustToolchainCheck",
+    "installCargoNdk",
+    "verifyCargoNdk",
+    "installWasmPack",
+    "verifyWasmPack",
+    "installWasmBindgenCli",
+    "verifyWasmBindgen",
+    "rustWasmBindgenConsistency",
+    "rustInstall",
+    "rustWasmLockCheck",
+    "rustWasm",
+    "rustNativeTest",
+    "rustWasmSmoke",
+    "rustWasmPairingTest",
+    "rustWasmEntropyTest",
+    "rustWasmExpiryTest",
+    "rustWasmMemoryBoundTest",
+    "rustWasmResponseErasureTest",
+    "rustTest",
+    "rustWasmConformance",
+    "rustWasmConformanceTest",
+    "rustHostJni",
+    "rustJniConformance",
+    "rustJni",
+    "rustPackage",
+    "rustFormat",
+    "rustLintHost",
+    "rustLintHostJni",
+    "rustLintWasm",
+    "rustLintAndroid",
+    "rustLint",
+    "rustNdkVersion",
+    "rustNdkDir",
+).forEach { rustTaskName ->
+    tasks.register(rustTaskName) {
+        group = "rust"
+        description = "Runs :$rustTaskName of the included rust build."
+        dependsOn(rustBuild.task(":$rustTaskName"))
     }
 }
 
+// ---- Android build bridge --------------------------------------------------------------
+// `android/` is an independent build (design D4); the documented Android commands keep working
+// from the repository root through thin aliases. App tasks target `:app:<task>`, Spotless targets
+// the Android build root because it is applied there, and the retained aggregates below depend on
+// included-build tasks directly.
+listOf(
+    "assembleDebug",
+    "assembleRelease",
+    "testDebugUnitTest",
+    "lintDebug",
+    "detekt",
+    "connectedDebugAndroidTest",
+).forEach { androidTaskName ->
+    tasks.register(androidTaskName) {
+        group = "android"
+        description = "Runs :app:$androidTaskName of the included android build."
+        dependsOn(androidBuild.task(":app:$androidTaskName"))
+    }
+}
+
+listOf("spotlessCheck", "spotlessApply").forEach { androidRootTaskName ->
+    tasks.register(androidRootTaskName) {
+        group = "android"
+        description = "Runs :$androidRootTaskName of the included android build."
+        dependsOn(androidBuild.task(":$androidRootTaskName"))
+    }
+}
+
+// Only the verification-tool installers and protocolRustTest still reach into rust/:
+// every Rust build task lives in the included `rust` build.
 val rustDir = layout.projectDirectory.dir("rust")
-val rustCrateDir = rustDir.dir("veles-crypto")
-val rustToolsFile = rustDir.file("toolchain-tools.toml")
-val rustTargetDir = layout.buildDirectory.dir("rust/target")
-val rustToolsDir = layout.buildDirectory.dir("rust-tools")
 val verifyCargoToolsFile = layout.projectDirectory.file("verify/cargo-tools.toml")
 val verifyToolsDir = layout.buildDirectory.dir("verify-tools")
 val wasmPackageDir = layout.projectDirectory.dir("web-extension/rust-wasm/pkg")
@@ -68,22 +115,12 @@ val windowsExecutableSuffix = if (System.getProperty("os.name").startsWith("Wind
 val npmCommand = if (windowsExecutableSuffix.isNotEmpty()) "npm.cmd" else "npm"
 val protocolDir = layout.projectDirectory.dir("protocol")
 
-fun pinnedToolVersion(name: String): String {
-    val pattern = Regex("(?m)^${Regex.escape(name)}\\s*=\\s*\"([^\"]+)\"\\s*$")
-    return requireNotNull(pattern.find(rustToolsFile.asFile.readText())) {
-        "Missing '$name' pin in ${rustToolsFile.asFile}"
-    }.groupValues[1]
-}
-
 fun pinnedVerificationToolVersion(name: String): String {
     val pattern = Regex("(?m)^${Regex.escape(name)}\\s*=\\s*\"([^\"]+)\"\\s*$")
     return requireNotNull(pattern.find(verifyCargoToolsFile.asFile.readText())) {
         "Missing '$name' pin in ${verifyCargoToolsFile.asFile}"
     }.groupValues[1]
 }
-
-fun File.prependToPath(existing: String?): String =
-    absolutePath + File.pathSeparator + (existing ?: "")
 
 fun requireOnPath(name: String, versionHint: String, installHint: String) {
     val path = System.getenv("PATH") ?: ""
@@ -92,21 +129,6 @@ fun requireOnPath(name: String, versionHint: String, installHint: String) {
     }
     check(found) {
         "Could not find '$name' on PATH. $installHint. Version hint: $versionHint."
-    }
-}
-
-fun requireNdkVersion(ndkDir: File, expected: String) {
-    check(ndkDir.isDirectory) {
-        "Android NDK $expected is not installed. " +
-            "Install it with sdkmanager \"ndk;$expected\"."
-    }
-    val properties = Properties().apply {
-        ndkDir.resolve("source.properties").inputStream().use(::load)
-    }
-    val actual = properties.getProperty("Pkg.Revision")
-    check(actual == expected) {
-        "Expected Android NDK $expected at $ndkDir, found '$actual'. " +
-            "Install the pinned version with sdkmanager \"ndk;$expected\"."
     }
 }
 
@@ -138,76 +160,9 @@ fun cargoRegistryRemapRustFlags(): String {
 }
 
 // Enables the repo's Conventional Commits commit-msg hook (.githooks) for local clones.
-// Never overrides a hooksPath the developer already configured; skipped on CI.
-abstract class InstallGitHooksTask @Inject constructor(
-    private val execOps: ExecOperations,
-) : DefaultTask() {
-    @get:Internal
-    abstract val repoDir: DirectoryProperty
-
-    @get:Input
-    abstract val onCi: Property<Boolean>
-
-    @TaskAction
-    fun install() {
-        if (onCi.get()) {
-            logger.info("CI=true: skipping git hook installation")
-            return
-        }
-        try {
-            configureHooks(repoDir.get().asFile)
-        } catch (e: Exception) {
-            logger.warn("Could not configure git hooks (${e.message}); skipping.")
-        }
-    }
-
-    private fun configureHooks(dir: File) {
-        val probe = ByteArrayOutputStream()
-        val inside = execOps.exec {
-            workingDir = dir
-            commandLine("git", "rev-parse", "--is-inside-work-tree")
-            standardOutput = probe
-            errorOutput = ByteArrayOutputStream()
-            isIgnoreExitValue = true
-        }
-        if (inside.exitValue != 0 || probe.toString(Charsets.UTF_8).trim() != "true") {
-            logger.info("Not inside a git work tree: skipping git hook installation")
-            return
-        }
-        val out = ByteArrayOutputStream()
-        val read = execOps.exec {
-            workingDir = dir
-            commandLine("git", "config", "--get", "core.hooksPath")
-            standardOutput = out
-            isIgnoreExitValue = true
-        }
-        val current = out.toString(Charsets.UTF_8).trim()
-        when {
-            read.exitValue != 0 || current.isEmpty() -> {
-                val write = execOps.exec {
-                    workingDir = dir
-                    commandLine("git", "config", "core.hooksPath", ".githooks")
-                    isIgnoreExitValue = true
-                }
-                if (write.exitValue != 0) {
-                    logger.warn("git config core.hooksPath failed (exit ${write.exitValue}); hook not installed.")
-                }
-            }
-            current == ".githooks" -> Unit
-            else -> logger.warn(
-                "git core.hooksPath is already set to '$current'; leaving it unchanged, " +
-                    "so the Conventional Commits commit-msg hook in .githooks is not active.",
-            )
-        }
-    }
-}
-
-tasks.register<InstallGitHooksTask>("installGitHooks") {
-    group = "build setup"
-    description = "Points git core.hooksPath at .githooks unless already configured (skipped on CI)."
-    repoDir.set(layout.projectDirectory)
-    onCi.set(providers.environmentVariable("CI").map { it == "true" }.orElse(false))
-}
+// One shared script, also applied by the independent Android build (android/build.gradle.kts),
+// so `installGitHooks` has identical behaviour from both entry points.
+apply(from = file(".githooks/install-hooks.gradle.kts"))
 
 // ---- Release tooling: pinned git-cliff (scripts/release-tools.toml) and the scripts/ test suite ----
 val releaseToolsFile = layout.projectDirectory.file("scripts/release-tools.toml")
@@ -338,90 +293,6 @@ val scriptsTest = tasks.register<Exec>("scriptsTest") {
     )
 }
 
-val rustToolchainCheck = tasks.register("rustToolchainCheck") {
-    group = "rust"
-    inputs.file(rustDir.file("rust-toolchain.toml"))
-    doLast {
-        requireOnPath(
-            "rustup",
-            "Rust 1.98.0",
-            "Install rustup and run `rustup show active-toolchain` in rust/ to install the pinned toolchain",
-        )
-        requireOnPath(
-            "cargo",
-            "Rust 1.98.0",
-            "Install rustup and run `rustup show active-toolchain` in rust/ to install the pinned toolchain",
-        )
-        val rustup = providers.exec {
-            workingDir(rustDir)
-            commandLine("rustup", "show", "active-toolchain")
-        }.standardOutput.asText.get().trim()
-        val rustc = providers.exec {
-            workingDir(rustDir)
-            commandLine("rustc", "--version")
-        }.standardOutput.asText.get().trim()
-        check(rustc.startsWith("rustc 1.98.0 ")) {
-            "rust/rust-toolchain.toml requires Rust 1.98.0; active toolchain is '$rustup' ($rustc)"
-        }
-    }
-}
-
-fun registerCargoTool(
-    taskStem: String,
-    crateName: String,
-    binaryName: String,
-): Pair<TaskProvider<Exec>, TaskProvider<Task>> {
-    val version = pinnedToolVersion(crateName)
-    val installRoot = rustToolsDir.map { it.dir(crateName) }
-    val binary = installRoot.map {
-        it.file("bin/$binaryName$windowsExecutableSuffix")
-    }
-    val install = tasks.register<Exec>("install$taskStem") {
-        group = "rust"
-        description = "Installs $crateName $version into the build directory."
-        dependsOn("rustToolchainCheck")
-        inputs.property("crateName", crateName)
-        inputs.property("version", version)
-        inputs.file(rustDir.file("rust-toolchain.toml"))
-        outputs.dir(installRoot)
-        workingDir(rustDir)
-        environment(
-            "CARGO_TARGET_DIR",
-            layout.buildDirectory.dir("rust/tool-install-target/$crateName").get().asFile,
-        )
-        doFirst { delete(installRoot) }
-        commandLine(
-            "cargo", "install", "--locked", "--version", version,
-            "--root", installRoot.get().asFile, crateName,
-        )
-    }
-    val verify = tasks.register("verify$taskStem") {
-        group = "rust"
-        dependsOn(install)
-        inputs.property("version", version)
-        inputs.file(binary.map { it.asFile })
-        doLast {
-            val output = providers.exec {
-                // cargo-ndk refuses to run unless it detects it was launched
-                // via cargo (it checks the CARGO env var); wasm-pack and
-                // wasm-bindgen ignore this, so setting it unconditionally
-                // keeps this verify step tool-agnostic.
-                environment("CARGO", "cargo")
-                commandLine(binary.get().asFile, "--version")
-            }.standardOutput.asText.get().trim()
-            // Extract the first whitespace-delimited token after the tool name
-            // and compare it as an exact semver, not a substring. `contains`
-            // would accept 4.1.20 when expecting 4.1.2.
-            val actualVersion = output.split(Regex("\\s+"))
-                .firstOrNull { it.matches(Regex("\\d+\\.\\d+\\.\\d+(-\\S+)?")) }
-            check(actualVersion == version) {
-                "Expected $crateName $version at ${binary.get().asFile}, got: $output"
-            }
-        }
-    }
-    return install to verify
-}
-
 fun registerVerificationCargoTool(
     taskStem: String,
     crateName: String,
@@ -436,7 +307,7 @@ fun registerVerificationCargoTool(
     val install = tasks.register<Exec>("install$taskStem") {
         group = "verification"
         description = "Installs $crateName $version into the verification tool directory."
-        dependsOn("rustToolchainCheck")
+        dependsOn(rustBuild.task(":rustToolchainCheck"))
         inputs.property("crateName", crateName)
         inputs.property("version", version)
         inputs.file(verifyCargoToolsFile)
@@ -473,13 +344,6 @@ fun registerVerificationCargoTool(
     return install to verify
 }
 
-val (_, verifyCargoNdk) = registerCargoTool("CargoNdk", "cargo-ndk", "cargo-ndk")
-val (_, verifyWasmPack) = registerCargoTool("WasmPack", "wasm-pack", "wasm-pack")
-val (_, verifyWasmBindgen) = registerCargoTool(
-    "WasmBindgenCli",
-    "wasm-bindgen-cli",
-    "wasm-bindgen",
-)
 val (_, verifyCargoCyclonedx) = registerVerificationCargoTool(
     "CargoCyclonedx",
     "cargo-cyclonedx",
@@ -487,96 +351,6 @@ val (_, verifyCargoCyclonedx) = registerVerificationCargoTool(
     listOf("cyclonedx", "--version"),
 )
 val (_, verifyCargoDeny) = registerVerificationCargoTool("CargoDeny", "cargo-deny", "cargo-deny")
-
-val rustWasmBindgenConsistency = tasks.register("rustWasmBindgenConsistency") {
-    group = "rust"
-    dependsOn(verifyWasmBindgen)
-    inputs.file(rustDir.file("Cargo.lock"))
-    inputs.property("cliVersion", pinnedToolVersion("wasm-bindgen-cli"))
-    doLast {
-        // Parse the resolved wasm-bindgen version from Cargo.lock and verify
-        // it exactly matches the wasm-bindgen-cli pin. The spec requires the
-        // CLI and runtime to be in lock-step.
-        val lock = rustDir.file("Cargo.lock").asFile.readText()
-        val lockVersion = Regex(
-            "(?ms)^name = \"wasm-bindgen\"$.*?^version = \"([^\"]+)\"$",
-        ).find(lock)?.groupValues?.get(1)
-        val cliVersion = pinnedToolVersion("wasm-bindgen-cli")
-        check(lockVersion == cliVersion) {
-            "wasm-bindgen ($lockVersion in Cargo.lock) must match " +
-                "wasm-bindgen-cli ($cliVersion in toolchain-tools.toml)."
-        }
-    }
-}
-
-val rustInstall = tasks.register("rustInstall") {
-    group = "rust"
-    description = "Installs and verifies all exact-pinned Rust build CLIs."
-    dependsOn(verifyCargoNdk, verifyWasmPack, rustWasmBindgenConsistency)
-}
-
-val rustWasmLockCheck = tasks.register<Exec>("rustWasmLockCheck") {
-    group = "rust"
-    dependsOn(rustToolchainCheck)
-    workingDir(rustDir)
-    environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
-    // wasm-pack 0.15 runs `cargo metadata` (unlocked) before forwarding --locked
-    // to cargo build. Preflight with --locked here so lock drift fails before
-    // wasm-pack can touch anything.
-    commandLine("cargo", "metadata", "--locked", "--no-deps", "--manifest-path", "Cargo.toml")
-}
-
-val rustWasm = tasks.register<Exec>("rustWasm") {
-    group = "rust"
-    description = "Builds the locked web-target WASM package."
-    dependsOn(verifyWasmPack, verifyWasmBindgen, rustWasmBindgenConsistency, rustWasmLockCheck)
-    inputs.files(
-        fileTree(rustCrateDir) { include("Cargo.toml", "src/**/*.rs") },
-        rustDir.file("Cargo.toml"),
-        rustDir.file("Cargo.lock"),
-        rustDir.file("rust-toolchain.toml"),
-        rustToolsFile,
-    )
-    outputs.dir(wasmPackageDir)
-    workingDir(rustDir)
-    environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
-    environment("CARGO_PROFILE_RELEASE_PANIC", "abort")
-    doFirst {
-        delete(wasmPackageDir)
-        val wasmPackBin = rustToolsDir.get().file(
-            "wasm-pack/bin/wasm-pack$windowsExecutableSuffix",
-        ).asFile
-        val bindgenBinDir = rustToolsDir.get().dir("wasm-bindgen-cli/bin").asFile
-        environment(
-            "PATH",
-            wasmPackBin.parentFile.prependToPath(
-                bindgenBinDir.prependToPath(System.getenv("PATH")),
-            ),
-        )
-        // Registry-path remap for a byte-reproducible WASM binary (see
-        // cargoRegistryRemapRustFlags): wasm-bindgen panic locations embed
-        // ${CARGO_HOME}/registry/src/... into veles_crypto_bg.wasm, so builds
-        // with different CARGO_HOME produce different bytes without it.
-        environment("RUSTFLAGS", cargoRegistryRemapRustFlags())
-        executable(wasmPackBin)
-        setArgs(
-            listOf(
-                "build", "veles-crypto", "--target", "web", "--release",
-                "--mode", "no-install", "--no-opt",
-                "--out-dir", wasmPackageDir.asFile.absolutePath,
-                "--", "--locked",
-            ),
-        )
-    }
-}
-
-val rustNativeTest = tasks.register<Exec>("rustNativeTest") {
-    group = "rust"
-    dependsOn(rustToolchainCheck)
-    workingDir(rustDir)
-    environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
-    commandLine("cargo", "test", "--workspace", "--locked")
-}
 
 val protocolNodeCheck = tasks.register("protocolNodeCheck") {
     group = "verification"
@@ -626,9 +400,9 @@ val protocolContractCheck = tasks.register<Exec>("protocolContractCheck") {
 val protocolRustTest = tasks.register<Exec>("protocolRustTest") {
     group = "verification"
     description = "Runs the host-only Rust OTP-02 shared-fixture consumer."
-    dependsOn(rustToolchainCheck)
+    dependsOn(rustBuild.task(":rustToolchainCheck"))
     workingDir(rustDir)
-    environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
+    environment("CARGO_TARGET_DIR", layout.buildDirectory.dir("rust/target").get().asFile)
     commandLine("cargo", "test", "--locked", "--test", "protocol_fixtures")
 }
 
@@ -643,7 +417,7 @@ val protocolWebInstall = tasks.register<Exec>("protocolWebInstall") {
 val protocolWebTest = tasks.register<Exec>("protocolWebTest") {
     group = "verification"
     description = "Runs the web extension OTP-02 shared-fixture consumer."
-    dependsOn(protocolWebInstall, rustWasm)
+    dependsOn(protocolWebInstall, rustBuild.task(":rustWasm"))
     workingDir(layout.projectDirectory.dir("web-extension"))
     commandLine(npmCommand, "exec", "vitest", "run", "test/protocol-fixtures.test.ts")
 }
@@ -652,22 +426,25 @@ val protocolWebTest = tasks.register<Exec>("protocolWebTest") {
 // JVM while the production TypeScript client engine plays the peer over the stdin/stdout
 // protocol. `VELES_LOOPBACK_REQUIRED=1` makes the Vitest suite fail instead of skipping
 // when the classpath is unavailable, so CI can never silently lose the check.
-val sessionLoopbackClasspathFile = layout.projectDirectory.file("app/build/session-loopback/classpath.txt")
+val sessionLoopbackClasspathFile = layout.projectDirectory.file("android/app/build/session-loopback/classpath.txt")
+// The host-JVM cdylib and the WASM package come from the included Rust build; their
+// outputs stay under the repository-root build/.
+val rustHostJniDir = layout.buildDirectory.dir("rust/host-jni")
 
 val sessionLoopbackCheck = tasks.register<Exec>("sessionLoopbackCheck") {
     group = "verification"
     description = "Runs the Kotlin phone / TypeScript client cross-endpoint session loopback."
     dependsOn(
-        "rustHostJni",
-        "rustWasm",
-        ":app:sessionLoopbackClasspath",
+        rustBuild.task(":rustHostJni"),
+        rustBuild.task(":rustWasm"),
+        androidBuild.task(":app:sessionLoopbackClasspath"),
         protocolWebInstall,
     )
     workingDir(layout.projectDirectory.dir("web-extension"))
     doFirst {
         val classpathFile = sessionLoopbackClasspathFile.asFile
         check(classpathFile.isFile) {
-            "sessionLoopbackCheck: missing ${classpathFile.path}; run :app:sessionLoopbackClasspath"
+            "sessionLoopbackCheck: missing ${classpathFile.path}; run ./gradlew :android:app:sessionLoopbackClasspath"
         }
         environment("VELES_LOOPBACK_CLASSPATH", classpathFile.readText().trim())
         environment("VELES_LOOPBACK_REQUIRED", "1")
@@ -693,319 +470,6 @@ val protocolFreshEvidenceCheck = tasks.register<Exec>("protocolFreshEvidenceChec
     outputs.upToDateWhen { false }
     workingDir(layout.projectDirectory)
     commandLine("node", "protocol/checks/check.mjs", "--evidence-only")
-}
-
-val rustWasmSmoke = tasks.register<Exec>("rustWasmSmoke") {
-    group = "rust"
-    dependsOn(rustWasm)
-    inputs.file(rustCrateDir.file("tests/wasm-smoke.mjs"))
-    inputs.dir(wasmPackageDir)
-    doFirst {
-        requireOnPath(
-            "node",
-            "Node >=22.0.0",
-            "Install Node.js >=22.0.0 (declared in web-extension/package.json engines.node)",
-        )
-        val version = providers.exec {
-            commandLine("node", "--version")
-        }.standardOutput.asText.get().trim()
-        val major = version.removePrefix("v").substringBefore('.').toIntOrNull()
-        check(major != null && major >= 22) {
-            "Node >=22 is required by web-extension/package.json; found '$version'"
-        }
-    }
-    commandLine("node", rustCrateDir.file("tests/wasm-smoke.mjs").asFile)
-}
-
-val rustTest = tasks.register("rustTest") {
-    group = "rust"
-    description = "Runs native Rust and generated web-target WASM tests."
-    dependsOn(rustNativeTest, rustWasmSmoke, "rustWasmPairingTest")
-}
-
-tasks.register<Exec>("rustWasmPairingTest") {
-    group = "verification"
-    dependsOn(rustWasm)
-    workingDir(layout.projectDirectory)
-    commandLine("node", "rust/veles-crypto/tests/pairing-wasm.mjs")
-}
-
-for ((suffix, flag) in listOf("Entropy" to "--entropy-failure", "Expiry" to "--clock-tests",
-    "MemoryBound" to "--memory-boundary", "ResponseErasure" to "--response-erasure")) {
-    val test = tasks.register<Exec>("rustWasm${suffix}Test") {
-        group = "verification"
-        dependsOn(rustWasm)
-        workingDir(layout.projectDirectory)
-        commandLine("node", "rust/veles-crypto/tests/pairing-wasm.mjs", "web-extension/rust-wasm/pkg", flag)
-    }
-    rustTest.configure { dependsOn(test) }
-}
-
-val appNdkDirectory = objects.directoryProperty()
-val conformanceWasmDir = layout.buildDirectory.dir("rust/conformance-wasm")
-val rustWasmConformance = tasks.register<Exec>("rustWasmConformance") {
-    group = "verification"
-    description = "Builds a test-only fixed-scalar WASM package outside product outputs."
-    dependsOn(verifyWasmPack, verifyWasmBindgen, rustWasmBindgenConsistency, rustWasmLockCheck)
-    workingDir(rustDir)
-    environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
-    environment("CARGO_PROFILE_RELEASE_PANIC", "abort")
-    doFirst {
-        val bin = rustToolsDir.get().file("wasm-pack/bin/wasm-pack$windowsExecutableSuffix").asFile
-        val bindgen = rustToolsDir.get().dir("wasm-bindgen-cli/bin").asFile
-        environment("PATH", bin.parentFile.prependToPath(bindgen.prependToPath(System.getenv("PATH"))))
-        executable(bin)
-        setArgs(listOf("build", "veles-crypto", "--target", "web", "--release", "--mode", "no-install", "--no-opt",
-            "--out-dir", conformanceWasmDir.get().asFile.absolutePath, "--", "--locked", "--features", "conformance"))
-    }
-}
-
-tasks.register<Exec>("rustWasmConformanceTest") {
-    group = "verification"
-    dependsOn(rustWasmConformance)
-    workingDir(layout.projectDirectory)
-    commandLine("node", "rust/veles-crypto/tests/pairing-wasm.mjs", conformanceWasmDir.get().asFile, "--conformance")
-}
-
-// Separate output and target directories keep test-only native exports out of
-// the app's generated/jniLibs directory, release APK and rustPackage.
-// OTP-10: the same applies to the host-JVM cdylib. `host-jni` is a non-default
-// feature, so this task is the only producer of a host library; it writes under
-// build/rust/ (covered by `clean` and rust/scripts/assert-clean.sh) and never
-// into app/build/generated/jniLibs, rustPackage or any release artifact.
-val rustHostJniDir = layout.buildDirectory.dir("rust/host-jni")
-val rustHostJniTargetDir = layout.buildDirectory.dir("rust/host-jni-target")
-val hostJniLibraryName = when {
-    windowsExecutableSuffix.isNotEmpty() -> "veles_crypto.dll"
-    System.getProperty("os.name").startsWith("Mac") -> "libveles_crypto.dylib"
-    else -> "libveles_crypto.so"
-}
-
-val rustHostJni = tasks.register<Exec>("rustHostJni") {
-    group = "rust"
-    description = "Builds the locked host-JVM cdylib used by JVM tests and the loopback child JVM."
-    dependsOn("rustToolchainCheck")
-    inputs.files(
-        fileTree(rustCrateDir) { include("Cargo.toml", "src/**/*.rs") },
-        rustDir.file("Cargo.toml"),
-        rustDir.file("Cargo.lock"),
-        rustDir.file("rust-toolchain.toml"),
-    )
-    outputs.dir(rustHostJniDir)
-    workingDir(rustDir)
-    doFirst {
-        delete(rustHostJniDir)
-        environment("CARGO_TARGET_DIR", rustHostJniTargetDir.get().asFile)
-        // The JNI boundary keeps the panic machinery; a test-only build must
-        // match the release product's unwind behavior so panics surface as
-        // Java exceptions instead of aborting the test JVM.
-        environment("CARGO_PROFILE_RELEASE_PANIC", "unwind")
-        // Explicit registry-path remap (rustJniConformance sets none): the host
-        // library embeds panic locations like the product .so, so a build must
-        // not depend on where CARGO_HOME happens to store the registry.
-        environment("RUSTFLAGS", cargoRegistryRemapRustFlags())
-    }
-    commandLine(
-        "cargo", "build", "--locked", "--release",
-        "--package", "veles-crypto", "--features", "host-jni",
-    )
-    doLast {
-        val built = rustHostJniTargetDir.get().asFile.resolve("release/$hostJniLibraryName")
-        check(built.isFile) { "rustHostJni: expected the host library at $built" }
-        val output = rustHostJniDir.get().asFile
-        output.mkdirs()
-        built.copyTo(output.resolve(hostJniLibraryName), overwrite = true)
-    }
-}
-
-tasks.register<Exec>("rustJniConformance") {
-    group = "verification"
-    dependsOn(verifyCargoNdk)
-    workingDir(rustDir)
-    doFirst {
-        val ndk = appNdkDirectory.get().asFile
-        requireNdkVersion(ndk, libs.versions.ndk.get())
-        environment("ANDROID_NDK_HOME", ndk)
-        environment("PATH", rustToolsDir.get().dir("cargo-ndk/bin").asFile.prependToPath(System.getenv("PATH")))
-        environment("CARGO_TARGET_DIR", layout.buildDirectory.dir("rust/conformance-target").get().asFile)
-        environment("CARGO_PROFILE_RELEASE_PANIC", "unwind")
-    }
-    commandLine("cargo", "ndk", "--platform", "33", "--target", "arm64-v8a", "--target", "x86_64",
-        "--output-dir", layout.buildDirectory.dir("rust/conformance-jni").get().asFile,
-        "build", "--release", "--locked", "--features", "conformance")
-}
-
-project(":app").plugins.withId("com.android.application") {
-    val androidComponents = project(":app").extensions
-        .getByType(ApplicationAndroidComponentsExtension::class.java)
-    appNdkDirectory.set(androidComponents.sdkComponents.ndkDirectory)
-}
-
-val rustJniOutput = project(":app").layout.buildDirectory.dir("generated/jniLibs")
-val rustJni = tasks.register<Exec>("rustJni") {
-    group = "rust"
-    description = "Builds locked release JNI libraries for the approved Android ABIs."
-    dependsOn(verifyCargoNdk)
-    inputs.files(
-        fileTree(rustCrateDir) { include("Cargo.toml", "src/**/*.rs") },
-        rustDir.file("Cargo.toml"),
-        rustDir.file("Cargo.lock"),
-        rustDir.file("rust-toolchain.toml"),
-        rustToolsFile,
-    )
-    inputs.property("ndkVersion", libs.versions.ndk.get())
-    outputs.dir(rustJniOutput)
-    workingDir(rustDir)
-    doFirst {
-        val ndkDir = appNdkDirectory.get().asFile
-        val expected = libs.versions.ndk.get()
-        requireNdkVersion(ndkDir, expected)
-        delete(rustJniOutput)
-        val cargoNdkBinDir = rustToolsDir.get().dir("cargo-ndk/bin").asFile
-        environment("PATH", cargoNdkBinDir.prependToPath(System.getenv("PATH")))
-        environment("ANDROID_NDK_HOME", ndkDir)
-        environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
-        environment("CARGO_PROFILE_RELEASE_PANIC", "unwind")
-        // Registry-path remap for byte-reproducible JNI libraries (see
-        // cargoRegistryRemapRustFlags): without it, CI runner vs Docker
-        // rebuilds embed different CARGO_HOME paths and the APK compare fails.
-        environment("RUSTFLAGS", cargoRegistryRemapRustFlags())
-    }
-    commandLine(
-        "cargo", "ndk", "--platform", "33",
-        "--target", "arm64-v8a",
-        "--target", "armeabi-v7a",
-        "--target", "x86_64",
-        "--output-dir", rustJniOutput.get().asFile,
-        "build", "--workspace", "--release", "--locked",
-    )
-}
-
-val rustPackageDir = layout.buildDirectory.dir("rust-package")
-val rustJniPaths = listOf(
-    "arm64-v8a/libveles_crypto.so",
-    "armeabi-v7a/libveles_crypto.so",
-    "x86_64/libveles_crypto.so",
-)
-
-val rustPackage = tasks.register<Sync>("rustPackage") {
-    group = "rust"
-    description = "Stages the JNI and WASM artifacts as the rust-jni-wasm package."
-    dependsOn(rustJni, rustWasm)
-    from(rustJniOutput) {
-        include(rustJniPaths)
-        into("jni")
-    }
-    from(wasmPackageDir) { into("wasm") }
-    into(rustPackageDir)
-    doFirst {
-        val actual = rustJniOutput.get().asFile.walkTopDown()
-            .filter { it.isFile }
-            .map { it.relativeTo(rustJniOutput.get().asFile).invariantSeparatorsPath }
-            .sorted()
-            .toList()
-        check(actual == rustJniPaths.sorted()) {
-            "Unexpected JNI artifact paths: $actual"
-        }
-    }
-    doLast {
-        val root = rustPackageDir.get().asFile
-        // Gradle's Sync excludes dotfiles, but wasm-pack emits .gitignore as
-        // part of the package contract, so copy it before recording checksums.
-        wasmPackageDir.file(".gitignore").asFile.copyTo(root.resolve("wasm/.gitignore"), overwrite = true)
-        val paths = root.walkTopDown()
-            .filter { it.isFile && it.name != "SHA256SUMS" }
-            .map { it.relativeTo(root).invariantSeparatorsPath }
-            .sorted()
-            .toList()
-        check(paths.filter { it.startsWith("jni/") } == rustJniPaths.map { "jni/$it" }.sorted()) {
-            "Rust package JNI paths are invalid: $paths"
-        }
-        check(paths.any { it.startsWith("wasm/") }) { "Rust package has no WASM files" }
-        val sums = paths.joinToString(separator = "\n", postfix = "\n") { path ->
-            val digest = MessageDigest.getInstance("SHA-256")
-                .digest(root.resolve(path).readBytes())
-                .joinToString("") { byte -> "%02x".format(byte) }
-            "$digest  $path"
-        }
-        root.resolve("SHA256SUMS").writeText(sums)
-    }
-}
-
-val rustFormat = tasks.register<Exec>("rustFormat") {
-    group = "rust"
-    dependsOn(rustToolchainCheck)
-    workingDir(rustDir)
-    environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
-    commandLine("cargo", "fmt", "--all", "--", "--check")
-}
-
-val rustLintHost = tasks.register<Exec>("rustLintHost") {
-    group = "rust"
-    dependsOn(rustToolchainCheck)
-    workingDir(rustDir)
-    environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
-    commandLine(
-        "cargo", "clippy", "--workspace", "--all-targets", "--locked",
-        "--", "-D", "warnings",
-    )
-}
-
-val rustLintHostJni = tasks.register<Exec>("rustLintHostJni") {
-    group = "rust"
-    description = "Runs denied-warning Clippy on the host-JVM JNI exports (non-default host-jni feature)."
-    dependsOn("rustToolchainCheck")
-    workingDir(rustDir)
-    environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
-    commandLine(
-        "cargo", "clippy", "--package", "veles-crypto", "--all-targets", "--locked",
-        "--features", "host-jni", "--", "-D", "warnings",
-    )
-}
-
-val rustLintWasm = tasks.register<Exec>("rustLintWasm") {
-    group = "rust"
-    dependsOn(rustToolchainCheck)
-    workingDir(rustDir)
-    environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
-    environment("CARGO_PROFILE_RELEASE_PANIC", "abort")
-    commandLine(
-        "cargo", "clippy", "--workspace", "--target", "wasm32-unknown-unknown",
-        "--locked", "--", "-D", "warnings",
-    )
-}
-
-val rustLintAndroid = tasks.register<Exec>("rustLintAndroid") {
-    group = "rust"
-    dependsOn(verifyCargoNdk)
-    workingDir(rustDir)
-    doFirst {
-        val ndkDir = appNdkDirectory.get().asFile
-        val expected = libs.versions.ndk.get()
-        requireNdkVersion(ndkDir, expected)
-        val cargoNdkBinDir = rustToolsDir.get().dir("cargo-ndk/bin").asFile
-        environment("PATH", cargoNdkBinDir.prependToPath(System.getenv("PATH")))
-        environment("ANDROID_NDK_HOME", ndkDir)
-        environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
-        environment("CARGO_PROFILE_RELEASE_PANIC", "unwind")
-    }
-    commandLine(
-        "cargo", "ndk", "--platform", "33", "--target", "x86_64",
-        "clippy", "--workspace", "--all-targets", "--locked",
-        "--", "-D", "warnings",
-    )
-}
-
-val rustLint = tasks.register("rustLint") {
-    group = "rust"
-    description = "Runs denied-warning Clippy checks for host, host-JNI, WASM, and Android JNI."
-    dependsOn(rustLintHost, rustLintHostJni, rustLintWasm, rustLintAndroid)
-}
-
-tasks.register("rustNdkVersion") {
-    group = "rust"
-    description = "Prints the pinned Android NDK version for CI provisioning."
-    doLast { println(libs.versions.ndk.get()) }
 }
 
 // ---------------------------------------------------------------------------
@@ -2284,9 +1748,9 @@ val bridgeInstallerSupplyChain = tasks.register<Exec>("bridgeInstallerSupplyChai
 
 tasks.named("check") {
     dependsOn(
-        rustFormat,
-        rustLint,
-        rustTest,
+        "rustFormat",
+        "rustLint",
+        "rustTest",
         bridgeFormat,
         bridgeLint,
         bridgeTypecheck,
@@ -2310,13 +1774,14 @@ tasks.register("protocolCheck") {
         protocolRustTest,
         protocolWebTest,
         protocolBridgeTest,
-        ":app:protocolJvmTest",
+        androidBuild.task(":app:protocolJvmTest"),
         sessionLoopbackCheck,
     )
 }
 
 tasks.named<Delete>("clean") {
-    dependsOn(":app:clean")
+    // Android's app output and the Android build root are owned by the included android build.
+    dependsOn(androidBuild.task(":app:clean"), androidBuild.task(":clean"))
     // Root `clean` removes every declared generated product, verification,
     // SBOM, checksum, and tool output under `build/` plus the two named
     // source-tree exceptions (`web-extension/dist` and the WASM package).
@@ -2336,8 +1801,8 @@ tasks.named<Delete>("clean") {
         layout.projectDirectory.dir("native-bridge/installer/target"),
         layout.projectDirectory.dir("native-bridge/installer/macos/.build"),
         layout.buildDirectory.dir("native-bridge"),
-        // Rust JNI/WASM staged package (rustPackage producer).
-        rustPackageDir,
+        // Rust JNI/WASM staged package (the included Rust build's rustPackage producer).
+        layout.buildDirectory.dir("rust-package"),
         // Aggregate verification evidence and toolchain manifest.
         layout.buildDirectory.dir("verification"),
         // CycloneDX SBOM outputs.

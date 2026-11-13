@@ -91,7 +91,7 @@ class FixtureAgreement(unittest.TestCase):
         self.assertEqual(record[:4], b"VEL\x03")
         self.assertTrue(all(record[i] == (i + 61) & 0xFF for i in range(4, 4096)))
         self.assertEqual(WANT, hashlib.sha256(record).hexdigest())
-        kotlin = (HERE.parent.parent.parent / "app/src/main/java/me/nagaev/veles/sharing/SyntheticTransportFixture.kt").read_text()
+        kotlin = (HERE.parent.parent.parent / "android/app/src/main/java/me/nagaev/veles/sharing/SyntheticTransportFixture.kt").read_text()
         self.assertIn("UNSOLICITED_SEED = 61", kotlin)
         self.assertIn("0x56, 0x45, 0x4c, 3", kotlin)
 

@@ -1,0 +1,6 @@
+# The independent Android build has its own build directories. `/build` in the repository-root
+# .gitignore is anchored to the root, so without this file a generated report under android/build/
+# can be committed and would make the git-derived Android versionName dirty.
+/build
+/.gradle
+/.kotlin

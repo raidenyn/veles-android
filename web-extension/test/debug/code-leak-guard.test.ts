@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 const WEB_EXTENSION = join(__dirname, '..', '..');
 const ROOTS = [
-    join(WEB_EXTENSION, '..', 'app', 'src', 'debug'),
+    join(WEB_EXTENSION, '..', 'android', 'app', 'src', 'debug'),
     join(WEB_EXTENSION, 'src', 'debug'),
 ];
 

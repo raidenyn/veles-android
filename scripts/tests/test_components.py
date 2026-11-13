@@ -126,9 +126,38 @@ class SelectionTest(unittest.TestCase):
         self.assertFalse(a["native-host"])
 
     def test_global_selects_all(self):
-        self.assertTrue(all(affected(["build.gradle.kts"], CMAP).values()))
-        self.assertTrue(all(affected([".github/workflows/check-android.yml"], CMAP).values()))
-        self.assertTrue(all(affected([".java-version"], CMAP).values()))
+        for path in (
+            "gradle/wrapper/gradle-wrapper.properties",
+            ".github/workflows/check-android.yml",
+            ".java-version",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(all(affected([path], CMAP).values()), path)
+
+    def test_root_build_file_selects_every_node_but_android(self):
+        for path in ("build.gradle.kts", "settings.gradle.kts", "gradle.properties"):
+            with self.subTest(path=path):
+                self.assertEqual(owner_nodes(path, CMAP), NODES - {"android"})
+                a = affected([path], CMAP)
+                self.assertEqual({n for n, v in a.items() if v}, NODES - {"android"})
+                self.assertEqual(unaccounted([path], CMAP), [])
+                self.assertNotIn(path, CMAP["global"])
+                self.assertIn(path, CMAP["nodes"]["web-extension"]["paths"])
+                self.assertIn(path, CMAP["nodes"]["installer"]["paths"])
+                self.assertNotIn(path, CMAP["nodes"]["android"]["paths"])
+
+    def test_wrapper_selects_every_node(self):
+        for path in (
+            "gradlew",
+            "gradlew.bat",
+            "gradle/wrapper/gradle-wrapper.jar",
+            "gradle/wrapper/gradle-wrapper.properties",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(all(affected([path], CMAP).values()), path)
+                self.assertEqual(unaccounted([path], CMAP), [])
+        for path in ("gradlew", "gradlew.bat", "gradle/", ".java-version"):
+            self.assertIn(path, CMAP["global"])
 
     def test_unaccounted_selects_all(self):
         self.assertTrue(all(affected(["newdir/x"], CMAP).values()))
@@ -138,12 +167,12 @@ class SelectionTest(unittest.TestCase):
     def test_known_cross_directory_dependencies(self):
         self.assertTrue(affected(["verify/lib/checksum-manifest.mjs"], CMAP)["web-extension"])
         self.assertTrue(affected(["verify/lib/checksum-manifest.mjs"], CMAP)["bridge-scaffold"])
-        self.assertTrue(affected(["config/detekt/detekt.yml"], CMAP)["android"])
+        self.assertTrue(affected(["config/detekt/detekt.yml"], CMAP)["android"])  # retired-paths
+        self.assertTrue(affected(["android/config/detekt/detekt.yml"], CMAP)["android"])
         self.assertTrue(affected(["protocol/v1/fixtures/crypto.json"], CMAP)["rust"])
         self.assertTrue(affected(["protocol/v1/limits.json"], CMAP)["bridge-scaffold"])
         self.assertTrue(affected(["verify/check-remote-code.mjs"], CMAP)["native-host"])
         self.assertTrue(affected(["rust/scripts/assert-clean.sh"], CMAP)["installer"])  # via ci-paths
-        self.assertTrue(affected(["config/detekt/detekt.yml"], CMAP)["android"])  # via ci-paths
         self.assertTrue(affected([".license-policy.json"], CMAP)["supply-chain"])
         self.assertTrue(affected(["web-extension/src/connector.ts"], CMAP)["supply-chain"])
 
@@ -153,7 +182,8 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual(owner_nodes("README.md", CMAP), set())
 
     def test_owner_nodes_contract(self):
-        self.assertIsNone(owner_nodes("build.gradle.kts", CMAP))
+        self.assertEqual(owner_nodes("build.gradle.kts", CMAP), NODES - {"android"})
+        self.assertIsNone(owner_nodes("gradle/wrapper/gradle-wrapper.properties", CMAP))
         self.assertIsNone(owner_nodes("newdir/x", CMAP))
         self.assertEqual(owner_nodes("native-bridge/host/src/lib.rs", CMAP), {"native-host", "protocol", "supply-chain"})
         self.assertEqual(owner_nodes("scripts/components.py", CMAP), {"tooling"})
@@ -165,11 +195,51 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual({n for n, v in a.items() if v}, {"tooling"})
         self.assertEqual(unaccounted([".github/components.json"], CMAP), [])
 
+    def test_root_alias_script_selects_tooling(self):
+        script = "verify/check-root-aliases.sh"
+        self.assertIn(script, CMAP["nodes"]["tooling"]["ci-paths"])
+        self.assertIn("tooling", owner_nodes(script, CMAP))
+        self.assertTrue(affected([script], CMAP)["tooling"])
+        self.assertEqual(unaccounted([script], CMAP), [])
+
     def test_editorconfig_selects_prettier_and_ktlint_consumers(self):
-        self.assertEqual(owner_nodes(".editorconfig", CMAP), {"android", "web-extension", "bridge-scaffold"})
+        self.assertEqual(owner_nodes(".editorconfig", CMAP), {"web-extension", "bridge-scaffold"})
         a = affected([".editorconfig"], CMAP)
-        self.assertEqual({n for n, v in a.items() if v}, {"android", "web-extension", "bridge-scaffold"})
+        self.assertEqual({n for n, v in a.items() if v}, {"web-extension", "bridge-scaffold"})
         self.assertEqual(unaccounted([".editorconfig"], CMAP), [])
+        # Android has its own android/.editorconfig, covered by the android/ path.
+        self.assertNotIn(".editorconfig", CMAP["nodes"]["android"]["ci-paths"])
+        self.assertEqual(owner_nodes("android/.editorconfig", CMAP), {"android", "protocol"})
+
+    def test_android_detekt_selects_android_and_protocol(self):
+        a = affected(["android/config/detekt/detekt.yml"], CMAP)
+        self.assertEqual({n for n, v in a.items() if v}, {"android", "protocol"})
+        self.assertEqual(unaccounted(["android/config/detekt/detekt.yml"], CMAP), [])
+
+    def test_migration_pr_deleted_app_files_are_accounted(self):
+        files = [
+            "app/build.gradle.kts",
+            "app/src/main/java/me/nagaev/veles/MainActivity.kt",
+            "config/detekt/detekt.yml",
+            "android/app/build.gradle.kts",
+            "android/settings.gradle.kts",
+        ]
+        self.assertEqual(unaccounted(files, CMAP), [])
+        a = affected(files, CMAP)
+        self.assertTrue(a["android"])
+        self.assertEqual(owner_nodes("app/build.gradle.kts", CMAP), {"android"})
+        self.assertEqual(owner_nodes("config/detekt/detekt.yml", CMAP), {"android"})
+        self.assertEqual(
+            CMAP["retired-paths"], {"app/": ["android"], "config/detekt/": ["android"]}
+        )
+
+    def test_protocol_spec_edit_selects_protocol_consumers_not_installer(self):
+        spec = "protocol/docs/veles-v1.md"
+        a = affected([spec], CMAP)
+        for node in ("protocol", "android", "rust", "web-extension", "native-host", "bridge-scaffold"):
+            self.assertTrue(a[node], node)
+        self.assertFalse(a["installer"])
+        self.assertEqual(unaccounted([spec], CMAP), [])
 
     def test_protocol_change_does_not_select_installer(self):
         a = affected(["protocol/v1/limits.json"], CMAP)

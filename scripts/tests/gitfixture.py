@@ -87,6 +87,17 @@ class Repo:
     def tag(self, name, at="HEAD"):
         self.git("tag", name, at)
 
+    def migrate(self, message="refactor(android): move the app to android/"):
+        """The migration commit: adds android/ and, like the real move, deletes app/.
+
+        Every commit after it is in the new layout epoch (its tree contains android/).
+        """
+        self.write("android/settings.gradle.kts", "// android root\n")
+        self.write("android/app/build.gradle.kts", "// app\n")
+        self.git("rm", "-r", "-q", "app")
+        self.git("add", "-A")
+        return self._commit(message)
+
     def head(self):
         return self.git("rev-parse", "HEAD")
 

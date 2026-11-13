@@ -8,6 +8,17 @@ This document describes prerequisites, build commands, installation instructions
 
 - **JDK 21** installed and configured (e.g. via `JAVA_HOME`).
 - **Android Studio** or standalone **Android SDK** with build tools for API 33+.
+- **Android NDK 29.0.14206865** for the native Rust core. The Android Gradle Plugin no longer
+  installs the NDK automatically, so install the pinned version once:
+  ```bash
+  sdkmanager "ndk;29.0.14206865"
+  ```
+  The version is defined once in [`rust/ndk-version`](rust/ndk-version); the Rust build finds it
+  through `ANDROID_NDK_HOME`, then `$ANDROID_SDK_ROOT/ndk/<version>`, then
+  `$ANDROID_HOME/ndk/<version>`, then the `sdk.dir` of the repository-root `local.properties`,
+  then the `sdk.dir` of `android/local.properties`. The independent Android build reads the SDK
+  location from `android/local.properties` (or `ANDROID_HOME`/`ANDROID_SDK_ROOT`); a
+  repository-root `local.properties` is not used by it.
 - **ADB** (Android Debug Bridge) for deploying to a physical device or emulator.
 - *(Optional, for external toolchains)*:
   - **Node.js** (LTS) & npm for `web-extension/`.
@@ -17,20 +28,32 @@ This document describes prerequisites, build commands, installation instructions
 
 ## Building the Android App
 
-From the repository root:
+`android/` is an independent Gradle build. Both entry points work for the common commands:
+the thin root aliases below forward to the included Android build, and running from `android/`
+addresses the build directly. Use the `android/` form whenever a command needs a task option
+that the root alias cannot carry — notably `--tests` for a single unit test class.
 
 ### Debug Build
 ```bash
+# From the repository root (root alias)
+./gradlew assembleDebug
+
+# Directly in the Android build
+cd android
 ./gradlew assembleDebug
 ```
 The output APK is generated at:
 ```
-app/build/outputs/apk/debug/app-debug.apk
+android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ### Run Unit Tests
 ```bash
+# From the repository root (root alias)
 ./gradlew testDebugUnitTest
+
+# A single test class: the root alias cannot accept --tests
+cd android && ./gradlew testDebugUnitTest --tests "me.nagaev.veles.otp.handlers.RegexMessageHandlerTest"
 ```
 
 ### Release Build
@@ -50,7 +73,7 @@ See [docs/releasing.md](docs/releasing.md) for signing configuration and release
 
 2. Install the debug APK:
    ```bash
-   adb install -r app/build/outputs/apk/debug/app-debug.apk
+   adb install -r android/app/build/outputs/apk/debug/app-debug.apk
    ```
 
 3. Open **Veles** and complete the permission flow:

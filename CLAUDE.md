@@ -34,10 +34,12 @@ cross-platform key: Android and macOS identities are separate.
   regenerate the key, uninstall the app, or clear data as a routine workaround; if the
   original key is unavailable, stop and ask.
 - **OTP-23 fixture migration (user-authorized 2026-11-02):** the replacement debug fixture key
-  is `config/android_keys/otp23-fixture.keystore`, with local Gradle init script
-  `config/android_keys/fixture-signing.gradle`. The directory is git-ignored and must be
-  retained and backed up securely. Build the existing isolated fixture and its test APK with
-  `./gradlew --init-script config/android_keys/fixture-signing.gradle assembleDebug assembleDebugAndroidTest`.
+  is `android/config/android_keys/otp23-fixture.keystore`, with local Gradle init script
+  `android/config/android_keys/fixture-signing.gradle`. The directory is git-ignored and must be
+  retained and backed up securely. Build the existing isolated fixture and its test APK from
+  the independent Android build:
+  `cd android && ./gradlew --init-script config/android_keys/fixture-signing.gradle assembleDebug assembleDebugAndroidTest`
+  (keep the directory git-ignored; never commit key material).
   This debug-only identity does not authorize changing production signing; keep comparing APK
   certificates before future updates and never commit the key or its credentials.
 - **macOS:** reuse the exact approved signing identity/team and bundle ID. No ad-hoc
@@ -62,8 +64,9 @@ Details: `docs/windows-ble-poc.md` (Android) and `docs/desktop-ble-poc.md` (macO
 # OTP-02 contract: fresh Node crypto evidence plus Kotlin, Rust and both TypeScript consumers
 ./gradlew protocolCheck
 
-# Run a single unit test class
-./gradlew testDebugUnitTest --tests "me.nagaev.veles.otp.handlers.RegexMessageHandlerTest"
+# Run a single unit test class. The root `testDebugUnitTest` is a plain forwarding alias
+# and cannot accept `--tests`; run the filtered form from the independent Android build.
+cd android && ./gradlew testDebugUnitTest --tests "me.nagaev.veles.otp.handlers.RegexMessageHandlerTest"
 
 # Run instrumented tests (requires connected device or emulator)
 ./gradlew connectedDebugAndroidTest
@@ -90,7 +93,7 @@ npm run package                 # vite build + deterministic zip + sha256 sideca
 # Format, lint host+WASM+Android targets, and run native+WASM tests
 ./gradlew rustFormat rustLint rustTest
 
-# Build three Android JNI ABIs into app/build/generated/jniLibs/
+# Build three Android JNI ABIs into build/rust/jniLibs/
 ./gradlew rustJni
 
 # Build web-target WASM into web-extension/rust-wasm/pkg/

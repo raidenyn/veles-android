@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { lstatSync, readFileSync } from 'node:fs';
 import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -329,7 +330,7 @@ test('Android workflow builds one release variant and stages its APK, mapping, a
   assert.match(versionStep, /:app:androidGitVersion/, 'version assertion must read androidGitVersion');
   assert.match(versionStep, /\$\{VERSION_TAG#android-v\}/, 'version assertion must strip the android-v prefix');
   const jniStep = source.slice(source.indexOf('- name: Verify APK JNI allow-list'), source.indexOf('- name: Stage release APK, mapping, and checksums'));
-  assert.match(jniStep, /APK="app\/build\/outputs\/apk\/release\/app-release-unsigned\.apk"/, 'JNI validation must select the unsigned APK');
+  assert.match(jniStep, /APK="android\/app\/build\/outputs\/apk\/release\/app-release-unsigned\.apk"/, 'JNI validation must select the unsigned APK from android/');
   assert.match(jniStep, /rust\/scripts\/verify-apk-jni\.sh "\$APK"/, 'JNI allow-list must run against the unsigned APK');
   // No Docker reference rebuild and no canonical unsigned export.
   assert.doesNotMatch(source, /verify\/verify\.sh/, 'Android workflow must not run the Docker reference rebuild');
@@ -338,8 +339,8 @@ test('Android workflow builds one release variant and stages its APK, mapping, a
   const stageStep = source.slice(source.indexOf('- name: Stage release APK, mapping, and checksums'), source.indexOf('- uses: actions/upload-artifact'));
   assert.match(stageStep, /APK="app-release-unsigned\.apk"/, 'staging must select the unsigned APK');
   assert.doesNotMatch(stageStep, /app-release\.apk/, 'staging must not name a signed APK');
-  assert.match(stageStep, /cp "app\/build\/outputs\/apk\/release\/\$APK" "build\/verification\/android-release\/\$APK"/, 'Android workflow must stage the actual release APK under its selected name');
-  assert.match(stageStep, /cp app\/build\/outputs\/mapping\/release\/mapping\.txt build\/verification\/android-release\/mapping\.txt/, 'Android workflow must stage the mapping');
+  assert.match(stageStep, /cp "android\/app\/build\/outputs\/apk\/release\/\$APK" "build\/verification\/android-release\/\$APK"/, 'Android workflow must stage the actual release APK under its selected name');
+  assert.match(stageStep, /cp android\/app\/build\/outputs\/mapping\/release\/mapping\.txt build\/verification\/android-release\/mapping\.txt/, 'Android workflow must stage the mapping');
   assert.match(stageStep, /sha256sum "\$APK" mapping\.txt > SHA256SUMS/, 'Android workflow must stage SHA256SUMS over the APK and mapping');
   assert.match(source, /name:\s*\$\{\{ inputs\.artifact-name \}\}/, 'Android workflow must upload the caller-selected artifact');
   assertExactUploadPaths(source, 'build-android.yml', ['build/verification/android-release/']);
@@ -721,8 +722,15 @@ function shellCommands(source) {
   return [...runCommands(source), ...scripts];
 }
 
+// Commands that actually execute tasks. `./gradlew --dry-run <alias>` only configures the graph, so it
+// must not claim ownership in the executed-command inventory (tooling proves the root aliases that the
+// Android and protocol nodes execute for real).
+function executedShellCommands(source) {
+  return shellCommands(executableYaml(source)).filter((run) => !/(?:^|\s)--dry-run(?:\s|$)/.test(run));
+}
+
 function inventoryOwners(sources, command) {
-  return Object.entries(sources).filter(([, source]) => shellCommands(executableYaml(source)).some((run) => commandPattern(command).test(run))).map(([name]) => name);
+  return Object.entries(sources).filter(([, source]) => executedShellCommands(source).some((run) => commandPattern(command).test(run))).map(([name]) => name);
 }
 
 function assertComponentCi(source, nodes) {
@@ -1233,8 +1241,8 @@ function uploadPathsOrEmpty(source) {
 }
 
 const CLEAN_CONTRACT_ORDER = [
-  ':app:assembleDebug', 'verify-apk-jni.sh', './gradlew rustHostJni', './gradlew rustWasm',
-  'npm run build', './gradlew clean', 'assert-clean.sh', ':app:assembleDebug', 'verify-apk-jni.sh',
+  'assembleDebug', 'verify-apk-jni.sh', './gradlew rustHostJni', './gradlew rustWasm',
+  'npm run build', './gradlew clean', 'assert-clean.sh', 'assembleDebug', 'verify-apk-jni.sh',
 ];
 
 function assertCleanContractOrder(source) {
@@ -3082,4 +3090,314 @@ test('PR installer caller contract rejects routing, approval, scope and boundary
     (error) => /approval boundary as a workflow-local convenience gate/.test(error.message),
     'removing the approval-boundary honesty must fail the workflow-local convenience gate diagnostic',
   );
+});
+
+// Task 11: `android/` becomes an independent Gradle build at the layout cut-over, but it never
+// carries a second wrapper. Until the cut-over the two shims delegate to the repository-root
+// wrapper, so `cd android && ./gradlew …` works while exactly one gradle-wrapper.jar and one
+// distribution remain in the repository. The shims are real LF files, never symlinks.
+const ANDROID_SHIM_CONTENTS = {
+  'android/gradlew': '#!/bin/sh\nexec "$(dirname "$0")/../gradlew" "$@"\n',
+  'android/gradlew.bat': '@call "%~dp0..\\gradlew.bat" %*\n',
+};
+
+test('android shims delegate to the root wrapper, are not symlinks, use LF and the repository has exactly one gradle-wrapper.jar', async () => {
+  for (const [name, expected] of Object.entries(ANDROID_SHIM_CONTENTS)) {
+    const info = lstatSync(join(repository, name));
+    assert.ok(!info.isSymbolicLink(), `${name} must not be a symlink`);
+    assert.ok(info.isFile(), `${name} must be a regular file`);
+    const bytes = readFileSync(join(repository, name));
+    assert.ok(!bytes.includes('\r'), `${name} must use LF line endings`);
+    assert.equal(bytes.toString('utf8'), expected, `${name} must delegate to the root wrapper`);
+  }
+  const shim = lstatSync(join(repository, 'android/gradlew'));
+  assert.ok((shim.mode & 0o111) !== 0, 'the POSIX android/gradlew shim must be executable');
+  // The shims must keep LF on checkout on every host, including Windows.
+  const attributes = (await readFile(new URL('android/.gitattributes', root), 'utf8')).split('\n');
+  for (const line of ['gradlew text eol=lf', 'gradlew.bat text eol=lf']) {
+    assert.ok(attributes.includes(line), `android/.gitattributes must declare "${line}"`);
+  }
+  const tracked = spawnSync('git', ['ls-files'], { cwd: repository, encoding: 'utf8' });
+  assert.equal(tracked.status, 0, `git ls-files failed: ${tracked.stderr}`);
+  const wrapperJars = tracked.stdout.split('\n').filter((path) => path === 'gradle-wrapper.jar' || path.endsWith('/gradle-wrapper.jar'));
+  assert.deepEqual(wrapperJars, ['gradle/wrapper/gradle-wrapper.jar'], 'the repository must track exactly one gradle-wrapper.jar, the root wrapper');
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// Task 15: the Android cut-over. Android Gradle commands run from android/, the repository guards run from
+// the repository root and scan the relocated sources, and tooling proves the root aliases with a dry run.
+
+const ROOT_ANDROID_ALIASES = [
+  'assembleDebug', 'assembleRelease', 'testDebugUnitTest', 'lintDebug',
+  'spotlessCheck', 'detekt', 'connectedDebugAndroidTest', 'protocolCheck',
+];
+
+function stepRunText(step) {
+  return runCommands(step.join('\n')).join('\n');
+}
+
+function stepContaining(jobText, needle) {
+  const step = steps(jobText).find((candidate) => candidate.join('\n').includes(needle));
+  assert.ok(step, `job must define a step containing "${needle}"`);
+  return step;
+}
+
+function stepWorkingDirectory(step) {
+  const entries = step.map(mappingEntry).filter((entry) => entry?.key === 'working-directory');
+  assert.ok(entries.length <= 1, 'a step must declare at most one working-directory');
+  return entries[0]?.value.trim() ?? null;
+}
+
+// The key/value entries nested directly under a step's `with:` mapping. Action inputs must live here;
+// a step-level key with the same name would be an invalid action step.
+function stepWithEntries(step) {
+  const withIndex = step.findIndex((line) => {
+    const entry = mappingEntry(line);
+    return entry?.key === 'with' && entry.value.trim() === '';
+  });
+  if (withIndex === -1) return null;
+  const withIndent = mappingEntry(step[withIndex]).indent;
+  const entries = [];
+  for (let index = withIndex + 1; index < step.length; index += 1) {
+    const line = step[index];
+    if (line.trim() && line.match(/^\s*/)[0].length <= withIndent) break;
+    const entry = mappingEntry(line);
+    if (entry && entry.indent === withIndent + 2) entries.push({ key: entry.key, value: entry.value.trim() });
+  }
+  return entries;
+}
+
+function gradleSteps(jobText) {
+  return steps(jobText).filter((step) => /(?:^|\s)\.\/gradlew(?:\s|$)/.test(stepRunText(step)));
+}
+
+function assertAndroidCheckLayout(source) {
+  const jobs = workflowJobBlocks(executableYaml(source));
+  assert.deepEqual(Object.keys(jobs).sort(), ['instrumented-tests', 'lint', 'release-hook-guard', 'unit-tests'], 'check-android must keep its four jobs');
+  for (const job of ['lint', 'release-hook-guard', 'unit-tests']) {
+    const gradle = gradleSteps(jobs[job]);
+    assert.ok(gradle.length > 0, `check-android/${job} must run Gradle`);
+    for (const step of gradle) {
+      assert.equal(stepWorkingDirectory(step), 'android', `check-android/${job} Gradle steps must run from android/`);
+    }
+  }
+  // The emulator runner executes its script from android/ through its working-directory input. Both
+  // are action inputs inside `with:`, never step-level keys: a step-level `working-directory` would be
+  // an invalid action step that ignores the directory.
+  const emulator = steps(jobs['instrumented-tests']).find((step) => stepUses(step).some((use) => use.startsWith('reactivecircus/android-emulator-runner')));
+  assert.ok(emulator, 'instrumented-tests must use the Android emulator runner');
+  const withEntries = stepWithEntries(emulator);
+  assert.ok(withEntries, 'the emulator runner must declare a with: mapping');
+  assert.deepEqual(withEntries.filter((entry) => entry.key === 'working-directory'), [{ key: 'working-directory', value: 'android' }], 'the emulator working-directory must be an action input inside with:');
+  assert.deepEqual(withEntries.filter((entry) => entry.key === 'script'), [{ key: 'script', value: './gradlew connectedDebugAndroidTest' }], 'the emulator script input must run the Android-root task');
+  const usesIndent = mappingEntry(emulator.find((line) => mappingEntry(line)?.key === 'uses')).indent;
+  const stepLevelKeys = emulator.map(mappingEntry).filter((entry) => entry?.indent === usesIndent).map((entry) => entry.key);
+  assert.ok(!stepLevelKeys.includes('working-directory') && !stepLevelKeys.includes('script'), 'the emulator runner inputs must not be step-level keys');
+
+  // Repository guards run from the root and name the relocated sources.
+  const mac = stepContaining(jobs.lint, 'check-mac-comparisons');
+  assert.equal(stepRunText(mac).trim(), 'node scripts/check-mac-comparisons.mjs --scan android/app/src/main', 'the MAC guard must scan android/app/src/main from the root');
+  assert.equal(stepWorkingDirectory(mac), null, 'the MAC guard must run from the repository root');
+  const log = stepContaining(jobs.lint, 'android.util.Log');
+  assert.equal(stepWorkingDirectory(log), null, 'the android.util.Log guard must run from the repository root');
+  assert.match(stepRunText(log), /android\/app\/src\/main android\/app\/src\/debug --include=\*\.kt/, 'the android.util.Log guard must scan the relocated sources');
+  const pairing = stepContaining(jobs.lint, 'PairingCode');
+  assert.equal(stepWorkingDirectory(pairing), null, 'the pairing-code guard must run from the repository root');
+  assert.match(stepRunText(pairing), /android\/app\/src\/debug --include=\*\.kt/, 'the Kotlin pairing-code guard must scan android/app/src/debug');
+  assert.doesNotMatch(stepRunText(pairing), /web-extension\/src\/debug/, 'the web-extension pairing-code guard belongs to web-extension / lint');
+
+  // The root-only host-JNI prebuild is gone; the NDK version comes from the Android build.
+  assert.doesNotMatch(executableYaml(source), /rustHostJni/, 'check-android must not run the root-only rustHostJni alias');
+  for (const job of ['release-hook-guard', 'instrumented-tests']) {
+    const ndk = stepContaining(jobs[job], 'rustNdkVersion');
+    assert.equal(stepWorkingDirectory(ndk), 'android', `check-android/${job} must read rustNdkVersion from android/`);
+  }
+  // The Android outputs live under android/.
+  assert.match(source, /path: android\/app\/build\/test-results\//, 'unit-test results upload must read android/app/build/test-results/');
+  assert.match(source, /path: android\/app\/build\/outputs\/androidTest-results\//, 'instrumented results upload must read android/app/build/outputs/androidTest-results/');
+}
+
+test('check-android runs Gradle from android and guards from the root', async () => {
+  const source = await workflow('check-android.yml');
+  assertAndroidCheckLayout(source);
+  const mutations = {
+    'gradle from the root': (text) => text.replace('      - run: ./gradlew spotlessCheck\n        working-directory: android\n', '      - run: ./gradlew spotlessCheck\n'),
+    'guard from android': (text) => text.replace('        run: node scripts/check-mac-comparisons.mjs --scan android/app/src/main\n', '        working-directory: android\n        run: node scripts/check-mac-comparisons.mjs --scan android/app/src/main\n'),
+    'scan outside the relocated root': (text) => text.replace('--scan android/app/src/main', '--scan web-extension/src'),
+    'guards off the relocated sources': (text) => text.replaceAll('android/app/src/main', 'app/src/main'),
+    'web pairing guard back in android': (text) => text.replace('          exit $fail\n      - run: ./gradlew lintDebug', '          if grep -rnE "x" web-extension/src/debug --include=*.ts; then exit 1; fi\n          exit $fail\n      - run: ./gradlew lintDebug'),
+    'root host-JNI prebuild': (text) => text.replace('      - run: ./gradlew testDebugUnitTest\n        working-directory: android\n', '      - run: ./gradlew rustHostJni\n      - run: ./gradlew testDebugUnitTest\n        working-directory: android\n'),
+    'ndk from the root': (text) => text.replace('        working-directory: android\n        run: |\n          NDK_VERSION="$(./gradlew -q rustNdkVersion)"', '        run: |\n          NDK_VERSION="$(./gradlew -q rustNdkVersion)"'),
+    'emulator directory at step level': (text) => text
+      .replace('      - uses: reactivecircus/android-emulator-runner@4c44018e59b437e86cdfc41da381398f93ed8808 # v2\n        with:\n', '      - uses: reactivecircus/android-emulator-runner@4c44018e59b437e86cdfc41da381398f93ed8808 # v2\n        working-directory: android\n        with:\n')
+      .replace('          working-directory: android\n          script: ./gradlew connectedDebugAndroidTest\n', '          script: ./gradlew connectedDebugAndroidTest\n'),
+    'stale upload path': (text) => text.replace('path: android/app/build/test-results/', 'path: app/build/test-results/'),
+  };
+  for (const [label, mutate] of Object.entries(mutations)) {
+    const mutated = mutate(source);
+    assert.notEqual(mutated, source, `mutation "${label}" must change check-android.yml`);
+    assert.throws(() => assertAndroidCheckLayout(mutated), `the contract must reject "${label}"`);
+  }
+});
+
+const NDK_EXPORT = 'echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"';
+const NDK_SDKMANAGER_INSTALL = '"$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"';
+
+// GitHub's ubuntu-latest image presets ANDROID_NDK_HOME to its own NDK, and the Rust build
+// resolves ANDROID_NDK_HOME first. A job that installs the pinned NDK but leaves the preset
+// in place resolves the runner default and fails requireNdkVersion, so every install step
+// must both run sdkmanager and export the installed path through $GITHUB_ENV.
+function assertPinnedNdkExports(source, name) {
+  const installs = [];
+  for (const [job, block] of Object.entries(workflowJobBlocks(executableYaml(source)))) {
+    for (const step of steps(block)) {
+      const stepName = step.map(mappingEntry).find((entry) => entry?.key === 'name')?.value.trim();
+      if (stepName !== 'Install pinned Android NDK') continue;
+      installs.push(job);
+      const commands = stepRunText(step).split('\n').map((line) => line.trim());
+      const installAt = commands.indexOf(NDK_SDKMANAGER_INSTALL);
+      assert.notEqual(installAt, -1, `${name}/${job} must install the pinned NDK with sdkmanager`);
+      const exportAt = commands.indexOf(NDK_EXPORT);
+      assert.notEqual(exportAt, -1, `${name}/${job} must export ANDROID_NDK_HOME to $GITHUB_ENV`);
+      assert.ok(exportAt > installAt, `${name}/${job} must export ANDROID_NDK_HOME after installing it`);
+    }
+  }
+  assert.ok(installs.length > 0, `${name} must install the pinned Android NDK`);
+  return installs;
+}
+
+test('every pinned Android NDK install exports the installed path to $GITHUB_ENV', async () => {
+  // Job counts: the install happens once per NDK-using job, and no job may lose the export.
+  const expectedInstalls = {
+    'check-android.yml': 2,
+    'check-rust.yml': 3,
+    'build-android.yml': 1,
+    'build-rust.yml': 1,
+  };
+  for (const [name, count] of Object.entries(expectedInstalls)) {
+    const source = await workflow(name);
+    assert.equal(assertPinnedNdkExports(source, name).length, count, `${name} must install the pinned NDK in every NDK-using job`);
+    // Dropping the export from the first install step must fail, even when other steps keep it.
+    const dropped = source.replace(`          ${NDK_EXPORT}\n`, '');
+    assert.notEqual(dropped, source, `removing the $GITHUB_ENV export must change ${name}`);
+    assert.throws(() => assertPinnedNdkExports(dropped, name), `the contract must reject ${name} without the $GITHUB_ENV export`);
+    const replaced = source.replace(NDK_EXPORT, 'echo "ANDROID_NDK_HOME=/usr/local/lib/android/sdk/ndk/27.3.13750724" >> "$GITHUB_ENV"');
+    assert.notEqual(replaced, source, `changing the exported path must change ${name}`);
+    assert.throws(() => assertPinnedNdkExports(replaced, name), `the contract must reject ${name} exporting an unpinned NDK path`);
+  }
+});
+
+function assertWebExtensionGuards(source) {
+  const lint = workflowJobBlocks(executableYaml(source)).lint;
+  const mac = stepContaining(lint, 'check-mac-comparisons');
+  assert.equal(stepRunText(mac).trim(), 'node scripts/check-mac-comparisons.mjs --scan web-extension/src', 'web-extension lint must scan web-extension/src from the root');
+  assert.equal(stepWorkingDirectory(mac), null, 'the MAC guard must run from the repository root');
+  const pairing = stepContaining(lint, 'web-extension/src/debug');
+  assert.equal(stepWorkingDirectory(pairing), null, 'the pairing-code guard must run from the repository root');
+  assert.match(stepRunText(pairing), /PairingCode/, 'the web-extension pairing-code guard must inspect code-bearing values');
+}
+
+test('web-extension lint runs the MAC and pairing-code guards', async () => {
+  const source = await workflow('check-web-extension.yml');
+  assertWebExtensionGuards(source);
+  const mutations = {
+    'root scan removed': (text) => text.replace('node scripts/check-mac-comparisons.mjs --scan web-extension/src', 'node scripts/check-mac-comparisons.mjs'),
+    'android scan': (text) => text.replace('--scan web-extension/src', '--scan android/app/src/main'),
+    'guard from the extension directory': (text) => text.replace('        run: node scripts/check-mac-comparisons.mjs --scan web-extension/src\n', '        working-directory: web-extension\n        run: node scripts/check-mac-comparisons.mjs --scan web-extension/src\n'),
+    'pairing guard dropped': (text) => text.replace(/      - name: Guard against pairing-code logging in the Chrome debug surface\n        run: \|\n(?:          [^\n]*\n|            [^\n]*\n)+/, ''),
+  };
+  for (const [label, mutate] of Object.entries(mutations)) {
+    const mutated = mutate(source);
+    assert.notEqual(mutated, source, `mutation "${label}" must change check-web-extension.yml`);
+    assert.throws(() => assertWebExtensionGuards(mutated), `the contract must reject "${label}"`);
+  }
+});
+
+function dryRunAliases(script) {
+  const start = script.indexOf('./gradlew --dry-run ');
+  assert.ok(start >= 0, 'check-root-aliases.sh must run a Gradle dry run');
+  // The command may wrap with a trailing backslash; join it before reading the alias arguments.
+  const command = script.slice(start).split('\n').map((line) => line.trim().replace(/\\$/, '')).join(' ');
+  const args = command.match(/^\.\/gradlew --dry-run ([^>]+) >/);
+  assert.ok(args, 'the dry run must name its aliases on the command line');
+  return args[1].trim().split(/\s+/).filter((arg) => !arg.startsWith('--'));
+}
+
+test('tooling resolves every root alias with --dry-run and the inventory distinguishes dry-run from execution', async () => {
+  const tooling = await workflow('check-tooling.yml');
+  const script = await readFile(new URL('verify/check-root-aliases.sh', root), 'utf8');
+  assert.deepEqual(dryRunAliases(script), ROOT_ANDROID_ALIASES, 'the dry run must name every root alias exactly once');
+  const step = stepContaining(workflowJobBlocks(executableYaml(tooling))['unit-tests'], 'sh verify/check-root-aliases.sh');
+  assert.equal(stepRunText(step).trim(), 'sh verify/check-root-aliases.sh', 'tooling must run the root alias check');
+  assert.match(script, /--self-test/, 'the alias check must expose its self-test mode');
+  assert.match(script, /taskThatDoesNotExist/, 'the self-test must alias a task that does not exist');
+
+  // The executed-command inventory still reports one owner per executed alias (Android or protocol),
+  // never tooling; aliases that only the root keeps (for example assembleRelease) execute nowhere.
+  const sources = {};
+  for (const node of CHECK_WORKFLOWS) sources[`check-${node}.yml`] = await workflow(`check-${node}.yml`);
+  for (const alias of ROOT_ANDROID_ALIASES) {
+    assert.ok(!inventoryOwners(sources, alias).includes('check-tooling.yml'), `${alias} must not be executed by tooling`);
+  }
+  for (const executed of ['testDebugUnitTest', 'lintDebug', 'connectedDebugAndroidTest', 'protocolCheck']) {
+    const owners = inventoryOwners(sources, executed);
+    assert.equal(owners.length, 1, `${executed} must still be executed in exactly one check workflow, found ${owners.join(', ') || 'none'}`);
+  }
+
+  // A dry run is not an execution: an inline fixture proves the filter itself. Without --dry-run the
+  // same command owns the alias, so removing the filter would be detected here.
+  const dryRunFixture = 'jobs:\n  a:\n    steps:\n      - run: ./gradlew --dry-run testDebugUnitTest\n';
+  assert.deepEqual(inventoryOwners({ 'fixture.yml': dryRunFixture }, 'testDebugUnitTest'), [], 'a --dry-run command must not count as an execution');
+  const executedFixture = dryRunFixture.replace(' --dry-run', '');
+  assert.notEqual(executedFixture, dryRunFixture, 'the fixture mutation must remove --dry-run');
+  assert.deepEqual(inventoryOwners({ 'fixture.yml': executedFixture }, 'testDebugUnitTest'), ['fixture.yml'], 'without --dry-run the same command must own the alias');
+
+  // Drop the --dry-run and the same alias becomes an execution, so the inventory reports two owners.
+  const executed = tooling.replace('        run: sh verify/check-root-aliases.sh --self-test\n', '        run: sh verify/check-root-aliases.sh --self-test\n      - run: ./gradlew testDebugUnitTest\n');
+  assert.notEqual(executed, tooling, 'the execution mutation must change check-tooling.yml');
+  assert.equal(inventoryOwners({ 'check-tooling.yml': executed, 'check-android.yml': sources['check-android.yml'] }, 'testDebugUnitTest').length, 2, 'an executed alias must be distinguished from a dry run');
+});
+
+function assertToolingAliasSteps(source) {
+  const commands = shellCommands(executableYaml(source)).map((command) => command.trim());
+  for (const expected of ['sh verify/check-root-aliases.sh', 'sh verify/check-root-aliases.sh --self-test', 'node --test scripts/check-mac-comparisons.test.mjs']) {
+    assert.equal(commands.filter((command) => command === expected).length, 1, `tooling must run "${expected}" exactly once`);
+  }
+}
+
+test('tooling runs the alias check, its self-test and the MAC guard tests', async () => {
+  const source = await workflow('check-tooling.yml');
+  assertToolingAliasSteps(source);
+  for (const expected of ['sh verify/check-root-aliases.sh', 'sh verify/check-root-aliases.sh --self-test', 'node --test scripts/check-mac-comparisons.test.mjs']) {
+    const mutated = source.replace(`        run: ${expected}\n`, '');
+    assert.notEqual(mutated, source, `removing "${expected}" must change check-tooling.yml`);
+    assert.throws(() => assertToolingAliasSteps(mutated), `the contract must reject a missing "${expected}" step`);
+  }
+});
+
+function assertBuildAndroidArtifacts(source) {
+  const jni = source.slice(source.indexOf('- name: Verify APK JNI allow-list'), source.indexOf('- name: Stage release APK, mapping, and checksums'));
+  assert.match(jni, /APK="android\/app\/build\/outputs\/apk\/release\/app-release-unsigned\.apk"/, 'build-android must read the relocated release APK');
+  const stage = source.slice(source.indexOf('- name: Stage release APK, mapping, and checksums'), source.indexOf('- uses: actions/upload-artifact'));
+  assert.match(stage, /cp "android\/app\/build\/outputs\/apk\/release\/\$APK"/, 'build-android must stage the relocated release APK');
+  assert.match(stage, /cp android\/app\/build\/outputs\/mapping\/release\/mapping\.txt/, 'build-android must stage the relocated mapping');
+  assert.doesNotMatch(source, /(?<!android\/)app\/build\/outputs/, 'build-android must not read the pre-move app/build/outputs paths');
+  const version = source.slice(source.indexOf('- name: Assert derived version matches'), source.indexOf('- name: Verify APK JNI allow-list'));
+  assert.match(version, /working-directory: android/, 'the Android app task must run from android/');
+}
+
+test('build-android reads the relocated APK', async () => {
+  const source = await workflow('build-android.yml');
+  assertBuildAndroidArtifacts(source);
+  const mutations = {
+    'pre-move APK': (text) => text.replace('android/app/build/outputs/apk/release/app-release-unsigned.apk', 'app/build/outputs/apk/release/app-release-unsigned.apk'),
+    'pre-move mapping': (text) => text.replace('android/app/build/outputs/mapping/release/mapping.txt', 'app/build/outputs/mapping/release/mapping.txt'),
+    'pre-move staging': (text) => text.replace('cp "android/app/build/outputs/apk/release/$APK"', 'cp "app/build/outputs/apk/release/$APK"'),
+    'app task from the root': (text) => text.replace(/(      - name: Assert derived version matches the version tag\n        if: inputs\.version-tag != ''\n)        working-directory: android\n/, '$1'),
+  };
+  for (const [label, mutate] of Object.entries(mutations)) {
+    const mutated = mutate(source);
+    assert.notEqual(mutated, source, `mutation "${label}" must change build-android.yml`);
+    assert.throws(() => assertBuildAndroidArtifacts(mutated), `the contract must reject "${label}"`);
+  }
 });

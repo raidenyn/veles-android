@@ -22,7 +22,7 @@
 - Android legacy release paths are exactly `app/`, `build.gradle.kts`, `settings.gradle.kts`, `gradle.properties`, `gradle/libs.versions.toml` with epoch path `android/`; `config/detekt/` is never a legacy path.
 - `rust/ndk-version` is the only NDK version source; NDK lookup order `ANDROID_NDK_HOME`, `$ANDROID_SDK_ROOT/ndk/<version>`, `local.properties` `sdk.dir`.
 - Rust outputs stay under the repository-root `build/` (`build/rust/target`, `build/rust/host-jni`, `build/rust-tools`); JNI libraries go to `build/rust/jniLibs/<abi>`.
-- `config/android_keys/` is never moved, copied, regenerated or committed; APK certificate fingerprints are read from real output only.
+- Signing: no key material is committed. By owner-approved exception, the local, git-ignored fixture assets live at `android/config/android_keys/` and the documented command is `cd android && ./gradlew --init-script config/android_keys/fixture-signing.gradle ...`; release identity stays CI-only (generated only by master CI). APK certificate fingerprints are read from real output only.
 - Before every PR and every update push: `./gradlew spotlessCheck detekt lintDebug` (from `android/` after PR 2) and the raw `android.util.Log` guard of `check-android.yml`; validate the future squash message with `python3 -I scripts/commitlint.py --file <path>`.
 - Commits are Conventional Commits and end with the attribution trailer the harness requires; PR bodies end with the PR attribution line.
 - Frozen evidence (`native-bridge/feasibility/evidence/`), archived OpenSpec changes and dated plans/specs are never rewritten.
@@ -171,10 +171,10 @@
 
 **Files:** scratch only (outside the repo); results recorded in the PR body.
 
-- [ ] **Step 1: Real-build spike**: copy the repo to a scratch directory, apply the include layout (`includeBuild("android")`, `includeBuild("rust")`, android including `../rust`) on the real app build with AGP 9.3, KSP, Hilt and protobuf; run `./gradlew assembleDebug` from the root and from `android/`. Expected: both build. On failure, adopt the script fallback of design D5 and record it.
-- [ ] **Step 2: Shim spike**: run `cd android && ./gradlew --version` on Linux and `gradlew.bat --version` on a Windows checkout (use the `homepc` skill for the Windows machine), then a debug build there (`gradlew.bat assembleDebug` from `android/`, or `gradlew.bat help` if that machine has no Android SDK; report which). Expected: both report Gradle 9.5.0.
-- [ ] **Step 3: Version spike**: `cd android && ./gradlew -q :app:androidGitVersion` must print the same version name and code as the old layout on the same commit.
-- [ ] **Step 4: git-cliff spike** (pinned 2.14.2) on a scratch repository: 500 repeated `--skip-commit`, `--include-path` and `--context` together. If it fails, plan the planner-side commit filter for Task 17.
+- [x] **Step 1: Real-build spike**: copy the repo to a scratch directory, apply the include layout (`includeBuild("android")`, `includeBuild("rust")`, android including `../rust`) on the real app build with AGP 9.3, KSP, Hilt and protobuf; run `./gradlew assembleDebug` from the root and from `android/`. Expected: both build. On failure, adopt the script fallback of design D5 and record it.
+- [x] **Step 2: Shim spike**: run `cd android && ./gradlew --version` on Linux and `gradlew.bat --version` on a Windows checkout (use the `homepc` skill for the Windows machine), then a debug build there (`gradlew.bat assembleDebug` from `android/`, or `gradlew.bat help` if that machine has no Android SDK; report which). Expected: both report Gradle 9.5.0.
+- [x] **Step 3: Version spike**: `cd android && ./gradlew -q :app:androidGitVersion` must print the same version name and code as the old layout on the same commit.
+- [x] **Step 4: git-cliff spike** (pinned 2.14.2) on a scratch repository: 500 repeated `--skip-commit`, `--include-path` and `--context` together. If it fails, plan the planner-side commit filter for Task 17.
 
 ## Task 10: Rust build extraction in the old layout [tasks 4.5-4.9]
 
@@ -186,12 +186,12 @@
 **Interfaces:**
 - Produces: included build `rust` exporting tasks `rustToolchainCheck`, `rustInstall`, `rustWasm`, `rustHostJni`, `rustJni`, `rustNdkVersion`, `rustFormat`, `rustLint`, `rustTest`, `rustPackage` (names unchanged); `rustJni` output dir `build/rust/jniLibs/<abi>`; `rustNdkVersion` prints the contents of `rust/ndk-version`; NDK directory resolver with the specified order and the failure message `NDK <version> not found; searched: <locations>`.
 
-- [ ] **Step 1: Inventory** every root reference to a Rust task (providers and string names such as `dependsOn("rustHostJni", "rustWasm")`) and every `rootProject`/`:app` reference in `app/build.gradle.kts`; paste the list into the PR body.
-- [ ] **Step 2: Failing test**: write `rust/scripts/test-ndk-lookup.sh` covering `ANDROID_NDK_HOME` winning, SDK-directory lookup, `local.properties` lookup, the failure message, and `rustNdkVersion` equal to `rust/ndk-version`; run it. Expected: FAIL.
-- [ ] **Step 3:** Move the Rust tasks verbatim into `rust/build.gradle.kts`, keeping outputs under the repository-root `build/`; implement the NDK lookup; switch `app` `ndkVersion` to read `rust/ndk-version` and remove `ndk` from the catalog; rewire the root build and `app/build.gradle.kts` through `gradle.includedBuild("rust").task(":<name>")`; stage `build/rust/jniLibs` as a `jniLibs` source with `merge*JniLibFolders` depending on `rustJni`; unit tests depend on `rustHostJni` and use `build/rust/host-jni`.
-- [ ] **Step 3b:** Record with the user that AGP no longer auto-installs the NDK and document the `sdkmanager` step in `BUILD.md`.
-- [ ] **Step 4: Old-layout checkpoint**: `./gradlew assembleDebug && rust/scripts/verify-apk-jni.sh app/build/outputs/apk/debug/app-debug.apk`, `./gradlew testDebugUnitTest protocolCheck rustTest`, the clean contract (`./gradlew clean && rust/scripts/assert-clean.sh`), and `rust/scripts/test-ndk-lookup.sh`. Expected: all pass; shared Rust tasks run once per root invocation.
-- [ ] **Step 5: Commit** `refactor(rust): extract the Rust tasks into an included Gradle build`.
+- [x] **Step 1: Inventory** every root reference to a Rust task (providers and string names such as `dependsOn("rustHostJni", "rustWasm")`) and every `rootProject`/`:app` reference in `app/build.gradle.kts`; paste the list into the PR body.
+- [x] **Step 2: Failing test**: write `rust/scripts/test-ndk-lookup.sh` covering `ANDROID_NDK_HOME` winning, SDK-directory lookup, `local.properties` lookup, the failure message, and `rustNdkVersion` equal to `rust/ndk-version`; run it. Expected: FAIL.
+- [x] **Step 3:** Move the Rust tasks verbatim into `rust/build.gradle.kts`, keeping outputs under the repository-root `build/`; implement the NDK lookup; switch `app` `ndkVersion` to read `rust/ndk-version` and remove `ndk` from the catalog; rewire the root build and `app/build.gradle.kts` through `gradle.includedBuild("rust").task(":<name>")`; stage `build/rust/jniLibs` as a `jniLibs` source with `merge*JniLibFolders` depending on `rustJni`; unit tests depend on `rustHostJni` and use `build/rust/host-jni`.
+- [x] **Step 3b:** Record with the user that AGP no longer auto-installs the NDK and document the `sdkmanager` step in `BUILD.md`.
+- [x] **Step 4: Old-layout checkpoint**: `./gradlew assembleDebug && rust/scripts/verify-apk-jni.sh app/build/outputs/apk/debug/app-debug.apk`, `./gradlew testDebugUnitTest protocolCheck rustTest`, the clean contract (`./gradlew clean && rust/scripts/assert-clean.sh`), and `rust/scripts/test-ndk-lookup.sh`. Expected: all pass; shared Rust tasks run once per root invocation.
+- [x] **Step 5: Commit** `refactor(rust): extract the Rust tasks into an included Gradle build`.
 
 ## Task 11: Shims and shared hook script in the old layout [tasks 5.1, 5.2]
 
@@ -203,10 +203,10 @@
 **Interfaces:**
 - Produces: shim content `#!/bin/sh` + `exec "$(dirname "$0")/../gradlew" "$@"` and `@call "%~dp0..\gradlew.bat" %*`; shared script registering `installGitHooks` with unchanged behaviour (sets `core.hooksPath` to `.githooks` only when unset, warns otherwise, no-op when `CI=true`).
 
-- [ ] **Step 1: Failing contract test**: `android shims delegate to the root wrapper, are not symlinks, use LF and the repository has exactly one gradle-wrapper.jar`; run `node --test verify/test/workflow-contracts.test.mjs`. Expected: FAIL.
-- [ ] **Step 2:** Create the shims (`chmod +x android/gradlew`), `android/.gitattributes` (`gradlew text eol=lf`, `gradlew.bat text eol=lf`), the shared hook script (moved from the root task) and the provisional map entries; run `python3 -I scripts/components.py check`.
-- [ ] **Step 3: Verify hooks in the old layout**: with a scratch clone, no `core.hooksPath` -> `./gradlew assembleDebug` sets `.githooks`; custom path -> warning and unchanged; `CI=true` -> unchanged. Expected as stated.
-- [ ] **Step 4: Commit** `build(android): add the wrapper shims and a shared hook installer`.
+- [x] **Step 1: Failing contract test**: `android shims delegate to the root wrapper, are not symlinks, use LF and the repository has exactly one gradle-wrapper.jar`; run `node --test verify/test/workflow-contracts.test.mjs`. Expected: FAIL.
+- [x] **Step 2:** Create the shims (`chmod +x android/gradlew`), `android/.gitattributes` (`gradlew text eol=lf`, `gradlew.bat text eol=lf`), the shared hook script (moved from the root task) and the provisional map entries; run `python3 -I scripts/components.py check`.
+- [x] **Step 3: Verify hooks in the old layout**: with a scratch clone, no `core.hooksPath` -> `./gradlew assembleDebug` sets `.githooks`; custom path -> warning and unchanged; `CI=true` -> unchanged. Expected as stated.
+- [x] **Step 4: Commit** `build(android): add the wrapper shims and a shared hook installer`.
 
 ## Task 12: Layout cut-over (single commit) [task 5.3]
 
@@ -218,9 +218,9 @@
 **Interfaces:**
 - Produces: `android/settings.gradle.kts` (repositories from the old root settings, `include(":app")`, `includeBuild("../rust")`); `android/build.gradle.kts` (plugin aliases with `apply false`, Spotless Kotlin configuration moved from the root, fixture-path helper resolving `../protocol/v1` and `../protocol/conformance`, `rustNdkVersion` task depending on the included Rust task); root `settings.gradle.kts` with `includeBuild("android")` and `includeBuild("rust")` and no `include(":app")`; root aliases `assembleDebug`, `assembleRelease`, `testDebugUnitTest`, `lintDebug`, `detekt`, `connectedDebugAndroidTest` -> `gradle.includedBuild("android").task(":app:<name>")`, `spotlessCheck`, `spotlessApply` -> `task(":<name>")`, `protocolCheck` and `clean` depending on included-build tasks; loopback classpath at `android/app/build/session-loopback/classpath.txt`.
 
-- [ ] **Step 1: Prepare** all edits on one working tree; do not commit a half-moved state.
-- [ ] **Step 2: Verify at the cut-over** (CI need not be green at this commit; only the PR head must be): `cd android && ./gradlew assembleDebug testDebugUnitTest lintDebug spotlessCheck detekt`; `rust/scripts/verify-apk-jni.sh android/app/build/outputs/apk/debug/app-debug.apk`; from the root `./gradlew assembleDebug protocolCheck`; then `./gradlew clean && rust/scripts/assert-clean.sh`, rebuild with `./gradlew assembleDebug` and verify the APK again. Expected: all succeed.
-- [ ] **Step 3: Commit** `refactor(android): move the app to an independent android/ Gradle build` (single commit with the root rewiring and hook application).
+- [x] **Step 1: Prepare** all edits on one working tree; do not commit a half-moved state.
+- [x] **Step 2: Verify at the cut-over** (CI need not be green at this commit; only the PR head must be): `cd android && ./gradlew assembleDebug testDebugUnitTest lintDebug spotlessCheck detekt`; `rust/scripts/verify-apk-jni.sh android/app/build/outputs/apk/debug/app-debug.apk`; from the root `./gradlew assembleDebug protocolCheck`; then `./gradlew clean && rust/scripts/assert-clean.sh`, rebuild with `./gradlew assembleDebug` and verify the APK again. Expected: all succeed.
+- [x] **Step 3: Commit** `refactor(android): move the app to an independent android/ Gradle build` (single commit with the root rewiring and hook application).
 
 ## Task 13: Editor config and acceptance checks [tasks 5.4, 5.5, 5.6]
 
@@ -228,10 +228,10 @@
 - Create: `android/.editorconfig`, `verify/check-android-layout.sh`
 - Modify: root `.editorconfig`
 
-- [ ] **Step 1: Failing acceptance check** `sh verify/check-android-layout.sh` (one executable command, rerun after Step 2) asserting that `android/.editorconfig` exists with `root = true` and the ktlint overrides and the root `.editorconfig` has no `[*.{kt,kts}]` section, plus: the Android build succeeds with the root `build.gradle.kts`, `settings.gradle.kts` and `gradle.properties` temporarily renamed (scratch copy); `cd rust && ../gradlew help` configures alone; a single root invocation `./gradlew assembleDebug testDebugUnitTest rustHostJni rustJni --console=plain` executes each shared Rust task exactly once (count task executions in the output); `cd android && ./gradlew --version` reports the root wrapper's Gradle; the root aliases resolve with `--dry-run`. Expected: FAIL on the editorconfig ownership assertion only; every other assertion passes.
-- [ ] **Step 2:** Add `android/.editorconfig` (generic rules plus the `[*.{kt,kts}]` ktlint overrides, `root = true`) and trim the Kotlin section from the root file.
-- [ ] **Step 3: Rerun** `sh verify/check-android-layout.sh` (expected PASS) and verify hooks from both entry points (cases of Task 11 step 3 from `android/` and from the root alias). Expected as stated.
-- [ ] **Step 4: Commit** `build(android): give Android its own editorconfig and add layout acceptance checks`.
+- [x] **Step 1: Failing acceptance check** `sh verify/check-android-layout.sh` (one executable command, rerun after Step 2) asserting that `android/.editorconfig` exists with `root = true` and the ktlint overrides and the root `.editorconfig` has no `[*.{kt,kts}]` section, plus: the Android build succeeds with the root `build.gradle.kts`, `settings.gradle.kts` and `gradle.properties` temporarily renamed (scratch copy); `cd rust && ../gradlew help` configures alone; a single root invocation `./gradlew assembleDebug testDebugUnitTest rustHostJni rustJni --console=plain` executes each shared Rust task exactly once (count task executions in the output); `cd android && ./gradlew --version` reports the root wrapper's Gradle; the root aliases resolve with `--dry-run`. Expected: FAIL on the editorconfig ownership assertion only; every other assertion passes.
+- [x] **Step 2:** Add `android/.editorconfig` (generic rules plus the `[*.{kt,kts}]` ktlint overrides, `root = true`) and trim the Kotlin section from the root file.
+- [x] **Step 3: Rerun** `sh verify/check-android-layout.sh` (expected PASS) and verify hooks from both entry points (cases of Task 11 step 3 from `android/` and from the root alias). Expected as stated.
+- [x] **Step 4: Commit** `build(android): give Android its own editorconfig and add layout acceptance checks`.
 
 ## Task 14: MAC guard `--scan` [task 5.7]
 
@@ -242,10 +242,10 @@
 **Interfaces:**
 - Produces: repeatable `--scan DIR`; each directory must exist (exit 2 with `no such directory <path>`); an empty scan set exits 2; `DEFAULT_ROOTS = ['android/app/src/main', 'web-extension/src']`.
 
-- [ ] **Step 1: Failing tests** (`node --test scripts/check-mac-comparisons.test.mjs`): `a violation injected into a temporary Kotlin root fails`, `a violation injected into a temporary TypeScript root fails`, `scan of a missing directory exits 2`, `empty scan set exits 2`, `default roots scan android/app/src/main and web-extension/src`, `--root keeps its meaning as base for default roots`.
-- [ ] **Step 2: Implement** the option in `main()`; keep `--file`.
-- [ ] **Step 3: Run** the tests and `node scripts/check-mac-comparisons.mjs`. Expected: PASS and exit 0 on the real tree.
-- [ ] **Step 4: Commit** `fix(ci): scan explicit directories in the MAC comparison guard`.
+- [x] **Step 1: Failing tests** (`node --test scripts/check-mac-comparisons.test.mjs`): `a violation injected into a temporary Kotlin root fails`, `a violation injected into a temporary TypeScript root fails`, `scan of a missing directory exits 2`, `empty scan set exits 2`, `default roots scan android/app/src/main and web-extension/src`, `--root keeps its meaning as base for default roots`.
+- [x] **Step 2: Implement** the option in `main()`; keep `--file`.
+- [x] **Step 3: Run** the tests and `node scripts/check-mac-comparisons.mjs`. Expected: PASS and exit 0 on the real tree.
+- [x] **Step 4: Commit** `fix(ci): scan explicit directories in the MAC comparison guard`.
 
 ## Task 15: Workflows and contract migration [tasks 5.8, 5.9, 5.10]
 
@@ -257,21 +257,21 @@
 **Interfaces:**
 - Produces: `check-android.yml` Gradle steps with `working-directory: android` (emulator runner via its `working-directory` input), guards (`check-mac-comparisons.mjs --scan android/app/src/main`, `android.util.Log`, Kotlin pairing-code grep) without `working-directory`; `check-web-extension.yml` runs `--scan web-extension/src` and the `web-extension/src/debug` pairing-code grep; `check-rust.yml` `jni-integration` runs root aliases and verifies `android/app/build/outputs/apk/debug/app-debug.apk`; `check-tooling.yml` steps `sh verify/check-root-aliases.sh` (runs `./gradlew --dry-run assembleDebug assembleRelease testDebugUnitTest lintDebug spotlessCheck detekt connectedDebugAndroidTest protocolCheck`), `sh verify/check-root-aliases.sh --self-test` (executes a scratch dry run whose alias targets a missing task and expects a non-zero exit) and `node --test scripts/check-mac-comparisons.test.mjs`; `build-android.yml` reads `android/app/build/outputs/...`.
 
-- [ ] **Step 1: Failing contract tests**: `check-android runs Gradle from android and guards from the root`, `web-extension lint runs the MAC and pairing-code guards`, `tooling resolves every root alias with --dry-run and the inventory distinguishes dry-run from execution`, `build-android reads the relocated APK`, `tooling runs the alias check, its self-test and the MAC guard tests` (mutation: removing a step fails the contract); update the existing assertions that hard-code `app/build` and `:app:assembleDebug` in both contract suites. Run both suites. Expected: FAIL.
-- [ ] **Step 2: Inventory** root-only commands that `check-android.yml` calls (`rustHostJni`, `rustNdkVersion`): drop the redundant host-JNI prebuild and call the Android-root `rustNdkVersion` from `android/`.
-- [ ] **Step 3: Edit the workflows** as specified; audit `publish-release.yml` (it downloads the reusable build's artifact and signs it; edit only what changes).
-- [ ] **Step 4: Run** `node --test verify/test/workflow-contracts.test.mjs` and `python3 -I native-bridge/installer/scripts/test_build_contract.py`. Expected: PASS.
-- [ ] **Step 5: Commit** `ci(android): run Android checks from android/ and keep guards at the repository root`.
+- [x] **Step 1: Failing contract tests**: `check-android runs Gradle from android and guards from the root`, `web-extension lint runs the MAC and pairing-code guards`, `tooling resolves every root alias with --dry-run and the inventory distinguishes dry-run from execution`, `build-android reads the relocated APK`, `tooling runs the alias check, its self-test and the MAC guard tests` (mutation: removing a step fails the contract); update the existing assertions that hard-code `app/build` and `:app:assembleDebug` in both contract suites. Run both suites. Expected: FAIL.
+- [x] **Step 2: Inventory** root-only commands that `check-android.yml` calls (`rustHostJni`, `rustNdkVersion`): drop the redundant host-JNI prebuild and call the Android-root `rustNdkVersion` from `android/`.
+- [x] **Step 3: Edit the workflows** as specified; audit `publish-release.yml` (it downloads the reusable build's artifact and signs it; edit only what changes).
+- [x] **Step 4: Run** `node --test verify/test/workflow-contracts.test.mjs` and `python3 -I native-bridge/installer/scripts/test_build_contract.py`. Expected: PASS.
+- [x] **Step 5: Commit** `ci(android): run Android checks from android/ and keep guards at the repository root`.
 
 ## Task 16: Path audit and documentation [tasks 5.11, 5.12]
 
 **Files:**
 - Modify: `rust/scripts/assert-clean.sh`, `.dockerignore`, `.idea/**`, `verify/**`, `CLAUDE.md`, `BUILD.md`, `CONTRIBUTING.md`, `docs/ci.md`, `docs/releasing.md`
 
-- [ ] **Step 1: Audit command** (record in the PR): `git grep -nE '(^|[^a-zA-Z_./-])app/' -- . ':!native-bridge/feasibility/evidence' ':!openspec/changes/archive' ':!docs/superpowers' ':!android'` and the `config/detekt` equivalent.
-- [ ] **Step 2:** Update every live match (`assert-clean.sh` paths to `android/app/build/...`, `.dockerignore` `android/app/build`, docs and `CLAUDE.md` including `cd android && ./gradlew --init-script ../config/android_keys/fixture-signing.gradle ...`).
-- [ ] **Step 3: Re-run** the audit and classify each remaining match as operational or intentional historical-layout data (the `legacy-release` and `retired-paths` entries and their planner fixtures added in Task 17). Expected: zero operational matches; list the intentional ones in the PR and re-run the audit after Task 17.
-- [ ] **Step 4: Commit** `docs(android): point live files at the android/ layout`.
+- [x] **Step 1: Audit command** (record in the PR): `git grep -nE '(^|[^a-zA-Z_./-])app/' -- . ':!native-bridge/feasibility/evidence' ':!openspec/changes/archive' ':!docs/superpowers' ':!android'` and the `config/detekt` equivalent.
+- [x] **Step 2:** Update every live match (`assert-clean.sh` paths to `android/app/build/...`, `.dockerignore` `android/app/build`, docs and `CLAUDE.md` including `cd android && ./gradlew --init-script config/android_keys/fixture-signing.gradle ...`).
+- [x] **Step 3: Re-run** the audit and classify each remaining match as operational or intentional historical-layout data (the `legacy-release` and `retired-paths` entries and their planner fixtures added in Task 17). Expected: zero operational matches; list the intentional ones in the PR and re-run the audit after Task 17.
+- [x] **Step 4: Commit** `docs(android): point live files at the android/ layout`.
 
 ## Task 17: Component map for the move and the legacy release pass [tasks 5.13, 5.14, 5.15]
 
@@ -284,20 +284,20 @@
 - Produces: `legacy_commits(repo: Path, tag: Optional[str], epoch_path: str) -> List[str]` (old-epoch commit ids in `<tag>..HEAD`, those whose tree lacks `epoch_path`); `legacy_skip_args(repo: Path, tag: Optional[str], epoch_path: str) -> List[str]` (`--skip-commit <sha>` for every new-epoch commit, or a planner-side filter if Task 9 step 4 failed); `make_plan` merges the main and legacy passes by commit id, takes the highest bump for tagged components, keeps `initial-version` for untagged ones, and keeps the `--bumped-version` cross-check when the legacy pass contributes no commit.
 - Map state: `android` `paths` `android/`, `rust/`, `protocol/`; `ci-paths` hook script (and no `.editorconfig`); `build.gradle.kts`, `settings.gradle.kts`, `gradle.properties` removed from `global` and added to the `paths` of every non-Android node; `protocol` lists `android/`; `retired-paths` `{"app/": ["android"], "config/detekt/": ["android"]}`; `legacy-release` as in Global Constraints.
 
-- [ ] **Step 1: Failing tests** in `test_components.py`: `test_root_build_file_selects_every_node_but_android` (migrating the existing root-global expectations and `test_editorconfig_selects_prettier_and_ktlint_consumers`, which after the move expects `web-extension` and `bridge-scaffold` only because `.editorconfig` leaves `android` `ci-paths`), `test_wrapper_selects_every_node`, `test_android_detekt_selects_android_and_protocol`, `test_migration_pr_deleted_app_files_are_accounted` (files `app/build.gradle.kts` and `config/detekt/detekt.yml` plus `android/…`: `unaccounted == []`, android selected), `test_protocol_spec_edit_selects_protocol_consumers_not_installer`, `test_android_check_workflow_override` is deferred to Task 19. In `test_release_plan.py` (git fixture with an epoch commit that adds `android/`): `test_unreleased_feat_app_before_move_still_bumps_android`, `test_root_only_feat_after_move_does_not_bump_android_but_bumps_web_extension_and_installer`, `test_squash_migration_counts_through_normal_pass`, `test_revert_and_reapply_keeps_old_epoch_attribution`, `test_commit_matching_both_passes_counted_once`, `test_legacy_pass_inert_after_new_tag`, `test_untagged_component_keeps_initial_version_with_legacy_commits`, `test_config_detekt_gains_no_attribution`, `test_refactor_migration_leaves_earlier_attribution_unchanged`, `test_bumped_version_crosscheck_kept_without_legacy_commits`.
-- [ ] **Step 2: Run** `VELES_GIT_CLIFF="$PWD/build/release-tools/git-cliff/git-cliff" python3 -I -m unittest discover -s scripts/tests -p "test_[cr]*.py" -v`. Expected: FAIL.
-- [ ] **Step 3: Implement** the map edits and the planner functions above.
-- [ ] **Step 4: Run** the same command and `python3 -I scripts/components.py check`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(release): keep release attribution across the android/ move`.
+- [x] **Step 1: Failing tests** in `test_components.py`: `test_root_build_file_selects_every_node_but_android` (migrating the existing root-global expectations and `test_editorconfig_selects_prettier_and_ktlint_consumers`, which after the move expects `web-extension` and `bridge-scaffold` only because `.editorconfig` leaves `android` `ci-paths`), `test_wrapper_selects_every_node`, `test_android_detekt_selects_android_and_protocol`, `test_migration_pr_deleted_app_files_are_accounted` (files `app/build.gradle.kts` and `config/detekt/detekt.yml` plus `android/…`: `unaccounted == []`, android selected), `test_protocol_spec_edit_selects_protocol_consumers_not_installer`, `test_android_check_workflow_override` is deferred to Task 19. In `test_release_plan.py` (git fixture with an epoch commit that adds `android/`): `test_unreleased_feat_app_before_move_still_bumps_android`, `test_root_only_feat_after_move_does_not_bump_android_but_bumps_web_extension_and_installer`, `test_squash_migration_counts_through_normal_pass`, `test_revert_and_reapply_keeps_old_epoch_attribution`, `test_commit_matching_both_passes_counted_once`, `test_legacy_pass_inert_after_new_tag`, `test_untagged_component_keeps_initial_version_with_legacy_commits`, `test_config_detekt_gains_no_attribution`, `test_refactor_migration_leaves_earlier_attribution_unchanged`, `test_bumped_version_crosscheck_kept_without_legacy_commits`.
+- [x] **Step 2: Run** `VELES_GIT_CLIFF="$PWD/build/release-tools/git-cliff/git-cliff" python3 -I -m unittest discover -s scripts/tests -p "test_[cr]*.py" -v`. Expected: FAIL.
+- [x] **Step 3: Implement** the map edits and the planner functions above.
+- [x] **Step 4: Run** the same command and `python3 -I scripts/components.py check`. Expected: PASS.
+- [x] **Step 5: Commit** `feat(release): keep release attribution across the android/ move`.
 
 ## Task 18: Verify identity, open PR 2 and gate it [tasks 5.16-5.19]
 
-- [ ] **Step 1: Identity** in two scratch clones (never the working repository): check out the merge base in one and the PR head in the other, create the same local tag `android-v1.2.3` on each checked-out commit so the git-derived version inputs are identical, and build debug and release APKs with the same approved signing configuration (`VELES_KEYSTORE_*`, or the default debug keystore for the debug APK). Compare `versionName` and `versionCode` (`aapt dump badging`; expected `1.2.3` and `10203` in both) and certificate fingerprints (`apksigner verify --print-certs`) from real output; expected identical. If the approved identity is unavailable, stop and report; never regenerate, substitute or move keys.
-- [ ] **Step 2:** `./gradlew clean && rust/scripts/assert-clean.sh`; then run `./gradlew installGitCliff` in each of the two scratch clones (clean removes release tooling) and, without tags, `python3 -I scripts/release_plan.py --git-cliff "$PWD/build/release-tools/git-cliff/git-cliff" plan --releases-json releases.json --manifest-json manifest.json --out plan.json --notes notes.md --today 2026-11-13` with `releases.json` containing `[]` and `manifest.json` containing `{}`; expected: identical attribution of every pre-existing commit in `notes.md` for the merge-base and PR-head runs, and no new Android bump caused by the migration commit.
-- [ ] **Step 3: Local gate**: from `android/` run `./gradlew spotlessCheck detekt lintDebug`, the raw Log guard, and from the root the checks that remain; validate the squash message with commitlint; write the revert rollback into the PR body.
-- [ ] **Step 4:** Push, `gh pr create` titled `refactor(android): move the app to an independent android/ Gradle build`, link the PR.
-- [ ] **Step 5: Owner confirmation**: ask the owner to confirm the local `config/android_keys/fixture-signing.gradle` works from `android/` and record it in the PR.
-- [ ] **Step 6: Merge gate**: all CI nodes green (including `rust / jni-integration`, `protocol / contract-tests`, `tooling / unit-tests`) and step 5 recorded before merging.
+- [x] **Step 1: Identity** in two scratch clones (never the working repository): check out the merge base in one and the PR head in the other, create the same local tag `android-v1.2.3` on each checked-out commit so the git-derived version inputs are identical, and build debug and release APKs with the same approved signing configuration (`VELES_KEYSTORE_*`, or the default debug keystore for the debug APK). Compare `versionName` and `versionCode` (`aapt dump badging`; expected `1.2.3` and `10203` in both) and certificate fingerprints (`apksigner verify --print-certs`) from real output; expected identical. If the approved identity is unavailable, stop and report; never regenerate, substitute or move keys.
+- [x] **Step 2:** `./gradlew clean && rust/scripts/assert-clean.sh`; then run `./gradlew installGitCliff` in each of the two scratch clones (clean removes release tooling) and, without tags, `python3 -I scripts/release_plan.py --git-cliff "$PWD/build/release-tools/git-cliff/git-cliff" plan --releases-json releases.json --manifest-json manifest.json --out plan.json --notes notes.md --today 2026-11-13` with `releases.json` containing `[]` and `manifest.json` containing `{}`; expected: identical attribution of every pre-existing commit in `notes.md` for the merge-base and PR-head runs, and no new Android bump caused by the migration commit.
+- [x] **Step 3: Local gate**: from `android/` run `./gradlew spotlessCheck detekt lintDebug`, the raw Log guard, and from the root the checks that remain; validate the squash message with commitlint; write the revert rollback into the PR body.
+- [x] **Step 4:** Push, `gh pr create` titled `refactor(android): move the app to an independent android/ Gradle build`, link the PR.
+- [x] **Step 5: Owner confirmation**: ask the owner to confirm the local `config/android_keys/fixture-signing.gradle` works from `android/` and record it in the PR.
+- [x] **Step 6: Merge gate**: all CI nodes green (including `rust / jni-integration`, `protocol / contract-tests`, `tooling / unit-tests`) and step 5 recorded before merging.
 
 ## Task 19: PR 3 - node-owned Android workflows [tasks 6.1-6.3]
 

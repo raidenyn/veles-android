@@ -59,11 +59,10 @@ for relative in "${generated_paths[@]}"; do
   fi
 done
 
-# app/build is allowed to contain reports/problems only after clean; assert no
-# generated JNI or APK outputs remain.
-for relative in app/build/generated/jniLibs app/build/outputs/apk; do
-  if [ -e "$ROOT/$relative" ]; then
-    echo "ERROR: generated path survived clean: $relative" >&2
-    exit 1
-  fi
-done
+# android/app/build is allowed to contain reports/problems only after clean; the JNI
+# libraries are built into build/rust/jniLibs (covered by build/rust above), so assert
+# no APK outputs remain.
+if [ -e "$ROOT/android/app/build/outputs/apk" ]; then
+  echo "ERROR: generated path survived clean: android/app/build/outputs/apk" >&2
+  exit 1
+fi
