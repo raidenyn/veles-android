@@ -21,14 +21,15 @@ const GUARD = join(__dirname, '..', '..', 'build', 'web-extension-guard');
 
 describe('dist/ contents (post-build artifact)', () => {
     it('contains exactly the expected file set', () => {
-        // Run after `npm run build`. The exact list is the contract:
-        // any change (new chunk, new asset, new manifest field) breaks this test
-        // and forces a conscious review. Hash-named files (chunks/-[hash].js,
-        // assets/[name]-[hash][extname]) are part of the asserted list because
-        // under the committed lockfile they are deterministic.
+        // Run after `npm run build`. The file set is the contract: any change
+        // (new chunk, new asset, new manifest field) breaks this test and forces
+        // a conscious review. Chunks are asserted by their base name rather than
+        // their content hash: a chunk that embeds the `version_name` (the debug
+        // probe chunk does) gets a new hash on every commit, so an exact hashed
+        // name would fail on unrelated revisions without any artifact change.
         //
         // The WASM asset name changes with every Rust build, so it is matched
-        // by pattern instead of an exact hashed name.
+        // by pattern instead of a pinned hashed name.
         const files = walk(DIST).sort();
         const wasm = files.filter((file) => /^assets\/veles_crypto_bg-[^/]+\.wasm$/.test(file));
         expect(wasm).toHaveLength(1);
@@ -40,17 +41,33 @@ describe('dist/ contents (post-build artifact)', () => {
             (file) => file === 'connector.js' || /^chunks\/connector-[^/]+\.js$/.test(file),
         );
         expect(connectorModules).toHaveLength(1);
+        const chunkBases = [
+            'clipboard',
+            'modulepreload-polyfill',
+            'ownership',
+            'pairing-panel',
+            'probe',
+            'repository',
+            'storage',
+        ];
+        for (const base of chunkBases) {
+            const matches = files.filter((file) =>
+                new RegExp(`^chunks/${base}-[^/]+\\.js$`).test(file),
+            );
+            expect(matches, `chunk ${base}`).toHaveLength(1);
+        }
+        expect(files.filter((file) => file.startsWith('chunks/'))).toHaveLength(
+            chunkBases.length + (connectorModules[0].startsWith('chunks/') ? 1 : 0),
+        );
         expect(
-            files.filter((file) => !wasm.includes(file) && !connectorModules.includes(file)),
+            files.filter(
+                (file) =>
+                    !wasm.includes(file) &&
+                    !connectorModules.includes(file) &&
+                    !file.startsWith('chunks/'),
+            ),
         ).toEqual([
             'background.js',
-            'chunks/clipboard-DE1lG-x_.js',
-            'chunks/modulepreload-polyfill-DaKOjhqt.js',
-            'chunks/ownership-BOcJ26Iv.js',
-            'chunks/pairing-panel-DkoXOaO7.js',
-            'chunks/probe-6-96fGg2.js',
-            'chunks/repository-Dd2amz8z.js',
-            'chunks/storage-DOMCF8BZ.js',
             'connector.html',
             'content.js',
             'manifest.json',
