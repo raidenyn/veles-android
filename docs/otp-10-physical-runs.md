@@ -75,6 +75,22 @@ UTF-16LE on Windows).
 
 The phone already held one `ACTIVE` record (the Windows client) when the macOS run started, so this run also exercises the multi-peer path: the phone ended with two independent desktop records. The macOS host had to be packaged as an ad-hoc-signed `VelesNativeBridge.app` bundle with `NSBluetoothAlwaysUsageDescription` and `LSUIElement`; the Native Messaging manifest `me.nagaev.veles.bridge` was registered per-user and under the dedicated Chrome profile’s `NativeMessagingHosts` directory (with `--user-data-dir`, the profile-local directory is the one Chrome read).
 
+## Post-gate re-check — 2026-11-13 (after the final-gate fixes)
+
+Re-ran the scenarios most affected by the final-gate changes on the same Windows host and phone,
+with the APK built from `50ab23a` and the development extension `0.1.0-63-g50ab23a`:
+
+| Step | Result | Observation |
+| --- | --- | --- |
+| 1. Enrollment (code `153399`) | PASS | Chrome panel `Fingerprint: 200C 8D6E 0276`; after activation the phone's debug screen showed `Pairing fingerprint: 200C 8D6E 0276` (the new display), and the phone record became `ACTIVE` with the Chrome record `active_activation_pending` |
+| 2. Chrome Cancel during startup (about 1.2 s after Start) | PASS | The panel reported "Pairing cancelled"; the phone window had closed at the verified `cB`, no new phone record was created (the phone still held its three existing records), and the client's existing record was unchanged |
+| 3. Phone debug Cancel during a live attempt (code `630567`) | PASS | The `me.nagaev.veles.debugpairing.CANCEL` broadcast closed the window, the BLE link dropped immediately (the Chrome panel finished without a new pairing), and no new phone record was created |
+
+The re-check used a fresh Chrome profile, so its client installation id is new; the phone's three
+`ACTIVE` records are the earlier Windows client, the macOS client and this re-check client. Active
+records cannot be removed by the debug Clear control (it refuses non-incomplete records); a fresh
+identity was used instead of uninstalling the app or clearing app data.
+
 ## Limits
 
 - Development builds only: the extension and the Android fixture key are not production
