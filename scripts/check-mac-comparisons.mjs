@@ -17,11 +17,13 @@
 //   node scripts/check-mac-comparisons.mjs --file FILE [--file FILE ...]
 //
 // `--scan DIR` is repeatable and scans exactly the given directories: each one
-// must exist, and a missing directory is an environment error (exit 2). Without
-// `--scan`, the built-in `DEFAULT_ROOTS` are scanned relative to `--root` (the
-// current directory by default); missing default roots are skipped silently so
-// the guard still works in partial checkouts. An empty scan set is an
-// environment error (exit 2) rather than a silent pass.
+// must exist, and a missing directory is an environment error (exit 2).
+// `--file` and `--scan` cannot be combined (exit 2): silently preferring one
+// would leave the other set unchecked. Without `--scan`, the built-in
+// `DEFAULT_ROOTS` are scanned relative to `--root` (the current directory by
+// default); missing default roots are skipped silently so the guard still works
+// in partial checkouts. An empty scan set is an environment error (exit 2)
+// rather than a silent pass.
 //
 // Exit 0 when clean, 1 with `path:line: text` lines on violations.
 
@@ -163,6 +165,28 @@ function main() {
         }
     }
 
+    // Validate every explicitly requested scan directory first: a caller that
+    // named a directory must hear about a rename or typo even when the request
+    // is also invalid in another way (such as mixing --file).
+    for (const path of scans) {
+        let isDirectory = false;
+        try {
+            isDirectory = statSync(path).isDirectory();
+        } catch {
+            isDirectory = false;
+        }
+        if (!isDirectory) {
+            console.error(`check-mac-comparisons: no such directory ${path}`);
+            process.exit(2);
+        }
+    }
+    if (explicit.length > 0 && scans.length > 0) {
+        // Refuse the mixed mode instead of silently ignoring one side: dropping
+        // the scans would leave requested source trees unchecked.
+        console.error('check-mac-comparisons: --file and --scan cannot be combined');
+        process.exit(2);
+    }
+
     let paths;
     if (explicit.length > 0) {
         for (const path of explicit) {
@@ -173,21 +197,6 @@ function main() {
         }
         paths = explicit;
     } else if (scans.length > 0) {
-        // An explicit scan is a contract: a missing directory means the caller's
-        // layout is wrong (or the directory was renamed), so fail loudly instead
-        // of passing because nothing was scanned.
-        for (const path of scans) {
-            let isDirectory = false;
-            try {
-                isDirectory = statSync(path).isDirectory();
-            } catch {
-                isDirectory = false;
-            }
-            if (!isDirectory) {
-                console.error(`check-mac-comparisons: no such directory ${path}`);
-                process.exit(2);
-            }
-        }
         paths = scans;
     } else {
         paths = DEFAULT_ROOTS.map((path) => join(root, path)).filter((path) => existsSync(path));
