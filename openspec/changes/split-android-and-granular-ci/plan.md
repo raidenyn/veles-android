@@ -307,10 +307,10 @@
 **Interfaces:**
 - Produces: `global-overrides` entries `.github/workflows/check-android.yml` and `.github/workflows/build-android.yml`, each `["android", "tooling", "installer"]`.
 
-- [ ] **Step 1: Failing tests** (also migrate the check-android.yml assertion of `test_global_selects_all`, which assumes a global workflow, and rerun the whole components suite after each map change): `test_check_android_workflow_selects_android_tooling_installer`, `test_build_android_workflow_selects_android_tooling_installer`, `test_other_workflows_stay_global`; run `python3 -I -m unittest discover -s scripts/tests -p "test_components.py" -v`. Expected: FAIL.
-- [ ] **Step 2:** Add the two overrides; update `docs/ci.md`.
-- [ ] **Step 3: Verify** the tooling workflow contracts and the installer `scripts-tests` still run for those edits (`node --test verify/test/workflow-contracts.test.mjs`, `python3 -I native-bridge/installer/scripts/test_build_contract.py`). Expected: PASS.
-- [ ] **Step 4: Gate and PR** as Task 7 steps 1-3, title `ci: select only the owning nodes for the Android workflows`, revert rollback in the body.
+- [x] **Step 1: Failing tests** (also migrate the check-android.yml assertion of `test_global_selects_all`, which assumes a global workflow, and rerun the whole components suite after each map change): `test_check_android_workflow_selects_android_tooling_installer`, `test_build_android_workflow_selects_android_tooling_installer`, `test_other_workflows_stay_global`; run `python3 -I -m unittest discover -s scripts/tests -p "test_components.py" -v`. Expected: FAIL.
+- [x] **Step 2:** Add the two overrides; update `docs/ci.md`.
+- [x] **Step 3: Verify** the tooling workflow contracts and the installer `scripts-tests` still run for those edits (`node --test verify/test/workflow-contracts.test.mjs`, `python3 -I native-bridge/installer/scripts/test_build_contract.py`). Expected: PASS.
+- [x] **Step 4: Gate and PR** as Task 7 steps 1-3, title `ci: select only the owning nodes for the Android workflows`, revert rollback in the body.
 
 ## Task 20: Wrap-up [tasks 7.1, 7.2]
 

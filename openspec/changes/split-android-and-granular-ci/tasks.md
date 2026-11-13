@@ -71,9 +71,9 @@ Commit discipline for this group: 5.1 and 5.2 are prepared in the old layout and
 
 ## 6. PR 3: node-owned Android workflows
 
-- [ ] 6.1 Add `global-overrides` for `.github/workflows/check-android.yml` and `.github/workflows/build-android.yml` mapped to `android`, `tooling` and `installer`; add `components.py` tests for both overrides and for another workflow staying global
-- [ ] 6.2 Confirm the tooling workflow contracts and the installer `scripts-tests` still run for those workflow edits and update `docs/ci.md`
-- [ ] 6.3 Run the local checks, validate the squash message with commitlint, record the rollback (revert) in the PR body and open PR 3 titled `ci: select only the owning nodes for the Android workflows`
+- [x] 6.1 Add `global-overrides` for `.github/workflows/check-android.yml` and `.github/workflows/build-android.yml` mapped to `android`, `tooling` and `installer`; add `components.py` tests for both overrides and for another workflow staying global
+- [x] 6.2 Confirm the tooling workflow contracts and the installer `scripts-tests` still run for those workflow edits and update `docs/ci.md`
+- [x] 6.3 Run the local checks, validate the squash message with commitlint, record the rollback (revert) in the PR body and open PR 3 titled `ci: select only the owning nodes for the Android workflows`
 
 ## 7. Wrap-up
 
