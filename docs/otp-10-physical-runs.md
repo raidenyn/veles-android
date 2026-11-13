@@ -65,30 +65,26 @@ UTF-16LE on Windows).
 
 ## macOS 26.5.2 + Chrome
 
-Status: **BLOCKED at the macOS Bluetooth privacy grant; no pairing was attempted.**
-
 | Step | Result | Observation |
 | --- | --- | --- |
 | 1. Extension and host | PASS | `Extensions.loadUnpacked` returned `mhpehgcgnfejmeaocnpaihfaklopeabm`; the connector reported `Bridge veles-native-host/0.1.0 · macOS · API 1` |
-| 2. Phone search | BLOCKED | The connector showed “Allow Bluetooth access on this Mac … macOS blocked Bluetooth access for the Veles Native Bridge. In System Settings > Privacy & Security > Bluetooth, allow Bluetooth access for the Veles Native Bridge on this Mac, then choose Retry.” |
-| 3. Privacy grant | NOT GRANTED | System Settings → Privacy & Security → Bluetooth lists `VelesNativeBridge` and two `veles-native-host` entries; enabling them from the GUI session did not clear the denial for the dev-built host |
+| 2. Bluetooth permission | PASS after a user grant | The first search was refused (“macOS blocked Bluetooth access for the Veles Native Bridge”); after “Veles Native Bridge” was allowed in System Settings → Privacy & Security → Bluetooth, the scan found the phone (`BLE device ..dba3`, hint `macos:7d26b705-b5cd-352a-3904-8d16ba0edba3`) |
+| 3. Pair with code `292682` | PASS | Panel reached `State: active · Fingerprint: C61D 3F56 8D27`; the Chrome record became `active_activation_pending` (transcript `f1650a91…`), and the phone showed the same fingerprint. The phone record was `COMMITTED_WAITING_ACK` right after the client finished: the client’s ack was lost when the link closed |
+| 4. Reconnect 1 (device-row Connect, user-selected) | PASS (ack-loss recovery) | The signed reconnect resumed activation without a code: the phone record became `ACTIVE` (`lastSeen` set) and the Chrome record kept `active_activation_pending` with `lastSeen` set |
+| 5. Reconnect 2 | PASS | A further device-row Connect upgraded the Chrome record to `active`, `lastSeen` refreshed, macOS platform hint captured |
 
-The macOS host was built as an ad-hoc-signed `VelesNativeBridge.app` bundle with
-`NSBluetoothAlwaysUsageDescription` and `LSUIElement`, launched through the Native Messaging
-manifest `me.nagaev.veles.bridge` (registered per-user and under the dedicated Chrome profile's
-`NativeMessagingHosts`). A grant recorded for a different build identity did not apply to this
-one. The run needs a user-approved Bluetooth grant for this host identity before the macOS
-steps can be executed; nothing was recorded for a macOS pairing.
+The phone already held one `ACTIVE` record (the Windows client) when the macOS run started, so this run also exercises the multi-peer path: the phone ended with two independent desktop records. The macOS host had to be packaged as an ad-hoc-signed `VelesNativeBridge.app` bundle with `NSBluetoothAlwaysUsageDescription` and `LSUIElement`; the Native Messaging manifest `me.nagaev.veles.bridge` was registered per-user and under the dedicated Chrome profile’s `NativeMessagingHosts` directory (with `--user-data-dir`, the profile-local directory is the one Chrome read).
 
 ## Limits
 
 - Development builds only: the extension and the Android fixture key are not production
   artifacts; the Windows host is unsigned and the macOS host is ad-hoc signed.
 - One phone (OnePlus 6T), one Chrome version per platform, one Windows build, one macOS build.
-- The interrupted activation was produced by force-stopping the app after the phone reached
-  `COMMITTED_WAITING_ACK`; the resume used the connector's debug `connect` hook with an explicit
-  phone installation id, which is the documented explicit-id recovery path, not a product UI
-  flow.
+- On Windows the interrupted activation was produced by force-stopping the app after the phone
+  reached `COMMITTED_WAITING_ACK`; the resume used the connector's debug `connect` hook with an
+  explicit phone installation id, which is the documented explicit-id recovery path, not a
+  product UI flow. On macOS the same interruption occurred naturally: the client's ack was lost
+  when the link closed, and the next user-selected reconnect resumed it.
 - Only the Windows run completed the pairing, reconnect and recovery steps; the macOS run is
   recorded as blocked at its first required permission grant.
 - No keys, nonces or full installation identifiers are recorded here beyond the fingerprints,
