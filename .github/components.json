@@ -10,9 +10,12 @@
     "gradlew.bat",
     ".java-version"
   ],
-  "ci-global": [
-    ".editorconfig"
-  ],
+  "ci-global": [],
+  "global-overrides": {
+    ".github/components.json": [
+      "tooling"
+    ]
+  },
   "unowned": [
     "docs/",
     "site/",
@@ -42,7 +45,8 @@
         "protocol/"
       ],
       "ci-paths": [
-        "config/detekt/"
+        "config/detekt/",
+        ".editorconfig"
       ],
       "jobs": [
         "lint",
@@ -61,6 +65,9 @@
         "protocol/",
         "verify/lib/"
       ],
+      "ci-paths": [
+        ".editorconfig"
+      ],
       "jobs": [
         "lint",
         "unit-tests",
@@ -72,11 +79,10 @@
       "tag-prefix": "installer-v",
       "initial-version": "0.1.0",
       "paths": [
-        "native-bridge/installer/",
-        "native-bridge/host/",
-        "protocol/"
+        "native-bridge/installer/"
       ],
       "ci-paths": [
+        "native-bridge/host/rust-toolchain.toml",
         "rust/scripts/assert-clean.sh",
         "verify/check-cargo-build-scripts.mjs",
         "verify/check-npm-licenses.mjs",
@@ -84,6 +90,10 @@
         "verify/generate-sboms.sh",
         "verify/verify-sboms.mjs",
         "verify/verify-supply-chain.sh"
+      ],
+      "release-paths": [
+        "native-bridge/host/",
+        "protocol/"
       ],
       "jobs": [
         "lint",
@@ -173,6 +183,9 @@
         "native-bridge/test/",
         "verify/lib/",
         "protocol/"
+      ],
+      "ci-paths": [
+        ".editorconfig"
       ],
       "jobs": [
         "lint",

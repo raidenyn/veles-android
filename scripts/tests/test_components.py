@@ -104,8 +104,30 @@ class SelectionTest(unittest.TestCase):
     def test_owner_nodes_contract(self):
         self.assertIsNone(owner_nodes("build.gradle.kts", CMAP))
         self.assertIsNone(owner_nodes("newdir/x", CMAP))
-        self.assertEqual(owner_nodes("native-bridge/host/src/lib.rs", CMAP), {"installer", "native-host", "protocol", "supply-chain"})
+        self.assertEqual(owner_nodes("native-bridge/host/src/lib.rs", CMAP), {"native-host", "protocol", "supply-chain"})
         self.assertEqual(owner_nodes("scripts/components.py", CMAP), {"tooling"})
+
+    def test_components_json_selects_only_tooling(self):
+        self.assertEqual(owner_nodes(".github/components.json", CMAP), {"tooling"})
+        a = affected([".github/components.json"], CMAP)
+        self.assertTrue(a["tooling"])
+        self.assertEqual({n for n, v in a.items() if v}, {"tooling"})
+        self.assertEqual(unaccounted([".github/components.json"], CMAP), [])
+
+    def test_editorconfig_selects_prettier_and_ktlint_consumers(self):
+        self.assertEqual(owner_nodes(".editorconfig", CMAP), {"android", "web-extension", "bridge-scaffold"})
+        a = affected([".editorconfig"], CMAP)
+        self.assertEqual({n for n, v in a.items() if v}, {"android", "web-extension", "bridge-scaffold"})
+        self.assertEqual(unaccounted([".editorconfig"], CMAP), [])
+
+    def test_protocol_change_does_not_select_installer(self):
+        a = affected(["protocol/v1/limits.json"], CMAP)
+        self.assertFalse(a["installer"])
+        self.assertTrue(a["native-host"])
+
+    def test_host_toolchain_selects_installer(self):
+        self.assertIn("native-bridge/host/rust-toolchain.toml", CMAP["nodes"]["installer"]["ci-paths"])
+        self.assertTrue(affected(["native-bridge/host/rust-toolchain.toml"], CMAP)["installer"])
 
     def test_override_selects_only_listed_nodes(self):
         cmap = load_map(tmp_map(**{"global-overrides": {".github/components.json": ["tooling"]}}))
@@ -146,7 +168,11 @@ class SelectionTest(unittest.TestCase):
     def test_release_paths(self):
         self.assertIn("build.gradle.kts", release_paths("installer", CMAP))
         self.assertIn("native-bridge/installer/", release_paths("installer", CMAP))
+        self.assertIn("native-bridge/host/", release_paths("installer", CMAP))
+        self.assertIn("protocol/", release_paths("installer", CMAP))
         self.assertNotIn("app/", release_paths("installer", CMAP))
+        self.assertNotIn("native-bridge/host/", CMAP["nodes"]["installer"]["paths"])
+        self.assertNotIn("protocol/", CMAP["nodes"]["installer"]["paths"])
 
     def test_ci_paths_never_release(self):
         rp = release_paths("installer", CMAP)
@@ -193,11 +219,6 @@ class SelectionTest(unittest.TestCase):
         self.assertIn(".github/", rp)
         for p in ("app/", "build.gradle.kts", "config/detekt/"):
             self.assertNotIn(p, rp)
-
-    def test_ci_global_selects_every_node(self):
-        self.assertTrue(all(affected([".editorconfig"], CMAP).values()))
-        self.assertIsNone(owner_nodes(".editorconfig", CMAP))
-        self.assertEqual(unaccounted([".editorconfig"], CMAP), [])
 
 
 class MapValidationTest(unittest.TestCase):
