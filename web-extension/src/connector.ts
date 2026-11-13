@@ -435,6 +435,10 @@ export class ConnectorApp {
                 proofs: this.proofs,
                 code,
                 deviceHandle,
+                // Every await inside `start` re-checks this: a cancel, teardown or
+                // replacement during startup must stop it before it processes an
+                // offer or releases `pB`.
+                isCancelled: () => !this.isPairingAttemptLive(attempt),
                 // Register the handle from the connected event, before the first
                 // send: a link lost during start must never look like a session.
                 onConnected: (connectionHandle) => {

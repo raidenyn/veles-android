@@ -262,18 +262,30 @@ interface PendingConnect {
     resolve(result: ConnectorResult<ConnectedEvent>): void;
 }
 
+interface PendingSend {
+    readonly handle: string;
+    resolve(result: ConnectorResult<SentEvent>): void;
+}
+
 /**
  * A controller whose transport `connect` stays pending until the test settles it,
  * so a pairing startup can be observed mid-flight. `close` is deliberately inert:
- * it lets `dispose()` race a connect that later resolves successfully.
+ * it lets `dispose()` race a connect that later resolves successfully. A send can
+ * be deferred once, and inbound records can be delivered to the installed
+ * listener, to observe a startup between its connect and its first frame.
  */
 class DeferredPairingController implements ConnectorControllerLike {
     readonly state = new ConnectorState();
     readonly connects: PendingConnect[] = [];
     readonly sent: Uint8Array[] = [];
     readonly disconnected: string[] = [];
+    readonly pendingSends: PendingSend[] = [];
+    readonly recordListeners = new Set<
+        (record: { connectionHandle: string; bytes: Uint8Array }) => void
+    >();
     portGeneration = 0;
     private nextHandle = 1;
+    private deferNextSend = false;
 
     connect(): Promise<ConnectorResult<ConnectedEvent>> {
         const handle = `link-${this.nextHandle}`;
@@ -299,8 +311,24 @@ class DeferredPairingController implements ConnectorControllerLike {
         });
     }
 
+    /** Holds the next send until `acceptSend`, exposing the startup window. */
+    deferSendOnce(): void {
+        this.deferNextSend = true;
+    }
+
+    /** Delivers an inbound record to every installed listener. */
+    emit(handle: string, bytes: Uint8Array): void {
+        for (const listener of this.recordListeners) listener({ connectionHandle: handle, bytes });
+    }
+
     async send(handle: string, record: Uint8Array): Promise<ConnectorResult<SentEvent>> {
         this.sent.push(record.slice());
+        if (this.deferNextSend) {
+            this.deferNextSend = false;
+            return new Promise<ConnectorResult<SentEvent>>((resolve) => {
+                this.pendingSends.push({ handle, resolve });
+            });
+        }
         return {
             ok: true,
             event: {
@@ -311,6 +339,22 @@ class DeferredPairingController implements ConnectorControllerLike {
                 connection_handle: handle,
             },
         };
+    }
+
+    /** Settles a deferred send successfully. */
+    acceptSend(index: number): void {
+        const pending = this.pendingSends[index];
+        if (pending === undefined) throw new Error(`send ${index} was not issued`);
+        pending.resolve({
+            ok: true,
+            event: {
+                type: 'sent',
+                envelope_version: 1,
+                api_version: 1,
+                request_id: `sent-${index}`,
+                connection_handle: pending.handle,
+            },
+        });
     }
 
     async disconnect(handle: string): Promise<ConnectorResult<DisconnectedEvent>> {
@@ -326,8 +370,13 @@ class DeferredPairingController implements ConnectorControllerLike {
         };
     }
 
-    onRecord(): () => void {
-        return () => undefined;
+    onRecord(
+        listener: (record: { connectionHandle: string; bytes: Uint8Array }) => void,
+    ): () => void {
+        this.recordListeners.add(listener);
+        return () => {
+            this.recordListeners.delete(listener);
+        };
     }
     onChange(): () => void {
         return () => undefined;
@@ -932,7 +981,7 @@ describe('client enrollment machine', () => {
         }
     });
 
-    it('cancel_during_pairing_startup_disposes_the_stale_link', async () => {
+    it('cancel_during_pairing_startup_aborts_before_the_first_frame', async () => {
         const { app, controller, trust } = await createPairingApp();
         try {
             const pairing = app.startPairing('device-1', '000042');
@@ -940,15 +989,14 @@ describe('client enrollment machine', () => {
             expect(controller.connects).toHaveLength(1);
 
             // The user cancels while the transport connect is still pending: the
-            // startup has no `pairingLink` to cancel yet, so only the generation
-            // can make it stale.
+            // startup has no `pairingLink` to cancel yet, so the generation makes it
+            // stale. `start` observes that right after connect and closes the
+            // transport without ever sending its pairing_request.
             expect(await app.cancelPairing()).toBe(true);
             controller.acceptConnect(0);
 
             expect(await pairing).toBe(false);
-            // The resolved link really became live (it sent its pairing_request),
-            // then was disposed instead of being installed.
-            expect(controller.sent).toHaveLength(1);
+            expect(controller.sent).toEqual([]);
             expect(controller.disconnected).toEqual(['link-1']);
             expect(app.pairingState).toEqual({ phase: 'idle', finished: true });
             expect(openHandleCount()).toBe(0);
@@ -958,7 +1006,45 @@ describe('client enrollment machine', () => {
         }
     });
 
-    it('dispose_during_pairing_startup_disposes_the_stale_link', async () => {
+    it('cancel_during_pairing_startup_never_processes_an_offer', async () => {
+        const { app, controller, trust } = await createPairingApp();
+        const phone = await PhonePeer.create({ code: '000042' });
+        try {
+            // Hold the initial pairing_request: the link is connected, its record
+            // listener is installed, and the startup has not returned yet.
+            controller.deferSendOnce();
+            const pairing = app.startPairing('device-1', '000042');
+            await flush();
+            expect(controller.connects).toHaveLength(1);
+            controller.acceptConnect(0);
+            await flush();
+            expect(controller.pendingSends).toHaveLength(1);
+            expect(controller.sent.map((frame) => frame[0])).toEqual([PairingFrameType.REQUEST]);
+
+            const offer = phone.offerFor(controller.sent[0]);
+            expect(await app.cancelPairing()).toBe(true);
+
+            // The offer arrives after the cancel while the listener is still live: a
+            // cancelled startup must never process it or release `pB`.
+            controller.emit('link-1', offer);
+            await flush();
+            expect(controller.sent.map((frame) => frame[0])).toEqual([PairingFrameType.REQUEST]);
+            expect(openHandleCount()).toBe(0);
+
+            // Settlement closes the transport and leaves no pending trust record.
+            controller.acceptSend(0);
+            expect(await pairing).toBe(false);
+            await flush();
+            expect(openHandleCount()).toBe(0);
+            expect(controller.disconnected).toEqual(['link-1']);
+            expect(await trust.repository.peers()).toEqual([]);
+        } finally {
+            phone.close();
+            app.dispose();
+        }
+    });
+
+    it('dispose_during_pairing_startup_aborts_before_the_first_frame', async () => {
         const { app, controller, trust } = await createPairingApp();
         const pairing = app.startPairing('device-1', '000042');
         await flush();
@@ -966,11 +1052,11 @@ describe('client enrollment machine', () => {
 
         app.dispose();
         // The tab teardown is inert for the pending transport, which then resolves
-        // successfully; the startup must still not install that link.
+        // successfully; the startup must still not install that link or send a frame.
         controller.acceptConnect(0);
 
         expect(await pairing).toBe(false);
-        expect(controller.sent).toHaveLength(1);
+        expect(controller.sent).toEqual([]);
         expect(controller.disconnected).toEqual(['link-1']);
         expect(app.pairingState.finished).toBe(true);
         expect(openHandleCount()).toBe(0);
@@ -988,17 +1074,19 @@ describe('client enrollment machine', () => {
             await flush();
             expect(controller.connects).toHaveLength(2);
 
-            // The first startup resolves after being replaced: it must be disposed.
+            // The first startup resolves after being replaced: `start` sees the stale
+            // generation right after connect, closes the transport and sends nothing.
             controller.acceptConnect(0);
             expect(await first).toBe(false);
+            expect(controller.sent).toEqual([]);
             expect(controller.disconnected).toEqual(['link-1']);
             expect(app.pairingState).toEqual({ phase: 'idle', finished: false });
 
-            // The second startup owns the one live link.
+            // The second startup owns the one live link and sends its request.
             controller.acceptConnect(1);
             expect(await second).toBe(true);
             expect(app.pairingState).toEqual({ phase: 'awaiting_offer', finished: false });
-            expect(controller.sent).toHaveLength(2);
+            expect(controller.sent).toHaveLength(1);
             expect(controller.disconnected).toEqual(['link-1']);
 
             expect(await app.cancelPairing()).toBe(true);

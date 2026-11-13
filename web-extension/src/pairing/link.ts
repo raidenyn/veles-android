@@ -55,10 +55,24 @@ export interface PairingLinkDeps {
     setInterval?: (fn: () => void, ms: number) => unknown;
     clearInterval?: (handle: unknown) => void;
     init?: () => Promise<void>;
+    /**
+     * Startup cancellation, owned by the connector's attempt generation. `start`
+     * checks it at every await boundary, and an inbound record is ignored once it
+     * turns true, so a cancelled attempt never releases `pB` or processes a frame.
+     */
+    isCancelled?: () => boolean;
     /** Called immediately after connect, before the first pairing frame is sent. */
     onConnected?: (connectionHandle: string) => void;
     /** Called once when the link stops, whatever the reason. */
     onEnded?: () => void;
+}
+
+/** A startup that observed its attempt cancelled before it could return a live link. */
+export class PairingCancelled extends Error {
+    constructor() {
+        super('pairing startup cancelled');
+        this.name = 'PairingCancelled';
+    }
 }
 
 function defaultClock(): number {
@@ -73,6 +87,7 @@ export class PairingLink {
     private readonly controller: PairingTransport;
     private readonly clearIntervalFn: (handle: unknown) => void;
     private readonly onEnded: (() => void) | undefined;
+    private readonly isCancelled: () => boolean;
     private unsubscribe: (() => void) | null = null;
     private timer: unknown = null;
     private disposed = false;
@@ -86,20 +101,27 @@ export class PairingLink {
         machine: ClientMachine,
         clearIntervalFn: (handle: unknown) => void,
         onEnded: (() => void) | undefined,
+        isCancelled: () => boolean,
     ) {
         this.controller = controller;
         this.connectionHandle = connectionHandle;
         this.machine = machine;
         this.clearIntervalFn = clearIntervalFn;
         this.onEnded = onEnded;
+        this.isCancelled = isCancelled;
     }
 
     /**
      * Connects the selected phone, starts the client machine and sends the one
      * `pairing_request`. A failed connect or send leaves no handle or listener.
+     * Cancellation is checked across every await, so a startup the connector no
+     * longer owns releases the handle and the core instead of becoming live.
      */
     static async start(deps: PairingLinkDeps): Promise<PairingLink> {
+        const isCancelled = deps.isCancelled ?? (() => false);
+        if (isCancelled()) throw new PairingCancelled();
         await (deps.init ?? initPairingCore)();
+        if (isCancelled()) throw new PairingCancelled();
         // Construct (and validate the code/caps) before opening a link: a bad
         // request can never leave a connected BLE link without an owner.
         const machine = new ClientMachine({
@@ -126,16 +148,33 @@ export class PairingLink {
             machine,
             deps.clearInterval ?? ((timer) => globalThis.clearInterval(timer as never)),
             deps.onEnded,
+            isCancelled,
         );
+        if (isCancelled()) {
+            // The transport is already connected: close it and erase the machine
+            // before anyone can mistake this attempt for an installed link.
+            await link.abandon();
+            throw new PairingCancelled();
+        }
         link.unsubscribe = deps.controller.onRecord((record) => {
             if (record.connectionHandle !== handle) return;
+            // `receive` drops the record and tears the link down when the attempt
+            // was cancelled while this listener was live.
             void link.receive(record.bytes);
         });
         try {
+            if (isCancelled()) throw new PairingCancelled();
             await link.send(machine.start());
         } catch (error) {
             await link.dispose();
             throw error;
+        }
+        if (isCancelled()) {
+            // A cancel that landed while the initial send was pending: `receive`
+            // may already have torn the link down, so dispose and never install a
+            // timer or return an unowned link.
+            await link.dispose();
+            throw new PairingCancelled();
         }
         const tick = deps.tickIntervalMs ?? DEFAULT_TICK_MS;
         if (tick > 0) {
@@ -153,6 +192,13 @@ export class PairingLink {
     receive(bytes: Uint8Array): Promise<void> {
         const next = this.queue.then(async () => {
             if (this.disposed || this.stopped) return;
+            if (this.isCancelled()) {
+                // A cancelled attempt must not process an offer or release `pB`
+                // (or a later confirmation): erase the machine and drop the link,
+                // including this enrollment's pending record.
+                await this.dispose();
+                return;
+            }
             try {
                 const frames = await this.machine.onFrame(bytes);
                 for (const frame of frames) await this.send(frame);
