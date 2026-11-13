@@ -180,12 +180,13 @@ private class EnrollmentRun(private val harness: Harness) {
         val phoneIdentity = readPhoneIdentity()
         val et = releaseClientIdentity(phoneIdentity)
         val prepare = harness.machine.onFrame(sealed(RecordType.ENROLL_IDENTITY.wire, clientBody!!))
-        verifyPrepare(prepare.singleFrame())
+        verifyPrepare(prepare.singleProtectedRecord())
         val complete = harness.machine.onFrame(sealed(RecordType.ACTIVATION_COMMIT.wire, activationMac(clientKeys().clientActivationKey, et, STAGE_COMMIT)))
-        verifyComplete(complete.singleFrame(), et)
+        verifyComplete(complete.singleProtectedRecord(), et)
         val ack = activationMac(clientKeys().clientActivationKey, et, STAGE_ACK)
-        val empty = harness.machine.onFrame(sealed(RecordType.ACTIVATION_ACK.wire, ack))
-        assertTrue(empty.isEmpty())
+        // OTP2-STA-010b step 6: the verified ack activates the record and ends the connection.
+        val closing = harness.machine.onFrame(sealed(RecordType.ACTIVATION_ACK.wire, ack))
+        assertEquals(listOf<Outgoing>(Outgoing.Disconnect), closing)
         assertEquals(PairingState.ACTIVE, harness.machine.state)
         keys?.wipe()
         execution?.close()
@@ -232,17 +233,9 @@ private class EnrollmentRun(private val harness: Harness) {
 
     private suspend fun readPhoneIdentity(): IdentityRecord {
         val frame = phoneIdentityFrame ?: error("no phone identity frame")
-        val opened = RecordCodec.open(
-            clientKeys().aToBAesKey,
-            clientKeys().aToBNoncePrefix,
-            prefix ?: error("no prefix"),
-            Direction.PHONE_TO_CLIENT,
-            rxSequence,
-            frame,
-        )
-        rxSequence += 1uL
+        val body = openPhoneRecord(frame, RecordType.ENROLL_IDENTITY)
         val record = EnrollmentRecords.decodeForStorage(
-            opened.body,
+            body,
             IdentityRole.PHONE,
             { point -> P256.requireValidPoint(point) },
             { },
@@ -283,18 +276,19 @@ private class EnrollmentRun(private val harness: Harness) {
     }
 
     private suspend fun verifyPrepare(frame: ByteArray) {
-        val opened = openPhoneRecord(frame)
+        val opened = openPhoneRecord(frame, RecordType.ENROLLMENT_PREPARE)
         val expected = activationMac(clientKeys().phoneActivationKey, transcript ?: error("no ET"), STAGE_PREPARE)
         assertArrayEquals(expected, opened)
     }
 
     private suspend fun verifyComplete(frame: ByteArray, et: ByteArray) {
-        val opened = openPhoneRecord(frame)
+        val opened = openPhoneRecord(frame, RecordType.ACTIVATION_COMPLETE)
         val expected = activationMac(clientKeys().phoneActivationKey, et, STAGE_COMPLETE)
         assertArrayEquals(expected, opened)
     }
 
-    private suspend fun openPhoneRecord(frame: ByteArray): ByteArray {
+    /** Opens one phone→client protected record and asserts its §7 type. */
+    private suspend fun openPhoneRecord(frame: ByteArray, type: RecordType): ByteArray {
         val opened = RecordCodec.open(
             clientKeys().aToBAesKey,
             clientKeys().aToBNoncePrefix,
@@ -304,6 +298,7 @@ private class EnrollmentRun(private val harness: Harness) {
             frame,
         )
         rxSequence += 1uL
+        assertEquals(type.wire, opened.type)
         return opened.body
     }
 
@@ -372,6 +367,13 @@ private fun List<Outgoing>.singleFrame(type: PairingFrameType? = null): ByteArra
     if (type != null) assertEquals(type, decoded.type)
     return decoded.payload
 }
+
+/**
+ * The one protected record the phone sent, still sealed. Post-confirmation traffic is §7
+ * protected records, not `0x01`-`0x05` pairing frames, so it must be opened with
+ * `RecordCodec`, never decoded with `PairingFrames.decode`.
+ */
+private fun List<Outgoing>.singleProtectedRecord(): ByteArray = filterIsInstance<Outgoing.Frame>().single().bytes
 
 private fun parseOffer(payload: ByteArray): Offer {
     val fixed = PAIRING_ID_BYTES + NONCE_BYTES + 4
