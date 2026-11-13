@@ -829,35 +829,6 @@ fn frozen_stdout_duplicate_request_id_rejected_bounded() {
 }
 
 #[test]
-fn delayed_release_and_frozen_writer_share_one_deadline() {
-    // Delayed real release (3 s, leaving 2 s of slack inside the 5 s deadline so a loaded runner
-    // cannot push it past the deadline) with a frozen writer: the release observation and the
-    // drain share the one terminal deadline, so the drain's remaining budget can never push the
-    // exit past five seconds. The protocol exit stands and nothing is delivered through the
-    // frozen writer.
-    let mut run = spawn_driver(
-        &["--test-freeze-stdout", "--test-delayed-release=3000"],
-        &[DEVELOPMENT_ORIGIN],
-    );
-    let terminal = Instant::now();
-    write_frames(&mut run, &[hello_frame(&[1]), shutdown_frame("bye")], true);
-    let (code, elapsed, stdout, stderr) = finish_after_terminal(run, terminal, WATCHDOG);
-    assert_eq!(
-        code, 0,
-        "the release was observed inside the deadline: exit preserved"
-    );
-    assert!(
-        elapsed >= Duration::from_millis(4_500) && elapsed < CHILD_WINDOW_CEILING,
-        "the drain waited for the shared deadline behind the frozen writer: {elapsed:?}"
-    );
-    assert!(
-        stdout.is_empty(),
-        "the frozen writer never delivered: {stdout:?}"
-    );
-    assert_eq!(stderr, "");
-}
-
-#[test]
 fn output_overflow_exits_4_with_unread_stdout() {
     // No stdout reader and the raw read end held unread: the writer fills the 64 KiB pipe,
     // parks, and the output queue overflows its 128-message ceiling → exit 4, bounded,

@@ -21,8 +21,11 @@
 //!    [`BackendEvent::ShutdownComplete`], drained post-exit into the core's
 //!    [`Core::shutdown_complete_received`] observation, per the Task 5 prerequisite cleanup)
 //!    and, inside the same deadline, at most [`DRAIN_MAX`] — two seconds — draining the
-//!    output queue through the writer. If the release is not observed by the deadline, the
-//!    host fails closed with exit 1 regardless of the core's code; otherwise the core's
+//!    output queue through the writer, with the drain-driven path ending
+//!    [`EXIT_DISARM_RESERVE`] before the deadline (or keeping at least [`DRAIN_FLOOR`] when the
+//!    release lands inside the reserve) so its final disarm has a scheduling margin ahead of
+//!    the watchdog backstop. If the release is not observed by the deadline,
+//!    the host fails closed with exit 1 regardless of the core's code; otherwise the core's
 //!    protocol exit (0/2/3/4) stands.
 //! 2. An independent process-level [`HangWatchdog`] (the enforcement layer): it is armed —
 //!    with exactly the same terminal deadline — at terminal detection, *before* the first
@@ -93,6 +96,26 @@ const EXIT_DEADLINE: Duration = Duration::from_secs(5);
 /// writer to finish the queued output.
 const DRAIN_MAX: Duration = Duration::from_secs(2);
 
+/// Part of [`EXIT_DEADLINE`] held back from the drain so a drain-driven exit can disarm the
+/// process-exit watchdog before its backstop may fire (`EXIT_DEADLINE + WATCHDOG_GRACE`).
+/// The drain is best-effort; letting it consume the whole deadline would leave a legitimate,
+/// on-time exit only [`WATCHDOG_GRACE`] between its final disarm and the enforced kill, and
+/// any scheduling delay larger than that grace would turn a successful cleanup into
+/// `EXIT_HOST_FAILURE`. The reserve buys the drain-driven path a scheduling margin of this
+/// size. It is a margin, not a guarantee: a release observed inside the last
+/// [`EXIT_DISARM_RESERVE`] of the window keeps only [`DRAIN_FLOOR`] (or the little that is
+/// left) instead of the reserve, and a stall longer than the reserve remains the watchdog's to
+/// enforce.
+const EXIT_DISARM_RESERVE: Duration = Duration::from_millis(500);
+
+/// Minimum drain window a released exit keeps when the release is observed inside
+/// [`EXIT_DISARM_RESERVE`]. The drain only has to give a healthy writer one scheduling slot to
+/// flush what is already queued; with no window at all a successful run can exit 0 while its
+/// last frames — the `shutdown_complete` completion — are dropped with the killed writer
+/// (reproduced with a release just past the reserve boundary). It stays well below the reserve,
+/// so a drain-driven exit keeps most of its margin, and it is capped by the shared deadline.
+const DRAIN_FLOOR: Duration = Duration::from_millis(250);
+
 /// The independent watchdog's safety margin after the terminal deadline: an exactly-on-time
 /// bounded exit performs its final disarm within microseconds of the deadline, so the
 /// enforcing thread re-checks after this small grace before terminating the process. It only
@@ -104,6 +127,13 @@ const WATCHDOG_GRACE: Duration = Duration::from_millis(100);
 // process tests' parent ceiling is derived from it. Raising either constant fails the build.
 const _: () = assert!(EXIT_DEADLINE.as_millis() == 5_000);
 const _: () = assert!(WATCHDOG_GRACE.as_millis() <= 100);
+// The reserve is meant to absorb a scheduling delay of the final drain return and disarm,
+// not merely to end before the backstop: a few watchdog graces of margin.
+const _: () = assert!(EXIT_DISARM_RESERVE.as_millis() >= 4 * WATCHDOG_GRACE.as_millis());
+// The floor is a flush window, not a second reserve: it must stay inside the reserve and cover
+// several watchdog graces of scheduling delay for the writer wake-up it exists to allow.
+const _: () = assert!(DRAIN_FLOOR.as_millis() < EXIT_DISARM_RESERVE.as_millis());
+const _: () = assert!(DRAIN_FLOOR.as_millis() >= 2 * WATCHDOG_GRACE.as_millis());
 
 /// The independent process-level watchdog seam (review fix: the exit deadline must hold even
 /// when its clock starts before terminal handling can call a blocking adapter). The core
@@ -310,6 +340,38 @@ pub fn process_exit_watchdog() -> Arc<dyn HangWatchdog> {
     ProcessExitWatchdog::spawn()
 }
 
+/// The monotonic time source of the bounded exit. Production uses [`SystemClock`]; tests
+/// inject a fixed clock so the shared-deadline arithmetic and the exit decision are exercised
+/// without sleeping, without real waits, and without depending on the runner's load.
+trait Clock {
+    /// The current monotonic instant.
+    fn now(&self) -> Instant;
+}
+
+/// The production [`Clock`]: the process's own monotonic clock.
+struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
+/// The stdout drain seam of the bounded exit. Production waits on the [`OutQueue`] up to the
+/// given deadline; tests inject a recording implementation, whose frozen-writer form returns
+/// `false` immediately, so the deadline it was handed is asserted without any wait.
+trait Drain {
+    /// Waits (never past `deadline`) for the writer to finish the queued output; `true` only
+    /// when the queue is empty.
+    fn wait_drained(&self, deadline: Instant) -> bool;
+}
+
+impl Drain for OutQueue {
+    fn wait_drained(&self, deadline: Instant) -> bool {
+        OutQueue::wait_drained(self, deadline)
+    }
+}
+
 /// The process stdio owns. The reader thread owns `stdin` exclusively; the writer thread owns
 /// `stdout` exclusively and is the only code that writes it.
 pub struct Io {
@@ -454,6 +516,11 @@ where
         Arc::clone(&waker),
     );
     let watchdog = config.watchdog.as_ref();
+    // Every deadline decision in the loop reads this one clock. Production is the process
+    // clock; unit tests substitute a controllable one so the gate can be driven without
+    // waiting. (The idle park below stays on real time: it is a wait, not a decision, and it
+    // is only ever fed a production clock.)
+    let clock = SystemClock;
     // The absolute terminal deadline of the input that decides the exit: set on every
     // handled input, so it always equals the winning (exit-deciding) handle's deadline —
     // armed before `Core::handle` can touch the backend at all.
@@ -465,7 +532,7 @@ where
 
     let code = loop {
         if let Some(deadline) = shutdown_deadline
-            && Instant::now() >= deadline
+            && clock.now() >= deadline
             && let Some(code) = core.abort_pending_shutdown()
         {
             // The release was not confirmed within five seconds of the accepted request:
@@ -482,6 +549,7 @@ where
                 watchdog,
                 &mut exit_deadline,
                 &mut shutdown_deadline,
+                &clock,
             )
         {
             break code;
@@ -493,6 +561,7 @@ where
                 watchdog,
                 &mut exit_deadline,
                 &mut shutdown_deadline,
+                &clock,
             )
         {
             break code;
@@ -502,13 +571,14 @@ where
         // an idle moment that continuous traffic would never provide.
         if core
             .next_deadline()
-            .is_some_and(|deadline| Instant::now() >= deadline)
+            .is_some_and(|deadline| clock.now() >= deadline)
             && let Some(code) = handle_input(
                 &mut core,
                 Input::Tick,
                 watchdog,
                 &mut exit_deadline,
                 &mut shutdown_deadline,
+                &clock,
             )
         {
             break code;
@@ -525,6 +595,7 @@ where
                     watchdog,
                     &mut exit_deadline,
                     &mut shutdown_deadline,
+                    &clock,
                 ) {
                     break code;
                 }
@@ -541,6 +612,7 @@ where
                     watchdog,
                     &mut exit_deadline,
                     &mut shutdown_deadline,
+                    &clock,
                 ) {
                     break code;
                 }
@@ -555,6 +627,7 @@ where
                 watchdog,
                 &mut exit_deadline,
                 &mut shutdown_deadline,
+                &clock,
             ) {
                 break code;
             }
@@ -578,8 +651,19 @@ where
     };
 
     // ---- bounded exit: observe the real release, drain the output, never join threads ----
-    let deadline = exit_deadline.unwrap_or_else(|| Instant::now() + EXIT_DEADLINE);
-    let code = bounded_exit(&mut core, &receiver, &out, &input, code, deadline);
+    let deadline = exit_deadline.unwrap_or_else(|| clock.now() + EXIT_DEADLINE);
+    let code = bounded_exit(
+        &mut core,
+        &receiver,
+        &out,
+        &input,
+        code,
+        deadline,
+        ExitSeams {
+            clock: &SystemClock,
+            drain: out.as_ref(),
+        },
+    );
     // Dropping the core drops the backend: a blocking adapter `Drop` is therefore still
     // inside the armed deadline. `run` only completes once that is done; then the watchdog
     // is disarmed so it can never fire into the caller's (already computed) result.
@@ -599,6 +683,7 @@ fn handle_input<B: Backend>(
     watchdog: &dyn HangWatchdog,
     exit_deadline: &mut Option<Instant>,
     shutdown_deadline: &mut Option<Instant>,
+    clock: &dyn Clock,
 ) -> Option<i32> {
     // A pending explicit shutdown keeps its original deadline (armed when the request was
     // accepted); every other input arms a fresh one before the core can touch the backend.
@@ -606,19 +691,19 @@ fn handle_input<B: Backend>(
         // The pending handshake's deadline is checked BEFORE the input can reach the core:
         // once it expired no input — least of all a late attributed `ShutdownComplete` — may
         // complete the handshake or be accepted. Fail closed, nothing emitted.
-        if Instant::now() >= deadline
+        if clock.now() >= deadline
             && let Some(code) = core.abort_pending_shutdown()
         {
             *exit_deadline = Some(deadline);
             return Some(code);
         }
     }
-    let deadline = shutdown_deadline.unwrap_or_else(|| Instant::now() + EXIT_DEADLINE);
+    let deadline = shutdown_deadline.unwrap_or_else(|| clock.now() + EXIT_DEADLINE);
     if shutdown_deadline.is_none() {
         watchdog.arm(deadline);
     }
     *exit_deadline = Some(deadline);
-    let code = core.handle(input, Instant::now());
+    let code = core.handle(input, clock.now());
     if code.is_none() {
         if core.shutdown_pending() {
             // Post-handle consistency on the actual monotonic clock: a backend call that
@@ -628,7 +713,7 @@ fn handle_input<B: Backend>(
             // the call: a backend only stages events into the ingress, and the success frame
             // is emitted solely when the runtime later dispatches the drained terminal
             // through this function, whose pre-dispatch gate above rejects it once expired.
-            if Instant::now() >= deadline
+            if clock.now() >= deadline
                 && let Some(code) = core.abort_pending_shutdown()
             {
                 *shutdown_deadline = Some(deadline);
@@ -656,8 +741,17 @@ fn terminal_input(kind: InputTerminal) -> Input {
 /// Bounded exit sequence. The one shared terminal deadline — armed at terminal detection,
 /// before any terminal handling could touch the backend — drives everything: watch the
 /// backend's real `ShutdownComplete` (post-exit drained into the core) until it, and — inside
-/// the same window — at most two seconds of stdout drain. Missing cleanup fails closed
-/// (exit 1); observed cleanup preserves the core's protocol exit. No thread is joined.
+/// the same window — at most two seconds of stdout drain, with the drain-driven path ending
+/// [`EXIT_DISARM_RESERVE`] before the deadline so its final disarm has a scheduling margin
+/// ahead of the watchdog backstop. A release observed inside the reserve instead keeps
+/// [`DRAIN_FLOOR`] (or the window left) so a healthy writer can still flush its last frames;
+/// the reserve is a margin, not a proof: a stall past the reserve is the watchdog's to
+/// enforce. Missing cleanup fails closed (exit 1); observed cleanup preserves the core's
+/// protocol exit. No thread is joined.
+///
+/// `clock` and `drain` are seams: production passes [`SystemClock`] and the [`OutQueue`];
+/// tests pass a fixed instant and a recording drain, so the deadline arithmetic and the exit
+/// decision are validated without waiting.
 fn bounded_exit<B: Backend>(
     core: &mut Core<B>,
     receiver: &BackendReceiver,
@@ -665,6 +759,7 @@ fn bounded_exit<B: Backend>(
     input: &Arc<InputFrames>,
     code: i32,
     total_deadline: Instant,
+    seams: ExitSeams<'_>,
 ) -> i32 {
     out.close();
     // The queue state is dead past the core's exit; setting the terminal releases a producer
@@ -674,7 +769,7 @@ fn bounded_exit<B: Backend>(
 
     let mut cleanup_seen = core.shutdown_complete_received();
     while !cleanup_seen {
-        let now = Instant::now();
+        let now = seams.clock.now();
         if now >= total_deadline {
             break;
         }
@@ -683,7 +778,7 @@ fn bounded_exit<B: Backend>(
             BackendPop::Event(event) => {
                 // Post-exit the core only records the process-wide terminal; every other
                 // event is returned unchanged, dropping its payload with it.
-                let _ = core.handle(Input::Backend(event), Instant::now());
+                let _ = core.handle(Input::Backend(event), seams.clock.now());
                 cleanup_seen = core.shutdown_complete_received();
             }
             BackendPop::Timeout => {}
@@ -693,11 +788,29 @@ fn bounded_exit<B: Backend>(
         return EXIT_HOST_FAILURE;
     }
     // The writer has been draining concurrently all along; the bound only matters when it is
-    // slow or blocked. Drain ≤2 s, inside the total deadline.
-    let drain_deadline = Instant::now() + DRAIN_MAX;
-    let drain_deadline = drain_deadline.min(total_deadline);
-    let _drained = out.wait_drained(drain_deadline);
+    // slow or blocked. Drain ≤2 s and always strictly inside the terminal deadline.
+    let drain_until = drain_deadline(seams.clock.now(), total_deadline);
+    let _drained = seams.drain.wait_drained(drain_until);
     stdout_failure_precedence(code, out)
+}
+
+/// The bounded exit's seams: the monotonic clock it reads and the drain it waits on. Bundled so
+/// the sequence keeps one call site, and so tests can substitute both without a real clock.
+struct ExitSeams<'a> {
+    clock: &'a dyn Clock,
+    drain: &'a dyn Drain,
+}
+
+/// The drain's own bound: at most [`DRAIN_MAX`] from the moment the release was observed, never
+/// later than [`EXIT_DISARM_RESERVE`] before the shared terminal deadline (so a drain-driven
+/// exit normally disarms a scheduling margin ahead of the watchdog backstop), and never shorter
+/// than [`DRAIN_FLOOR`], or the window left to the deadline when that is shorter — a healthy
+/// writer must always get the chance to flush what is queued. All limits are arithmetic on the
+/// two instants.
+fn drain_deadline(now: Instant, total_deadline: Instant) -> Instant {
+    let reserved = total_deadline - EXIT_DISARM_RESERVE;
+    let floor = (now + DRAIN_FLOOR).min(total_deadline);
+    (now + DRAIN_MAX).min(reserved.max(floor))
 }
 
 /// Precedence when both are latched: a failed stdout delivery dominates an output overflow.
@@ -723,7 +836,14 @@ mod tests {
     use crate::buffer::Payload;
     use crate::ingress::BackendEvents;
 
-    struct NullBackend;
+    /// A backend with no OS work. `spend_on_shutdown` models a blocking adapter call: it
+    /// consumes that much *clock* time inside `shutdown` (there is no real wait) and then
+    /// reports its attributed release synchronously, on return.
+    #[derive(Default)]
+    struct NullBackend {
+        spend_on_shutdown: Option<(Arc<OffsetClock>, Duration)>,
+        events: Option<BackendEvents>,
+    }
 
     impl Backend for NullBackend {
         fn normalize_target(&self, _hint: &str) -> Option<NormalizedTarget> {
@@ -734,7 +854,45 @@ mod tests {
         fn connect(&mut self, _conn: Token, _target: &Target) {}
         fn write_fragments(&mut self, _conn: Token, _send: Token, _frames: Vec<Payload>) {}
         fn disconnect(&mut self, _conn: Token) {}
-        fn shutdown(&mut self) {}
+        fn shutdown(&mut self) {
+            if let Some((clock, spent)) = &self.spend_on_shutdown {
+                clock.spend(*spent);
+                if let Some(events) = &self.events {
+                    events.emit(BackendEvent::ShutdownComplete);
+                }
+            }
+        }
+    }
+
+    /// A clock that starts at one fixed instant and only advances when a test (or the fake
+    /// backend, modelling a blocking adapter call) spends time on it. Nothing reads the real
+    /// clock, so every gate below is decided by scripted instants alone.
+    struct OffsetClock {
+        base: Instant,
+        spent_ms: std::sync::atomic::AtomicU64,
+    }
+
+    impl OffsetClock {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                base: Instant::now(),
+                spent_ms: std::sync::atomic::AtomicU64::new(0),
+            })
+        }
+
+        fn spend(&self, spent: Duration) {
+            self.spent_ms.fetch_add(
+                spent.as_millis() as u64,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
+    }
+
+    impl Clock for OffsetClock {
+        fn now(&self) -> Instant {
+            self.base
+                + Duration::from_millis(self.spent_ms.load(std::sync::atomic::Ordering::SeqCst))
+        }
     }
 
     struct NoWatchdog;
@@ -749,6 +907,7 @@ mod tests {
         events: BackendEvents,
         receiver: BackendReceiver,
         out: Arc<OutQueue>,
+        clock: Arc<dyn Clock>,
         exit_deadline: Option<Instant>,
         shutdown_deadline: Option<Instant>,
     }
@@ -765,15 +924,22 @@ mod tests {
                 &NoWatchdog,
                 &mut self.exit_deadline,
                 &mut self.shutdown_deadline,
+                self.clock.as_ref(),
             )
         }
 
-        /// Hello + accepted shutdown: handshake pending, deadline armed by `handle_input`.
-        fn pending() -> Self {
+        /// Hello accepted: the core is Ready and no request is pending.
+        fn ready(
+            spend_on_shutdown: Option<(Arc<OffsetClock>, Duration)>,
+            clock: Arc<dyn Clock>,
+        ) -> Self {
             let (events, receiver) = BackendEvents::new();
             let out = OutQueue::new(MAX_QUEUED_MESSAGES, MAX_QUEUED_BYTES);
             let core = Core::new(
-                NullBackend,
+                NullBackend {
+                    spend_on_shutdown,
+                    events: Some(events.clone()),
+                },
                 out.clone(),
                 CoreConfig {
                     bridge_version: "runtime-unit/0".into(),
@@ -786,15 +952,18 @@ mod tests {
                 events,
                 receiver,
                 out,
+                clock,
                 exit_deadline: None,
                 shutdown_deadline: None,
             };
-            let hello =
-                r#"{"envelope_version":1,"type":"hello","request_id":"h","api_versions":[1]}"#;
-            assert_eq!(fixture.input(frame(hello)), None);
-            let bye =
-                r#"{"envelope_version":1,"api_version":1,"type":"shutdown","request_id":"bye"}"#;
-            assert_eq!(fixture.input(frame(bye)), None);
+            assert_eq!(fixture.input(frame(HELLO)), None);
+            fixture
+        }
+
+        /// Hello + accepted shutdown: handshake pending, deadline armed by `handle_input`.
+        fn pending() -> Self {
+            let mut fixture = Self::ready(None, Arc::new(SystemClock));
+            assert_eq!(fixture.input(frame(BYE)), None);
             assert!(fixture.shutdown_deadline.is_some(), "handshake pending");
             fixture
         }
@@ -802,9 +971,15 @@ mod tests {
         /// The attributed release (emitted after the claim), as the runtime would pop it.
         fn release(&mut self) -> Input {
             self.events.emit(BackendEvent::ShutdownComplete);
+            self.take_release()
+        }
+
+        /// Pops the release the backend already emitted, without emitting another: a test
+        /// using this form requires the adapter itself to have reported it.
+        fn take_release(&mut self) -> Input {
             match self.receiver.pop_event(Some(Duration::ZERO)) {
                 BackendPop::Event(event) => Input::Backend(event),
-                BackendPop::Timeout => panic!("release was not delivered"),
+                BackendPop::Timeout => panic!("the backend did not report the release"),
             }
         }
 
@@ -821,6 +996,184 @@ mod tests {
 
     fn frame_of(len: usize) -> Payload {
         Payload::new(vec![0x41; len])
+    }
+
+    // ---- shared terminal deadline: arithmetic and decision without a real clock ---------------
+
+    /// A clock pinned to one instant: the "delayed release" is represented by the instant the
+    /// drain starts from, not by waiting for it.
+    struct FixedClock(Instant);
+
+    impl Clock for FixedClock {
+        fn now(&self) -> Instant {
+            self.0
+        }
+    }
+
+    /// A clock that advances by a fixed step on every read: the deadline gate's "checked
+    /// again on the next cycle" behavior without waiting for real time.
+    struct CountingClock {
+        start: Instant,
+        step: Duration,
+        reads: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Clock for CountingClock {
+        fn now(&self) -> Instant {
+            let read = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.start + self.step * read as u32
+        }
+    }
+
+    /// A recording drain: the frozen-writer form never drains, and the deadline it was handed
+    /// is kept for the assertion. Nothing blocks, so the test runs in microseconds.
+    #[derive(Default)]
+    struct RecordingDrain {
+        drained: bool,
+        deadline: std::sync::Mutex<Option<Instant>>,
+    }
+
+    impl RecordingDrain {
+        fn frozen() -> Self {
+            Self::default()
+        }
+
+        fn deadline(&self) -> Instant {
+            self.deadline
+                .lock()
+                .expect("drain record")
+                .expect("the drain was consulted")
+        }
+    }
+
+    impl Drain for RecordingDrain {
+        fn wait_drained(&self, deadline: Instant) -> bool {
+            *self.deadline.lock().expect("drain record") = Some(deadline);
+            self.drained
+        }
+    }
+
+    /// The drain never gets a fresh budget, never extends the terminal deadline, and always
+    /// keeps a flush window: `min(release + 2 s, max(deadline - reserve, release + floor))`.
+    /// Pure arithmetic — no clock is read.
+    #[test]
+    fn drain_deadline_shares_the_terminal_deadline_and_keeps_the_disarm_reserve() {
+        let t0 = Instant::now();
+        let total = t0 + EXIT_DEADLINE;
+        let reserved = total - EXIT_DISARM_RESERVE;
+        let cases = [
+            (t0, t0 + DRAIN_MAX),
+            (
+                t0 + Duration::from_millis(2_000),
+                t0 + Duration::from_millis(4_000),
+            ),
+            (t0 + Duration::from_millis(2_500), reserved),
+            (t0 + Duration::from_millis(3_500), reserved),
+            // Inside the reserve from here on: the floor keeps a flush window.
+            (
+                t0 + Duration::from_millis(4_500),
+                t0 + Duration::from_millis(4_750),
+            ),
+            (t0 + Duration::from_millis(4_999), total),
+            (total, total),
+        ];
+        for (now, expected) in cases {
+            let deadline = drain_deadline(now, total);
+            assert_eq!(deadline, expected, "drain deadline from {now:?}");
+            assert!(deadline <= now + DRAIN_MAX, "never a fresh budget");
+            assert!(deadline <= total, "never past the terminal deadline");
+            if now < total {
+                assert!(
+                    deadline > now,
+                    "every released exit keeps a flush window for the writer"
+                );
+            }
+            if now + DRAIN_FLOOR <= reserved {
+                // Well before the reserve boundary the drain ends with the reserve intact.
+                assert_eq!(deadline, (now + DRAIN_MAX).min(reserved));
+                assert!(deadline + WATCHDOG_GRACE <= total);
+            }
+        }
+    }
+
+    /// The delayed-release + frozen-writer case at the drain boundary, in virtual time: the
+    /// release is observed at 3.5 s, the writer never drains, and the protocol exit must stand
+    /// with the drain bounded by the shared deadline (not by a fresh two seconds).
+    #[test]
+    fn delayed_release_and_frozen_writer_share_one_deadline() {
+        let t0 = Instant::now();
+        let released_at = t0 + Duration::from_millis(3_500);
+        let total = t0 + EXIT_DEADLINE;
+        let mut fixture = Fixture::pending();
+        let release = fixture.release();
+        assert_eq!(
+            fixture.core.handle(release, released_at),
+            Some(EXIT_OK),
+            "the attributed release completes the handshake"
+        );
+        assert!(fixture.core.shutdown_complete_received());
+        let input = InputFrames::new();
+        let drain = RecordingDrain::frozen();
+        let code = bounded_exit(
+            &mut fixture.core,
+            &fixture.receiver,
+            &fixture.out,
+            &input,
+            EXIT_OK,
+            total,
+            ExitSeams {
+                clock: &FixedClock(released_at),
+                drain: &drain,
+            },
+        );
+        assert_eq!(
+            code, EXIT_OK,
+            "an observed release preserves the protocol exit"
+        );
+        assert_eq!(
+            drain.deadline(),
+            total - EXIT_DISARM_RESERVE,
+            "the drain shares the terminal deadline"
+        );
+        assert!(
+            drain.deadline() - released_at <= DRAIN_MAX,
+            "the drain never extends the exit beyond its own bound"
+        );
+        assert!(
+            drain.deadline() > released_at,
+            "the writer always gets a window to flush the last frames"
+        );
+    }
+
+    /// The opposite branch, also without waiting: with the cleanup window spent and no
+    /// observed release, the exit fails closed and no drain is even attempted.
+    #[test]
+    fn unobserved_release_fails_closed_at_the_deadline_without_waiting() {
+        let t0 = Instant::now();
+        let total = t0 + EXIT_DEADLINE;
+        let mut fixture = Fixture::pending();
+        let input = InputFrames::new();
+        let drain = RecordingDrain::frozen();
+        let code = bounded_exit(
+            &mut fixture.core,
+            &fixture.receiver,
+            &fixture.out,
+            &input,
+            EXIT_OK,
+            total,
+            ExitSeams {
+                clock: &FixedClock(total),
+                drain: &drain,
+            },
+        );
+        assert_eq!(
+            code, EXIT_HOST_FAILURE,
+            "an unobserved release fails closed"
+        );
+        assert!(
+            drain.deadline.lock().expect("drain record").is_none(),
+            "a failed cleanup never drains"
+        );
     }
 
     #[test]
@@ -890,6 +1243,10 @@ mod tests {
             &input,
             EXIT_OUTPUT_OVERFLOW,
             Instant::now() + Duration::from_secs(5),
+            ExitSeams {
+                clock: &SystemClock,
+                drain: out.as_ref(),
+            },
         );
         writer.join().unwrap();
         assert_eq!(code, EXIT_OK);
@@ -912,6 +1269,55 @@ mod tests {
         fixture.shutdown_deadline = Some(Instant::now() + Duration::from_millis(250));
         assert_eq!(fixture.input(release), Some(0));
         assert_eq!(fixture.output_types(), vec!["ready", "shutdown_complete"]);
+    }
+
+    /// A blocking adapter call that returns *before* the terminal deadline, driven by the
+    /// injected clock: `shutdown` consumes 4 s of clock time (no real wait) and reports its
+    /// release on return, so the handshake still completes.
+    #[test]
+    fn blocking_release_returning_before_the_deadline_still_succeeds() {
+        let clock = OffsetClock::new();
+        let mut fixture = Fixture::ready(
+            Some((Arc::clone(&clock), Duration::from_secs(4))),
+            clock.clone(),
+        );
+        assert_eq!(
+            fixture.input(frame(BYE)),
+            None,
+            "the call returned inside the deadline: the handshake stays armed"
+        );
+        assert!(fixture.core.shutdown_pending());
+        // The backend reported the attributed release on return; take exactly that one.
+        let release = fixture.take_release();
+        assert_eq!(fixture.input(release), Some(EXIT_OK));
+        assert_eq!(
+            fixture.output_types(),
+            vec!["ready", "shutdown_complete"],
+            "the protocol exit and its last output stand"
+        );
+    }
+
+    /// The same blocking call returning *across* the deadline: the post-handle consistency
+    /// gate fails the handshake closed, with no `shutdown_complete` and no real wait.
+    #[test]
+    fn blocking_release_returning_after_the_deadline_fails_closed_without_success() {
+        let clock = OffsetClock::new();
+        let mut fixture = Fixture::ready(
+            Some((Arc::clone(&clock), Duration::from_millis(5_050))),
+            clock.clone(),
+        );
+        assert_eq!(
+            fixture.input(frame(BYE)),
+            Some(EXIT_HOST_FAILURE),
+            "a call returning across the deadline fails closed"
+        );
+        assert_eq!(
+            fixture.output_types(),
+            vec!["ready"],
+            "no shutdown_complete after a failed handshake"
+        );
+        assert!(!fixture.core.shutdown_complete_received());
+        assert!(!fixture.core.shutdown_pending(), "the handshake is aborted");
     }
 
     #[test]
@@ -960,7 +1366,7 @@ mod tests {
         let (_events, receiver) = BackendEvents::new();
         let out = OutQueue::new(MAX_QUEUED_MESSAGES, MAX_QUEUED_BYTES);
         let mut core = Core::new(
-            NullBackend,
+            NullBackend::default(),
             out,
             CoreConfig {
                 bridge_version: "runtime-unit/0".into(),
@@ -977,6 +1383,7 @@ mod tests {
             &watchdog,
             &mut exit_deadline,
             &mut shutdown_deadline,
+            &SystemClock,
         );
         let after = Instant::now();
         assert!(code.is_some(), "EOF is terminal");
@@ -1011,7 +1418,17 @@ mod tests {
     fn bounded_exit_without_release_fails_closed_at_the_given_deadline() {
         let mut fixture = Fixture::pending();
         let input = InputFrames::new();
-        let deadline = Instant::now() + Duration::from_millis(200);
+        let deadline = Instant::now() + Duration::from_millis(20);
+        // The scripted clock puts the first cycle one millisecond short of the deadline and
+        // the next cycle exactly on it: the loop must consult the deadline again (no
+        // give-up after the first miss) and fail closed on it. The first cycle's poll slice
+        // is that same millisecond; the decision itself is clock-driven, not elapsed-time.
+        let clock = CountingClock {
+            start: deadline - Duration::from_millis(1),
+            step: Duration::from_millis(1),
+            reads: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let drain = RecordingDrain::frozen();
         let code = bounded_exit(
             &mut fixture.core,
             &fixture.receiver,
@@ -1019,11 +1436,19 @@ mod tests {
             &input,
             EXIT_OK,
             deadline,
+            ExitSeams {
+                clock: &clock,
+                drain: &drain,
+            },
         );
         assert_eq!(code, EXIT_HOST_FAILURE);
         assert!(
-            Instant::now() >= deadline,
-            "the release was awaited until the shared deadline, not given up early"
+            clock.reads.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+            "the release was awaited past the first deadline cycle, not given up early"
+        );
+        assert!(
+            drain.deadline.lock().expect("drain record").is_none(),
+            "a failed cleanup never drains"
         );
     }
 
@@ -1039,6 +1464,10 @@ mod tests {
             &input,
             EXIT_OK,
             Instant::now() - Duration::from_millis(1),
+            ExitSeams {
+                clock: &SystemClock,
+                drain: &RecordingDrain::frozen(),
+            },
         );
         assert_eq!(code, EXIT_HOST_FAILURE);
     }
@@ -1067,6 +1496,10 @@ mod tests {
         assert_eq!(WATCHDOG_GRACE, Duration::from_millis(100));
         // Worst-case enforced kill of a wedged host: deadline + grace (+ scheduling).
         assert_eq!(EXIT_DEADLINE + WATCHDOG_GRACE, Duration::from_millis(5_100));
+        // A drain-driven exit has the reserve between its own deadline and the watchdog's
+        // backstop. The reserve is a scheduling margin, not a guarantee against long stalls.
+        assert!(EXIT_DISARM_RESERVE > WATCHDOG_GRACE);
+        assert!(EXIT_DISARM_RESERVE + WATCHDOG_GRACE <= EXIT_DEADLINE);
     }
 
     #[test]
@@ -1339,6 +1772,7 @@ mod tests {
                 &watchdog,
                 &mut exit_deadline,
                 &mut shutdown_deadline,
+                &SystemClock,
             );
         }
         log.lock().unwrap().clone()
