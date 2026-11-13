@@ -20,18 +20,17 @@
 
 ## Commits
 
-- **Range**: `d5f9816..c0ba5b7`
-- **Count**: `42`
+- **Range**: `d5f9816..a11da20`
+- **Count**: `47`
 
 ---
 
 ## Tasks
 
-- **Completed**: `42 of 48` checkboxes in tasks.md flipped to `- [x]`
+- **Completed**: `44 of 48` checkboxes in tasks.md flipped to `- [x]`
 - **Remaining**:
   - `1.8` — `verify/verify-supply-chain.sh` pending: the script pins Node 26.8.1 / npm 11.19.0; this container has Node 26.13.1 / npm 11.20.0. The other 1.8 checks (mutant APK guard, mutant package file-set guard, `components.py check`, SBOM docs) are done.
-  - `7.2` — `PairingInstrumentedTest` is written and compiles (`:app:assembleDebugAndroidTest`); the `connectedDebugAndroidTest` run on hardware is deferred (no install on the user's phones; `config/android_keys/fixture-signing.gradle` is absent from this checkout).
-  - `7.4`, `7.5` — physical phone-to-Chrome runs on Windows and macOS; need the user's hardware and hands.
+  - `7.5` — the macOS physical run is blocked at the macOS Bluetooth privacy grant for the ad-hoc-signed development host; the Windows run (7.4) and the instrumented test (7.2) passed and are recorded in `docs/otp-10-physical-runs.md`.
   - `8.1` — PR title/body; the PR has not been opened (waiting on the user).
   - `8.2` — sync delta specs and archive after verification.
 
