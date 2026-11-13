@@ -10,12 +10,14 @@ sys.path.insert(0, SCRIPTS)
 
 from components import (  # noqa: E402
     affected,
+    affected_for_node,
     changed_files,
     load_map,
     main,
     owner_nodes,
     parse_map,
     release_paths,
+    selection_spec,
     unaccounted,
 )
 
@@ -30,6 +32,53 @@ def git(cwd, *args):
         ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
         cwd=cwd, check=True, stdout=subprocess.PIPE, universal_newlines=True,
     ).stdout.strip()
+
+
+def commit_file(cwd, path, text, message):
+    full = os.path.join(cwd, path)
+    parent = os.path.dirname(full)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(full, "w") as handle:
+        handle.write(text)
+    git(cwd, "add", "-A")
+    git(cwd, "commit", "-q", "-m", message)
+    return git(cwd, "rev-parse", "HEAD")
+
+
+def write_json(directory, name, data):
+    path = os.path.join(directory, name)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(data, handle)
+    return path
+
+
+def read_outputs(path):
+    with open(path, encoding="utf-8") as handle:
+        return {
+            name: value == "true"
+            for name, value in (line.split("=", 1) for line in handle.read().split())
+        }
+
+
+def summary_rows(path):
+    with open(path, encoding="utf-8") as handle:
+        lines = [line.rstrip("\n") for line in handle if line.strip()]
+    if lines[:2] != ["| node | selection | base | reason |", "| --- | --- | --- | --- |"]:
+        raise AssertionError("unexpected summary header: %r" % lines[:2])
+    rows = {}
+    for line in lines[2:]:
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        rows[cells[0]] = cells[1:]
+    return rows
+
+
+def reversed_json(value):
+    if isinstance(value, dict):
+        return {key: reversed_json(value[key]) for key in reversed(list(value))}
+    if isinstance(value, list):
+        return [reversed_json(item) for item in reversed(value)]
+    return value
 
 
 def tmp_map(**overrides):
@@ -173,6 +222,9 @@ class SelectionTest(unittest.TestCase):
         self.assertIsNone(changed_files(""))
         self.assertTrue(all(affected(None, CMAP).values()))
         self.assertFalse(any(affected([], CMAP).values()))
+        self.assertTrue(affected_for_node("android", None, CMAP))
+        self.assertTrue(affected_for_node("android", ["app/a.kt"], CMAP))
+        self.assertFalse(affected_for_node("android", ["docs/ci.md"], CMAP))
 
     def test_release_paths(self):
         self.assertIn("build.gradle.kts", release_paths("installer", CMAP))
@@ -230,6 +282,41 @@ class SelectionTest(unittest.TestCase):
         self.assertIn(".github/", rp)
         for p in ("app/", "build.gradle.kts", "config/detekt/"):
             self.assertNotIn(p, rp)
+
+
+class SelectionSpecTest(unittest.TestCase):
+    def test_selection_spec_ignores_key_order_and_whitespace(self):
+        path = tmp_map(**{"global-overrides": {".github/components.json": ["tooling"]}})
+        cmap = load_map(path)
+        with open(path, encoding="utf-8") as handle:
+            raw = json.load(handle)
+        reordered = parse_map(json.dumps(reversed_json(raw), indent=4))
+        for node in cmap["nodes"]:
+            self.assertEqual(selection_spec(cmap, node), selection_spec(reordered, node), node)
+
+    def test_selection_spec_changes_when_override_membership_changes(self):
+        before = load_map(tmp_map(**{"global-overrides": {".github/components.json": ["tooling"]}}))
+        after = load_map(tmp_map(**{"global-overrides": {".github/components.json": ["tooling", "rust"]}}))
+        self.assertNotEqual(selection_spec(before, "android"), selection_spec(after, "android"))
+
+    def test_selection_spec_changes_when_override_removed(self):
+        before = load_map(tmp_map(**{"global-overrides": {".github/components.json": ["tooling"]}}))
+        after = load_map(tmp_map())
+        self.assertNotEqual(selection_spec(before, "android"), selection_spec(after, "android"))
+
+    def test_selection_spec_changes_when_node_paths_expand(self):
+        before = load_map(tmp_map())
+        expanded = {
+            "android": {
+                "release": True,
+                "tag-prefix": "android-v",
+                "initial-version": "0.1.0",
+                "paths": ["app/", "core/"],
+                "jobs": ["lint"],
+            },
+        }
+        after = load_map(tmp_map(nodes=expanded))
+        self.assertNotEqual(selection_spec(before, "android"), selection_spec(after, "android"))
 
 
 class MapValidationTest(unittest.TestCase):
@@ -384,6 +471,212 @@ class CliTest(unittest.TestCase):
                 self.assertEqual(rc, 1)
                 with open(out) as handle:
                     self.assertEqual(sorted(handle.read().split()), sorted(n + "=true" for n in NODES))
+
+
+class PerNodeSelectionTest(unittest.TestCase):
+    def test_changed_all_selects_every_node_but_still_validates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            git(tmp, "init", "-q")
+            base = commit_file(tmp, "app/base.kt", "class Base\n", "base")
+            commit_file(tmp, "newdir/x", "x\n", "unaccounted")
+            out = os.path.join(tmp, "out")
+            summary = os.path.join(tmp, "summary.md")
+            rc = main(
+                ["changed", "--base", base, "--all", "--github-output", out, "--summary-out", summary],
+                cwd=tmp,
+            )
+            self.assertEqual(rc, 1)
+            self.assertEqual(read_outputs(out), {n: True for n in NODES})
+            rows = summary_rows(summary)
+            self.assertEqual(set(rows), NODES)
+            for node in NODES:
+                self.assertEqual(rows[node], ["run", "none", "fallback"], node)
+
+    def test_node_bases_skip_unchanged_node(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            git(tmp, "init", "-q")
+            parent = commit_file(tmp, "app/x.kt", "class X\n", "base")
+            head = commit_file(tmp, "docs/ci.md", "docs\n", "docs")
+            bases = write_json(tmp, "bases.json", {n: parent for n in NODES})
+            out = os.path.join(tmp, "out")
+            summary = os.path.join(tmp, "summary.md")
+            rc = main(
+                [
+                    "changed", "--base", parent, "--head", head, "--node-bases", bases,
+                    "--github-output", out, "--summary-out", summary,
+                ],
+                cwd=tmp,
+            )
+            self.assertEqual(rc, 0)
+            outputs = read_outputs(out)
+            self.assertFalse(outputs["android"])
+            self.assertFalse(any(outputs.values()))
+            self.assertEqual(
+                summary_rows(summary)["android"], ["skip", parent, "unchanged since " + parent]
+            )
+
+    def test_node_without_base_uses_full_diff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            git(tmp, "init", "-q")
+            base = commit_file(tmp, "app/base.kt", "class Base\n", "base")
+            commit_file(tmp, "docs/ci.md", "docs\n", "docs")
+            head = commit_file(tmp, "app/x.kt", "class X\n", "feature")
+            bases = write_json(tmp, "bases.json", {"rust": base})
+            out = os.path.join(tmp, "out")
+            summary = os.path.join(tmp, "summary.md")
+            rc = main(
+                [
+                    "changed", "--base", base, "--head", head, "--node-bases", bases,
+                    "--github-output", out, "--summary-out", summary,
+                ],
+                cwd=tmp,
+            )
+            self.assertEqual(rc, 0)
+            outputs = read_outputs(out)
+            self.assertTrue(outputs["android"])
+            self.assertFalse(outputs["rust"])
+            rows = summary_rows(summary)
+            self.assertEqual(rows["android"], ["run", "none", "never passed"])
+            self.assertEqual(rows["rust"], ["skip", base, "unchanged since " + base])
+
+    def test_unusable_node_base_falls_back_to_full_diff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            git(tmp, "init", "-q")
+            base = commit_file(tmp, "app/base.kt", "class Base\n", "base")
+            head = commit_file(tmp, "app/x.kt", "class X\n", "feature")
+            bases = write_json(tmp, "bases.json", {"android": "1" * 40, "rust": base})
+            out = os.path.join(tmp, "out")
+            summary = os.path.join(tmp, "summary.md")
+            rc = main(
+                [
+                    "changed", "--base", base, "--head", head, "--node-bases", bases,
+                    "--github-output", out, "--summary-out", summary,
+                ],
+                cwd=tmp,
+            )
+            self.assertEqual(rc, 0)
+            outputs = read_outputs(out)
+            self.assertTrue(outputs["android"])
+            self.assertFalse(outputs["rust"])
+            rows = summary_rows(summary)
+            self.assertEqual(rows["android"], ["run", "none", "fallback"])
+            self.assertEqual(rows["rust"], ["skip", base, "unchanged since " + base])
+
+    def test_validation_uses_merge_commit_diff_after_master_advanced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            git(tmp, "init", "-q")
+            main_branch = git(tmp, "symbolic-ref", "--short", "HEAD")
+            branch_base = commit_file(tmp, "app/base.kt", "class Base\n", "base")
+            git(tmp, "checkout", "-q", "-b", "pr")
+            pr_head = commit_file(tmp, "app/feature.kt", "class Feature\n", "feature")
+            git(tmp, "checkout", "-q", main_branch)
+            commit_file(tmp, "rust/master-only.rs", "// master\n", "master rust")
+            commit_file(tmp, "newdir/master-only", "master\n", "master unaccounted")
+            master_tip = git(tmp, "rev-parse", "HEAD")
+            git(tmp, "merge", "-q", "--no-ff", "pr", "-m", "merge pr")
+            merge_head = git(tmp, "rev-parse", "HEAD")
+            bases = write_json(tmp, "bases.json", {n: branch_base for n in NODES})
+            out = os.path.join(tmp, "out")
+            summary = os.path.join(tmp, "summary.md")
+            rc = main(
+                [
+                    "changed", "--base", master_tip, "--head", merge_head, "--node-head", pr_head,
+                    "--node-bases", bases, "--github-output", out, "--summary-out", summary,
+                ],
+                cwd=tmp,
+            )
+            self.assertEqual(rc, 0)
+            outputs = read_outputs(out)
+            self.assertTrue(outputs["android"])
+            self.assertFalse(outputs["rust"])
+            self.assertFalse(outputs["web-extension"])
+            rows = summary_rows(summary)
+            self.assertEqual(rows["android"], ["run", branch_base, "changed since " + branch_base])
+            self.assertEqual(rows["rust"], ["skip", branch_base, "unchanged since " + branch_base])
+
+    def test_unaccounted_path_fails_after_outputs_in_every_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            git(tmp, "init", "-q")
+            base = commit_file(tmp, "app/base.kt", "class Base\n", "base")
+            head = commit_file(tmp, "newdir/x", "x\n", "unaccounted")
+            usable = write_json(tmp, "bases.json", {n: base for n in NODES})
+            unusable = write_json(tmp, "unusable.json", {n: "1" * 40 for n in NODES})
+            modes = [
+                ("first run", []),
+                ("node-bases", ["--node-bases", usable]),
+                ("--all", ["--all"]),
+                ("fallback", ["--node-bases", unusable]),
+            ]
+            for index, (label, extra) in enumerate(modes):
+                with self.subTest(mode=label):
+                    out = os.path.join(tmp, "out-%d" % index)
+                    summary = os.path.join(tmp, "summary-%d.md" % index)
+                    rc = main(
+                        [
+                            "changed", "--base", base, "--head", head,
+                            "--github-output", out, "--summary-out", summary,
+                        ] + extra,
+                        cwd=tmp,
+                    )
+                    self.assertEqual(rc, 1, label)
+                    self.assertEqual(read_outputs(out), {n: True for n in NODES}, label)
+                    rows = summary_rows(summary)
+                    self.assertEqual(set(rows), NODES, label)
+                    for node in NODES:
+                        self.assertEqual(rows[node], ["run", "none", "fallback"], (label, node))
+
+    def test_summary_rows_for_every_reason(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            git(tmp, "init", "-q")
+            base = commit_file(tmp, "app/base.kt", "class Base\n", "base")
+            head = commit_file(tmp, "app/feature.kt", "class Feature\n", "feature")
+            out = os.path.join(tmp, "out")
+            summary = os.path.join(tmp, "summary.md")
+
+            rc = main(
+                ["changed", "--base", base, "--head", head, "--github-output", out, "--summary-out", summary],
+                cwd=tmp,
+            )
+            self.assertEqual(rc, 0)
+            self.assertEqual(summary_rows(summary)["android"], ["run", "none", "never passed"])
+
+            bases = write_json(tmp, "bases.json", {n: base for n in NODES})
+            notes = write_json(
+                tmp, "notes.json", {"web-extension": "incompatible map", "installer": "never passed"}
+            )
+            rc = main(
+                [
+                    "changed", "--base", base, "--head", head, "--node-bases", bases,
+                    "--evidence-notes", notes, "--github-output", out, "--summary-out", summary,
+                ],
+                cwd=tmp,
+            )
+            self.assertEqual(rc, 0)
+            rows = summary_rows(summary)
+            self.assertEqual(rows["android"], ["run", base, "changed since " + base])
+            self.assertEqual(rows["rust"], ["skip", base, "unchanged since " + base])
+            self.assertEqual(rows["web-extension"], ["run", "none", "incompatible map"])
+            self.assertEqual(rows["installer"], ["run", "none", "never passed"])
+
+            fallback = write_json(tmp, "fallback.json", {"android": "2" * 40, "rust": base})
+            rc = main(
+                [
+                    "changed", "--base", base, "--head", head, "--node-bases", fallback,
+                    "--github-output", out, "--summary-out", summary,
+                ],
+                cwd=tmp,
+            )
+            self.assertEqual(rc, 0)
+            self.assertEqual(summary_rows(summary)["android"], ["run", "none", "fallback"])
+
+            rc = main(
+                ["changed", "--base", base, "--head", head, "--all", "--github-output", out, "--summary-out", summary],
+                cwd=tmp,
+            )
+            self.assertEqual(rc, 0)
+            rows = summary_rows(summary)
+            for node in NODES:
+                self.assertEqual(rows[node], ["run", "none", "fallback"], node)
 
 
 if __name__ == "__main__":

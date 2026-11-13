@@ -145,6 +145,30 @@ def affected(files, cmap):
     return result
 
 
+def affected_for_node(node, files, cmap):
+    """Whether one node is selected by files; None (unknown diff) selects it."""
+    return affected(files, cmap)[node]
+
+
+def _sorted_mapping(section):
+    return {key: sorted(names) for key, names in sorted(section.items())}
+
+
+def selection_spec(cmap, node):
+    """Normalised selection inputs for node: equal specs keep evidence usable."""
+    entry = cmap["nodes"][node]
+    return {
+        "paths": sorted(entry["paths"]),
+        "ci-paths": sorted(entry.get("ci-paths", [])),
+        "jobs": sorted(entry.get("jobs", [])),
+        "global": sorted(cmap["global"]),
+        "ci-global": sorted(cmap["ci-global"]),
+        "global-overrides": _sorted_mapping(cmap.get("global-overrides", {})),
+        "retired-paths": _sorted_mapping(cmap.get("retired-paths", {})),
+        "unowned": sorted(cmap["unowned"]),
+    }
+
+
 def unaccounted(files, cmap):
     return [
         f for f in files
@@ -190,6 +214,54 @@ def _write_outputs(result, path):
         sys.stdout.write(text)
 
 
+def _write_summary(result, reasons, path):
+    """Markdown table: one row per node, from the same decision as the outputs."""
+    if not path:
+        return
+    lines = ["| node | selection | base | reason |", "| --- | --- | --- | --- |"]
+    for node, selected in result.items():
+        base, reason = reasons[node]
+        lines.append(
+            "| %s | %s | %s | %s |" % (node, "run" if selected else "skip", base, reason)
+        )
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+
+
+def _load_json_object(path, what):
+    with open(str(path), encoding="utf-8") as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict):
+        raise ValueError("%s must be a JSON object" % what)
+    return data
+
+
+def _select_nodes(cmap, files, node_head, bases, notes, cwd):
+    """Result and (base, reason) per node from the full diff and optional per-node evidence."""
+    result = {}
+    reasons = {}
+    for node in cmap["nodes"]:
+        note = notes.get(node)
+        if note is not None:
+            result[node] = True
+            reasons[node] = ("none", note)
+            continue
+        if bases is None or node not in bases:
+            result[node] = affected_for_node(node, files, cmap)
+            reasons[node] = ("none", "never passed")
+            continue
+        base = bases[node]
+        node_files = changed_files(base, node_head, cwd)
+        if node_files is None:
+            result[node] = affected_for_node(node, files, cmap)
+            reasons[node] = ("none", "fallback")
+            continue
+        selected = affected_for_node(node, node_files, cmap)
+        result[node] = selected
+        reasons[node] = (base, ("changed since %s" if selected else "unchanged since %s") % base)
+    return result, reasons
+
+
 def main(argv=None, cwd=None):
     parser = argparse.ArgumentParser(prog="components.py")
     parser.add_argument("--map", default=MAP_PATH)
@@ -198,13 +270,23 @@ def main(argv=None, cwd=None):
     ch = sub.add_parser("changed")
     ch.add_argument("--base", default=None)
     ch.add_argument("--head", default="HEAD")
+    ch.add_argument("--node-head", default=None)
+    ch.add_argument("--node-bases", default=None)
+    ch.add_argument("--evidence-notes", default=None)
+    ch.add_argument("--summary-out", default=None)
+    ch.add_argument("--all", dest="all_nodes", action="store_true")
     ch.add_argument("--github-output", default=None)
     args = parser.parse_args(argv)
     cwd = cwd or REPO
     try:
         cmap = load_map(args.map)
+        bases = _load_json_object(args.node_bases, "--node-bases") if getattr(args, "node_bases", None) else None
+        notes = (
+            _load_json_object(args.evidence_notes, "--evidence-notes")
+            if getattr(args, "evidence_notes", None) else {}
+        )
     except (ValueError, OSError) as error:
-        print("components: invalid map: %s" % error, file=sys.stderr)
+        print("components: invalid input: %s" % error, file=sys.stderr)
         return 1
     if args.command == "check":
         listing = _git(["ls-files", "-z"], cwd)
@@ -218,15 +300,24 @@ def main(argv=None, cwd=None):
         return 1 if bad else 0
     files = changed_files(args.base, args.head, cwd)
     if files is None:
-        _write_outputs(affected(None, cmap), args.github_output)
+        result = {n: True for n in cmap["nodes"]}
+        _write_outputs(result, args.github_output)
+        _write_summary(result, {n: ("none", "fallback") for n in result}, args.summary_out)
         return 0
     bad = unaccounted(files, cmap)
-    if bad:
-        for f in bad:
-            print("components: not owned, global or unowned: %s" % f, file=sys.stderr)
-        _write_outputs(affected(None, cmap), args.github_output)
-        return 1
-    _write_outputs(affected(files, cmap), args.github_output)
+    if bad or args.all_nodes:
+        result = {n: True for n in cmap["nodes"]}
+        _write_outputs(result, args.github_output)
+        _write_summary(result, {n: ("none", "fallback") for n in result}, args.summary_out)
+        if bad:
+            for f in bad:
+                print("components: not owned, global or unowned: %s" % f, file=sys.stderr)
+            return 1
+        return 0
+    node_head = args.node_head or args.head
+    result, reasons = _select_nodes(cmap, files, node_head, bases, notes, cwd)
+    _write_outputs(result, args.github_output)
+    _write_summary(result, reasons, args.summary_out)
     return 0
 
 
