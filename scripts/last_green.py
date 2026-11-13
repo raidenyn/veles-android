@@ -177,10 +177,12 @@ def node_is_green(node: str, expected: List[str], jobs: List[dict]) -> bool:
             # A duplicated node job cannot be trusted: a later success must never
             # overwrite an earlier failure.
             return False
-        actual[short] = job.get("conclusion")
+        actual[short] = (job.get("status"), job.get("conclusion"))
     if set(actual) != set(expected):
         return False
-    return all(actual[name] == "success" for name in expected)
+    # A completed run reports completed jobs; a success conclusion on a job that
+    # is still in progress (or reports no status) is not evidence of anything.
+    return all(actual[name] == ("completed", "success") for name in expected)
 
 
 def _validate_run(run):
@@ -224,7 +226,14 @@ def _validate_job(job):
         raise LastGreenError("job lacks a name")
     if not isinstance(job.get("run_attempt"), int):
         raise LastGreenError("job %r lacks run_attempt" % job.get("name"))
-    # An in-progress job legitimately reports null, but the key must exist.
+    # Jobs are validated only for completed runs, so a job that is not completed
+    # is an inconsistent response, not a legitimately running attempt.
+    if not isinstance(job.get("status"), str):
+        raise LastGreenError("job %r lacks a status" % job.get("name"))
+    if job["status"] != "completed":
+        raise LastGreenError(
+            "job %r reports status %r in a completed run" % (job.get("name"), job["status"])
+        )
     if "conclusion" not in job:
         raise LastGreenError("job %r lacks conclusion" % job.get("name"))
     if job["conclusion"] is not None and not isinstance(job["conclusion"], str):
@@ -286,6 +295,14 @@ def find_bases(
             accepted = []
             for run in runs:
                 _validate_run(run)
+                if run["head_sha"] != sha:
+                    # The head_sha filter must never leak evidence from another
+                    # commit into this candidate; an inconsistent response is an
+                    # API problem, so fail closed instead of skipping it.
+                    raise LastGreenError(
+                        "workflow run %d reports head_sha %r for candidate %r"
+                        % (run["id"], run["head_sha"], sha)
+                    )
                 if run["status"] != "completed" or run.get("event") != "pull_request":
                     continue
                 if not run_belongs_to_pr(run, number, head_repo, head_ref):

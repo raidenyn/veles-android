@@ -365,6 +365,56 @@ class EligibilityTest(unittest.TestCase):
         case.write("runs-c1.json", runs)
         self.assertEqual(find(case.api())["android"], NodeEvidence(None, "never passed"))
 
+    def test_run_for_another_sha_is_an_error(self):
+        # The candidate's head_sha filter must never leak another commit's run into
+        # the evidence; an inconsistent response fails closed (and main exits non-zero
+        # so the workflow falls back).
+        case = Case(self, "green")
+        runs = case.read("runs-c1.json")
+        runs["workflow_runs"][0]["head_sha"] = "c9"
+        case.write("runs-c1.json", runs)
+        with self.assertRaises(last_green.LastGreenError):
+            find(case.api())
+        out, notes = output_paths(self)
+        with main_env(case.api()):
+            code = last_green.main(main_args(out=out, notes=notes))
+        self.assertNotEqual(code, 0)
+        self.assertFalse(os.path.exists(out))
+        self.assertFalse(os.path.exists(notes))
+
+    def test_in_progress_job_with_success_conclusion_is_an_error(self):
+        mutations = {
+            "in progress": lambda job: job.update(status="in_progress", conclusion="success"),
+            "missing status": lambda job: job.pop("status"),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(job=label):
+                case = Case(self, "green")
+                jobs = case.read("jobs-1001-1.json")
+                mutate(jobs["jobs"][0])
+                case.write("jobs-1001-1.json", jobs)
+                self.assertFalse(
+                    last_green.node_is_green(
+                        "android", CMAP["nodes"]["android"]["jobs"], jobs["jobs"]
+                    )
+                )
+                with self.assertRaises(last_green.LastGreenError):
+                    find(case.api())
+                out, notes = output_paths(self)
+                with main_env(case.api()):
+                    code = last_green.main(main_args(out=out, notes=notes))
+                self.assertNotEqual(code, 0)
+                self.assertFalse(os.path.exists(out))
+
+    def test_completed_run_with_completed_success_jobs_is_green(self):
+        case = Case(self, "green")
+        jobs = case.read("jobs-1001-1.json")
+        self.assertTrue(
+            all(job["status"] == "completed" for job in jobs["jobs"]),
+            "the green fixture must report completed jobs",
+        )
+        self.assertEqual(find(case.api())["android"], NodeEvidence("c1", None))
+
     def test_fork_pr_with_empty_pull_requests_matches_by_repo_and_ref(self):
         case = Case(self, "green")
         runs = case.read("runs-c1.json")
