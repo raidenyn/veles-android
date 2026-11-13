@@ -19,16 +19,12 @@ import javax.inject.Inject
 
 plugins {
     base
-    alias(libs.plugins.android.application) apply false
-    alias(libs.plugins.compose) apply false
-    alias(libs.plugins.ksp) apply false
-    alias(libs.plugins.hilt) apply false
-    alias(libs.plugins.protobuf) apply false
-    alias(libs.plugins.spotless)
-    alias(libs.plugins.detekt) apply false
 }
 
-// ---- Rust build bridge ---------------------------------------------------------------
+// ---- Included builds ------------------------------------------------------------------
+// Android and Rust are independent builds (design D4). The root only orchestrates: no project of
+// this build is an Android module, so every Android entry point is an included-build task.
+val androidBuild = gradle.includedBuild("android")
 // Every Rust task is defined once, in the included `rust` build. The root tasks below
 // keep the historical names working from the repository root (CI, rust/scripts/*, docs)
 // and only depend on the included task, so a root invocation executes each shared Rust
@@ -77,25 +73,31 @@ listOf(
     }
 }
 
-spotless {
-    kotlin {
-        target("**/*.kt")
-        targetExclude("**/build/**", "**/.gradle/**", "**/.kotlin/**")
-        ktlint().editorConfigOverride(
-            mapOf(
-                // Compose @Composable functions are PascalCase by convention.
-                "ktlint_standard_function-naming" to "disabled",
-                // `_foo` backing properties for StateFlow are idiomatic in Compose VMs.
-                "ktlint_standard_backing-property-naming" to "disabled",
-                // Singleton `INSTANCE` is the idiomatic Room DB pattern.
-                "ktlint_standard_property-naming" to "disabled",
-                // detekt enforces MaxLineLength separately; long string literals
-                // (regex patterns, notification text) would otherwise need wrapping.
-                "ktlint_standard_max-line-length" to "disabled",
-            ),
-        )
-        trimTrailingWhitespace()
-        endWithNewline()
+// ---- Android build bridge --------------------------------------------------------------
+// `android/` is an independent build (design D4); the documented Android commands keep working
+// from the repository root through thin aliases. App tasks target `:app:<task>`, Spotless targets
+// the Android build root because it is applied there, and the retained aggregates below depend on
+// included-build tasks directly.
+listOf(
+    "assembleDebug",
+    "assembleRelease",
+    "testDebugUnitTest",
+    "lintDebug",
+    "detekt",
+    "connectedDebugAndroidTest",
+).forEach { androidTaskName ->
+    tasks.register(androidTaskName) {
+        group = "android"
+        description = "Runs :app:$androidTaskName of the included android build."
+        dependsOn(androidBuild.task(":app:$androidTaskName"))
+    }
+}
+
+listOf("spotlessCheck", "spotlessApply").forEach { androidRootTaskName ->
+    tasks.register(androidRootTaskName) {
+        group = "android"
+        description = "Runs :$androidRootTaskName of the included android build."
+        dependsOn(androidBuild.task(":$androidRootTaskName"))
     }
 }
 
@@ -424,7 +426,7 @@ val protocolWebTest = tasks.register<Exec>("protocolWebTest") {
 // JVM while the production TypeScript client engine plays the peer over the stdin/stdout
 // protocol. `VELES_LOOPBACK_REQUIRED=1` makes the Vitest suite fail instead of skipping
 // when the classpath is unavailable, so CI can never silently lose the check.
-val sessionLoopbackClasspathFile = layout.projectDirectory.file("app/build/session-loopback/classpath.txt")
+val sessionLoopbackClasspathFile = layout.projectDirectory.file("android/app/build/session-loopback/classpath.txt")
 // The host-JVM cdylib and the WASM package come from the included Rust build; their
 // outputs stay under the repository-root build/.
 val rustHostJniDir = layout.buildDirectory.dir("rust/host-jni")
@@ -435,7 +437,7 @@ val sessionLoopbackCheck = tasks.register<Exec>("sessionLoopbackCheck") {
     dependsOn(
         rustBuild.task(":rustHostJni"),
         rustBuild.task(":rustWasm"),
-        ":app:sessionLoopbackClasspath",
+        androidBuild.task(":app:sessionLoopbackClasspath"),
         protocolWebInstall,
     )
     workingDir(layout.projectDirectory.dir("web-extension"))
@@ -1772,13 +1774,14 @@ tasks.register("protocolCheck") {
         protocolRustTest,
         protocolWebTest,
         protocolBridgeTest,
-        ":app:protocolJvmTest",
+        androidBuild.task(":app:protocolJvmTest"),
         sessionLoopbackCheck,
     )
 }
 
 tasks.named<Delete>("clean") {
-    dependsOn(":app:clean")
+    // Android's app output and the Android build root are owned by the included android build.
+    dependsOn(androidBuild.task(":app:clean"), androidBuild.task(":clean"))
     // Root `clean` removes every declared generated product, verification,
     // SBOM, checksum, and tool output under `build/` plus the two named
     // source-tree exceptions (`web-extension/dist` and the WASM package).

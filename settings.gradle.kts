@@ -20,7 +20,8 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "Veles"
-include(":app")
-// The Rust workspace is an independent Gradle build: every Rust task is defined there
-// once and the root reaches it through gradle.includedBuild("rust").
+
+// PR 2 layout (design D4): Android is an independent build under android/ and Rust is its own
+// build. This root only orchestrates them; no `include(":app")`.
+includeBuild("android")
 includeBuild("rust")

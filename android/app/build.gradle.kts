@@ -1,3 +1,4 @@
+import java.io.File
 import java.util.zip.ZipFile
 
 plugins {
@@ -18,12 +19,17 @@ androidGitVersion {
 
 detekt {
     buildUponDefaultConfig = true
-    config.setFrom("${rootProject.projectDir}/config/detekt/detekt.yml")
+    // The detekt configuration is owned by the Android build root (android/config/detekt/).
+    config.setFrom(layout.settingsDirectory.dir("config/detekt/detekt.yml").asFile)
 }
 
+// Inputs owned by the repository root are published by the Android root build
+// (android/build.gradle.kts), so the `../` path arithmetic lives in one file.
+val protocolV1Dir = rootProject.extra["protocolV1Dir"] as File
+val protocolConformanceDir = rootProject.extra["protocolConformanceDir"] as File
 // The Android NDK version is defined once, in rust/ndk-version, and shared with the Rust
 // build (rustJni resolves the same version from its own file).
-val rustNdkVersion = rootProject.layout.projectDirectory.file("rust/ndk-version").asFile.readText().trim()
+val rustNdkVersion = rootProject.extra["ndkVersion"] as String
 
 android {
     namespace = "me.nagaev.veles"
@@ -94,10 +100,10 @@ android {
     androidResources {
         localeFilters += listOf("en")
     }
-    // The JNI libraries are a Rust build product (build/rust/jniLibs, staged by the
-    // included :rustJni task), not an app build output.
+    // The JNI libraries are a Rust build product (repository-root build/rust/jniLibs, staged by
+    // the included :rustJni task), not an app build output.
     sourceSets.getByName("main").jniLibs.srcDir(
-        rootProject.layout.buildDirectory.dir("rust/jniLibs").get().asFile,
+        layout.settingsDirectory.dir("../build/rust/jniLibs").asFile,
     )
     packaging {
         resources {
@@ -121,23 +127,13 @@ android {
 // `protocol/v1/` fixture files the Node/Rust/TypeScript consumers read. The
 // unit-test source set maps that shared root as an extra test-resource
 // directory instead of checking in a second, copied fixture truth.
-android.sourceSets.getByName("test").resources.srcDir(
-    rootProject.layout.projectDirectory.dir("protocol/v1"),
-)
-android.sourceSets.getByName("testDebug").resources.srcDir(
-    rootProject.layout.projectDirectory.dir("protocol/v1"),
-)
+android.sourceSets.getByName("test").resources.srcDir(protocolV1Dir)
+android.sourceSets.getByName("testDebug").resources.srcDir(protocolV1Dir)
 // OTP-09 Task 10: the scenario inventory is owned by the `protocol` component and
 // read from the shared tree, never copied into the app.
-android.sourceSets.getByName("test").resources.srcDir(
-    rootProject.layout.projectDirectory.dir("protocol/conformance"),
-)
-android.sourceSets.getByName("testDebug").resources.srcDir(
-    rootProject.layout.projectDirectory.dir("protocol/conformance"),
-)
-android.sourceSets.getByName("androidTest").assets.srcDir(
-    rootProject.layout.projectDirectory.dir("protocol/v1"),
-)
+android.sourceSets.getByName("test").resources.srcDir(protocolConformanceDir)
+android.sourceSets.getByName("testDebug").resources.srcDir(protocolConformanceDir)
+android.sourceSets.getByName("androidTest").assets.srcDir(protocolV1Dir)
 
 // Focused JVM consumer task for the `protocolCheck` aggregate: runs only
 // me.nagaev.veles.protocol.ProtocolFixturesTest instead of the whole unit-test
@@ -148,16 +144,20 @@ afterEvaluate {
     // its directory goes on java.library.path so VelesCrypto's
     // System.loadLibrary("veles_crypto") resolves in JVM tests. Robolectric tests
     // never initialize VelesCrypto (one library per class loader), so the path is
-    // inert for them.
-    val hostJniDir = rootProject.layout.buildDirectory.dir("rust/host-jni")
+    // inert for them. The library is a Rust build product under the repository
+    // root build/, staged by the included :rustHostJni task.
+    val hostJniDir = layout.settingsDirectory.dir("../build/rust/host-jni").asFile
     unitTest.dependsOn(gradle.includedBuild("rust").task(":rustHostJni"))
-    unitTest.systemProperty("java.library.path", hostJniDir.get().asFile.absolutePath)
+    unitTest.systemProperty("java.library.path", hostJniDir.absolutePath)
     tasks.register<Test>("protocolJvmTest") {
         group = "verification"
         description = "Runs the focused OTP-02 protocol fixture consumer on the JVM."
-        dependsOn(unitTest.taskDependencies.getDependencies(unitTest))
         dependsOn(gradle.includedBuild("rust").task(":rustHostJni"))
-        systemProperty("java.library.path", hostJniDir.get().asFile.absolutePath)
+        systemProperty("java.library.path", hostJniDir.absolutePath)
+        // `classpath` and `testClassesDirs` are the unit-test task's file collections: they carry
+        // the compilation dependencies themselves. Resolving `unitTest.taskDependencies` here
+        // would resolve the AGP configurations while the root build's included-build dependency
+        // graph is being created ("configuration ... attempted without an exclusive lock").
         classpath = unitTest.classpath
         testClassesDirs = unitTest.testClassesDirs
         filter {
@@ -167,11 +167,11 @@ afterEvaluate {
 
     // OTP-09 Task 10: `sessionLoopbackCheck` runs the TypeScript client against the real
     // Kotlin phone engine in a child JVM. This task only publishes the unit-test JVM
-    // classpath; it compiles the same source sets `protocolJvmTest` depends on.
+    // classpath; it compiles the same source sets `protocolJvmTest` depends on. `inputs.files`
+    // carries the classpath's task dependencies (see the comment above).
     tasks.register("sessionLoopbackClasspath") {
         group = "verification"
         description = "Writes the JVM unit-test classpath used by the cross-endpoint session loopback."
-        dependsOn(unitTest.taskDependencies.getDependencies(unitTest))
         val output = layout.buildDirectory.file("session-loopback/classpath.txt")
         inputs.files(unitTest.classpath).withPropertyName("unitTestClasspath")
         outputs.file(output)
