@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { lstatSync, readFileSync } from 'node:fs';
 import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -3082,4 +3083,35 @@ test('PR installer caller contract rejects routing, approval, scope and boundary
     (error) => /approval boundary as a workflow-local convenience gate/.test(error.message),
     'removing the approval-boundary honesty must fail the workflow-local convenience gate diagnostic',
   );
+});
+
+// Task 11: `android/` becomes an independent Gradle build at the layout cut-over, but it never
+// carries a second wrapper. Until the cut-over the two shims delegate to the repository-root
+// wrapper, so `cd android && ./gradlew …` works while exactly one gradle-wrapper.jar and one
+// distribution remain in the repository. The shims are real LF files, never symlinks.
+const ANDROID_SHIM_CONTENTS = {
+  'android/gradlew': '#!/bin/sh\nexec "$(dirname "$0")/../gradlew" "$@"\n',
+  'android/gradlew.bat': '@call "%~dp0..\\gradlew.bat" %*\n',
+};
+
+test('android shims delegate to the root wrapper, are not symlinks, use LF and the repository has exactly one gradle-wrapper.jar', async () => {
+  for (const [name, expected] of Object.entries(ANDROID_SHIM_CONTENTS)) {
+    const info = lstatSync(join(repository, name));
+    assert.ok(!info.isSymbolicLink(), `${name} must not be a symlink`);
+    assert.ok(info.isFile(), `${name} must be a regular file`);
+    const bytes = readFileSync(join(repository, name));
+    assert.ok(!bytes.includes('\r'), `${name} must use LF line endings`);
+    assert.equal(bytes.toString('utf8'), expected, `${name} must delegate to the root wrapper`);
+  }
+  const shim = lstatSync(join(repository, 'android/gradlew'));
+  assert.ok((shim.mode & 0o111) !== 0, 'the POSIX android/gradlew shim must be executable');
+  // The shims must keep LF on checkout on every host, including Windows.
+  const attributes = (await readFile(new URL('android/.gitattributes', root), 'utf8')).split('\n');
+  for (const line of ['gradlew text eol=lf', 'gradlew.bat text eol=lf']) {
+    assert.ok(attributes.includes(line), `android/.gitattributes must declare "${line}"`);
+  }
+  const tracked = spawnSync('git', ['ls-files'], { cwd: repository, encoding: 'utf8' });
+  assert.equal(tracked.status, 0, `git ls-files failed: ${tracked.stderr}`);
+  const wrapperJars = tracked.stdout.split('\n').filter((path) => path === 'gradle-wrapper.jar' || path.endsWith('/gradle-wrapper.jar'));
+  assert.deepEqual(wrapperJars, ['gradle/wrapper/gradle-wrapper.jar'], 'the repository must track exactly one gradle-wrapper.jar, the root wrapper');
 });
