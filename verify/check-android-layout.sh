@@ -92,10 +92,13 @@ report 1 "android/.editorconfig owns the Kotlin/ktlint configuration and the roo
 # settings.gradle.kts and gradle.properties renamed, so any read of the root build fails.
 begin_check
 scratch="$workdir/tree"
+archive="$workdir/tree.tar"
 log="$workdir/android-standalone.log"
 mkdir -p "$scratch"
 # Caches and build outputs are not part of the working tree; everything else is copied, so
-# the scratch build sees exactly these sources and the shared Gradle user home.
+# the scratch build sees exactly these sources and the shared Gradle user home. Archive
+# creation and extraction are separate commands: a pipeline would report only the
+# extractor's status and could accept a truncated copy after an archiving failure.
 if ! (cd "$root" && tar \
         --exclude=./.git \
         --exclude=./.gradle \
@@ -107,9 +110,12 @@ if ! (cd "$root" && tar \
         --exclude='*/node_modules' \
         --exclude='*/target' \
         --exclude='*/dist' \
-        -cf - .) | tar -xf - -C "$scratch"; then
-    add_problem "copying the working tree to $scratch failed"
+        -cf "$archive" .); then
+    add_problem "archiving the working tree failed; not building from a partial copy"
+elif ! tar -xf "$archive" -C "$scratch"; then
+    add_problem "extracting the working-tree archive into $scratch failed"
 else
+    rm -f "$archive"
     renamed=0
     for name in build.gradle.kts settings.gradle.kts gradle.properties; do
         if mv "$scratch/$name" "$scratch/$name.acceptance-removed"; then
@@ -132,6 +138,7 @@ else
     done
     rm -rf "$scratch"
 fi
+rm -f "$archive"
 report 2 "android builds with the root build.gradle.kts, settings.gradle.kts and gradle.properties removed"
 
 # 3. The Rust build configures alone -----------------------------------------------------
@@ -144,30 +151,34 @@ fi
 report 3 "cd rust && ../gradlew help configures the Rust build alone"
 
 # 4. Each shared Rust task executes once -------------------------------------------------
-# The root aliases and the Android build both reach into the included Rust build; one root
-# invocation must list every included Rust task exactly once in its task graph.
+# The root aliases and the Android build both reach into the included Rust build; one real
+# root invocation must execute every included Rust task exactly once. `--rerun-tasks` makes
+# the count independent of a warm build (an up-to-date task prints no `> Task` line), and
+# `--no-parallel` keeps the plain console from re-printing a task header when output from
+# parallel work interleaves, so each `> Task :rust:` line is one execution.
 begin_check
 log="$workdir/root-rust-graph.log"
-if ! ./gradlew assembleDebug testDebugUnitTest rustHostJni rustJni --console=plain --dry-run >"$log" 2>&1; then
-    add_problem "the root dry run of assembleDebug testDebugUnitTest rustHostJni rustJni failed"
-    tail_log "$log" 40 >>"$problems"
+if ! ./gradlew assembleDebug testDebugUnitTest rustHostJni rustJni --console=plain \
+        --no-parallel --rerun-tasks >"$log" 2>&1; then
+    add_problem "the root invocation of assembleDebug testDebugUnitTest rustHostJni rustJni failed"
+    tail_log "$log" 60 >>"$problems"
 else
-    rust_tasks="$(sed -n 's/^\(:rust:[^ ]*\) .*/\1/p' "$log" | sort)"
+    rust_tasks="$(sed -n 's/^> Task \(:rust:[^ ]*\).*/\1/p' "$log" | sort)"
     if [ -z "$rust_tasks" ]; then
-        add_problem "the root dry run lists no :rust: task"
+        add_problem "the root invocation executed no :rust: task"
     else
         duplicates="$(printf '%s\n' "$rust_tasks" | uniq -d)"
         if [ -n "$duplicates" ]; then
-            add_problem "the root dry run lists shared Rust tasks more than once:"
+            add_problem "the root invocation executed shared Rust tasks more than once:"
             printf '%s\n' "$duplicates" | sed 's/^/  /' >>"$problems"
         fi
         for task in :rust:rustHostJni :rust:rustJni; do
             printf '%s\n' "$rust_tasks" | grep -qx "$task" ||
-                add_problem "the root dry run does not execute $task"
+                add_problem "the root invocation did not execute $task"
         done
     fi
 fi
-report 4 "one root invocation lists each shared Rust task execution exactly once"
+report 4 "one root invocation executes each shared Rust task exactly once"
 
 # 5. The Android wrapper is the root wrapper ---------------------------------------------
 begin_check
@@ -184,15 +195,17 @@ grep -qF '../gradlew' android/gradlew ||
 report 5 "cd android && ./gradlew --version reports the root wrapper's Gradle 9.5.0"
 
 # 6. The documented root aliases resolve -------------------------------------------------
+# The full alias contract: the CI scenario plus the Android-root Spotless apply alias and
+# `clean` (design D4 / android-standalone-build spec).
 begin_check
 log="$workdir/root-aliases.log"
 if ! ./gradlew --dry-run --console=plain \
-        assembleDebug assembleRelease testDebugUnitTest lintDebug spotlessCheck detekt \
-        connectedDebugAndroidTest protocolCheck >"$log" 2>&1; then
+        assembleDebug assembleRelease testDebugUnitTest lintDebug spotlessCheck spotlessApply \
+        detekt clean connectedDebugAndroidTest protocolCheck >"$log" 2>&1; then
     add_problem "a documented root alias does not resolve with --dry-run"
     tail_log "$log" 40 >>"$problems"
 fi
-report 6 "the root aliases resolve with --dry-run"
+report 6 "the root aliases (including spotlessApply and clean) resolve with --dry-run"
 
 if [ "$failures" -eq 0 ]; then
     echo "PASS: the Android layout acceptance checks all passed"
