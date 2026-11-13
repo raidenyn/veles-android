@@ -169,7 +169,7 @@ Building from `android/` SHALL produce the same `versionName` and `versionCode` 
 - **THEN** their signing certificate fingerprints are identical
 
 ### Requirement: Signing inputs stay local and git-ignored
-Key material MUST NOT be committed. The owner approved an exception to the original "keys stay at the repository root" rule: after the move the local, git-ignored fixture assets live at `android/config/android_keys/`, are retained (never regenerated as a routine workaround), and the documented fixture build SHALL use `cd android && ./gradlew --init-script config/android_keys/fixture-signing.gradle ...` from `android/`. Release identity stays CI-only: it is generated only by master CI and is never present in a local checkout or this repository.
+Key material MUST NOT be committed. The owner approved an exception to the original "keys stay at the repository root" rule: after the move the local, git-ignored fixture assets live at `android/config/android_keys/`, are retained (never regenerated as a routine workaround), and the documented fixture build SHALL use `cd android && ./gradlew --init-script config/android_keys/fixture-signing.gradle ...` from `android/`. Release identity stays CI-only: it is generated only by master CI and is never present in a local checkout or this repository. Before PR 2 merges, the owner MUST confirm that the local init script runs from `android/`, and that confirmation MUST be recorded in the PR.
 
 #### Scenario: Fixture signing
 - **WHEN** a developer builds the fixture with the documented command from `android/`

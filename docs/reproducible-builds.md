@@ -296,7 +296,7 @@ installs with `npm ci --ignore-scripts`, executing only from
 
 | Image | Pinned by | Asserts |
 |---|---|---|
-| `verify/Dockerfile` (Android) | `.java-version`, `gradle/libs.versions.toml` (NDK), `rust/rust-toolchain.toml` | JDK 21, Android SDK/NDK, Rust 1.98.0 |
+| `verify/Dockerfile` (Android) | `.java-version`, `rust/ndk-version` (NDK), `rust/rust-toolchain.toml` | JDK 21, Android SDK/NDK, Rust 1.98.0 |
 | `verify/Dockerfile.web` | digest-pinned `node:26.8.1-bookworm-slim` | Node 26.8.1, npm 11.19.0 |
 | `verify/Dockerfile.rust` | digest-pinned base + committed archive hashes | JDK 21, Android SDK/NDK, Rust 1.98.0, cargo-ndk 4.1.2, wasm-pack 0.15.0, wasm-bindgen-cli 0.2.127, Node 26.8.1 |
 
@@ -394,7 +394,8 @@ android/app/build/generated/jniLibs  android/app/build/outputs/apk
 | Tool | Pinned in |
 |---|---|
 | Gradle | `gradle/wrapper/gradle-wrapper.properties` |
-| AGP, Kotlin, KSP, plugins, libraries | `gradle/libs.versions.toml` |
+| AGP, Kotlin, KSP, plugins, libraries | `android/gradle/libs.versions.toml` |
+| Android NDK | `rust/ndk-version` |
 | JDK (Temurin) | `.java-version` — must match the base image in `verify/Dockerfile` (`verify.sh` enforces this) |
 | Android cmdline-tools, platform, build-tools | `verify/Dockerfile` |
 | Docker base image | `verify/Dockerfile` (digest-pinned) |

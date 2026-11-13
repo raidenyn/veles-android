@@ -269,7 +269,7 @@
 - Modify: `rust/scripts/assert-clean.sh`, `.dockerignore`, `.idea/**`, `verify/**`, `CLAUDE.md`, `BUILD.md`, `CONTRIBUTING.md`, `docs/ci.md`, `docs/releasing.md`
 
 - [x] **Step 1: Audit command** (record in the PR): `git grep -nE '(^|[^a-zA-Z_./-])app/' -- . ':!native-bridge/feasibility/evidence' ':!openspec/changes/archive' ':!docs/superpowers' ':!android'` and the `config/detekt` equivalent.
-- [x] **Step 2:** Update every live match (`assert-clean.sh` paths to `android/app/build/...`, `.dockerignore` `android/app/build`, docs and `CLAUDE.md` including `cd android && ./gradlew --init-script ../config/android_keys/fixture-signing.gradle ...`).
+- [x] **Step 2:** Update every live match (`assert-clean.sh` paths to `android/app/build/...`, `.dockerignore` `android/app/build`, docs and `CLAUDE.md` including `cd android && ./gradlew --init-script config/android_keys/fixture-signing.gradle ...`).
 - [x] **Step 3: Re-run** the audit and classify each remaining match as operational or intentional historical-layout data (the `legacy-release` and `retired-paths` entries and their planner fixtures added in Task 17). Expected: zero operational matches; list the intentional ones in the PR and re-run the audit after Task 17.
 - [x] **Step 4: Commit** `docs(android): point live files at the android/ layout`.
 
