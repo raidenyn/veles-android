@@ -797,6 +797,58 @@ test('ci.yml calls one change-gated check workflow per component node and gates 
   }
 });
 
+// The jobs GitHub reports for a node: ci.yml gates each node with one caller job that reuses the node's
+// workflow, so the caller's `name:` prefixes every called job's display name (`<node> / <job>`). A matrix
+// job runs under several names, and a caller that does not reuse a workflow has no single source of job
+// names, so both are unparseable and throw instead of inventing a name.
+async function derivedJobNames(callerName) {
+  const callers = workflowJobBlocks(executableYaml(await workflow('ci.yml')));
+  const caller = callers[callerName];
+  assert.ok(caller, `ci.yml must define the ${callerName} caller job`);
+  assert.match(caller, new RegExp(`^    name: ${escapeRegexp(callerName)}\\s*$`, 'm'), `ci.yml must report the ${callerName} node as ${callerName} / <job>`);
+  const uses = caller.match(/^    uses: \.\/\.github\/workflows\/([^\s/]+\.yml)\s*$/m);
+  assert.ok(uses, `ci.yml job ${callerName} must reuse a repository workflow`);
+  return calledJobNames(uses[1], executableYaml(await workflow(uses[1])));
+}
+
+function calledJobNames(file, source) {
+  const jobs = workflowJobBlocks(source);
+  assert.ok(Object.keys(jobs).length > 0, `${file} must declare at least one job`);
+  const names = Object.entries(jobs).map(([id, block]) => {
+    assert.doesNotMatch(block, /^    strategy:/m, `${file} job ${id} declares a matrix strategy, so it has no single display name`);
+    const declared = block.match(/^    name: (.+)$/m)?.[1].trim();
+    assert.ok(declared === undefined || !declared.includes('${{'), `${file} job ${id} has a dynamic name, which cannot be declared`);
+    return declared ?? id;
+  });
+  assert.equal(new Set(names).size, names.length, `${file} must not repeat a job display name`);
+  return names.sort();
+}
+
+function assertDeclaredJobs(node, declared, derived) {
+  assert.ok(Array.isArray(declared), `${node} must declare its jobs in .github/components.json`);
+  assert.deepEqual([...derived].sort(), [...declared].sort(), `${node} declared jobs must equal the jobs of the workflow it calls`);
+}
+
+test("declared jobs equal the jobs of each ci.yml caller's reusable workflow", async () => {
+  for (const [node, entry] of Object.entries(COMPONENT_MAP.nodes)) {
+    assertDeclaredJobs(node, entry.jobs, await derivedJobNames(node));
+  }
+  assert.deepEqual(await derivedJobNames('supply-chain'), ['build'], 'supply-chain derives the called job id when the job has no name');
+
+  // Negative: a matrix job has no single display name, and a missing or renamed declared job fails.
+  const rust = await workflow('check-rust.yml');
+  const matrix = rust.replace('  jni-integration:\n    name: jni-integration\n', '  jni-integration:\n    name: jni-integration\n    strategy:\n      matrix:\n        os: [ubuntu-latest]\n');
+  assert.notEqual(matrix, rust, 'the matrix mutation must change the workflow');
+  assert.throws(() => calledJobNames('check-rust.yml', executableYaml(matrix)), /matrix/);
+  const derived = calledJobNames('check-rust.yml', executableYaml(rust));
+  const missing = COMPONENT_MAP.nodes.rust.jobs.filter((job) => job !== 'jni-integration');
+  assert.notDeepEqual(missing, COMPONENT_MAP.nodes.rust.jobs, 'the missing-job mutation must drop a declared job');
+  assert.throws(() => assertDeclaredJobs('rust', missing, derived), /declared jobs/);
+  const renamed = derived.map((job) => (job === 'jni-integration' ? 'jni-integration-legacy' : job));
+  assert.notDeepEqual(renamed, derived, 'the renamed-job mutation must change a derived job');
+  assert.throws(() => assertDeclaredJobs('rust', COMPONENT_MAP.nodes.rust.jobs, renamed), /declared jobs/);
+});
+
 test('every pre-split CI command runs in exactly one check workflow', async () => {
   const sources = {};
   for (const node of CHECK_WORKFLOWS) sources[`check-${node}.yml`] = await workflow(`check-${node}.yml`);

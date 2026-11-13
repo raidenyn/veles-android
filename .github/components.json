@@ -43,6 +43,12 @@
       ],
       "ci-paths": [
         "config/detekt/"
+      ],
+      "jobs": [
+        "lint",
+        "unit-tests",
+        "release-hook-guard",
+        "instrumented-tests"
       ]
     },
     "web-extension": {
@@ -54,6 +60,11 @@
         "rust/",
         "protocol/",
         "verify/lib/"
+      ],
+      "jobs": [
+        "lint",
+        "unit-tests",
+        "browser-tests"
       ]
     },
     "installer": {
@@ -73,6 +84,13 @@
         "verify/generate-sboms.sh",
         "verify/verify-sboms.mjs",
         "verify/verify-supply-chain.sh"
+      ],
+      "jobs": [
+        "lint",
+        "unit-tests (linux)",
+        "unit-tests (windows)",
+        "unit-tests (macos)",
+        "scripts-tests"
       ]
     },
     "rust": {
@@ -80,6 +98,11 @@
       "paths": [
         "rust/",
         "protocol/"
+      ],
+      "jobs": [
+        "lint",
+        "unit-tests",
+        "jni-integration"
       ]
     },
     "protocol": {
@@ -104,6 +127,9 @@
         "native-bridge/src/",
         "native-bridge/src-tauri/",
         "native-bridge/test/"
+      ],
+      "jobs": [
+        "contract-tests"
       ]
     },
     "native-host": {
@@ -118,6 +144,15 @@
         "verify/generate-sboms.sh",
         "verify/verify-sboms.mjs",
         "verify/verify-supply-chain.sh"
+      ],
+      "jobs": [
+        "lint",
+        "unit-tests (linux)",
+        "unit-tests (windows)",
+        "unit-tests (macos)",
+        "build-contract",
+        "compile (windows)",
+        "compile (macos)"
       ]
     },
     "bridge-scaffold": {
@@ -138,6 +173,10 @@
         "native-bridge/test/",
         "verify/lib/",
         "protocol/"
+      ],
+      "jobs": [
+        "lint",
+        "unit-tests"
       ]
     },
     "supply-chain": {
@@ -181,6 +220,9 @@
         "native-bridge/installer/scripts/",
         "native-bridge/installer/windows/",
         "native-bridge/installer/macos/"
+      ],
+      "jobs": [
+        "build"
       ]
     },
     "tooling": {
@@ -190,6 +232,9 @@
         ".githooks/",
         "cliff.toml",
         "verify/test/"
+      ],
+      "jobs": [
+        "unit-tests"
       ]
     }
   }
