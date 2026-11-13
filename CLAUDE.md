@@ -92,7 +92,7 @@ npm run package                 # vite build + deterministic zip + sha256 sideca
 # Format, lint host+WASM+Android targets, and run native+WASM tests
 ./gradlew rustFormat rustLint rustTest
 
-# Build three Android JNI ABIs into android/app/build/generated/jniLibs/
+# Build three Android JNI ABIs into build/rust/jniLibs/
 ./gradlew rustJni
 
 # Build web-target WASM into web-extension/rust-wasm/pkg/

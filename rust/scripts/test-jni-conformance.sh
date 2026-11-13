@@ -3,7 +3,9 @@ set -euo pipefail
 # Run from the repository root after `homepc ensure`. JAVA_HOME must be a JDK.
 SERIAL="${1:?usage: bash rust/scripts/test-jni-conformance.sh <adb-serial>}"
 PACKAGE=me.nagaev.veles.debug
-./gradlew rustJniConformance assembleDebug assembleDebugAndroidTest
+./gradlew rustJniConformance assembleDebug
+# `assembleDebugAndroidTest` is not a root alias; the Android build is independent.
+( cd android && ./gradlew :app:assembleDebugAndroidTest )
 ABI="$(adb -s "$SERIAL" shell getprop ro.product.cpu.abi | tr -d '\r')"
 case "$ABI" in arm64-v8a|x86_64) ;; *) echo "Unsupported conformance ABI: $ABI" >&2; exit 2 ;; esac
 adb -s "$SERIAL" install --no-streaming -r android/app/build/outputs/apk/debug/app-debug.apk

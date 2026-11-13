@@ -423,9 +423,10 @@ The 1d verification cargo tools (`cargo-cyclonedx`, `cargo-deny`) install the sa
 Generated output boundaries are intentionally narrow:
 
 - **Android JNI**: `./gradlew rustJni` builds exactly the three ABI filters declared in
-  `android/app/build.gradle.kts` (`arm64-v8a`, `armeabi-v7a`, `x86_64`) into
-  `android/app/build/generated/jniLibs/<abi>/libveles_crypto.so`. This is the *only* JNI output
-  path; `:app:assembleDebug`/`assembleRelease` depend on `rustJni` so a clean build always
+  `android/app/build.gradle.kts` (`arm64-v8a`, `armeabi-v7a`, `x86_64`) into the repository-root
+  `build/rust/jniLibs/<abi>/libveles_crypto.so`. This is the *only* JNI output path; the Android
+  build consumes that directory directly as a `jniLibs` source (`android/app/build.gradle.kts`),
+  and `:app:assembleDebug`/`assembleRelease` depend on `rustJni` so a clean build always
   regenerates it.
 - **Rust package**: `./gradlew rustPackage` stages the three JNI libraries and the
   complete WASM package into `build/rust-package/` with a `SHA256SUMS` manifest.
