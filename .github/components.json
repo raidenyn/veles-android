@@ -10,9 +10,12 @@
     "gradlew.bat",
     ".java-version"
   ],
-  "ci-global": [
-    ".editorconfig"
-  ],
+  "ci-global": [],
+  "global-overrides": {
+    ".github/components.json": [
+      "tooling"
+    ]
+  },
   "unowned": [
     "docs/",
     "site/",
@@ -42,7 +45,14 @@
         "protocol/"
       ],
       "ci-paths": [
-        "config/detekt/"
+        "config/detekt/",
+        ".editorconfig"
+      ],
+      "jobs": [
+        "lint",
+        "unit-tests",
+        "release-hook-guard",
+        "instrumented-tests"
       ]
     },
     "web-extension": {
@@ -54,6 +64,14 @@
         "rust/",
         "protocol/",
         "verify/lib/"
+      ],
+      "ci-paths": [
+        ".editorconfig"
+      ],
+      "jobs": [
+        "lint",
+        "unit-tests",
+        "browser-tests"
       ]
     },
     "installer": {
@@ -61,11 +79,10 @@
       "tag-prefix": "installer-v",
       "initial-version": "0.1.0",
       "paths": [
-        "native-bridge/installer/",
-        "native-bridge/host/",
-        "protocol/"
+        "native-bridge/installer/"
       ],
       "ci-paths": [
+        "native-bridge/host/rust-toolchain.toml",
         "rust/scripts/assert-clean.sh",
         "verify/check-cargo-build-scripts.mjs",
         "verify/check-npm-licenses.mjs",
@@ -73,6 +90,28 @@
         "verify/generate-sboms.sh",
         "verify/verify-sboms.mjs",
         "verify/verify-supply-chain.sh"
+      ],
+      "release-paths": [
+        "native-bridge/host/.gitignore",
+        "native-bridge/host/Cargo.lock",
+        "native-bridge/host/Cargo.toml",
+        "native-bridge/host/README.md",
+        "native-bridge/host/acceptance/",
+        "native-bridge/host/examples/",
+        "native-bridge/host/fuzz/",
+        "native-bridge/host/rustfmt.toml",
+        "native-bridge/host/scripts/",
+        "native-bridge/host/src/",
+        "native-bridge/host/tests/",
+        "native-bridge/host/vendor/",
+        "protocol/"
+      ],
+      "jobs": [
+        "lint",
+        "unit-tests (linux)",
+        "unit-tests (windows)",
+        "unit-tests (macos)",
+        "scripts-tests"
       ]
     },
     "rust": {
@@ -80,6 +119,11 @@
       "paths": [
         "rust/",
         "protocol/"
+      ],
+      "jobs": [
+        "lint",
+        "unit-tests",
+        "jni-integration"
       ]
     },
     "protocol": {
@@ -104,6 +148,9 @@
         "native-bridge/src/",
         "native-bridge/src-tauri/",
         "native-bridge/test/"
+      ],
+      "jobs": [
+        "contract-tests"
       ]
     },
     "native-host": {
@@ -118,6 +165,15 @@
         "verify/generate-sboms.sh",
         "verify/verify-sboms.mjs",
         "verify/verify-supply-chain.sh"
+      ],
+      "jobs": [
+        "lint",
+        "unit-tests (linux)",
+        "unit-tests (windows)",
+        "unit-tests (macos)",
+        "build-contract",
+        "compile (windows)",
+        "compile (macos)"
       ]
     },
     "bridge-scaffold": {
@@ -138,6 +194,13 @@
         "native-bridge/test/",
         "verify/lib/",
         "protocol/"
+      ],
+      "ci-paths": [
+        ".editorconfig"
+      ],
+      "jobs": [
+        "lint",
+        "unit-tests"
       ]
     },
     "supply-chain": {
@@ -181,6 +244,9 @@
         "native-bridge/installer/scripts/",
         "native-bridge/installer/windows/",
         "native-bridge/installer/macos/"
+      ],
+      "jobs": [
+        "build"
       ]
     },
     "tooling": {
@@ -190,6 +256,9 @@
         ".githooks/",
         "cliff.toml",
         "verify/test/"
+      ],
+      "jobs": [
+        "unit-tests"
       ]
     }
   }

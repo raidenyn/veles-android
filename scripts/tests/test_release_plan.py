@@ -99,6 +99,18 @@ class PlannerBumpTest(unittest.TestCase):
         c = comps(self.plan_after("fix: x", touching="config/detekt/detekt.yml"))
         self.assertEqual(c["android"].action, "CARRY")
 
+    def test_protocol_fix_still_bumps_installer(self):
+        c = comps(self.plan_after("fix(protocol): limits", touching="protocol/v1/limits.json"))
+        self.assertEqual((c["installer"].current, c["installer"].next, c["installer"].action), ("0.1.0", "0.1.1", "RELEASE"))
+
+    def test_host_source_fix_still_bumps_installer(self):
+        c = comps(self.plan_after("fix(host): framing", touching="native-bridge/host/src/lib.rs"))
+        self.assertEqual((c["installer"].current, c["installer"].next, c["installer"].action), ("0.1.0", "0.1.1", "RELEASE"))
+
+    def test_toolchain_only_fix_does_not_bump_installer(self):
+        c = comps(self.plan_after("fix(host): toolchain", touching="native-bridge/host/rust-toolchain.toml"))
+        self.assertEqual((c["installer"].current, c["installer"].next, c["installer"].action), ("0.1.0", "0.1.0", "CARRY"))
+
 
 @requires_cliff
 class PlannerTest(unittest.TestCase):

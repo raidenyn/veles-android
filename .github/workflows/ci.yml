@@ -29,6 +29,10 @@ jobs:
   changes:
     name: changes
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     outputs:
       android: ${{ steps.select.outputs.android }}
       web-extension: ${{ steps.select.outputs.web-extension }}
@@ -49,6 +53,12 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
           BEFORE: ${{ github.event.before }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          CI_LAST_GREEN: ${{ vars.CI_LAST_GREEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           if [ "$EVENT_NAME" = pull_request ]; then
             BASE="$(git merge-base "origin/$BASE_REF" HEAD)" || BASE=""
@@ -57,7 +67,22 @@ jobs:
           fi
           echo "base: ${BASE:-<none>}"
           status=0
-          python3 -I scripts/components.py changed --base "$BASE" --github-output "$GITHUB_OUTPUT" || status=$?
+          mode=all
+          if [ "$EVENT_NAME" = pull_request ]; then
+            mode=last-green
+            if ! python3 -I scripts/last_green.py --pr "$PR_NUMBER" --head "$PR_HEAD_SHA" --head-repo "$PR_HEAD_REPO" --head-ref "$PR_HEAD_REF" --out bases.json --notes-out notes.json; then
+              mode=fallback
+              echo "::warning::last-green evidence unavailable; selecting every node"
+            fi
+          fi
+          if [ "$mode" = last-green ]; then
+            python3 -I scripts/components.py changed --base "$BASE" --head HEAD --node-head "$PR_HEAD_SHA" --node-bases bases.json --evidence-notes notes.json --summary-out summary.md --github-output "$GITHUB_OUTPUT" || status=$?
+          else
+            python3 -I scripts/components.py changed --base "$BASE" --head HEAD --all --summary-out summary.md --github-output "$GITHUB_OUTPUT" || status=$?
+          fi
+          if [ -f summary.md ]; then
+            cat summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "changed-status=$status" >> "$GITHUB_OUTPUT"
       - name: Check the component map
         run: python3 -I scripts/components.py check

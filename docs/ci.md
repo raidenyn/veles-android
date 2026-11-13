@@ -18,8 +18,8 @@ Every other check reports a status but is not required. Skipped nodes do not blo
 
 ```
 ci.yml
-├── changes            components.py check + components.py changed -> one boolean output per node
-├── android            check-android.yml         lint | unit-tests | instrumented-tests
+├── changes            components.py check + last-green selection -> one boolean output per node
+├── android            check-android.yml         lint | unit-tests | release-hook-guard | instrumented-tests
 ├── web-extension      check-web-extension.yml   lint | unit-tests | browser-tests
 ├── installer          check-installer.yml       lint | unit-tests (linux, windows, macos) | scripts-tests
 ├── rust               check-rust.yml            lint | unit-tests | jni-integration
@@ -39,6 +39,7 @@ What each check runs:
 |---|---|
 | `android / lint` | `spotlessCheck`, `detekt`, the raw `android.util.Log` guard, `lintDebug` |
 | `android / unit-tests` | `testDebugUnitTest` |
+| `android / release-hook-guard` | `:app:releaseHookGuard` |
 | `android / instrumented-tests` | `connectedDebugAndroidTest` on an API 33 emulator (KVM) |
 | `web-extension / lint` | `./gradlew rustWasm`, `npm run format:check`, `npm run lint`, `npm run typecheck` |
 | `web-extension / unit-tests` | `./gradlew rustWasm`, `npm test`, `npm run build && npm run test:bundle` |
@@ -75,17 +76,43 @@ builds and changed-only master builds in `release-build.yml`; signed products co
 
 ## Node selection
 
-`changes` checks out the full history and runs two commands:
+`changes` checks out the full history and keeps the same step order: select, check the map, fail on
+unaccounted paths. Selection writes the `<node>=true|false` outputs first, then the
+`scripts/components.py check` step validates every tracked file, then the failure step fails the job
+when the selection reported an unaccounted changed path. The selected nodes still run and `ci-ok` fails.
 
-- `python3 -I scripts/components.py check`: every tracked file must be owned by a node, global or
-  explicitly unowned. A failure fails `changes`, and therefore `ci-ok`.
-- `python3 -I scripts/components.py changed --base <base>`: writes `<node>=true|false` for every node.
-  It diffs without rename detection, so a file moved from one component to another selects both.
+The base and the selection mode differ by event:
 
-The base is:
+- **First pull request run** (no evidence head): each node is diffed against `git merge-base
+  origin/<base branch> HEAD`, without rename detection, so a file moved from one component to another
+  selects both.
+- **Later pull request runs**: `scripts/last_green.py` looks up each node's newest green head and passes
+  it as `bases.json`; `components.py changed` diffs each node from that head to
+  `github.event.pull_request.head.sha`. Master movement after the evidence head is ignored because the
+  evidence head is an ancestor of the pull request head.
+- **Push to `master`**: every node is selected with `--all`; the Actions API is never called. Ownership
+  validation still runs on `github.event.before..HEAD`.
+- **API failure**: a non-zero `last_green.py` exit makes `changes` emit
+  `::warning::last-green evidence unavailable; selecting every node`, select every node with `--all`
+  (reason `fallback` in the summary) and still validate ownership on the full diff.
 
-- for a pull request: `git merge-base origin/<base branch> HEAD`;
-- for a push: `github.event.before`.
+A node with no usable evidence head falls back to the merge-base diff per node; it runs only when a
+path it owns changed against the merge base. A missing or all-zero base, a global path, an unaccounted
+path or a base that is not in the history selects every node.
+
+`last_green.py` decides "green" as one complete attempt: a completed `ci.yml` `pull_request` run for an
+ancestor of the pull request head that belongs to this pull request (for fork pull requests whose
+`pull_requests` list is empty, the head repository and ref must match), whose pinned attempt has every
+job in the node's declared `jobs` set with conclusion `success` and no extra `<node> / ...` job.
+Skipped, neutral, cancelled, failed, running and missing jobs do not count, and results of different
+runs or attempts are never combined. Evidence is used only when the component map's normalised
+selection definition at that head equals the current one. The lookup is bounded (20 candidate heads and
+100 API calls by default); running out of budget degrades to per-node merge-base selection, not an
+error.
+
+`changes` appends `summary.md` to the job summary: one row per node with `run`/`skip`, the evidence head
+or `none`, and the reason (`never passed`, `incompatible map`, `changed since <sha>`,
+`unchanged since <sha>` or `fallback`).
 
 The rules for each changed path:
 
@@ -93,18 +120,38 @@ The rules for each changed path:
 |---|---|
 | a node's `paths` | that node (and every other node that lists it) |
 | a node's `ci-paths` | that node; these are check-only inputs (lint config, verifier scripts) that never cut a release |
+| a node's `release-paths` | nothing in CI; these are release-only inputs (they still count for release attribution) |
+| `global-overrides` | exactly the listed nodes instead of every node; the path still counts for release attribution through `global` |
+| `retired-paths` | the listed nodes; the prefix is accounted for validation even when the files no longer exist |
 | `global` (`.github/`, root Gradle files, `gradle/`, the wrapper, `.java-version`) | every node |
-| `ci-global` (`.editorconfig`) | every node; check-only, never cuts a release |
+| `ci-global` | every node; check-only, never cuts a release |
 | `unowned` (`docs/`, `openspec/`, `README.md`, ...) | nothing |
 | nothing above (unaccounted) | every node, and `changes` fails after writing the outputs |
 
-A missing or all-zero base (for example a new branch) or a base that is not in the history selects every
-node. Because every workflow file is under `.github/`, any workflow edit runs the whole tree, including
+Every node also declares `jobs`, its expected job display names without the `<node> / ` prefix; the
+workflow contract suite derives them from the reusable workflow each caller invokes and fails on drift,
+on a matrix job and on any shape it cannot derive.
+
+Because every workflow file is under `.github/`, any workflow edit runs the whole tree, including
 `native-host / build-contract` and `installer / scripts-tests`, which own the two Python build-contract
 suites.
 
 Node jobs use `if: !cancelled() && needs.changes.outputs.<node> == 'true'`, so when `changes` writes its
 outputs and then fails (an unaccounted path), the selected nodes still run and `ci-ok` still fails.
+
+The top-level `permissions` stays `contents: read`. The `changes` job declares `contents: read`,
+`actions: read` and `pull-requests: read` (a job-level mapping replaces the inherited one) and uses no
+secret, so pull request runs from forks can read their own evidence with the read-only token.
+
+## Last-green kill switch and rollback
+
+Set the repository variable `CI_LAST_GREEN=off` to make every pull request run behave like a first run
+(no evidence heads, merge-base selection) without changing the workflow. `scripts/last_green.py` then
+returns `null` for every node and exits 0 without calling the API.
+
+To roll back the optimisation entirely, keep `CI_LAST_GREEN=off` or revert the `changes` job commit.
+`release-build.yml` keeps its own before-based `components.py changed --base "$BEFORE"` selection and is
+unaffected either way.
 
 ## ci-ok
 
