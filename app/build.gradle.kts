@@ -21,11 +21,15 @@ detekt {
     config.setFrom("${rootProject.projectDir}/config/detekt/detekt.yml")
 }
 
+// The Android NDK version is defined once, in rust/ndk-version, and shared with the Rust
+// build (rustJni resolves the same version from its own file).
+val rustNdkVersion = rootProject.layout.projectDirectory.file("rust/ndk-version").asFile.readText().trim()
+
 android {
     namespace = "me.nagaev.veles"
     compileSdk = 35
     buildToolsVersion = "36.0.0"
-    ndkVersion = libs.versions.ndk.get()
+    ndkVersion = rustNdkVersion
 
     defaultConfig {
         applicationId = "me.nagaev.veles"
@@ -90,8 +94,10 @@ android {
     androidResources {
         localeFilters += listOf("en")
     }
+    // The JNI libraries are a Rust build product (build/rust/jniLibs, staged by the
+    // included :rustJni task), not an app build output.
     sourceSets.getByName("main").jniLibs.srcDir(
-        layout.buildDirectory.dir("generated/jniLibs").get().asFile,
+        rootProject.layout.buildDirectory.dir("rust/jniLibs").get().asFile,
     )
     packaging {
         resources {
@@ -144,13 +150,13 @@ afterEvaluate {
     // never initialize VelesCrypto (one library per class loader), so the path is
     // inert for them.
     val hostJniDir = rootProject.layout.buildDirectory.dir("rust/host-jni")
-    unitTest.dependsOn(rootProject.tasks.named("rustHostJni"))
+    unitTest.dependsOn(gradle.includedBuild("rust").task(":rustHostJni"))
     unitTest.systemProperty("java.library.path", hostJniDir.get().asFile.absolutePath)
     tasks.register<Test>("protocolJvmTest") {
         group = "verification"
         description = "Runs the focused OTP-02 protocol fixture consumer on the JVM."
         dependsOn(unitTest.taskDependencies.getDependencies(unitTest))
-        dependsOn(rootProject.tasks.named("rustHostJni"))
+        dependsOn(gradle.includedBuild("rust").task(":rustHostJni"))
         systemProperty("java.library.path", hostJniDir.get().asFile.absolutePath)
         classpath = unitTest.classpath
         testClassesDirs = unitTest.testClassesDirs
@@ -270,7 +276,7 @@ tasks.register("releaseHookGuard") {
 }
 
 tasks.matching { it.name.matches(Regex("merge.*JniLibFolders")) }.configureEach {
-    dependsOn(rootProject.tasks.named("rustJni"))
+    dependsOn(gradle.includedBuild("rust").task(":rustJni"))
 }
 
 dependencies {

@@ -8,6 +8,14 @@ This document describes prerequisites, build commands, installation instructions
 
 - **JDK 21** installed and configured (e.g. via `JAVA_HOME`).
 - **Android Studio** or standalone **Android SDK** with build tools for API 33+.
+- **Android NDK 29.0.14206865** for the native Rust core. The Android Gradle Plugin no longer
+  installs the NDK automatically, so install the pinned version once:
+  ```bash
+  sdkmanager "ndk;29.0.14206865"
+  ```
+  The version is defined once in [`rust/ndk-version`](rust/ndk-version); the Rust build finds it
+  through `ANDROID_NDK_HOME`, then `$ANDROID_SDK_ROOT/ndk/<version>`, then the `sdk.dir` of
+  `local.properties`.
 - **ADB** (Android Debug Bridge) for deploying to a physical device or emulator.
 - *(Optional, for external toolchains)*:
   - **Node.js** (LTS) & npm for `web-extension/`.
