@@ -92,7 +92,18 @@
         "verify/verify-supply-chain.sh"
       ],
       "release-paths": [
-        "native-bridge/host/",
+        "native-bridge/host/.gitignore",
+        "native-bridge/host/Cargo.lock",
+        "native-bridge/host/Cargo.toml",
+        "native-bridge/host/README.md",
+        "native-bridge/host/acceptance/",
+        "native-bridge/host/examples/",
+        "native-bridge/host/fuzz/",
+        "native-bridge/host/rustfmt.toml",
+        "native-bridge/host/scripts/",
+        "native-bridge/host/src/",
+        "native-bridge/host/tests/",
+        "native-bridge/host/vendor/",
         "protocol/"
       ],
       "jobs": [

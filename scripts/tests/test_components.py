@@ -129,6 +129,15 @@ class SelectionTest(unittest.TestCase):
         self.assertIn("native-bridge/host/rust-toolchain.toml", CMAP["nodes"]["installer"]["ci-paths"])
         self.assertTrue(affected(["native-bridge/host/rust-toolchain.toml"], CMAP)["installer"])
 
+    def test_toolchain_ci_path_is_not_a_release_input(self):
+        toolchain = "native-bridge/host/rust-toolchain.toml"
+        self.assertIn(toolchain, CMAP["nodes"]["installer"]["ci-paths"])
+        for p in release_paths("installer", CMAP):
+            if p.endswith("/"):
+                self.assertFalse(toolchain.startswith(p), "release path %r covers %r" % (p, toolchain))
+            else:
+                self.assertNotEqual(toolchain, p, "release input %r is the CI-only toolchain" % p)
+
     def test_override_selects_only_listed_nodes(self):
         cmap = load_map(tmp_map(**{"global-overrides": {".github/components.json": ["tooling"]}}))
         self.assertEqual(owner_nodes(".github/components.json", cmap), {"tooling"})
@@ -168,9 +177,11 @@ class SelectionTest(unittest.TestCase):
     def test_release_paths(self):
         self.assertIn("build.gradle.kts", release_paths("installer", CMAP))
         self.assertIn("native-bridge/installer/", release_paths("installer", CMAP))
-        self.assertIn("native-bridge/host/", release_paths("installer", CMAP))
+        self.assertIn("native-bridge/host/Cargo.toml", release_paths("installer", CMAP))
+        self.assertIn("native-bridge/host/src/", release_paths("installer", CMAP))
         self.assertIn("protocol/", release_paths("installer", CMAP))
         self.assertNotIn("app/", release_paths("installer", CMAP))
+        self.assertNotIn("native-bridge/host/", release_paths("installer", CMAP))
         self.assertNotIn("native-bridge/host/", CMAP["nodes"]["installer"]["paths"])
         self.assertNotIn("protocol/", CMAP["nodes"]["installer"]["paths"])
 

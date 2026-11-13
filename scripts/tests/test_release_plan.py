@@ -107,6 +107,10 @@ class PlannerBumpTest(unittest.TestCase):
         c = comps(self.plan_after("fix(host): framing", touching="native-bridge/host/src/lib.rs"))
         self.assertEqual((c["installer"].current, c["installer"].next, c["installer"].action), ("0.1.0", "0.1.1", "RELEASE"))
 
+    def test_toolchain_only_fix_does_not_bump_installer(self):
+        c = comps(self.plan_after("fix(host): toolchain", touching="native-bridge/host/rust-toolchain.toml"))
+        self.assertEqual((c["installer"].current, c["installer"].next, c["installer"].action), ("0.1.0", "0.1.0", "CARRY"))
+
 
 @requires_cliff
 class PlannerTest(unittest.TestCase):
