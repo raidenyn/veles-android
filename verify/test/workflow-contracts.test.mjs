@@ -799,19 +799,46 @@ test('ci.yml calls one change-gated check workflow per component node and gates 
 
 // The jobs GitHub reports for a node: ci.yml gates each node with one caller job that reuses the node's
 // workflow, so the caller's `name:` prefixes every called job's display name (`<node> / <job>`). A matrix
-// job runs under several names, and a caller that does not reuse a workflow has no single source of job
-// names, so both are unparseable and throw instead of inventing a name.
-async function derivedJobNames(callerName) {
-  const callers = workflowJobBlocks(executableYaml(await workflow('ci.yml')));
+// on the caller or on a called job runs under several names, a caller that does not reuse a workflow has
+// no single source of job names, and a job entry the block parser does not recognize could hide a real
+// job, so every such shape throws instead of inventing a name.
+async function derivedJobNames(callerName, ciSource = null) {
+  const source = ciSource ?? executableYaml(await workflow('ci.yml'));
+  assertStrictJobEntries('ci.yml', source);
+  const callers = workflowJobBlocks(source);
   const caller = callers[callerName];
   assert.ok(caller, `ci.yml must define the ${callerName} caller job`);
+  assert.doesNotMatch(caller, /^    strategy:/m, `ci.yml job ${callerName} declares a matrix strategy, so it reports several jobs`);
   assert.match(caller, new RegExp(`^    name: ${escapeRegexp(callerName)}\\s*$`, 'm'), `ci.yml must report the ${callerName} node as ${callerName} / <job>`);
   const uses = caller.match(/^    uses: \.\/\.github\/workflows\/([^\s/]+\.yml)\s*$/m);
   assert.ok(uses, `ci.yml job ${callerName} must reuse a repository workflow`);
   return calledJobNames(uses[1], executableYaml(await workflow(uses[1])));
 }
 
+// The job-block parser understands one shape: a standalone `  <key>:` job key. A flow mapping, a quoted
+// key, a list entry or a non-standard indentation is a valid GitHub job the parser never sees, so the
+// derived set would silently omit a real `<node> / ...` check. Reject every job-level entry that is not
+// exactly that shape instead of trusting the parser's silence.
+function assertStrictJobEntries(file, source) {
+  const lines = source.split('\n');
+  const start = lines.findIndex((line) => /^jobs:\s*$/.test(line));
+  assert.notEqual(start, -1, `${file} must declare a jobs: block`);
+  const entries = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() && !line.startsWith(' ')) break;
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    entries.push(line);
+  }
+  assert.ok(entries.length > 0, `${file} must declare at least one job entry`);
+  const indent = Math.min(...entries.map((line) => line.match(/^\s*/)[0].length));
+  for (const line of entries) {
+    if (line.match(/^\s*/)[0].length !== indent) continue;
+    assert.match(line, /^ {2}[A-Za-z0-9_-]+:\s*$/, `${file} job entry "${line.trim()}" is not a standalone job key the contract can derive`);
+  }
+}
+
 function calledJobNames(file, source) {
+  assertStrictJobEntries(file, source);
   const jobs = workflowJobBlocks(source);
   assert.ok(Object.keys(jobs).length > 0, `${file} must declare at least one job`);
   const names = Object.entries(jobs).map(([id, block]) => {
@@ -847,6 +874,21 @@ test("declared jobs equal the jobs of each ci.yml caller's reusable workflow", a
   const renamed = derived.map((job) => (job === 'jni-integration' ? 'jni-integration-legacy' : job));
   assert.notDeepEqual(renamed, derived, 'the renamed-job mutation must change a derived job');
   assert.throws(() => assertDeclaredJobs('rust', COMPONENT_MAP.nodes.rust.jobs, renamed), /declared jobs/);
+
+  // Negative: an extra job the block parser cannot see (a flow mapping or a quoted key) is a real
+  // `<node> / ...` check, so the derivation must reject the shape instead of silently omitting it.
+  const extra = rust.replace('  jni-integration:\n', '  extra: {runs-on: ubuntu-latest, steps: [{run: "echo extra"}]}\n  jni-integration:\n');
+  assert.notEqual(extra, rust, 'the flow-mapping mutation must add a job entry');
+  assert.throws(() => calledJobNames('check-rust.yml', executableYaml(extra)), /standalone job key/);
+  const quoted = rust.replace('  jni-integration:\n', "  'extra':\n    runs-on: ubuntu-latest\n  jni-integration:\n");
+  assert.notEqual(quoted, rust, 'the quoted-key mutation must add a job entry');
+  assert.throws(() => calledJobNames('check-rust.yml', executableYaml(quoted)), /standalone job key/);
+
+  // Negative: a matrix on the ci.yml caller also reports several `<node> / ...` checks and must be rejected.
+  const ci = await workflow('ci.yml');
+  const callerMatrix = ci.replace('  rust:\n    name: rust\n', '  rust:\n    name: rust\n    strategy:\n      matrix:\n        os: [ubuntu-latest]\n');
+  assert.notEqual(callerMatrix, ci, 'the caller-matrix mutation must change ci.yml');
+  await assert.rejects(derivedJobNames('rust', executableYaml(callerMatrix)), /matrix/);
 });
 
 test('every pre-split CI command runs in exactly one check workflow', async () => {
