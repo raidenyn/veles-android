@@ -82,7 +82,9 @@ class Api(object):
             response = urlopen(request, timeout=30)
             try:
                 body = response.read()
-                headers = dict(response.headers)
+                # Header names are case-insensitive; normalise so pagination works
+                # for servers (and proxies) that send `link` instead of `Link`.
+                headers = {str(key).lower(): value for key, value in response.headers.items()}
             finally:
                 response.close()
         except HTTPError as error:
@@ -124,7 +126,7 @@ class Api(object):
                 raise LastGreenError("GET %s returned an unexpected structure" % path)
             for item in items:
                 yield item
-            if not LINK_NEXT_RE.search(self.last_headers.get("Link", "")):
+            if not LINK_NEXT_RE.search(self.last_headers.get("link", "")):
                 return
             page += 1
             if page > MAX_PAGES:
@@ -170,7 +172,12 @@ def node_is_green(node: str, expected: List[str], jobs: List[dict]) -> bool:
         name = job.get("name")
         if not isinstance(name, str) or not name.startswith(prefix):
             continue
-        actual[name[len(prefix):]] = job.get("conclusion")
+        short = name[len(prefix):]
+        if short in actual:
+            # A duplicated node job cannot be trusted: a later success must never
+            # overwrite an earlier failure.
+            return False
+        actual[short] = job.get("conclusion")
     if set(actual) != set(expected):
         return False
     return all(actual[name] == "success" for name in expected)
@@ -181,8 +188,35 @@ def _validate_run(run):
         raise LastGreenError("workflow run is not an object")
     if not isinstance(run.get("id"), int) or not isinstance(run.get("run_attempt"), int):
         raise LastGreenError("workflow run lacks id or run_attempt")
-    if not isinstance(run.get("status"), str) or not isinstance(run.get("pull_requests"), list):
-        raise LastGreenError("workflow run lacks status or pull_requests")
+    if not isinstance(run.get("status"), str) or not isinstance(run.get("event"), str):
+        raise LastGreenError("workflow run lacks status or event")
+    if not isinstance(run.get("head_sha"), str) or not run["head_sha"]:
+        raise LastGreenError("workflow run lacks head_sha")
+    if not isinstance(run.get("head_branch"), str) or not run["head_branch"]:
+        raise LastGreenError("workflow run lacks head_branch")
+    repository = run.get("head_repository")
+    if not isinstance(repository, dict) or not isinstance(repository.get("full_name"), str):
+        raise LastGreenError("workflow run lacks head_repository.full_name")
+    pulls = run.get("pull_requests")
+    if not isinstance(pulls, list):
+        raise LastGreenError("workflow run lacks pull_requests")
+    for entry in pulls:
+        if not isinstance(entry, dict) or not isinstance(entry.get("number"), int):
+            raise LastGreenError("workflow run has a malformed pull_requests entry")
+
+
+def _validate_job(job):
+    if not isinstance(job, dict):
+        raise LastGreenError("job is not an object")
+    if not isinstance(job.get("name"), str):
+        raise LastGreenError("job lacks a name")
+    if not isinstance(job.get("run_attempt"), int):
+        raise LastGreenError("job %r lacks run_attempt" % job.get("name"))
+    # An in-progress job legitimately reports null, but the key must exist.
+    if "conclusion" not in job:
+        raise LastGreenError("job %r lacks conclusion" % job.get("name"))
+    if job["conclusion"] is not None and not isinstance(job["conclusion"], str):
+        raise LastGreenError("job %r has a non-string conclusion" % job.get("name"))
 
 
 def _map_specs(text, nodes):
@@ -191,13 +225,14 @@ def _map_specs(text, nodes):
         return None
     try:
         cmap = components.parse_map(text)
-    except (ValueError, TypeError):
+    except (AttributeError, KeyError, TypeError, ValueError):
+        # `[]`, `null` and similar non-object roots reach parse_map's `.get()`.
         return None
     specs = {}
     for node in nodes:
         try:
             specs[node] = components.selection_spec(cmap, node)
-        except (KeyError, TypeError, ValueError):
+        except (AttributeError, KeyError, TypeError, ValueError):
             specs[node] = None
     return specs
 
@@ -221,6 +256,7 @@ def find_bases(
     current = {node: components.selection_spec(cmap, node) for node in nodes}
     evidence = {}
     incompatible = set()
+    exhausted = False
     try:
         commits = []
         for item in api.pages("/repos/%s/pulls/%d/commits" % (api.repo, number)):
@@ -250,10 +286,8 @@ def find_bases(
                 jobs = list(
                     api.pages(_jobs_path(api.repo, run["id"], run["run_attempt"]), key="jobs")
                 )
-                if not all(
-                    isinstance(job, dict) and isinstance(job.get("name"), str) for job in jobs
-                ):
-                    raise LastGreenError("run %d has a malformed job" % run["id"])
+                for job in jobs:
+                    _validate_job(job)
                 if any(job.get("run_attempt") != run["run_attempt"] for job in jobs):
                     continue
                 for node in nodes:
@@ -266,13 +300,18 @@ def find_bases(
                     else:
                         incompatible.add(node)
     except BudgetExhausted:
-        pass
-    return {
-        node: evidence[node]
-        if node in evidence
-        else NodeEvidence(None, "incompatible map" if node in incompatible else "never passed")
-        for node in nodes
-    }
+        exhausted = True
+    result = {}
+    for node in nodes:
+        if node in evidence:
+            result[node] = evidence[node]
+        elif not exhausted and node in incompatible:
+            result[node] = NodeEvidence(None, "incompatible map")
+        else:
+            # Budget exhaustion makes every node without evidence never passed,
+            # whatever an earlier candidate suggested.
+            result[node] = NodeEvidence(None, "never passed")
+    return result
 
 
 def _git(args):

@@ -102,7 +102,7 @@ class FakeApi(last_green.Api):
                     raise AssertionError("unexpected path %r" % path)
                 base = "jobs-%s-%s" % (match.group(1), match.group(2))
         if os.path.exists(os.path.join(self.root, page_name(base, page + 1))):
-            self.last_headers = {"Link": '<https://api.github.invalid/next>; rel="next"'}
+            self.last_headers = {"link": '<https://api.github.invalid/next>; rel="next"'}
         return self._load(base, page)
 
 
@@ -115,6 +115,20 @@ class ErrorApi(last_green.Api):
 
     def get(self, path, params=None):
         raise last_green.LastGreenError(self.message)
+
+
+class RecordedResponse(object):
+    """Minimal urlopen response for the production Api pagination regression."""
+
+    def __init__(self, body, headers=None):
+        self.body = json.dumps(body).encode("utf-8")
+        self.headers = headers or {}
+
+    def read(self):
+        return self.body
+
+    def close(self):
+        pass
 
 
 class Case(object):
@@ -301,6 +315,20 @@ class EligibilityTest(unittest.TestCase):
         case.write("jobs-1001-1.json", jobs)
         self.assertEqual(find(case.api())["android"], NodeEvidence(None, "never passed"))
 
+    def test_duplicate_job_names_not_green(self):
+        case = Case(self, "green")
+        jobs = case.read("jobs-1001-1.json")
+        jobs["jobs"][0]["conclusion"] = "failure"
+        duplicate = dict(jobs["jobs"][0])
+        duplicate["id"] = 999
+        duplicate["conclusion"] = "success"
+        jobs["jobs"].append(duplicate)
+        self.assertFalse(
+            last_green.node_is_green("android", CMAP["nodes"]["android"]["jobs"], jobs["jobs"])
+        )
+        case.write("jobs-1001-1.json", jobs)
+        self.assertEqual(find(case.api())["android"], NodeEvidence(None, "never passed"))
+
     def test_attempt_mismatch_rejects_run(self):
         case = Case(self, "green")
         jobs = case.read("jobs-1001-1.json")
@@ -367,6 +395,37 @@ class EligibilityTest(unittest.TestCase):
         )
 
 
+class ApiPaginationTest(unittest.TestCase):
+    """The production Api (not the fake) must treat header names case-insensitively."""
+
+    def test_lowercase_link_header_reads_every_job_page(self):
+        run = api_run(1001, "c1")
+        urls = []
+
+        def handle(request, timeout=None):
+            url = request.full_url
+            urls.append(url)
+            if "/pulls/7/commits" in url:
+                return RecordedResponse([{"sha": "c1"}])
+            if "/actions/workflows/ci.yml/runs" in url:
+                return RecordedResponse({"workflow_runs": [run]})
+            if "/actions/runs/1001/attempts/1/jobs" in url:
+                if "page=2" in url:
+                    return RecordedResponse({"jobs": [api_job("android / docs", job_id=99)]})
+                return RecordedResponse(
+                    {"jobs": android_jobs()},
+                    {"link": '<https://api.github.invalid/next>; rel="next"'},
+                )
+            raise AssertionError("unexpected request %r" % url)
+
+        api = last_green.Api("https://api.github.invalid", "token", REPO)
+        with mock.patch("last_green.urlopen", side_effect=handle):
+            result = find(api)
+        self.assertEqual(result["android"], NodeEvidence(None, "never passed"))
+        self.assertEqual(len(urls), 4)
+        self.assertTrue(any("page=2" in url for url in urls))
+
+
 class AncestryTest(unittest.TestCase):
     def test_normal_push_uses_previous_head(self):
         result = find(Case(self, "ancestors").api(), is_ancestor=always_ancestor)
@@ -419,6 +478,12 @@ class CompatibilityTest(unittest.TestCase):
         text = self.map_text(mutate)
         result = find(Case(self, "green").api(), show_map=lambda sha: text)
         self.assertEqual(result["android"], NodeEvidence(None, "incompatible map"))
+
+    def test_non_object_map_root_is_incompatible(self):
+        for text in ("[]", "null"):
+            with self.subTest(map_text=text):
+                result = find(Case(self, "green").api(), show_map=lambda sha: text)
+                self.assertEqual(result["android"], NodeEvidence(None, "incompatible map"))
 
     def test_renamed_job_invalidates(self):
         data = json.loads(MAP_TEXT)
@@ -483,6 +548,18 @@ class OutcomeTest(unittest.TestCase):
         self.assertEqual(api.calls, 4)
         self.assertEqual(result["android"], NodeEvidence(None, "never passed"))
 
+    def test_budget_exhaustion_marks_unresolved_never_passed(self):
+        data = json.loads(MAP_TEXT)
+        data["global-overrides"] = {}
+        text = json.dumps(data, indent=2)
+        api = Case(self, "green").api(budget=3)
+        result = find(api, show_map=lambda sha: text)
+        self.assertEqual(api.calls, 3)
+        # android was green only under an incompatible map; exhaustion discards
+        # that note and the mandated outcome is never passed.
+        self.assertEqual(result["android"], NodeEvidence(None, "never passed"))
+        self.assertEqual(result["web-extension"], NodeEvidence(None, "never passed"))
+
     def test_api_error_exits_nonzero(self):
         out, notes = output_paths(self)
         with main_env(ErrorApi()):
@@ -524,8 +601,34 @@ class OutcomeTest(unittest.TestCase):
             del runs["workflow_runs"][0]["run_attempt"]
             case.write("runs-c1.json", runs)
 
-        for label, mutate in (("missing workflow_runs", missing_list),
-                              ("missing run_attempt", missing_attempt)):
+        def missing_event(case):
+            runs = case.read("runs-c1.json")
+            del runs["workflow_runs"][0]["event"]
+            case.write("runs-c1.json", runs)
+
+        def malformed_pull_request(case):
+            runs = case.read("runs-c1.json")
+            runs["workflow_runs"][0]["pull_requests"] = [None]
+            case.write("runs-c1.json", runs)
+
+        def missing_conclusion(case):
+            jobs = case.read("jobs-1001-1.json")
+            del jobs["jobs"][0]["conclusion"]
+            case.write("jobs-1001-1.json", jobs)
+
+        def missing_job_attempt(case):
+            jobs = case.read("jobs-1001-1.json")
+            del jobs["jobs"][0]["run_attempt"]
+            case.write("jobs-1001-1.json", jobs)
+
+        for label, mutate in (
+            ("missing workflow_runs", missing_list),
+            ("missing run_attempt", missing_attempt),
+            ("missing event", missing_event),
+            ("pull_requests entry is null", malformed_pull_request),
+            ("missing job conclusion", missing_conclusion),
+            ("missing job run_attempt", missing_job_attempt),
+        ):
             with self.subTest(problem=label):
                 case = Case(self, "green")
                 mutate(case)
