@@ -14,6 +14,7 @@ from components import (  # noqa: E402
     load_map,
     main,
     owner_nodes,
+    parse_map,
     release_paths,
     unaccounted,
 )
@@ -36,9 +37,19 @@ def tmp_map(**overrides):
         "since": "a" * 40,
         "global": [".github/"],
         "unowned": ["docs/"],
+        "global-overrides": {},
+        "retired-paths": {},
         "nodes": {
-            "android": {"release": True, "tag-prefix": "android-v", "initial-version": "0.1.0", "paths": ["app/"]},
-            "rust": {"release": False, "paths": ["rust/"]},
+            "android": {
+                "release": True,
+                "tag-prefix": "android-v",
+                "initial-version": "0.1.0",
+                "paths": ["app/"],
+                "release-paths": ["native-bridge/host/"],
+                "jobs": ["lint"],
+            },
+            "rust": {"release": False, "paths": ["rust/"], "jobs": ["lint", "unit-tests"]},
+            "tooling": {"release": False, "paths": ["scripts/"], "jobs": ["unit-tests"]},
         },
     }
     base.update(overrides)
@@ -96,6 +107,35 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual(owner_nodes("native-bridge/host/src/lib.rs", CMAP), {"installer", "native-host", "protocol", "supply-chain"})
         self.assertEqual(owner_nodes("scripts/components.py", CMAP), {"tooling"})
 
+    def test_override_selects_only_listed_nodes(self):
+        cmap = load_map(tmp_map(**{"global-overrides": {".github/components.json": ["tooling"]}}))
+        self.assertEqual(owner_nodes(".github/components.json", cmap), {"tooling"})
+        a = affected([".github/components.json"], cmap)
+        self.assertTrue(a["tooling"])
+        self.assertFalse(a["android"])
+        self.assertFalse(a["rust"])
+        self.assertEqual(unaccounted([".github/components.json"], cmap), [])
+
+    def test_override_still_counts_for_release(self):
+        cmap = load_map(tmp_map(**{"global-overrides": {".github/components.json": ["tooling"]}}))
+        self.assertIn(".github/", release_paths("android", cmap))
+
+    def test_retired_path_is_accounted_and_selects_listed_nodes(self):
+        cmap = load_map(tmp_map(
+            nodes={"android": {"release": False, "paths": ["android/"]}},
+            **{"retired-paths": {"app/": ["android"]}},
+        ))
+        self.assertEqual(owner_nodes("app/x.kt", cmap), {"android"})
+        self.assertEqual(unaccounted(["app/x.kt"], cmap), [])
+        a = affected(["app/x.kt"], cmap)
+        self.assertTrue(a["android"])
+
+    def test_release_path_only_is_accounted_but_selects_nothing(self):
+        cmap = load_map(tmp_map())
+        self.assertEqual(owner_nodes("native-bridge/host/src/lib.rs", cmap), set())
+        self.assertEqual(unaccounted(["native-bridge/host/src/lib.rs"], cmap), [])
+        self.assertFalse(any(affected(["native-bridge/host/src/lib.rs"], cmap).values()))
+
     def test_no_base_selects_all(self):
         self.assertIsNone(changed_files("0" * 40))
         self.assertIsNone(changed_files(None))
@@ -118,6 +158,41 @@ class SelectionTest(unittest.TestCase):
                 self.assertNotIn(".editorconfig", release_paths(n, CMAP))
                 for p in node.get("ci-paths", []):
                     self.assertNotIn(p, release_paths(n, CMAP))
+
+    def test_ci_paths_never_in_release_paths(self):
+        cmap = load_map(tmp_map(
+            **{"ci-global": [".editorconfig"]},
+            nodes={"android": {
+                "release": False,
+                "paths": ["app/"],
+                "ci-paths": ["verify/check.mjs"],
+                "release-paths": ["native-bridge/host/"],
+            }},
+        ))
+        rp = release_paths("android", cmap)
+        self.assertIn("app/", rp)
+        self.assertIn("native-bridge/host/", rp)
+        self.assertNotIn("verify/check.mjs", rp)
+        self.assertNotIn(".editorconfig", rp)
+
+    def test_release_paths_excludes_legacy_and_retired(self):
+        cmap = load_map(tmp_map(
+            nodes={"android": {
+                "release": True,
+                "tag-prefix": "android-v",
+                "initial-version": "0.1.0",
+                "paths": ["android/"],
+                "release-paths": ["native-bridge/host/"],
+                "legacy-release": {"paths": ["app/", "build.gradle.kts"], "epoch-path": "android/"},
+            }},
+            **{"retired-paths": {"app/": ["android"], "config/detekt/": ["android"]}},
+        ))
+        rp = release_paths("android", cmap)
+        self.assertIn("android/", rp)
+        self.assertIn("native-bridge/host/", rp)
+        self.assertIn(".github/", rp)
+        for p in ("app/", "build.gradle.kts", "config/detekt/"):
+            self.assertNotIn(p, rp)
 
     def test_ci_global_selects_every_node(self):
         self.assertTrue(all(affected([".editorconfig"], CMAP).values()))
@@ -158,6 +233,63 @@ class MapValidationTest(unittest.TestCase):
 
     def test_valid_map(self):
         self.assertIn("android", load_map(tmp_map())["nodes"])
+
+    def test_parse_map_validates_text(self):
+        path = tmp_map()
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertEqual(parse_map(text), load_map(path))
+        with self.assertRaises(ValueError):
+            parse_map("{}")
+
+    def test_wildcard_in_new_lists_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            load_map(tmp_map(nodes={"android": {"release": False, "paths": ["app/"], "release-paths": ["app/**"]}}))
+        self.assertIn("app/**", str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            load_map(tmp_map(nodes={
+                "android": {"release": False, "paths": ["app/"], "legacy-release": {"paths": ["app/*"], "epoch-path": "android/"}},
+            }))
+        self.assertIn("app/*", str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            load_map(tmp_map(**{"global-overrides": {".github/*.yml": ["android"]}}))
+        self.assertIn(".github/*.yml", str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            load_map(tmp_map(**{"retired-paths": {"app/*": ["android"]}}))
+        self.assertIn("app/*", str(ctx.exception))
+
+    def test_override_unknown_node_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            load_map(tmp_map(**{"global-overrides": {".github/components.json": ["nope"]}}))
+        self.assertIn("nope", str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            load_map(tmp_map(**{"retired-paths": {"app/": ["nope"]}}))
+        self.assertIn("nope", str(ctx.exception))
+
+    def test_unknown_key_value_types_rejected(self):
+        for overrides in (
+            {"global-overrides": ["android"]},
+            {"global-overrides": {".github/components.json": "tooling"}},
+            {"global-overrides": {".github/components.json": [1]}},
+            {"global-overrides": {".github/components.json": []}},
+            {"global-overrides": {".github/": ["tooling"]}},
+            {"retired-paths": ["app/"]},
+            {"retired-paths": {"app/": "android"}},
+            {"retired-paths": {"app/": []}},
+        ):
+            with self.assertRaises(ValueError, msg=repr(overrides)):
+                load_map(tmp_map(**overrides))
+        for node in (
+            {"release": False, "paths": ["app/"], "jobs": "lint"},
+            {"release": False, "paths": ["app/"], "jobs": [1]},
+            {"release": False, "paths": ["app/"], "release-paths": "native-bridge/host/"},
+            {"release": False, "paths": ["app/"], "legacy-release": ["app/"]},
+            {"release": False, "paths": ["app/"], "legacy-release": {"paths": "app/"}},
+            {"release": False, "paths": ["app/"], "legacy-release": {"paths": ["app/"]}},
+            {"release": False, "paths": ["app/"], "legacy-release": {"paths": ["app/"], "epoch-path": ""}},
+        ):
+            with self.assertRaises(ValueError, msg=repr(node)):
+                load_map(tmp_map(nodes={"android": node}))
 
     def test_real_map_release_nodes(self):
         rel = {n: v for n, v in CMAP["nodes"].items() if v["release"]}

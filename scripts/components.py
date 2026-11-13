@@ -29,9 +29,16 @@ def _check_paths(owner, paths):
             raise ValueError("%s: path %r must be repo-relative with forward slashes" % (owner, p))
 
 
-def load_map(path):
-    with open(str(path), encoding="utf-8") as handle:
-        cmap = json.load(handle)
+def _check_node_names(owner, names, nodes):
+    if not isinstance(names, list) or not names:
+        raise ValueError("%s: must be a non-empty list of node names" % owner)
+    for name in names:
+        if not isinstance(name, str) or name not in nodes:
+            raise ValueError("%s: unknown node %r" % (owner, name))
+
+
+def parse_map(text):
+    cmap = json.loads(text)
     if not SHA_RE.match(str(cmap.get("since", ""))):
         raise ValueError("since: must be a full 40-hex commit SHA")
     for key in ("global", "ci-global", "unowned"):
@@ -46,6 +53,21 @@ def load_map(path):
         _check_paths(name, node.get("paths"))
         if "ci-paths" in node:
             _check_paths(name + " ci-paths", node["ci-paths"])
+        if "release-paths" in node:
+            _check_paths(name + " release-paths", node["release-paths"])
+        if "jobs" in node:
+            jobs = node["jobs"]
+            if not isinstance(jobs, list) or not all(isinstance(j, str) and j for j in jobs):
+                raise ValueError("%s: jobs must be a list of job names" % name)
+        if "legacy-release" in node:
+            legacy = node["legacy-release"]
+            if not isinstance(legacy, dict):
+                raise ValueError("%s: legacy-release must be an object" % name)
+            _check_paths(name + " legacy-release", legacy.get("paths"))
+            epoch = legacy.get("epoch-path")
+            if not isinstance(epoch, str) or not epoch:
+                raise ValueError("%s: legacy-release epoch-path must be a path" % name)
+            _check_paths(name + " legacy-release epoch-path", [epoch])
         if not isinstance(node.get("release"), bool):
             raise ValueError("%s: 'release' must be true or false" % name)
         if node["release"]:
@@ -54,7 +76,25 @@ def load_map(path):
                     raise ValueError("%s: release node is missing %s" % (name, field))
             if not SEMVER_RE.match(node["initial-version"]):
                 raise ValueError("%s: initial-version %r is not semver" % (name, node["initial-version"]))
+    for key in ("global-overrides", "retired-paths"):
+        section = cmap.get(key, {})
+        if not isinstance(section, dict):
+            raise ValueError("%s: must be an object" % key)
+        cmap[key] = section
+    for path, names in cmap["global-overrides"].items():
+        _check_paths("global-overrides", [path])
+        if path.endswith("/"):
+            raise ValueError("global-overrides: key %r must be an exact file name" % path)
+        _check_node_names("global-overrides " + path, names, nodes)
+    for prefix, names in cmap["retired-paths"].items():
+        _check_paths("retired-paths", [prefix])
+        _check_node_names("retired-paths " + prefix, names, nodes)
     return cmap
+
+
+def load_map(path):
+    with open(str(path), encoding="utf-8") as handle:
+        return parse_map(handle.read())
 
 
 def _matches(file, paths):
@@ -68,15 +108,24 @@ def _matches(file, paths):
 
 
 def owner_nodes(file, cmap):
-    """None: global or unaccounted (select all); empty set: unowned."""
+    """None: global or unaccounted (select all); a set (possibly empty): accounted."""
+    for path, names in cmap.get("global-overrides", {}).items():
+        if file == path:
+            return set(names)
     if _matches(file, cmap["global"]) or _matches(file, cmap["ci-global"]):
         return None
     owners = {
         n for n, node in cmap["nodes"].items()
         if _matches(file, node["paths"]) or _matches(file, node.get("ci-paths", []))
     }
+    for prefix, names in cmap.get("retired-paths", {}).items():
+        if _matches(file, [prefix]):
+            owners.update(names)
     if owners:
         return owners
+    for node in cmap["nodes"].values():
+        if _matches(file, node.get("release-paths", [])):
+            return set()
     if _matches(file, cmap["unowned"]):
         return set()
     return None
@@ -105,9 +154,10 @@ def unaccounted(files, cmap):
 
 
 def release_paths(node, cmap):
-    """Node paths plus global; never ci-paths or ci-global (CI-only inputs must not cut releases)."""
+    """Node paths plus release-paths plus global; never ci-paths, ci-global, retired or legacy paths."""
+    entry = cmap["nodes"][node]
     out = []
-    for p in cmap["nodes"][node]["paths"] + cmap["global"]:
+    for p in entry["paths"] + entry.get("release-paths", []) + cmap["global"]:
         if p not in out:
             out.append(p)
     return out
