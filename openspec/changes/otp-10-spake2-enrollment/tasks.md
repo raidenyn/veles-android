@@ -67,5 +67,5 @@
 
 ## 8. Process
 
-- [ ] 8.1 Use Conventional Commits for the commits and the PR title and body (`pr-title` check); `feat` for the pairing work, with the `protocol/` limits change noted
+- [x] 8.1 Use Conventional Commits for the commits and the PR title and body (`pr-title` check); `feat` for the pairing work, with the `protocol/` limits change noted. Done: PR https://github.com/raidenyn/veles-android/pull/141, title `feat: SPAKE2 enrollment and trust activation (OTP-10)`, body notes the `protocol/` limits change and the release-component bump
 - [ ] 8.2 After verification, sync the delta specs to `openspec/specs/` and archive the change
