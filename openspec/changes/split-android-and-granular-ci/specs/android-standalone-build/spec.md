@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Android lives in an independent build under `android/`
-All Android application code and build configuration SHALL live under `android/`: the `app` module at `android/app/`, its own `settings.gradle.kts`, `build.gradle.kts`, `gradle.properties`, `gradle/libs.versions.toml`, `config/detekt/`, Spotless Kotlin configuration and `.editorconfig`. The Android build MUST NOT evaluate root build files (`build.gradle.kts`, `settings.gradle.kts`, `gradle.properties`); its only accesses outside `android/` are the `rust/` build, `protocol/` fixtures, the wrapper and `.java-version`, the shared hook script, generated outputs under the repository-root `build/`, Git metadata, and explicit signing inputs under `config/android_keys/`.
+All Android application code and build configuration SHALL live under `android/`: the `app` module at `android/app/`, its own `settings.gradle.kts`, `build.gradle.kts`, `gradle.properties`, `gradle/libs.versions.toml`, `config/detekt/`, Spotless Kotlin configuration and `.editorconfig`. The Android build MUST NOT evaluate root build files (`build.gradle.kts`, `settings.gradle.kts`, `gradle.properties`); its only accesses outside `android/` are the `rust/` build, `protocol/` fixtures, the wrapper and `.java-version`, the shared hook script, generated outputs under the repository-root `build/` and Git metadata. Within `android/` it may read the local, git-ignored fixture signing inputs under `android/config/android_keys/`.
 
 #### Scenario: Build alone
 - **WHEN** a developer runs `cd android && ./gradlew assembleDebug`
@@ -168,16 +168,20 @@ Building from `android/` SHALL produce the same `versionName` and `versionCode` 
 - **WHEN** the debug and release APKs are built before and after the move with the same signing configuration
 - **THEN** their signing certificate fingerprints are identical
 
-### Requirement: Signing keys stay in place
-`config/android_keys/` MUST NOT be moved, copied or deleted, and key material MUST NOT be committed. The documented fixture build SHALL use `--init-script ../config/android_keys/fixture-signing.gradle` from `android/`, and the owner of the local init script MUST confirm that it works with the new layout before the move merges.
+### Requirement: Signing inputs stay local and git-ignored
+Key material MUST NOT be committed. The owner approved an exception to the original "keys stay at the repository root" rule: after the move the local, git-ignored fixture assets live at `android/config/android_keys/`, are retained (never regenerated as a routine workaround), and the documented fixture build SHALL use `cd android && ./gradlew --init-script config/android_keys/fixture-signing.gradle ...` from `android/`. Release identity stays CI-only: it is generated only by master CI and is never present in a local checkout or this repository.
 
 #### Scenario: Fixture signing
 - **WHEN** a developer builds the fixture with the documented command from `android/`
-- **THEN** the key material is read from the repository-root `config/android_keys/` and is never committed
+- **THEN** the key material is read from the local, git-ignored `android/config/android_keys/` and is never committed
 
-#### Scenario: Owner confirmation
-- **WHEN** the migration pull request is ready to merge
-- **THEN** the owner's confirmation that the local init script works with the new layout is recorded in the pull request
+#### Scenario: Release identity is CI-only
+- **WHEN** a local build runs with the fixture init script
+- **THEN** it uses only the git-ignored fixture identity; release artifacts are signed exclusively by master CI
+
+#### Scenario: Approved exception
+- **WHEN** the migration is reviewed
+- **THEN** the owner-approved exception that moved the fixture assets to `android/config/android_keys/` is recorded, and the documented fixture command runs from `android/`
 
 ### Requirement: Android builds keep installing git hooks
 Every Android build SHALL keep running `installGitHooks` before `:app:preBuild` with the behaviour required by `commit-conventions` (set `core.hooksPath` only when unset, warn and leave other values unchanged, do nothing under `CI=true`). The task MUST come from one shared script applied by both the root build and the Android build.

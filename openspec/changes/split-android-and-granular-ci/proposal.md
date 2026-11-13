@@ -83,7 +83,8 @@ which checks exist; changing release signing, tags or publishing behaviour.
 - **Code and paths**: `app/` -> `android/app/`; live references to the protocol spec path (code comments, build
   files, protocol checks and manifests, READMEs; inventory in the design); path-sensitive consumers (`scripts/check-mac-comparisons.mjs`, `.dockerignore`, `.idea`, Android lint
   guards, `CLAUDE.md`, docs).
-- **Constraints**: frozen evidence logs are not rewritten; `config/android_keys/` is not moved or deleted and the
+- **Constraints**: frozen evidence logs are not rewritten; by owner-approved exception the local, git-ignored
+  fixture signing assets live at `android/config/android_keys/` (release identity stays CI-only), and the
   APK signing certificate and computed version must match the old layout; unreleased commits keep their release
   attribution.
 - **Risks** (tracked as design spikes): nested `includeBuild` of `rust/` from root and `android/`; shim wrapper

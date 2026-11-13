@@ -17,7 +17,9 @@
 //   node scripts/check-mac-comparisons.mjs --file FILE [--file FILE ...]
 //
 // `--scan DIR` is repeatable and scans exactly the given directories: each one
-// must exist, and a missing directory is an environment error (exit 2).
+// must exist, and a missing directory is an environment error (exit 2). A bare
+// `--scan` without an operand is also an environment error (exit 2), never an
+// implicit scan of the current directory.
 // `--file` and `--scan` cannot be combined (exit 2): silently preferring one
 // would leave the other set unchecked. Without `--scan`, the built-in
 // `DEFAULT_ROOTS` are scanned relative to `--root` (the current directory by
@@ -154,7 +156,14 @@ function main() {
             root = resolve(args[index + 1] ?? '.');
             index += 1;
         } else if (args[index] === '--scan') {
-            scans.push(resolve(args[index + 1] ?? '.'));
+            const operand = args[index + 1];
+            if (operand === undefined || operand === '') {
+                // A bare `--scan` must not fall back to the current directory: that
+                // would silently scan an unrelated tree (and pass in an empty one).
+                console.error('check-mac-comparisons: --scan requires a directory operand');
+                process.exit(2);
+            }
+            scans.push(resolve(operand));
             index += 1;
         } else if (args[index] === '--file') {
             explicit.push(resolve(args[index + 1] ?? '.'));

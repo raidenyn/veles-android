@@ -64,8 +64,9 @@ Details: `docs/windows-ble-poc.md` (Android) and `docs/desktop-ble-poc.md` (macO
 # OTP-02 contract: fresh Node crypto evidence plus Kotlin, Rust and both TypeScript consumers
 ./gradlew protocolCheck
 
-# Run a single unit test class
-./gradlew testDebugUnitTest --tests "me.nagaev.veles.otp.handlers.RegexMessageHandlerTest"
+# Run a single unit test class. The root `testDebugUnitTest` is a plain forwarding alias
+# and cannot accept `--tests`; run the filtered form from the independent Android build.
+cd android && ./gradlew testDebugUnitTest --tests "me.nagaev.veles.otp.handlers.RegexMessageHandlerTest"
 
 # Run instrumented tests (requires connected device or emulator)
 ./gradlew connectedDebugAndroidTest

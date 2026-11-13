@@ -83,6 +83,23 @@ test('scan of a regular file exits 2', async () => {
     });
 });
 
+test('a bare --scan or an empty operand exits 2', async () => {
+    await withTree(async (root) => {
+        // An empty directory would otherwise make `--scan` fall back to the
+        // current directory and exit 0, silently scanning nothing.
+        for (const args of [['--scan'], ['--scan', '']]) {
+            const result = runScript(root, ...args);
+
+            assert.equal(
+                result.status,
+                2,
+                `expected exit 2, got ${result.status}\nstderr: ${result.stderr}`,
+            );
+            assert.match(result.stderr, /--scan requires a directory operand/);
+        }
+    });
+});
+
 test('--file and --scan cannot be combined', async () => {
     await withTree(async (root) => {
         const sources = join(root, 'sources');

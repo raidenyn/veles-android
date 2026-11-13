@@ -22,7 +22,7 @@
 - Android legacy release paths are exactly `app/`, `build.gradle.kts`, `settings.gradle.kts`, `gradle.properties`, `gradle/libs.versions.toml` with epoch path `android/`; `config/detekt/` is never a legacy path.
 - `rust/ndk-version` is the only NDK version source; NDK lookup order `ANDROID_NDK_HOME`, `$ANDROID_SDK_ROOT/ndk/<version>`, `local.properties` `sdk.dir`.
 - Rust outputs stay under the repository-root `build/` (`build/rust/target`, `build/rust/host-jni`, `build/rust-tools`); JNI libraries go to `build/rust/jniLibs/<abi>`.
-- `config/android_keys/` is never moved, copied, regenerated or committed; APK certificate fingerprints are read from real output only.
+- Signing: no key material is committed. By owner-approved exception, the local, git-ignored fixture assets live at `android/config/android_keys/` and the documented command is `cd android && ./gradlew --init-script config/android_keys/fixture-signing.gradle ...`; release identity stays CI-only (generated only by master CI). APK certificate fingerprints are read from real output only.
 - Before every PR and every update push: `./gradlew spotlessCheck detekt lintDebug` (from `android/` after PR 2) and the raw `android.util.Log` guard of `check-android.yml`; validate the future squash message with `python3 -I scripts/commitlint.py --file <path>`.
 - Commits are Conventional Commits and end with the attribution trailer the harness requires; PR bodies end with the PR attribution line.
 - Frozen evidence (`native-bridge/feasibility/evidence/`), archived OpenSpec changes and dated plans/specs are never rewritten.

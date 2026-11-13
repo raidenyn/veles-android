@@ -25,10 +25,18 @@ This document describes prerequisites, build commands, installation instructions
 
 ## Building the Android App
 
-From the repository root:
+`android/` is an independent Gradle build. Both entry points work for the common commands:
+the thin root aliases below forward to the included Android build, and running from `android/`
+addresses the build directly. Use the `android/` form whenever a command needs a task option
+that the root alias cannot carry — notably `--tests` for a single unit test class.
 
 ### Debug Build
 ```bash
+# From the repository root (root alias)
+./gradlew assembleDebug
+
+# Directly in the Android build
+cd android
 ./gradlew assembleDebug
 ```
 The output APK is generated at:
@@ -38,7 +46,11 @@ android/app/build/outputs/apk/debug/app-debug.apk
 
 ### Run Unit Tests
 ```bash
+# From the repository root (root alias)
 ./gradlew testDebugUnitTest
+
+# A single test class: the root alias cannot accept --tests
+cd android && ./gradlew testDebugUnitTest --tests "me.nagaev.veles.otp.handlers.RegexMessageHandlerTest"
 ```
 
 ### Release Build

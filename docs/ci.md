@@ -46,7 +46,7 @@ What each check runs:
 | `web-extension / browser-tests` | `./gradlew rustWasm`, `npm run build`, Playwright Chromium, `npm run test:browser` |
 | `rust / lint` | `rustFormat`, `rustLint` (host, WASM and Android targets) |
 | `rust / unit-tests` | `rustTest` (native and WASM) |
-| `rust / jni-integration` | the clean contract in one job, in this order: `:app:assembleDebug`, `verify-apk-jni.sh`, `rustHostJni`, `rustWasm`, extension `npm ci && npm run build`, `./gradlew clean`, `assert-clean.sh`, `:app:assembleDebug`, `verify-apk-jni.sh`, then the Rust tool cache refill |
+| `rust / jni-integration` | the clean contract in one job, in this order: `assembleDebug` (root alias), `verify-apk-jni.sh`, `rustHostJni`, `rustWasm`, extension `npm ci && npm run build`, `./gradlew clean`, `assert-clean.sh`, `assembleDebug` (root alias), `verify-apk-jni.sh`, then the Rust tool cache refill |
 | `protocol / contract-tests` | `protocolCheck` |
 | `native-host / lint` | `bridgeHostToolchainCheck`, `bridgeHostFormat`, `bridgeHostLint` (Linux) |
 | `native-host / unit-tests (linux)` | `bridgeHostTest` |

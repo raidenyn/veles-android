@@ -152,10 +152,11 @@ report 3 "cd rust && ../gradlew help configures the Rust build alone"
 
 # 4. Each shared Rust task executes once -------------------------------------------------
 # The root aliases and the Android build both reach into the included Rust build; one real
-# root invocation must execute every included Rust task exactly once. `--rerun-tasks` makes
-# the count independent of a warm build (an up-to-date task prints no `> Task` line), and
-# `--no-parallel` keeps the plain console from re-printing a task header when output from
-# parallel work interleaves, so each `> Task :rust:` line is one execution.
+# root invocation must execute every included Rust task exactly once. `--rerun-tasks` forces
+# each task to execute instead of Gradle skipping it as up to date, so the count reflects real
+# executions even after a warm build; `--no-parallel` keeps the plain console from re-printing
+# a task header when output from parallel work interleaves, so each `> Task :rust:` line is
+# one execution.
 begin_check
 log="$workdir/root-rust-graph.log"
 if ! ./gradlew assembleDebug testDebugUnitTest rustHostJni rustJni --console=plain \
@@ -206,6 +207,20 @@ if ! ./gradlew --dry-run --console=plain \
     tail_log "$log" 40 >>"$problems"
 fi
 report 6 "the root aliases (including spotlessApply and clean) resolve with --dry-run"
+
+# 7. The documented filtered unit-test command resolves ----------------------------------
+# `--tests` is a Test-task option and the root `testDebugUnitTest` is a plain forwarding
+# alias that rejects it, so the documented single-class command runs from `android/`
+# (CLAUDE.md, BUILD.md). `--dry-run` proves the command line is accepted and the task graph
+# resolves without running the suite.
+begin_check
+log="$workdir/android-filtered-tests.log"
+if ! (cd "$root/android" && ./gradlew testDebugUnitTest --dry-run --console=plain \
+        --tests "me.nagaev.veles.otp.handlers.RegexMessageHandlerTest") >"$log" 2>&1; then
+    add_problem "cd android && ./gradlew testDebugUnitTest --tests ... --dry-run failed"
+    tail_log "$log" 40 >>"$problems"
+fi
+report 7 "the documented filtered unit-test command resolves from android/ with --dry-run"
 
 if [ "$failures" -eq 0 ]; then
     echo "PASS: the Android layout acceptance checks all passed"

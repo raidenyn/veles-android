@@ -402,7 +402,7 @@ android/app/build/generated/jniLibs  android/app/build/outputs/apk
 | Rust compiler/components/targets | `rust/rust-toolchain.toml` |
 | Rust dependencies | `rust/Cargo.lock` plus exact direct pins in crate manifests |
 | Rust auxiliary CLIs | `rust/toolchain-tools.toml` (`cargo install --locked`) |
-| Android NDK | `gradle/libs.versions.toml` `ndk`, propagated to AGP and `verify/Dockerfile` |
+| Android NDK | `rust/ndk-version` (read by the Android build's `ndkVersion` and by the Rust build; no catalog entry) |
 | Native-bridge Tauri CLI & TS tooling | `native-bridge/package.json` (exact-pinned) + committed `package-lock.json` |
 | Native-bridge Rust crate & deps | `native-bridge/src-tauri/Cargo.toml` + committed `Cargo.lock` |
 | Verification cargo tools (cargo-cyclonedx, cargo-deny) | `verify/cargo-tools.toml` (`cargo install --locked --version`) |

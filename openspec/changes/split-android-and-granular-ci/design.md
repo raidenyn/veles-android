@@ -274,11 +274,12 @@ inertness after a new tag, each asserting the planned versions before and after 
   frozen evidence and archived changes): `.dockerignore`, `.idea`, `verify/` scripts, `publish-release.yml` and
   `build-android.yml` output paths (`android/app/build/outputs/...`), `release-build.yml`, `docs/*`, `CLAUDE.md`,
   `BUILD.md`, `CONTRIBUTING.md`, `docs/ci.md` job table (including the missing `release-hook-guard` row).
-- Signing: `config/android_keys/` is neither moved nor deleted and stays at the repository root. The tracked
-  documentation changes to `cd android && ./gradlew --init-script ../config/android_keys/fixture-signing.gradle ...`.
-  The local, git-ignored init script is not in the repository, so its compatibility with the new layout is verified
-  by the owner on the machine that holds it before PR 2 merges; certificate fingerprints are compared before any
-  install, per `CLAUDE.md`.
+- Signing: no key material is committed. By owner-approved exception, the local, git-ignored fixture assets
+  live at `android/config/android_keys/` after the move, and the tracked documentation uses
+  `cd android && ./gradlew --init-script config/android_keys/fixture-signing.gradle ...`. The local init
+  script is not in the repository, so its compatibility with the new layout is verified by the owner on
+  the machine that holds it before PR 2 merges; certificate fingerprints are compared before any install,
+  per `CLAUDE.md`. Release identity stays CI-only (generated only by master CI).
 
 ## Risks / Trade-offs
 
