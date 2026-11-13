@@ -87,6 +87,9 @@ private fun PairingDebugContent() {
             Text(stringResource(R.string.pairing_debug_closed))
         }
         Text(stringResource(R.string.pairing_debug_id, state.pairingId.orEmpty()))
+        state.fingerprint?.let { fingerprint ->
+            Text(stringResource(R.string.pairing_debug_fingerprint, fingerprint))
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = {

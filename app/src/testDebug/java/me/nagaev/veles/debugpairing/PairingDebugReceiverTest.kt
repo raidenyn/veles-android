@@ -4,6 +4,7 @@ import me.nagaev.veles.pairing.PairingWindow
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -63,5 +64,36 @@ class PairingDebugReceiverTest {
         assertFalse("the window is closed", PairingDebugHooks.state.value.open)
         assertFalse("the result never echoes the code", results.single().contains(code))
         assertFalse("the log never echoes the code", logs.single().contains(code))
+    }
+
+    @Test
+    fun cancel_closes_window_and_invokes_the_attached_callback_once() {
+        val window = PairingWindow({ 1_000L })
+        var cancels = 0
+        PairingDebugHooks.attach(window) { cancels += 1 }
+        window.open()
+
+        PairingDebugHooks.cancel()
+
+        assertFalse("the debug cancel closes the window", window.isOpen())
+        assertEquals("the enrollment cancel runs exactly once", 1, cancels)
+    }
+
+    @Test
+    fun fingerprint_survives_the_window_closing_and_clears_on_a_new_attach() {
+        val window = PairingWindow({ 1_000L })
+        PairingDebugHooks.attach(window)
+        PairingDebugHooks.start()
+        PairingDebugHooks.publishFingerprint("ABCD EF01 2345")
+
+        // OTP2-REC-011: the verified cB closes the window; the public value stays on screen.
+        window.cancel()
+        PairingDebugHooks.refresh()
+        val closed = PairingDebugHooks.state.value
+        assertFalse("the window is closed", closed.open)
+        assertEquals("the fingerprint survives the window closing", "ABCD EF01 2345", closed.fingerprint)
+
+        PairingDebugHooks.attach(PairingWindow({ 1_000L }))
+        assertNull("a new window starts without a fingerprint", PairingDebugHooks.state.value.fingerprint)
     }
 }

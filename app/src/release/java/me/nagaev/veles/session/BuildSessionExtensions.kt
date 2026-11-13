@@ -16,9 +16,13 @@ object BuildSessionExtensions {
     @Suppress("UnusedParameter")
     fun attach(host: SessionHost) = Unit
 
-    /** Release builds can never open a pairing window (design D5). */
+    /** Release builds can never open (or cancel) a pairing window (design D5). */
     @Suppress("UnusedParameter")
-    internal fun attachPairing(pairing: PairingEndpoint) = Unit
+    internal fun attachPairing(pairing: PairingEndpoint, onCancel: () -> Unit) = Unit
+
+    /** Release builds have no fingerprint surface. */
+    @Suppress("UnusedParameter")
+    internal fun publishPairFingerprint(value: String) = Unit
 
     internal fun detachPairing() = Unit
 }

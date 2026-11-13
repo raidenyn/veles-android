@@ -14,6 +14,8 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
+import me.nagaev.veles.pairing.Outgoing
+import me.nagaev.veles.pairing.PairingConnection
 import me.nagaev.veles.session.ApplicationHandler
 import me.nagaev.veles.session.Direction
 import me.nagaev.veles.session.FakeClock
@@ -833,9 +835,87 @@ class SessionHostTest {
         assertFalse(host.hasOpenSession("00".repeat(16)))
     }
 
+    @Test
+    fun cancelPairingsCancelsOnceSendsDisconnectAndClosesTheTransport() = runTest {
+        val client = TestClient()
+        val pairing = FakePairingConnection()
+        val host = SessionHost(
+            backgroundScope,
+            wire,
+            { engine(client) },
+            trust,
+            { clock.now },
+            pairingFactory = { pairing },
+        )
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+        host.onRecord(gen, byteArrayOf(PAIRING_FIRST_FRAME), admission())
+        runCurrent()
+        assertEquals("the generation selected the pairing path", 1, pairing.frames)
+
+        host.cancelPairings()
+        runCurrent()
+
+        assertEquals("the machine cancel runs exactly once", 1, pairing.cancels)
+        assertEquals("the host sends the machine's disconnect by tearing down", 1, pairing.disconnects)
+        assertEquals("the transport is closed", Wire.Closed(gen), wire.calls.last())
+
+        val next = ConnectionGeneration("bb", 2)
+        connect(host, next)
+        authenticate(host, next, client)
+        assertTrue(
+            "the host stays usable after cancel",
+            host.authenticatedSessions().any { it.generation == next },
+        )
+        host.shutdown()
+    }
+
+    @Test
+    fun cancelPairingsIsSafeWithoutAPairingConnection() = runTest {
+        val client = TestClient()
+        val host = host { engine(client) }
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+
+        host.cancelPairings()
+        runCurrent()
+
+        assertTrue("a reconnect generation is untouched", host.authenticatedSessions().isEmpty())
+        assertTrue("no transport close for a non-pairing generation", wire.calls.none { it is Wire.Closed })
+        host.shutdown()
+    }
+
+    private class FakePairingConnection : PairingConnection {
+        var frames = 0
+            private set
+        var cancels = 0
+            private set
+        var disconnects = 0
+            private set
+
+        override suspend fun onFrame(bytes: ByteArray): List<Outgoing> {
+            frames++
+            return emptyList()
+        }
+
+        override suspend fun onTick(): List<Outgoing> = emptyList()
+
+        override suspend fun onDisconnect() {
+            disconnects++
+        }
+
+        override suspend fun cancel(): List<Outgoing> {
+            cancels++
+            return listOf(Outgoing.Disconnect)
+        }
+    }
+
     private companion object {
         /** One more than the worker queue capacity: the last attempt must be refused at admission. */
         const val SATURATION_ATTEMPTS = 33
+
+        /** Any `0x02`-`0x05` first frame selects the pairing path. */
+        const val PAIRING_FIRST_FRAME: Byte = 0x03
 
         fun wireTypeOf(bytes: ByteArray): Int? {
             if (bytes.size < 5) return null

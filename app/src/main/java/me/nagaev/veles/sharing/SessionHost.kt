@@ -304,6 +304,38 @@ class SessionHost(
         remaining.forEach { teardownLocked(it) }
     }
 
+    /**
+     * Explicit user/debug cancel of every live enrollment connection: each pairing machine
+     * deletes the pending record it created, then the generation is torn down and its
+     * transport closed. Unlike [shutdown], this is the only path that deletes durable
+     * incomplete records; service shutdown keeps them for recovery. Safe when no generation
+     * has a pairing machine.
+     */
+    suspend fun cancelPairings() {
+        val lives = synchronized(registry) {
+            sessions.values.filter { !it.ended && it.pairing != null }
+        }
+        lives.forEach { live ->
+            live.mutex.withLock {
+                if (!isCurrent(live)) return@withLock
+                val pairing = live.pairing ?: return@withLock
+                try {
+                    applyPairing(live, pairing.cancel())
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: Exception) {
+                    failedLocked(live)
+                }
+                // The machine returns a disconnect, which [applyPairing] already applies. A
+                // machine that returns no terminal item is still torn down here.
+                if (isCurrent(live)) {
+                    teardownLocked(live)
+                    transport.close(live.gen)
+                }
+            }
+        }
+    }
+
     private fun enqueue(live: Live, step: Step): Boolean = !live.ended && live.queue.trySend(step).isSuccess
 
     private suspend fun runTicks(live: Live) {

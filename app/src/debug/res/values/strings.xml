@@ -7,6 +7,7 @@
     <string name="pairing_debug_code">Pairing code: %1$s</string>
     <string name="pairing_debug_closed">No pairing window. Press Start pairing window.</string>
     <string name="pairing_debug_id">Pairing id: %1$s</string>
+    <string name="pairing_debug_fingerprint">Pairing fingerprint: %1$s</string>
     <string name="pairing_debug_start">Start pairing window</string>
     <string name="pairing_debug_cancel">Cancel pairing window</string>
     <string name="pairing_debug_peer">Peer installation id</string>

@@ -203,6 +203,7 @@ val releaseHookForbidden = listOf(
     "Record cleared",
     "Clear failed or refused",
     "Pairing id:",
+    "Pairing fingerprint",
     "Start Bluetooth sharing first",
 )
 

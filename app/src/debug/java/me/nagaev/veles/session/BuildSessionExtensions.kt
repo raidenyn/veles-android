@@ -48,9 +48,14 @@ object BuildSessionExtensions {
         DebugProbeRuntime.host = host
     }
 
-    /** OTP-10 D5: expose the production window to the debug screen and broadcasts. */
-    internal fun attachPairing(pairing: PairingEndpoint) {
-        PairingDebugHooks.attach(pairing.window)
+    /** OTP-10 D5: expose the production window and its cancel to the debug surface. */
+    internal fun attachPairing(pairing: PairingEndpoint, onCancel: () -> Unit) {
+        PairingDebugHooks.attach(pairing.window, onCancel)
+    }
+
+    /** OTP2-REC-011: publish the public pair fingerprint to the debug screen. */
+    internal fun publishPairFingerprint(value: String) {
+        PairingDebugHooks.publishFingerprint(value)
     }
 
     internal fun detachPairing() {

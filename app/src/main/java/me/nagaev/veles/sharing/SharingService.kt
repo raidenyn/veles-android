@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import me.nagaev.veles.BuildConfig
 import me.nagaev.veles.R
@@ -150,7 +151,11 @@ internal class SharingService : Service() {
         sessionScope = scope
         // One window and one admission for the service; the native core is resolved only
         // when a pairing_request actually starts an execution.
-        val pairing = PairingEndpoint(trust = repository, proofs = proofs)
+        val pairing = PairingEndpoint(
+            trust = repository,
+            proofs = proofs,
+            onPairFingerprint = BuildSessionExtensions::publishPairFingerprint,
+        )
         val host = SessionHost(
             scope,
             transport,
@@ -172,7 +177,9 @@ internal class SharingService : Service() {
         this.pairing = pairing
         this.host = host
         BuildSessionExtensions.attach(host)
-        BuildSessionExtensions.attachPairing(pairing)
+        BuildSessionExtensions.attachPairing(pairing) {
+            scope.launch { host.cancelPairings() }
+        }
         return host
     }
 
@@ -260,6 +267,7 @@ internal class PairingEndpoint(
     private val trust: InstallationTrustRepository,
     private val proofs: ProofRegistry,
     coreFactory: () -> PairingCore = { VelesPairingCore() },
+    private val onPairFingerprint: (String) -> Unit = {},
 ) {
     private val limits = PairingLimits()
     private val core: PairingCore by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { coreFactory() }
@@ -277,6 +285,7 @@ internal class PairingEndpoint(
         clock = clock,
         limits = limits,
         proofs = proofs,
+        onPairFingerprint = onPairFingerprint,
     )
 
     /** Erases the pairing code and the pairing id; live executions are closed by the host. */
