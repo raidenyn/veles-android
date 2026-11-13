@@ -68,4 +68,4 @@
 ## 8. Process
 
 - [x] 8.1 Use Conventional Commits for the commits and the PR title and body (`pr-title` check); `feat` for the pairing work, with the `protocol/` limits change noted. Done: PR https://github.com/raidenyn/veles-android/pull/141, title `feat: SPAKE2 enrollment and trust activation (OTP-10)`, body notes the `protocol/` limits change and the release-component bump
-- [ ] 8.2 After verification, sync the delta specs to `openspec/specs/` and archive the change
+- [x] 8.2 After verification, sync the delta specs to `openspec/specs/` and archive the change. Done: the six delta specs were merged into `openspec/specs/` (four new capabilities created, `protected-record-session` and `reconnect-authentication` requirements replaced/added) and the change directory was moved to `openspec/changes/archive/2026-11-13-otp-10-spake2-enrollment/`
