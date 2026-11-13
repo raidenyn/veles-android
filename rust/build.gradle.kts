@@ -90,8 +90,18 @@ fun cargoRegistryRemapRustFlags(): String {
 // The NDK version is defined once in rust/ndk-version. The directory is resolved
 // at execution time (never at configuration time, so a machine without the NDK can
 // still configure and run the non-Android Rust tasks), in this order:
-// ANDROID_NDK_HOME, then $ANDROID_SDK_ROOT/ndk/<version>, then `sdk.dir` of the
-// repository-root local.properties.
+// ANDROID_NDK_HOME, then $ANDROID_SDK_ROOT/ndk/<version>, then
+// $ANDROID_HOME/ndk/<version>, then `sdk.dir` of the repository-root
+// local.properties, then `sdk.dir` of android/local.properties (the file the
+// independent Android build reads).
+fun sdkDirNdkLocation(propertiesFile: File): Pair<String, File>? {
+    if (!propertiesFile.isFile) return null
+    val properties = Properties().apply { propertiesFile.inputStream().use(::load) }
+    return properties.getProperty("sdk.dir")?.takeIf { it.isNotBlank() }?.let {
+        propertiesFile.parentFile.path + " sdk.dir" to File(it, "ndk/$ndkVersion")
+    }
+}
+
 fun ndkSearchLocations(): List<Pair<String, File>> {
     val locations = mutableListOf<Pair<String, File>>()
     System.getenv("ANDROID_NDK_HOME")?.takeIf { it.isNotBlank() }?.let {
@@ -100,12 +110,14 @@ fun ndkSearchLocations(): List<Pair<String, File>> {
     System.getenv("ANDROID_SDK_ROOT")?.takeIf { it.isNotBlank() }?.let {
         locations += "ANDROID_SDK_ROOT" to File(it, "ndk/$ndkVersion")
     }
-    val localProperties = repoRoot.file("local.properties").asFile
-    if (localProperties.isFile) {
-        val properties = Properties().apply { localProperties.inputStream().use(::load) }
-        properties.getProperty("sdk.dir")?.takeIf { it.isNotBlank() }?.let {
-            locations += "local.properties sdk.dir" to File(it, "ndk/$ndkVersion")
-        }
+    System.getenv("ANDROID_HOME")?.takeIf { it.isNotBlank() }?.let {
+        locations += "ANDROID_HOME" to File(it, "ndk/$ndkVersion")
+    }
+    listOf(
+        repoRoot.file("local.properties").asFile,
+        repoRoot.file("android/local.properties").asFile,
+    ).forEach { propertiesFile ->
+        sdkDirNdkLocation(propertiesFile)?.let { locations += it }
     }
     return locations
 }
@@ -114,7 +126,10 @@ fun resolveNdkDirectory(): File {
     val locations = ndkSearchLocations()
     locations.firstOrNull { it.second.isDirectory }?.let { return it.second }
     val searched = locations.joinToString(separator = ", ") { it.second.absolutePath }
-        .ifEmpty { "(no ANDROID_NDK_HOME, ANDROID_SDK_ROOT or local.properties sdk.dir)" }
+        .ifEmpty {
+            "(no ANDROID_NDK_HOME, ANDROID_SDK_ROOT, ANDROID_HOME, " +
+                "repository-root local.properties sdk.dir or android/local.properties sdk.dir)"
+        }
     throw GradleException("NDK $ndkVersion not found; searched: $searched")
 }
 
@@ -610,6 +625,6 @@ tasks.register("rustNdkVersion") {
 // the JNI tasks would use without running cargo.
 tasks.register("rustNdkDir") {
     group = "rust"
-    description = "Prints the resolved Android NDK directory (ANDROID_NDK_HOME, SDK ndk/<version>, local.properties sdk.dir)."
+    description = "Prints the resolved Android NDK directory (ANDROID_NDK_HOME, ANDROID_SDK_ROOT/ndk/<version>, ANDROID_HOME/ndk/<version>, local.properties sdk.dir)."
     doLast { println(resolveNdkDirectory().absolutePath) }
 }

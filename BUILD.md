@@ -14,10 +14,11 @@ This document describes prerequisites, build commands, installation instructions
   sdkmanager "ndk;29.0.14206865"
   ```
   The version is defined once in [`rust/ndk-version`](rust/ndk-version); the Rust build finds it
-  through `ANDROID_NDK_HOME`, then `$ANDROID_SDK_ROOT/ndk/<version>`, then the `sdk.dir` of
-  `local.properties`. The independent Android build reads the SDK location from
-  `android/local.properties` (or `ANDROID_HOME`/`ANDROID_SDK_ROOT`); a repository-root
-  `local.properties` is not used by it.
+  through `ANDROID_NDK_HOME`, then `$ANDROID_SDK_ROOT/ndk/<version>`, then
+  `$ANDROID_HOME/ndk/<version>`, then the `sdk.dir` of the repository-root `local.properties`,
+  then the `sdk.dir` of `android/local.properties`. The independent Android build reads the SDK
+  location from `android/local.properties` (or `ANDROID_HOME`/`ANDROID_SDK_ROOT`); a
+  repository-root `local.properties` is not used by it.
 - **ADB** (Android Debug Bridge) for deploying to a physical device or emulator.
 - *(Optional, for external toolchains)*:
   - **Node.js** (LTS) & npm for `web-extension/`.

@@ -39,6 +39,7 @@ jobs:
         run: |
           NDK_VERSION="$(./gradlew -q rustNdkVersion)"
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
       # Optional local-only tag so the derived version matches a planned
       # release. The tag is never pushed.
       - name: Create local version tag

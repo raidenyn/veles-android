@@ -386,7 +386,7 @@ build/rust                  build/rust-tools
 web-extension/dist          web-extension/rust-wasm/pkg
 native-bridge/src-tauri/target   native-bridge/dist
 native-bridge/host/target        native-bridge/host/build
-android/app/build/generated/jniLibs  android/app/build/outputs/apk
+build/rust/jniLibs  android/app/build/outputs/apk
 ```
 
 ## Pinned toolchain
@@ -440,7 +440,7 @@ Generated output boundaries are intentionally narrow:
 - **Local caches**: `build/rust/target` (the Cargo build cache) and `build/rust-tools`
   (the auxiliary-CLI install cache) live under the top-level `build/` directory, which is
   already gitignored; `rust/scripts/assert-clean.sh` asserts none of these generated paths
-  (nor `android/app/build/generated/jniLibs`, nor `android/app/build/outputs/apk`) survive `./gradlew clean`.
+  (nor `build/rust/jniLibs`, nor `android/app/build/outputs/apk`) survive `./gradlew clean`.
 
 The web-extension's npm dependencies are exact-pinned in `web-extension/package.json`
 (no `^`/`~`) and resolved via the committed `package-lock.json`. The deterministic
