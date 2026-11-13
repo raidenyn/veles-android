@@ -15,7 +15,9 @@ This document describes prerequisites, build commands, installation instructions
   ```
   The version is defined once in [`rust/ndk-version`](rust/ndk-version); the Rust build finds it
   through `ANDROID_NDK_HOME`, then `$ANDROID_SDK_ROOT/ndk/<version>`, then the `sdk.dir` of
-  `local.properties`.
+  `local.properties`. The independent Android build reads the SDK location from
+  `android/local.properties` (or `ANDROID_HOME`/`ANDROID_SDK_ROOT`); a repository-root
+  `local.properties` is not used by it.
 - **ADB** (Android Debug Bridge) for deploying to a physical device or emulator.
 - *(Optional, for external toolchains)*:
   - **Node.js** (LTS) & npm for `web-extension/`.
