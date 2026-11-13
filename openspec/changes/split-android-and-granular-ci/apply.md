@@ -2,13 +2,13 @@
 
 - **Change:** `split-android-and-granular-ci`
 - **Iteration:** 3
-- **Timestamp:** 2026-11-13T19:10:36Z
+- **Timestamp:** 2026-11-13T19:41:36Z
 - **Worktree:** `/home/dev/.t3/worktrees/veles-android/t3-f088aff8-69ca8b3feb2c66da`
 - **Branch:** `refactor/android-gradle-build`
-- **Commit range:** `8de11f6..3fb12bf` (PR 2), plus this artifact commit
+- **Commit range:** `8de11f6..c84582b` (PR 2), plus this artifact commit
 - **Pull requests:** https://github.com/raidenyn/veles-android/pull/143 (PR 1, merged as `5ca8bfa`); https://github.com/raidenyn/veles-android/pull/146 (PR 1b, merged as `8de11f6`); https://github.com/raidenyn/veles-android/pull/147 (PR 2, open)
-- **Tasks completed:** 51 of 57 (PR 1 tasks 1.1-2.11; PR 1b 3.1-3.6; PR 2 4.1-5.18)
-- **Remaining tasks:** 5.19 (all-node merge gate for PR 2), 6.1-6.3 (PR 3), 7.1-7.2 (verify/archive and follow-up)
+- **Tasks completed:** 52 of 57 (PR 1 tasks 1.1-2.11; PR 1b 3.1-3.6; PR 2 4.1-5.19)
+- **Remaining tasks:** 6.1-6.3 (PR 3), 7.1-7.2 (verify/archive and follow-up)
 - **Executor:** subagent-driven-development, with role-routed implementer and reviewer subagents; task reviews after every plan task and a final whole-branch review by Sol plus one scoped fix-wave re-review.
 
 ## State

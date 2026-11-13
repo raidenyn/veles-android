@@ -67,7 +67,7 @@ Commit discipline for this group: 5.1 and 5.2 are prepared in the old layout and
 - [x] 5.16 Verify identity: build debug and release APKs on the same commit with the previous and the new layout and compare `versionName`, `versionCode` and signing certificate fingerprints read from real output; run `assert-clean.sh` and the clean contract; run the planner CLI against the PR head
 - [x] 5.17 Run the mandatory local checks from `android/` (and the root-only checks that remain), validate the future squash message with commitlint (the PR body notes the migration commit type so release attribution is not distorted), record the rollback (revert the squash commit, legacy entry inert) in the PR body, and open PR 2 titled `refactor(android): move the app to an independent android/ Gradle build`
 - [x] 5.18 Ask the owner to confirm that the local `config/android_keys/fixture-signing.gradle` works from `android/` and record the confirmation in the PR (never copy or commit key material)
-- [ ] 5.19 Merge gate before merging PR 2: every CI node green on the PR (including `rust / jni-integration`, `protocol / contract-tests` and `tooling / unit-tests`) and the owner confirmation of 5.18 recorded
+- [x] 5.19 Merge gate before merging PR 2: every CI node green on the PR (including `rust / jni-integration`, `protocol / contract-tests` and `tooling / unit-tests`) and the owner confirmation of 5.18 recorded
 
 ## 6. PR 3: node-owned Android workflows
 
