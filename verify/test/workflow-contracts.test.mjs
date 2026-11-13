@@ -3148,6 +3148,25 @@ function stepWorkingDirectory(step) {
   return entries[0]?.value.trim() ?? null;
 }
 
+// The key/value entries nested directly under a step's `with:` mapping. Action inputs must live here;
+// a step-level key with the same name would be an invalid action step.
+function stepWithEntries(step) {
+  const withIndex = step.findIndex((line) => {
+    const entry = mappingEntry(line);
+    return entry?.key === 'with' && entry.value.trim() === '';
+  });
+  if (withIndex === -1) return null;
+  const withIndent = mappingEntry(step[withIndex]).indent;
+  const entries = [];
+  for (let index = withIndex + 1; index < step.length; index += 1) {
+    const line = step[index];
+    if (line.trim() && line.match(/^\s*/)[0].length <= withIndent) break;
+    const entry = mappingEntry(line);
+    if (entry && entry.indent === withIndent + 2) entries.push({ key: entry.key, value: entry.value.trim() });
+  }
+  return entries;
+}
+
 function gradleSteps(jobText) {
   return steps(jobText).filter((step) => /(?:^|\s)\.\/gradlew(?:\s|$)/.test(stepRunText(step)));
 }
@@ -3162,11 +3181,18 @@ function assertAndroidCheckLayout(source) {
       assert.equal(stepWorkingDirectory(step), 'android', `check-android/${job} Gradle steps must run from android/`);
     }
   }
-  // The emulator runner executes its script from android/ through its working-directory input.
+  // The emulator runner executes its script from android/ through its working-directory input. Both
+  // are action inputs inside `with:`, never step-level keys: a step-level `working-directory` would be
+  // an invalid action step that ignores the directory.
   const emulator = steps(jobs['instrumented-tests']).find((step) => stepUses(step).some((use) => use.startsWith('reactivecircus/android-emulator-runner')));
   assert.ok(emulator, 'instrumented-tests must use the Android emulator runner');
-  assert.match(emulator.join('\n'), /^ *working-directory: android$/m, 'the emulator script must run from android/');
-  assert.match(emulator.join('\n'), /^ *script: \.\/gradlew connectedDebugAndroidTest$/m, 'the emulator script must run the Android-root task');
+  const withEntries = stepWithEntries(emulator);
+  assert.ok(withEntries, 'the emulator runner must declare a with: mapping');
+  assert.deepEqual(withEntries.filter((entry) => entry.key === 'working-directory'), [{ key: 'working-directory', value: 'android' }], 'the emulator working-directory must be an action input inside with:');
+  assert.deepEqual(withEntries.filter((entry) => entry.key === 'script'), [{ key: 'script', value: './gradlew connectedDebugAndroidTest' }], 'the emulator script input must run the Android-root task');
+  const usesIndent = mappingEntry(emulator.find((line) => mappingEntry(line)?.key === 'uses')).indent;
+  const stepLevelKeys = emulator.map(mappingEntry).filter((entry) => entry?.indent === usesIndent).map((entry) => entry.key);
+  assert.ok(!stepLevelKeys.includes('working-directory') && !stepLevelKeys.includes('script'), 'the emulator runner inputs must not be step-level keys');
 
   // Repository guards run from the root and name the relocated sources.
   const mac = stepContaining(jobs.lint, 'check-mac-comparisons');
@@ -3202,6 +3228,9 @@ test('check-android runs Gradle from android and guards from the root', async ()
     'web pairing guard back in android': (text) => text.replace('          exit $fail\n      - run: ./gradlew lintDebug', '          if grep -rnE "x" web-extension/src/debug --include=*.ts; then exit 1; fi\n          exit $fail\n      - run: ./gradlew lintDebug'),
     'root host-JNI prebuild': (text) => text.replace('      - run: ./gradlew testDebugUnitTest\n        working-directory: android\n', '      - run: ./gradlew rustHostJni\n      - run: ./gradlew testDebugUnitTest\n        working-directory: android\n'),
     'ndk from the root': (text) => text.replace('        working-directory: android\n        run: |\n          NDK_VERSION="$(./gradlew -q rustNdkVersion)"', '        run: |\n          NDK_VERSION="$(./gradlew -q rustNdkVersion)"'),
+    'emulator directory at step level': (text) => text
+      .replace('      - uses: reactivecircus/android-emulator-runner@4c44018e59b437e86cdfc41da381398f93ed8808 # v2\n        with:\n', '      - uses: reactivecircus/android-emulator-runner@4c44018e59b437e86cdfc41da381398f93ed8808 # v2\n        working-directory: android\n        with:\n')
+      .replace('          working-directory: android\n          script: ./gradlew connectedDebugAndroidTest\n', '          script: ./gradlew connectedDebugAndroidTest\n'),
     'stale upload path': (text) => text.replace('path: android/app/build/test-results/', 'path: app/build/test-results/'),
   };
   for (const [label, mutate] of Object.entries(mutations)) {
@@ -3267,6 +3296,14 @@ test('tooling resolves every root alias with --dry-run and the inventory disting
     const owners = inventoryOwners(sources, executed);
     assert.equal(owners.length, 1, `${executed} must still be executed in exactly one check workflow, found ${owners.join(', ') || 'none'}`);
   }
+
+  // A dry run is not an execution: an inline fixture proves the filter itself. Without --dry-run the
+  // same command owns the alias, so removing the filter would be detected here.
+  const dryRunFixture = 'jobs:\n  a:\n    steps:\n      - run: ./gradlew --dry-run testDebugUnitTest\n';
+  assert.deepEqual(inventoryOwners({ 'fixture.yml': dryRunFixture }, 'testDebugUnitTest'), [], 'a --dry-run command must not count as an execution');
+  const executedFixture = dryRunFixture.replace(' --dry-run', '');
+  assert.notEqual(executedFixture, dryRunFixture, 'the fixture mutation must remove --dry-run');
+  assert.deepEqual(inventoryOwners({ 'fixture.yml': executedFixture }, 'testDebugUnitTest'), ['fixture.yml'], 'without --dry-run the same command must own the alias');
 
   // Drop the --dry-run and the same alias becomes an execution, so the inventory reports two owners.
   const executed = tooling.replace('        run: sh verify/check-root-aliases.sh --self-test\n', '        run: sh verify/check-root-aliases.sh --self-test\n      - run: ./gradlew testDebugUnitTest\n');
