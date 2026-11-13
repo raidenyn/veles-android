@@ -96,4 +96,42 @@ class PairingDebugReceiverTest {
         PairingDebugHooks.attach(PairingWindow({ 1_000L }))
         assertNull("a new window starts without a fingerprint", PairingDebugHooks.state.value.fingerprint)
     }
+
+    @Test
+    fun a_new_window_clears_the_previous_pair_fingerprint() {
+        val window = PairingWindow({ 1_000L })
+        PairingDebugHooks.attach(window)
+        assertTrue("the first window opens", PairingDebugHooks.start())
+        PairingDebugHooks.publishFingerprint("ABCD EF01 2345")
+
+        // OTP2-REC-011: a closed window keeps its public value...
+        window.cancel()
+        PairingDebugHooks.refresh()
+        assertEquals(
+            "the fingerprint survives the window closing",
+            "ABCD EF01 2345",
+            PairingDebugHooks.state.value.fingerprint,
+        )
+
+        // ...but the next successfully opened window is a new pair.
+        assertTrue("the next window opens", PairingDebugHooks.start())
+        val reopened = PairingDebugHooks.state.value
+        assertTrue("the new window is open", reopened.open)
+        assertNull("the previous pair's fingerprint is no longer current", reopened.fingerprint)
+    }
+
+    @Test
+    fun a_refused_start_keeps_the_fingerprint() {
+        val window = PairingWindow({ 1_000L })
+        PairingDebugHooks.attach(window)
+        PairingDebugHooks.start()
+        PairingDebugHooks.publishFingerprint("ABCD EF01 2345")
+
+        assertFalse("a second open while the window is live is refused", PairingDebugHooks.start())
+        assertEquals(
+            "a refused start is not a new pair",
+            "ABCD EF01 2345",
+            PairingDebugHooks.state.value.fingerprint,
+        )
+    }
 }

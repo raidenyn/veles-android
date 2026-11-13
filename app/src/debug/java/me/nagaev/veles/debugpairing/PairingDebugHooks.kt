@@ -57,12 +57,23 @@ object PairingDebugHooks {
 
     /** Opens the window; false when it is already open or no service has attached one. */
     fun start(): Boolean {
-        val current = synchronized(lock) { window } ?: return false
-        val opened = try {
-            current.open()
-            true
-        } catch (_: IllegalStateException) {
-            false
+        val opened = synchronized(lock) {
+            val current = window
+            if (current == null) {
+                false
+            } else {
+                // A successful open is a new pair: the previous pair's public
+                // fingerprint is no longer current. A refused, closed or expired
+                // window keeps it.
+                val result = try {
+                    current.open()
+                    true
+                } catch (_: IllegalStateException) {
+                    false
+                }
+                if (result) fingerprint = null
+                result
+            }
         }
         refresh()
         return opened
