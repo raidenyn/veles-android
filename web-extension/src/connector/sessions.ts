@@ -17,7 +17,7 @@
 // id and manual Connect passes an explicit id or the single active-family
 // trusted phone (`intendedPeer`).
 
-import type { TrustedPeer } from '../trust/model';
+import { hex, type TrustedPeer } from '../trust/model';
 import type { AuthenticationVerifier, ChromeTrustRepository } from '../trust/repository';
 import {
     ClientSessionEngine,
@@ -126,6 +126,8 @@ export class SessionManager {
         private readonly deps: (handle: string, peerId: string) => ClientEngineDeps,
         private readonly portGeneration: () => number,
         timers: Partial<SessionTimers> = {},
+        /** Session-bound proof cleanup when a generation is torn down. */
+        private readonly onSessionClosed?: (sessionId: string) => void,
     ) {
         this.repository = repository;
         this.timers = {
@@ -302,7 +304,28 @@ export class SessionManager {
                     break;
                 }
                 case 'authenticated': {
-                    await this.authenticated(session, effect.peerId);
+                    const applications = effect.unprompted ?? [];
+                    try {
+                        await this.authenticated(session, effect.peerId);
+                        if (!this.isCurrent(session, generation)) return;
+                        // OTP2-STA-010b steps 0/5: the owner sends what the session owes only
+                        // after it handled the gate, never from inside the handler's context hook.
+                        for (const application of applications) {
+                            const sent = await session.engine.sendApplication(
+                                application.type,
+                                application.body,
+                            );
+                            await this.apply(session, generation, sent);
+                            if (
+                                session.phase === 'closed' ||
+                                !this.isCurrent(session, generation)
+                            ) {
+                                return;
+                            }
+                        }
+                    } finally {
+                        for (const application of applications) application.body.fill(0);
+                    }
                     return;
                 }
                 case 'terminated': {
@@ -375,6 +398,8 @@ export class SessionManager {
         if (session.phase === 'closed') return;
         session.phase = 'closed';
         this.cancelTick(session);
+        const prefix = session.engine.sessionIdPrefix;
+        if (prefix !== null) this.onSessionClosed?.(hex(prefix));
         session.engine.teardown();
         if (this.byHandle.get(session.handle) === session) this.byHandle.delete(session.handle);
         this.controller.state.diagnostics.push({

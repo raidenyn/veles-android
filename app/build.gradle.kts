@@ -138,10 +138,20 @@ android.sourceSets.getByName("androidTest").assets.srcDir(
 // suite, reusing the full testDebugUnitTest classpath (incl. resources).
 afterEvaluate {
     val unitTest = tasks.getByName<Test>("testDebugUnitTest")
+    // OTP-10 D1: the real Rust core is a host-JVM cdylib built by `rustHostJni`;
+    // its directory goes on java.library.path so VelesCrypto's
+    // System.loadLibrary("veles_crypto") resolves in JVM tests. Robolectric tests
+    // never initialize VelesCrypto (one library per class loader), so the path is
+    // inert for them.
+    val hostJniDir = rootProject.layout.buildDirectory.dir("rust/host-jni")
+    unitTest.dependsOn(rootProject.tasks.named("rustHostJni"))
+    unitTest.systemProperty("java.library.path", hostJniDir.get().asFile.absolutePath)
     tasks.register<Test>("protocolJvmTest") {
         group = "verification"
         description = "Runs the focused OTP-02 protocol fixture consumer on the JVM."
         dependsOn(unitTest.taskDependencies.getDependencies(unitTest))
+        dependsOn(rootProject.tasks.named("rustHostJni"))
+        systemProperty("java.library.path", hostJniDir.get().asFile.absolutePath)
         classpath = unitTest.classpath
         testClassesDirs = unitTest.testClassesDirs
         filter {
@@ -178,6 +188,23 @@ val releaseHookForbidden = listOf(
     "me.nagaev.veles.debug.",
     "INJECT_PEER",
     "REVOKE_PEER",
+    // OTP-10 D5 debug pairing surface: the package path survives R8 renaming in the DEX
+    // descriptor, and the action/screen strings survive in the manifest and resources.
+    "me/nagaev/veles/debugpairing",
+    "me.nagaev.veles.debugpairing.START",
+    "me.nagaev.veles.debugpairing.CANCEL",
+    "VelesPairingDebug",
+    "Veles pairing debug",
+    "Pairing code",
+    "Start pairing window",
+    "Cancel pairing window",
+    "Clear incomplete record",
+    "Peer installation id",
+    "Record cleared",
+    "Clear failed or refused",
+    "Pairing id:",
+    "Pairing fingerprint",
+    "Start Bluetooth sharing first",
 )
 
 /** First byte offset of [needle] in this array, or -1. */

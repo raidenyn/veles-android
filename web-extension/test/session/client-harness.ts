@@ -191,11 +191,15 @@ function randomBytes(length: number): Uint8Array {
 export interface PhoneRecord {
     publicKey: Uint8Array;
     state: TrustState;
+    /** OTP2-CRY-019f: the record's public `ET`, present when recovery keys must derive. */
+    et?: Uint8Array;
 }
 
 export interface PhoneHarnessOptions {
     /** Local client trust-record state used to seed `store` when the record is absent. */
     state?: TrustState;
+    /** Optional public `ET` seeded into the local record (OTP2-CRY-019f). */
+    et?: Uint8Array;
     phoneId?: string;
     phoneIdentity?: CryptoKeyPair;
     phoneEphemeral?: CryptoKeyPair;
@@ -270,6 +274,7 @@ export class PhoneHarness {
     readonly clientPublicKey: Uint8Array;
     readonly localInstallationId = CLIENT_INSTALLATION_ID.slice();
     readonly store: Map<string, PhoneRecord>;
+    readonly et: Uint8Array | null;
     readonly clock: FakeClock;
     readonly calls: HarnessCalls;
     readonly peerId: string;
@@ -285,6 +290,7 @@ export class PhoneHarness {
         clientIdentity: CryptoKeyPair,
         clientPublicKey: Uint8Array,
         store: Map<string, PhoneRecord>,
+        et: Uint8Array | null,
         clock: FakeClock,
         calls: HarnessCalls,
         peerId: string,
@@ -294,6 +300,7 @@ export class PhoneHarness {
         this.clientIdentity = clientIdentity;
         this.clientPublicKey = clientPublicKey;
         this.store = store;
+        this.et = et;
         this.clock = clock;
         this.calls = calls;
         this.peerId = peerId;
@@ -309,7 +316,11 @@ export class PhoneHarness {
         const peerId = options.phoneId ?? hexOf(phone.installationId);
         const store = options.store ?? new Map<string, PhoneRecord>();
         if (!store.has(peerId)) {
-            store.set(peerId, { publicKey: phone.publicKey, state: options.state ?? 'active' });
+            store.set(peerId, {
+                publicKey: phone.publicKey,
+                state: options.state ?? 'active',
+                ...(options.et === undefined ? {} : { et: options.et.slice() }),
+            });
         }
         const clientIdentity = await crypto.subtle.generateKey(
             { name: 'ECDSA', namedCurve: 'P-256' },
@@ -320,6 +331,7 @@ export class PhoneHarness {
             await crypto.subtle.exportKey('raw', clientIdentity.publicKey),
         );
         const clock = options.clock ?? new FakeClock();
+        const et = options.et?.slice() ?? null;
         const expectedPeerId = options.expectedPeerId ?? peerId;
         const calls: HarnessCalls = { sign: 0, lookup: 0, upgrade: [], isCurrent: 0 };
 
@@ -371,6 +383,7 @@ export class PhoneHarness {
             clientIdentity,
             clientPublicKey,
             store,
+            et,
             clock,
             calls,
             peerId,
@@ -462,6 +475,7 @@ export class PhoneHarness {
             shared,
             this.phone.nonce,
             started.clientHello.nonce,
+            this.et,
         );
         this.keys = await importKeys(material);
         material.c2pKey.fill(0);

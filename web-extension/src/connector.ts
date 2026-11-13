@@ -46,7 +46,11 @@ import {
 } from './connector/view-model';
 import type { ClientEngineDeps } from './session/engine';
 import type { DevelopmentProbe } from './debug/probe';
-import { bytes } from './trust/model';
+import { ActivationEngine } from './pairing/activation';
+import { initPairingCore } from './pairing/core';
+import { PairingLink } from './pairing/link';
+import { ProofRegistry } from './pairing/proofs';
+import { bytes, type TrustedPeer } from './trust/model';
 import { normalizeLowS } from './session/ecdsa';
 import { IndexedDbIdentityStore } from './trust/identity';
 import { ChromeLocalStore, trustLock } from './trust/storage';
@@ -191,12 +195,16 @@ export interface ConnectorControllerLike extends SessionController {
  * verifier can delegate to the manager's stage-bound verifier.
  */
 export interface ConnectorSessionOptions {
-    createRepository(verifier: AuthenticationVerifier): ChromeTrustRepository;
+    createRepository(
+        verifier: AuthenticationVerifier,
+        proofs: ProofRegistry,
+    ): ChromeTrustRepository;
     createEngineDeps(
         handle: string,
         peerId: string,
         localInstallationId: Uint8Array,
         repository: ChromeTrustRepository,
+        proofs: ProofRegistry,
     ): ClientEngineDeps;
 }
 
@@ -243,6 +251,7 @@ export class ConnectorApp {
     private readonly view: ConnectorView;
     private readonly trustSource: TrustHintSource;
     private readonly repository: ChromeTrustRepository | null;
+    private readonly proofs: ProofRegistry;
     readonly sessions: SessionManager | null;
     private readonly reconnect: ReconnectPolicy;
     private readonly unsubscribers: (() => void)[] = [];
@@ -252,6 +261,17 @@ export class ConnectorApp {
     private readonly suppressedPeerIds = new Set<string>();
     private readonly recoveryEpochs = new Map<string, number>();
     private trackedConnections = new Map<string, TrackedConnection>();
+    private devices: readonly { handle: string; label: string }[] = [];
+    private pairingLink: PairingLink | null = null;
+    private pairingEnded = false;
+    // Invalidates an enrollment startup still awaiting its transport. A cancel,
+    // a tab/host teardown and a replacement start each advance this generation,
+    // so a startup that resolves later disposes its link instead of installing a
+    // link nobody owns.
+    private pairingAttempt = 0;
+    // An enrollment connection is not a session: its disappearance must never
+    // schedule reconnect recovery.
+    private pairingHandles = new Set<string>();
     private userDisconnectSeen = false;
     private localInstallationId: Uint8Array | null = null;
 
@@ -271,17 +291,25 @@ export class ConnectorApp {
         this.controller = deps.controller;
         this.view = deps.view;
         const session = deps.session;
+        this.proofs = new ProofRegistry();
         if (session === undefined) {
             this.repository = null;
             this.sessions = null;
             this.trustSource = deps.trustSource ?? createChromeTrustHintSource();
         } else {
             // One repository per connector lifetime. Its verifier forwards to the
-            // manager's stage-bound verifier; until the manager exists every
-            // authentication is refused.
+            // manager's stage-bound verifier for `phone_active`/`authenticated`, and to
+            // the session-bound proof registry for the activation `complete` stage; until
+            // the manager exists, except for a pairing proof, every authentication is
+            // refused.
             const holder: { verify: AuthenticationVerifier } = { verify: async () => false };
-            const repository = session.createRepository((peer, stage, proof) =>
-                holder.verify(peer, stage, proof),
+            const proofs = this.proofs;
+            const repository = session.createRepository(
+                (peer, stage, proof) =>
+                    stage === 'complete' && proofs.consume(peer.installationId, stage, proof)
+                        ? Promise.resolve(true)
+                        : holder.verify(peer, stage, proof),
+                proofs,
             );
             const timers =
                 deps.setTimeout === undefined && deps.clearTimeout === undefined
@@ -298,10 +326,11 @@ export class ConnectorApp {
                 (handle, peerId) => {
                     const identity = this.localInstallationId;
                     if (identity === null) throw new Error('installation identity unavailable');
-                    return session.createEngineDeps(handle, peerId, identity, repository);
+                    return session.createEngineDeps(handle, peerId, identity, repository, proofs);
                 },
                 () => deps.controller.portGeneration,
                 timers,
+                (sessionId) => this.proofs.revoke(sessionId),
             );
             holder.verify = manager.verifier;
             this.repository = repository;
@@ -377,11 +406,159 @@ export class ConnectorApp {
         }
     }
 
+    /**
+     * Starts the OTP-10 enrollment flow over the BLE link. The flow is not a
+     * `SessionManager` session: it owns its own `PairingLink`, and the connector
+     * tab teardown (`dispose`) is what closes the core handle and deletes this
+     * enrollment's pending record (OTP2-STA-010d).
+     */
+    async startPairing(deviceHandle: string, code: string): Promise<boolean> {
+        if (this.disposed || this.shuttingDown) return false;
+        const repository = this.repository;
+        if (repository === null) {
+            this.applyFailure(synthesizeAuthenticationFailed());
+            return false;
+        }
+        // Own this attempt before the teardown await: a cancel, teardown or
+        // replacement that runs during it must make this startup stale.
+        const attempt = this.nextPairingAttempt();
+        await this.teardownPairing();
+        if (!this.isPairingAttemptLive(attempt)) {
+            if (attempt === this.pairingAttempt) this.pairingEnded = true;
+            return false;
+        }
+        this.pairingEnded = false;
+        try {
+            const link = await PairingLink.start({
+                controller: this.controller,
+                repo: repository,
+                proofs: this.proofs,
+                code,
+                deviceHandle,
+                // Every await inside `start` re-checks this: a cancel, teardown or
+                // replacement during startup must stop it before it processes an
+                // offer or releases `pB`.
+                isCancelled: () => !this.isPairingAttemptLive(attempt),
+                // Register the handle from the connected event, before the first
+                // send: a link lost during start must never look like a session.
+                onConnected: (connectionHandle) => {
+                    this.pairingHandles.add(connectionHandle);
+                },
+                onEnded: () => {
+                    // A superseded attempt must not end the current one.
+                    if (attempt === this.pairingAttempt) this.pairingEnded = true;
+                },
+            });
+            if (!this.isPairingAttemptLive(attempt)) {
+                // Cancelled, torn down or replaced while starting: never install
+                // a link for an attempt the connector no longer owns.
+                if (attempt === this.pairingAttempt) this.pairingEnded = true;
+                await link.dispose();
+                // A disconnect that already left the controller snapshot was
+                // consumed by `handleChange`; otherwise keep the registration so a
+                // later removal of an ambiguous link never schedules recovery.
+                if (
+                    !this.controller
+                        .snapshot()
+                        .connections.some(
+                            (connection) => connection.handle === link.connectionHandle,
+                        )
+                ) {
+                    this.pairingHandles.delete(link.connectionHandle);
+                }
+                return false;
+            }
+            this.pairingLink = link;
+            return true;
+        } catch {
+            if (this.isPairingAttemptLive(attempt)) {
+                this.pairingEnded = true;
+                this.applyFailure(synthesizeAuthenticationFailed());
+            } else if (attempt === this.pairingAttempt) {
+                this.pairingEnded = true;
+            }
+            return false;
+        }
+    }
+
+    /** Starts a new enrollment generation, invalidating every pending startup. */
+    private nextPairingAttempt(): number {
+        this.pairingAttempt += 1;
+        return this.pairingAttempt;
+    }
+
+    private isPairingAttemptLive(attempt: number): boolean {
+        return attempt === this.pairingAttempt && !this.disposed && !this.shuttingDown;
+    }
+
+    /** True once the current enrollment link stopped (success, failure or cancel). */
+    get pairingFinished(): boolean {
+        return this.pairingEnded;
+    }
+
+    /** The debug panel's state readout; never contains the six-digit code. */
+    get pairingState(): { phase: string; finished: boolean; fingerprint?: string } {
+        if (this.pairingLink === null) return { phase: 'idle', finished: this.pairingEnded };
+        const machine = this.pairingLink.machine;
+        const fingerprint = machine.fingerprint();
+        return {
+            phase: machine.state,
+            finished: this.pairingEnded,
+            ...(fingerprint === undefined ? {} : { fingerprint }),
+        };
+    }
+
+    /** Discovered phones for the debug panel; the extension-owned search fills this. */
+    get pairingDevices(): readonly { handle: string; label: string }[] {
+        return this.devices;
+    }
+
+    /** Every trust record, for the debug Clear control (design D5). */
+    async pairingPeers(): Promise<readonly TrustedPeer[]> {
+        return this.repository === null ? [] : this.repository.peers();
+    }
+
+    /** Clear a stranded or injected record with `repository.revoke`; no revocation protocol. */
+    async clearPairingPeer(peerId: string): Promise<void> {
+        const repository = this.repository;
+        if (repository === null) throw new Error('trust store unavailable');
+        await repository.revoke(peerId);
+    }
+
+    /** User cancel of the current enrollment attempt; false when its cleanup failed. */
+    async cancelPairing(): Promise<boolean> {
+        // Cancel also invalidates a startup that has not installed its link yet.
+        this.nextPairingAttempt();
+        const link = this.pairingLink;
+        this.pairingLink = null;
+        this.pairingEnded = true;
+        return link === null ? true : link.cancel();
+    }
+
+    private teardownPairing(): Promise<void> {
+        const link = this.pairingLink;
+        this.pairingLink = null;
+        this.pairingEnded = true;
+        return link === null ? Promise.resolve() : link.dispose();
+    }
+
+    private abandonPairing(): Promise<void> {
+        // A port death also invalidates a startup still awaiting its transport.
+        this.nextPairingAttempt();
+        // Keep the link: a later real tab teardown must still delete the pending
+        // record this dead link could not remove.
+        const link = this.pairingLink;
+        this.pairingEnded = true;
+        return link === null ? Promise.resolve() : link.abandon();
+    }
+
     dispose(): void {
         if (this.disposed) return;
         this.disposed = true;
+        this.nextPairingAttempt();
         this.session += 1;
         this.reconnect.dispose();
+        void this.teardownPairing();
         for (const unsubscribe of this.unsubscribers) unsubscribe();
         this.unsubscribers.length = 0;
         this.view.dispose?.();
@@ -822,6 +999,12 @@ export class ConnectorApp {
 
     private handleClose(close: ConnectorClose): void {
         if (this.disposed) return;
+        this.devices = [];
+        // A native-host port death is not connector-context loss: OTP2-STA-010d
+        // deletes a genuinely-pending client record only when the document/tab
+        // ends. Close the core handle and keep the durable pending record so a
+        // later recovery session can resume; the real tab teardown still deletes it.
+        void this.abandonPairing();
         // Every port death/replacement invalidates pending readiness and
         // recovery reads from the previous generation, including an ignored
         // user close used to restart the host.
@@ -829,6 +1012,7 @@ export class ConnectorApp {
         this.readiness = null;
         this.connectionPeerTargets.clear();
         this.sessionFailedHandles.clear();
+        this.pairingHandles.clear();
         for (const key of this.reconnect.keys()) {
             if (key === 'host') continue;
             this.reconnect.discard(key);
@@ -886,6 +1070,10 @@ export class ConnectorApp {
 
     private handleChange(snapshot: ConnectorSnapshot): void {
         if (this.disposed) return;
+        this.devices = snapshot.devices.map((device) => ({
+            handle: device.handle,
+            label: device.label,
+        }));
         const next = new Map(
             snapshot.connections.map((connection) => [
                 connection.handle,
@@ -907,6 +1095,7 @@ export class ConnectorApp {
         if (this.ready !== null && this.controller.isOpen() && !this.shuttingDown) {
             for (const [handle, previous] of this.trackedConnections) {
                 if (next.has(handle)) continue;
+                if (this.pairingHandles.delete(handle)) continue;
                 if (this.userDisconnectHandles.delete(handle)) continue;
 
                 const peer = this.connectionPeerTargets.get(handle);
@@ -1230,16 +1419,24 @@ function productionSessionOptions(): ConnectorSessionOptions {
             peerId: string,
             localInstallationId: Uint8Array,
             repository: ChromeTrustRepository,
+            proofs: ProofRegistry,
         ): ClientEngineDeps {
             return {
                 localInstallationId,
                 expectedPeerId: peerId,
                 isCurrent: () => false,
+                handler: new ActivationEngine({ trust: repository, proofs }),
                 lookupPhone: async (id) => {
                     const peers = await repository.peers();
                     const peer = peers.find((candidate) => candidate.installationId === id);
                     if (peer === undefined) return undefined;
-                    return { publicKey: bytes(peer.publicKey, 65), state: peer.state };
+                    return {
+                        publicKey: bytes(peer.publicKey, 65),
+                        state: peer.state,
+                        // OTP2-CRY-019f: the public `ET` persisted with the pending,
+                        // committed or active record binds the recovery keys.
+                        et: bytes(peer.enrollmentTranscript, 32),
+                    };
                 },
                 upgradeMirror: (id, proof) => repository.confirm(id, 'phone_active', proof),
                 now: () => performance.now(),
@@ -1318,6 +1515,12 @@ async function bootstrapOwnedConnector(): Promise<ConnectorApp | null> {
         return null;
     }
 
+    // OTP-10: the connector tab owns the bundled WASM pairing core; the MV3
+    // service worker never loads it. Warm the module once, off the startup
+    // path; a failure stays local to the pairing flow and never blocks the
+    // host connection.
+    void initPairingCore().catch(() => undefined);
+
     // Only the owner answers the launcher ping. Secondary/restored documents
     // therefore cannot be mistaken for the document that owns the host.
     if (
@@ -1383,6 +1586,22 @@ async function bootstrapOwnedConnector(): Promise<ConnectorApp | null> {
     });
     if (probe !== null && app.sessions !== null) {
         probe.install(app, app.sessions, controller);
+    }
+    if (__VELES_CHANNEL__ === 'development') {
+        // The second compile-time-guarded dynamic import keeps the pairing panel in its own
+        // development-only chunk; a production build folds both guards and emits neither.
+        const { mountPairingPanel } = await import('./debug/pairing-panel');
+        mountPairingPanel(document.body, {
+            devices: () => app.pairingDevices,
+            status: () => app.pairingState,
+            trust: {
+                peers: () => app.pairingPeers(),
+                revoke: (peerId: string) => app.clearPairingPeer(peerId),
+            },
+            start: (deviceHandle: string, code: string) => app.startPairing(deviceHandle, code),
+            cancel: () => app.cancelPairing(),
+            onChange: (listener: () => void) => controller.onChange(() => listener()),
+        });
     }
     const copyStatus = document.getElementById('synthetic-copy-status');
     const copyButton = document.getElementById('synthetic-copy-button');

@@ -24,13 +24,17 @@ class TrustRepositoryTest {
         }
         override fun sign(message: ByteArray): ByteArray = byteArrayOf()
     }
-    private fun repository(confirmed: Boolean = true) = TrustRepository(
+    private val proofGatedVerifier = ActivationVerifier { _, _, proof -> proof.contentEquals(byteArrayOf(1)) }
+    private fun repository(
+        confirmed: Boolean = true,
+        verifier: ActivationVerifier = ActivationVerifier { _, _, _ -> confirmed },
+    ) = TrustRepository(
         storage,
         identity,
         { elapsed },
         { boot },
         { wall },
-        ActivationVerifier { _, _, _ -> confirmed },
+        verifier,
     )
     private fun peer() = PendingPeer(
         "02".repeat(16),
@@ -68,6 +72,42 @@ class TrustRepositoryTest {
         assertFails { repo.confirm(peer.installationId, ActivationStep.ACK, byteArrayOf()) }
         assertFails { repo.confirm(peer.installationId, ActivationStep.COMMIT, byteArrayOf()) }
         assertTrue(repo.activePeers().isEmpty())
+    }
+
+    @Test fun `phone_duplicate_commit_on_active_is_noop_after_mac`() = runTest {
+        // protocol/v1/fixtures/records.json#st-rec-full-pending-peer-commit-duplicate-no-regression
+        val repo = repository(verifier = proofGatedVerifier)
+        repo.identity()
+        val peer = peer()
+        repo.addPending(peer)
+        repo.confirm(peer.installationId, ActivationStep.COMMIT, byteArrayOf(1))
+        repo.confirm(peer.installationId, ActivationStep.ACK, byteArrayOf(1))
+        val active = repo.peers().single()
+        assertEquals(TrustState.ACTIVE, active.state)
+
+        wall = 9000L
+        repo.confirm(peer.installationId, ActivationStep.COMMIT, byteArrayOf(1))
+
+        assertEquals(
+            "a duplicate commit never moves or re-stamps the active record",
+            active,
+            repo.peers().single(),
+        )
+    }
+
+    @Test fun `wrong_mac_duplicate_commit_still_rejected`() = runTest {
+        val repo = repository(verifier = proofGatedVerifier)
+        repo.identity()
+        val peer = peer()
+        repo.addPending(peer)
+        repo.confirm(peer.installationId, ActivationStep.COMMIT, byteArrayOf(1))
+        repo.confirm(peer.installationId, ActivationStep.ACK, byteArrayOf(1))
+        val active = repo.peers().single()
+
+        wall = 9000L
+        assertFails { repo.confirm(peer.installationId, ActivationStep.COMMIT, byteArrayOf(2)) }
+
+        assertEquals(active, repo.peers().single())
     }
 
     @Test fun `key loss never silently creates replacement identity`() = runTest {

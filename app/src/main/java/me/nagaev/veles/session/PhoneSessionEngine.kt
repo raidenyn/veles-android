@@ -2,6 +2,7 @@ package me.nagaev.veles.session
 
 import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CancellationException
+import me.nagaev.veles.trust.TrustEncoding
 import java.math.BigInteger
 import java.security.KeyPair
 import java.security.MessageDigest
@@ -187,6 +188,14 @@ class PhoneSessionEngine(
     @VisibleForTesting
     val keysErasedForTest: Boolean get() = state == State.CLOSED && keys == null
 
+    /**
+     * Test-only OTP2-CRY-019f observation: the live recovery holder of the derived keys. It is
+     * the same holder the session context carries for a non-full class, so a test can take it
+     * before the gate and assert its bytes are zeroed once the class resolves to `full`.
+     */
+    @VisibleForTesting
+    val recoveryKeysForTest: RecoveryKeys? get() = keys?.recovery
+
     @Suppress("ReturnCount") // Each validation failure rejects before any state is applied.
     private suspend fun onClientHello(bytes: ByteArray): List<SessionEffect> {
         val frame = decodeFrame(bytes) ?: return rejectPreAuth()
@@ -258,7 +267,7 @@ class PhoneSessionEngine(
         val keyPair = ephemeralKeyPair ?: return rejectPreAuth()
         val localNonceValue = localNonce ?: return rejectPreAuth()
         val ownSignature = phoneSignature ?: return rejectPreAuth()
-        val derived = deriveKeys(keyPair, hello, localNonceValue) ?: return rejectPreAuth()
+        val derived = deriveKeys(keyPair, hello, localNonceValue, current.et) ?: return rejectPreAuth()
 
         val input = ReconnectKeySchedule.confirmInput(transcript, ownSignature, signature)
         val ownState = if (current.state == LocalRecordState.ACTIVE) PEER_STATE_ACTIVE else PEER_STATE_BELOW_ACTIVE
@@ -514,12 +523,41 @@ class PhoneSessionEngine(
         val prefix = sessionIdPrefix ?: return terminate(STAGE_RECORD_INVALID)
         val cls = selectClass(record, peerState)
         fixedClass = cls
+        // OTP2-CRY-019f: the class is only fixed here, so a `full` session erases the recovery
+        // keys it derived at the handshake. Every other class keeps them for its activation rows.
+        if (cls == SessionClass.FULL) keys?.recovery?.erase()
         authenticated = true
         state = State.OPEN
         lastActivityAt = clock()
-        sessionHandler = handler?.forSession(prefix.copyOf())
-        listOf(SessionEffect.Authenticated(cls, installationId.copyOf(), prefix.copyOf()))
+        sessionHandler = handler?.forSession(sessionContext(cls, installationId, prefix, record))
+        // OTP2-STA-010b steps 0/5: the context is fixed, but the owner sends these after the
+        // effect; computing the MAC here keeps the send out of the finality monitor.
+        val unprompted = try {
+            sessionHandler?.unprompted().orEmpty()
+        } catch (_: Exception) {
+            return terminate(STAGE_DEPENDENCY)
+        }
+        listOf(SessionEffect.Authenticated(cls, installationId.copyOf(), prefix.copyOf(), unprompted))
     }
+
+    /**
+     * OTP-10 plan 9b: the fixed session facts a handler may need. The recovery holder is shared
+     * with the engine's live keys for every non-full class; a full session hands out null
+     * because its holder has just been erased.
+     */
+    private fun sessionContext(
+        cls: SessionClass,
+        installationId: ByteArray,
+        prefix: ByteArray,
+        record: PeerRecord,
+    ): SessionContext = SessionContext(
+        sessionIdPrefix = prefix.copyOf(),
+        sessionClass = cls,
+        peerId = TrustEncoding.hex(installationId),
+        et = record.et?.copyOf(),
+        peerState = peerState,
+        recovery = if (cls == SessionClass.FULL) null else keys?.recovery,
+    )
 
     private fun selectClass(record: PeerRecord, confirmedPeerState: Int): SessionClass = when (record.state) {
         LocalRecordState.ACTIVE ->
@@ -538,14 +576,19 @@ class PhoneSessionEngine(
         return stateByte.takeIf { it == PEER_STATE_ACTIVE || it == PEER_STATE_BELOW_ACTIVE }
     }
 
-    private fun deriveKeys(keyPair: KeyPair, hello: ReconnectHello, localNonceValue: ByteArray): ReconnectKeys? {
+    private fun deriveKeys(
+        keyPair: KeyPair,
+        hello: ReconnectHello,
+        localNonceValue: ByteArray,
+        et: ByteArray?,
+    ): ReconnectKeys? {
         val shared = try {
             P256.ecdhX(keyPair.private, hello.ephemeralPublicKey)
         } catch (_: SessionReject) {
             return null
         }
         return try {
-            ReconnectKeySchedule.derive(shared, localNonceValue, hello.nonce)
+            ReconnectKeySchedule.derive(shared, localNonceValue, hello.nonce, et)
         } catch (_: SessionReject) {
             null
         } finally {

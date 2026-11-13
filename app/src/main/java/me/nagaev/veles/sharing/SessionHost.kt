@@ -12,10 +12,14 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import me.nagaev.veles.pairing.Outgoing
+import me.nagaev.veles.pairing.PairingConnection
+import me.nagaev.veles.pairing.RejectingPairingConnection
 import me.nagaev.veles.session.PhoneSessionEngine
 import me.nagaev.veles.session.SessionClass
 import me.nagaev.veles.session.SessionEffect
 import me.nagaev.veles.session.SessionReject
+import me.nagaev.veles.session.UnpromptedApplication
 import me.nagaev.veles.trust.InstallationTrustRepository
 import me.nagaev.veles.trust.TrustEncoding
 import me.nagaev.veles.trust.TrustException
@@ -100,6 +104,14 @@ class SessionHost(
     private val engineFactory: (ConnectionGeneration) -> PhoneSessionEngine,
     private val trust: InstallationTrustRepository,
     private val clock: () -> Long,
+    /**
+     * The pairing path for a connection whose first frame is `pairing_request`. The default
+     * rejects that frame generically, so every non-pairing caller (tests, the debug probe)
+     * gets the unchanged reconnect behavior without production wiring.
+     */
+    private val pairingFactory: (ConnectionGeneration) -> PairingConnection = { RejectingPairingConnection() },
+    /** Session-bound proof cleanup when a generation is torn down (OTP-10 plan 9d). */
+    private val onSessionClosed: (String) -> Unit = {},
 ) : ConnectionListener {
     private class OwnedRecord(val bytes: ByteArray, val admission: RecordAdmission)
 
@@ -111,8 +123,24 @@ class SessionHost(
         data object Teardown : Step
     }
 
-    private class Live(val gen: ConnectionGeneration, val engine: PhoneSessionEngine) {
+    private class Live(val gen: ConnectionGeneration) {
         val mutex = Mutex()
+
+        /**
+         * The reconnect engine, created eagerly so an idle connection still has the
+         * handshake deadline. The first `pairing_request` tears it down and switches this
+         * generation to [pairing].
+         */
+        @Volatile var engine: PhoneSessionEngine? = null
+
+        /** The pairing machine, created only for a generation whose first frame is `0x01`. */
+        @Volatile var pairing: PairingConnection? = null
+
+        /**
+         * Set by the first dispatched frame. Only that frame selects the path: later frames
+         * always follow the chosen machine or engine (guarded by [mutex], like dispatch).
+         */
+        var firstFrameSeen = false
 
         /** Bounded FIFO: inbound is capped by the GATT ingress budget; the rest is slack. */
         val queue = Channel<Step>(QUEUE_CAPACITY)
@@ -143,7 +171,8 @@ class SessionHost(
     private val all = LinkedHashSet<Live>()
 
     override fun onConnected(gen: ConnectionGeneration) {
-        val live = Live(gen, engineFactory(gen))
+        val live = Live(gen)
+        live.engine = engineFactory(gen)
         synchronized(registry) {
             sessions[gen] = live
             all += live
@@ -275,6 +304,38 @@ class SessionHost(
         remaining.forEach { teardownLocked(it) }
     }
 
+    /**
+     * Explicit user/debug cancel of every live enrollment connection: each pairing machine
+     * deletes the pending record it created, then the generation is torn down and its
+     * transport closed. Unlike [shutdown], this is the only path that deletes durable
+     * incomplete records; service shutdown keeps them for recovery. Safe when no generation
+     * has a pairing machine.
+     */
+    suspend fun cancelPairings() {
+        val lives = synchronized(registry) {
+            sessions.values.filter { !it.ended && it.pairing != null }
+        }
+        lives.forEach { live ->
+            live.mutex.withLock {
+                if (!isCurrent(live)) return@withLock
+                val pairing = live.pairing ?: return@withLock
+                try {
+                    applyPairing(live, pairing.cancel())
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: Exception) {
+                    failedLocked(live)
+                }
+                // The machine returns a disconnect, which [applyPairing] already applies. A
+                // machine that returns no terminal item is still torn down here.
+                if (isCurrent(live)) {
+                    teardownLocked(live)
+                    transport.close(live.gen)
+                }
+            }
+        }
+    }
+
     private fun enqueue(live: Live, step: Step): Boolean = !live.ended && live.queue.trySend(step).isSuccess
 
     private suspend fun runTicks(live: Live) {
@@ -304,27 +365,38 @@ class SessionHost(
         when (step) {
             is Step.Inbound -> live.mutex.withLock {
                 try {
-                    if (isCurrent(live)) runStep(live) { live.engine.onInbound(step.record.bytes) }
+                    if (isCurrent(live)) dispatchInbound(live, step.record.bytes)
                 } finally {
                     eraseStep(live, step.record)
                 }
             }
             is Step.Completion -> live.mutex.withLock {
-                if (isCurrent(live)) runStep(live) { live.engine.onSendComplete(step.token, step.ok) }
+                val engine = live.engine
+                if (isCurrent(live) && engine != null) {
+                    runStep(live) { engine.onSendComplete(step.token, step.ok) }
+                }
             }
             Step.Tick -> {
                 live.tickQueued.set(false)
                 live.mutex.withLock {
-                    if (isCurrent(live)) runStep(live) { live.engine.onTick() }
+                    if (!isCurrent(live)) return@withLock
+                    val pairing = live.pairing
+                    if (pairing != null) {
+                        runPairing(live) { pairing.onTick() }
+                    } else {
+                        val engine = live.engine
+                        if (engine != null) runStep(live) { engine.onTick() }
+                    }
                 }
             }
             is Step.Application -> {
                 val result = live.mutex.withLock {
-                    if (!isCurrent(live) || !live.engine.isOpen) {
+                    val engine = live.engine
+                    if (!isCurrent(live) || engine == null || !engine.isOpen) {
                         false
                     } else {
                         try {
-                            apply(live, live.engine.sendApplication(step.type, step.body))
+                            apply(live, engine.sendApplication(step.type, step.body))
                         } catch (cancellation: CancellationException) {
                             throw cancellation
                         } catch (_: Exception) {
@@ -373,7 +445,15 @@ class SessionHost(
                     }
                     true -> sent = true
                 }
-                is SessionEffect.Authenticated -> if (!markAuthenticated(live, effect)) return false
+                is SessionEffect.Authenticated -> {
+                    if (!markAuthenticated(live, effect)) {
+                        eraseApplications(effect.unprompted, 0)
+                        return false
+                    }
+                    // OTP2-STA-010b steps 0/5: the owner sends what the session owes only after
+                    // it handled the gate, never from inside the handler's context hook.
+                    if (!sendUnprompted(live, effect.unprompted)) return false
+                }
                 is SessionEffect.Terminated -> Unit
                 is SessionEffect.Deliver -> Unit // OTP-09 has no application consumer; OTP-10 adds one.
                 SessionEffect.Close -> {
@@ -383,6 +463,121 @@ class SessionHost(
             }
         }
         return sent
+    }
+
+    /**
+     * Routes the first frame: a `pairing_request` (`0x01`) tears down the eager reconnect
+     * engine and hands the generation to the pairing machine; every other first frame
+     * stays on the reconnect engine, whose pre-auth frame set is therefore unchanged.
+     *
+     * Only the first frame of a generation selects the path. Re-checking later frames would
+     * read a protected record's version/schema bytes (`01 01`) as an envelope length and
+     * hand an authenticated reconnect generation to the pairing machine, and would let a
+     * mid-handshake pairing frame spend the pairing budgets on reconnect traffic.
+     */
+    private suspend fun dispatchInbound(live: Live, bytes: ByteArray) {
+        if (!live.firstFrameSeen) {
+            live.firstFrameSeen = true
+            if (isPairingFrame(bytes)) {
+                live.engine?.teardown()
+                live.engine = null
+                val machine = pairingFactory(live.gen)
+                live.pairing = machine
+                runPairing(live) { machine.onFrame(bytes) }
+                return
+            }
+        }
+        val pairing = live.pairing
+        if (pairing != null) {
+            runPairing(live) { pairing.onFrame(bytes) }
+            return
+        }
+        val engine = live.engine ?: return
+        runStep(live) { engine.onInbound(bytes) }
+    }
+
+    /**
+     * Selects the pairing path for the first frame of a generation.
+     *
+     * `0x02`-`0x05` are unambiguous pairing frames: a protected record starts with the
+     * protocol version `1` and a reconnect frame with `0x06`/`0x07`/`0x0F`, never `2`-`5`.
+     * They are routed to the machine even with a broken envelope so it can count them as a
+     * malformed pairing connection.
+     *
+     * `0x01` is shared: `pairing_request` and a protected record's first byte are both
+     * `1`. The envelope length must match, so a malformed `0x01` frame (a bad length) stays
+     * on the reconnect engine and gets the generic reject without spending any pairing
+     * budget — reconnect traffic MUST NOT share the pairing budgets (limits.json). That is
+     * the accepted boundary: the machine never sees such a frame.
+     */
+    private fun isPairingFrame(bytes: ByteArray): Boolean {
+        if (bytes.isEmpty()) return false
+        val type = bytes[0].toInt() and U8_MASK
+        // The type is enough for `0x02`-`0x05`: even a one-byte frame is pairing traffic
+        // and must reach the machine so it counts as a malformed pairing connection.
+        if (type != PAIRING_REQUEST_TYPE) return type in PAIRING_FIRST_FRAME_MIN..PAIRING_FIRST_FRAME_MAX
+        if (bytes.size < PAIRING_FRAME_HEADER) return false
+        val length = ((bytes[1].toInt() and U8_MASK) shl BITS_PER_BYTE) or (bytes[2].toInt() and U8_MASK)
+        return length == bytes.size - PAIRING_FRAME_HEADER
+    }
+
+    private suspend fun runPairing(live: Live, call: suspend () -> List<Outgoing>) {
+        try {
+            applyPairing(live, call())
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            failedLocked(live)
+        }
+    }
+
+    @Suppress("ReturnCount") // Each branch is a distinct terminal outcome for the generation.
+    private suspend fun applyPairing(live: Live, outgoing: List<Outgoing>): Boolean {
+        var sent = false
+        for ((index, item) in outgoing.withIndex()) {
+            if (!isCurrent(live)) {
+                eraseOutgoing(outgoing, index)
+                return false
+            }
+            when (item) {
+                is Outgoing.Frame -> when (sendPairingFrame(live, item)) {
+                    null -> {
+                        // The generation ended mid-effect: drop the rest, never touching the transport.
+                        eraseOutgoing(outgoing, index + 1)
+                        return false
+                    }
+                    false -> {
+                        failedLocked(live)
+                        return false
+                    }
+                    true -> sent = true
+                }
+                Outgoing.Disconnect -> {
+                    // The machine already closed its handle; the host ends the generation.
+                    teardownLocked(live)
+                    transport.close(live.gen)
+                    return sent
+                }
+            }
+        }
+        return sent
+    }
+
+    /** Null when the generation already ended; otherwise the transport's admission answer. */
+    private fun sendPairingFrame(live: Live, frame: Outgoing.Frame): Boolean? {
+        val bytes = frame.bytes
+        return try {
+            if (isCurrent(live)) transport.send(live.gen, bytes, null) else null
+        } finally {
+            bytes.fill(0)
+        }
+    }
+
+    /** Erases pairing frames that will never reach the transport. */
+    private fun eraseOutgoing(outgoing: List<Outgoing>, from: Int) {
+        for (index in from until outgoing.size) {
+            (outgoing[index] as? Outgoing.Frame)?.bytes?.fill(0)
+        }
     }
 
     /** Null when the generation already ended; otherwise the transport's admission answer. */
@@ -402,9 +597,50 @@ class SessionHost(
         }
     }
 
+    /**
+     * Sends the records the freshly opened session owes (OTP2-STA-010b steps 0/5). The caller
+     * holds [Live.mutex]; the engine's `sendApplication` is the same path a user send takes, so
+     * authorization and sequence rules apply unchanged. Bodies are erased after each attempt.
+     */
+    @Suppress("ReturnCount") // Each guard is a distinct terminal outcome for the generation.
+    private suspend fun sendUnprompted(
+        live: Live,
+        applications: List<UnpromptedApplication>,
+    ): Boolean {
+        val engine = live.engine ?: run {
+            eraseApplications(applications, 0)
+            return true
+        }
+        for ((index, application) in applications.withIndex()) {
+            try {
+                if (!isCurrent(live) || !engine.isOpen) {
+                    eraseApplications(applications, index)
+                    return false
+                }
+                val effects = engine.sendApplication(application.type, application.body)
+                if (effects.isEmpty()) continue
+                if (!apply(live, effects)) return false
+            } catch (_: SessionReject) {
+                failedLocked(live)
+                return false
+            } catch (_: Exception) {
+                failedLocked(live)
+                return false
+            } finally {
+                application.body.fill(0)
+            }
+        }
+        return true
+    }
+
+    private fun eraseApplications(applications: List<UnpromptedApplication>, from: Int) {
+        for (index in from until applications.size) applications[index].body.fill(0)
+    }
+
     private suspend fun markAuthenticated(live: Live, effect: SessionEffect.Authenticated): Boolean {
         try {
-            if (!isCurrent(live) || !live.engine.isOpen) return false
+            val engine = live.engine
+            if (!isCurrent(live) || engine == null || !engine.isOpen) return false
             live.sessionClass = effect.sessionClass
             live.peerId = effect.peerId.copyOf()
             live.sessionIdPrefix = effect.sessionIdPrefix.copyOf()
@@ -421,7 +657,7 @@ class SessionHost(
     }
 
     /** Terminal failure; the caller already holds [Live.mutex]. */
-    private fun failedLocked(live: Live) {
+    private suspend fun failedLocked(live: Live) {
         teardownLocked(live)
         transport.close(live.gen)
     }
@@ -443,7 +679,7 @@ class SessionHost(
      * [Live.mutex] and the operation is idempotent. Buffered worker steps reference the same
      * records, so their later erase is a no-op.
      */
-    private fun teardownLocked(live: Live) {
+    private suspend fun teardownLocked(live: Live) {
         live.ended = true
         live.tick?.cancel()
         live.queue.close()
@@ -453,10 +689,14 @@ class SessionHost(
         // worker never processes its queued step (shutdown, cancellation).
         val applications = synchronized(registry) { live.applications.toList().also { live.applications.clear() } }
         applications.forEach { it.result.complete(false) }
-        live.engine.teardown()
+        live.pairing?.onDisconnect()
+        live.pairing = null
+        live.engine?.teardown()
+        live.engine = null
         live.sessionClass = null
         live.peerId?.fill(0)
         live.peerId = null
+        live.sessionIdPrefix?.let { onSessionClosed(TrustEncoding.hex(it)) }
         live.sessionIdPrefix?.fill(0)
         live.sessionIdPrefix = null
         synchronized(registry) {
@@ -471,5 +711,11 @@ class SessionHost(
         const val TICK_MILLIS = 1_000L
         const val QUEUE_CAPACITY = 32
         const val SHUTDOWN_TIMEOUT_MS = 2_000L
+        const val U8_MASK = 0xFF
+        const val BITS_PER_BYTE = 8
+        const val PAIRING_REQUEST_TYPE = 0x01
+        const val PAIRING_FRAME_HEADER = 3
+        const val PAIRING_FIRST_FRAME_MIN = 0x02
+        const val PAIRING_FIRST_FRAME_MAX = 0x05
     }
 }

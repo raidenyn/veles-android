@@ -1,5 +1,7 @@
 import type { ConnectorApp, ConnectorSessionOptions } from '../connector';
 import type { SessionController, SessionManager } from '../connector/sessions';
+import { composeHandlers } from '../pairing/activation';
+import { ProofRegistry } from '../pairing/proofs';
 import type { ApplicationHandler } from '../session/engine';
 import { bytes, hex, type InstallationIdentity } from '../trust/model';
 import type { ChromeTrustRepository } from '../trust/repository';
@@ -266,7 +268,9 @@ export function createDevelopmentProbe(
             debugRepository = options.createDebugRepository();
         } else {
             const factory = requireValue(makeRepository, 'repository factory');
-            debugRepository = factory(async () => true);
+            // The development repository is for injected debug peers only: it never
+            // supplies activation proofs to the production session repository.
+            debugRepository = factory(async () => true, new ProofRegistry());
         }
         return debugRepository;
     }
@@ -333,13 +337,21 @@ export function createDevelopmentProbe(
         sessionOptions(base) {
             makeRepository = base.createRepository;
             return {
-                createRepository(verifier) {
-                    return base.createRepository(verifier);
+                createRepository(verifier, proofs) {
+                    return base.createRepository(verifier, proofs);
                 },
-                createEngineDeps(handle, peerId, localInstallationId, repository) {
+                createEngineDeps(handle, peerId, localInstallationId, repository, proofs) {
+                    const baseDeps = base.createEngineDeps(
+                        handle,
+                        peerId,
+                        localInstallationId,
+                        repository,
+                        proofs,
+                    );
                     return {
-                        ...base.createEngineDeps(handle, peerId, localInstallationId, repository),
-                        handler: probeHandler(handle, peerId),
+                        ...baseDeps,
+                        // Keep the main activation handler under the debug probe.
+                        handler: composeHandlers(baseDeps.handler, probeHandler(handle, peerId)),
                     };
                 },
             };

@@ -15,6 +15,8 @@ private const val P2C_NONCE_LABEL = "Veles reconnect A-to-B nonce v1"
 private const val P2C_CONFIRM_LABEL = "Veles reconnect A-to-B confirmation v1"
 private const val SESSION_ID_LABEL = "Veles reconnect session ID v1"
 private const val CONFIRM_INPUT_LABEL = "Veles reconnect confirmation input v1"
+private const val REC_CLIENT_LABEL = "Veles recovery client activation v1"
+private const val REC_PHONE_LABEL = "Veles recovery phone activation v1"
 
 /** OTP2-REC-020b/020c reconnect key material. */
 data class ReconnectKeys(
@@ -25,6 +27,11 @@ data class ReconnectKeys(
     val p2cPrefix: ByteArray,
     val phoneConfirmKey: ByteArray,
     val sessionId: ByteArray,
+    /**
+     * OTP2-CRY-019f recovery activation keys, non-null only when the peer record carried `ET`.
+     * They stay zeroed once the session class resolves to `full`.
+     */
+    val recovery: RecoveryKeys? = null,
 ) {
     /** OTP2-STA-015: zero every derived byte array on teardown. */
     fun erase() {
@@ -35,6 +42,19 @@ data class ReconnectKeys(
         p2cPrefix.fill(0)
         phoneConfirmKey.fill(0)
         sessionId.fill(0)
+        recovery?.erase()
+    }
+}
+
+/** OTP2-CRY-019f recovery activation keys: one Expand call per direction, info = label || ET. */
+data class RecoveryKeys(
+    val kRecClient: ByteArray,
+    val kRecPhone: ByteArray,
+) {
+    /** OTP2-CRY-019f: zero both directional keys, in place. */
+    fun erase() {
+        kRecClient.fill(0)
+        kRecPhone.fill(0)
     }
 }
 
@@ -63,7 +83,12 @@ object ReconnectKeySchedule {
         return Hkdf.extract(salt(phoneNonce, clientNonce), ss)
     }
 
-    fun derive(ss: ByteArray, phoneNonce: ByteArray, clientNonce: ByteArray): ReconnectKeys {
+    fun derive(
+        ss: ByteArray,
+        phoneNonce: ByteArray,
+        clientNonce: ByteArray,
+        et: ByteArray? = null,
+    ): ReconnectKeys {
         val prk = prk(ss, phoneNonce, clientNonce)
         try {
             return ReconnectKeys(
@@ -74,10 +99,20 @@ object ReconnectKeySchedule {
                 p2cPrefix = Hkdf.expand(prk, label(P2C_NONCE_LABEL), NONCE_PREFIX_BYTES),
                 phoneConfirmKey = Hkdf.expand(prk, label(P2C_CONFIRM_LABEL), AES_KEY_BYTES),
                 sessionId = Hkdf.expand(prk, label(SESSION_ID_LABEL), SESSION_ID_BYTES),
+                recovery = et?.let { recoveryKeys(prk, it) },
             )
         } finally {
             prk.fill(0)
         }
+    }
+
+    /** OTP2-CRY-019f: both directions are derived whenever the peer record carries `ET`. */
+    private fun recoveryKeys(prk: ByteArray, et: ByteArray): RecoveryKeys {
+        requireSized(et, HASH_BYTES)
+        return RecoveryKeys(
+            kRecClient = Hkdf.expand(prk, label(REC_CLIENT_LABEL) + et, AES_KEY_BYTES),
+            kRecPhone = Hkdf.expand(prk, label(REC_PHONE_LABEL) + et, AES_KEY_BYTES),
+        )
     }
 
     fun confirmInput(rbase: ByteArray, phoneSig: ByteArray, clientSig: ByteArray): ByteArray {

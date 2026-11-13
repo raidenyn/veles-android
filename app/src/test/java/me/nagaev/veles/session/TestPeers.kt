@@ -103,6 +103,32 @@ internal object TestPeers {
     private const val POINT_TAG = 0x04
 }
 
+/**
+ * Captures the session context the engine hands its handler at the authentication gate
+ * (OTP-10 plan 9b) and delegates the record surface to an optional handler.
+ */
+internal class ContextCapturingHandler(
+    private val delegate: ApplicationHandler? = null,
+) : ApplicationHandler {
+    var context: SessionContext? = null
+        private set
+
+    override fun handles(type: Int): Boolean = delegate?.handles(type) ?: false
+
+    override suspend fun handle(
+        type: Int,
+        body: ByteArray,
+        reply: suspend (type: Int, body: ByteArray) -> Unit,
+    ) {
+        delegate?.handle(type, body, reply)
+    }
+
+    override fun forSession(context: SessionContext): ApplicationHandler {
+        this.context = context
+        return this
+    }
+}
+
 /** A trust lookup whose record can be deleted between handshake steps. */
 internal class MutablePeerLookup(var record: PeerRecord?) : PeerLookup {
     override suspend fun find(installationId: ByteArray): PeerRecord? = record?.takeIf { it.installationId.contentEquals(installationId) }
@@ -131,7 +157,11 @@ internal class TestClient(
     lateinit var keys: ReconnectKeys
 
     /** Accepts the phone's hello and signature, then signs the transcript and derives keys. */
-    fun acceptPhoneHello(phoneHelloPayload: ByteArray, phoneSignature: ByteArray) {
+    fun acceptPhoneHello(
+        phoneHelloPayload: ByteArray,
+        phoneSignature: ByteArray,
+        et: ByteArray? = null,
+    ) {
         phoneHello = ReconnectHello.decode(phoneHelloPayload, Role.PHONE)
         rbase = ReconnectKeySchedule.rbase(phoneHelloPayload, helloPayload)
         signature = identity.signP1363(rbase)
@@ -140,6 +170,7 @@ internal class TestClient(
             P256.ecdhX(ephemeral.private, phoneHello.ephemeralPublicKey),
             phoneHello.nonce,
             nonce,
+            et,
         )
     }
 
@@ -285,6 +316,7 @@ internal class HandshakeProgress(
 internal suspend fun PhoneSessionEngine.driveToPeerConfirm(
     client: TestClient,
     peerState: Int = TestClient.PEER_STATE_ACTIVE,
+    et: ByteArray? = null,
 ): HandshakeProgress {
     val helloEffects = onInbound(client.helloFrame)
     check(helloEffects.size == 2 && helloEffects.all { it is SessionEffect.Send }) {
@@ -295,7 +327,7 @@ internal suspend fun PhoneSessionEngine.driveToPeerConfirm(
         PreAuthCodec.decode((helloEffects[1] as SessionEffect.Send).bytes).second,
         Role.PHONE,
     ).signature
-    client.acceptPhoneHello(phoneHelloPayload, phoneSignature)
+    client.acceptPhoneHello(phoneHelloPayload, phoneSignature, et)
     val confirmEffects = onInbound(client.signatureFrame())
     check(confirmEffects.size == 1 && confirmEffects[0] is SessionEffect.Send) {
         "expected the phone reconnect_confirm"
@@ -314,8 +346,9 @@ internal suspend fun PhoneSessionEngine.driveToPeerConfirm(
 internal suspend fun PhoneSessionEngine.completeHandshake(
     client: TestClient,
     peerState: Int = TestClient.PEER_STATE_ACTIVE,
+    et: ByteArray? = null,
 ): List<SessionEffect> {
-    val progress = driveToPeerConfirm(client, peerState)
+    val progress = driveToPeerConfirm(client, peerState, et)
     onInbound(progress.clientConfirmRecord)
     return onSendComplete(progress.token, true)
 }

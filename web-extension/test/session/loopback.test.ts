@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { beforeAll, describe, it, expect } from 'vitest';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import { normalizeLowS, signRbase, verifyP1363 } from '../../src/session/ecdsa';
 import { decodeFrame, decodeSignatureFrame } from '../../src/session/frames';
@@ -13,9 +14,18 @@ import {
     rbase as reconnectRbase,
     type ReconnectKeys,
 } from '../../src/session/schedule';
-import { Direction, FrameType, RecordType, Role } from '../../src/session/wire';
+import { Direction, FrameType, RecordType, Role, SessionClass } from '../../src/session/wire';
 import { requireValidPoint } from '../../src/session/p256';
-import { hexOf } from './client-harness';
+import { PEER_STATE_ACTIVE, hexOf } from './client-harness';
+import { initPairingCore, PairingExecution } from '../../src/pairing/core';
+import { PairingLink, type PairingTransport } from '../../src/pairing/link';
+import { ActivationEngine } from '../../src/pairing/activation';
+import { ProofRegistry } from '../../src/pairing/proofs';
+import { bytes as trustBytes, fingerprint } from '../../src/trust/model';
+import { SessionClock, createTestTrust } from '../connector/session-harness';
+import { API_VERSION } from '../connector/fixtures';
+import type { ConnectorResult } from '../../src/connector/port';
+import type { WireEvent } from '../../src/connector/protocol';
 
 // OTP-09 Task 10 cross-endpoint loopback: the production TypeScript client engine against
 // the real Kotlin phone engine in a child JVM (`PhoneLoopbackMainKt <seed>`). Skipped when
@@ -25,8 +35,24 @@ import { hexOf } from './client-harness';
 const CLASSPATH = process.env.VELES_LOOPBACK_CLASSPATH ?? '';
 const REQUIRED = process.env.VELES_LOOPBACK_REQUIRED === '1';
 const JAVA = process.env.VELES_LOOPBACK_JAVA ?? 'java';
+// OTP-10: the Gradle `rustHostJni` output directory, exported by `sessionLoopbackCheck`.
+// The child JVM loads the real Rust core with System.loadLibrary("veles_crypto"), so the
+// directory must be on java.library.path. Left unset in a bare local run (the OTP-09
+// scenarios do not touch the native core); CI always sets it.
+const HOST_JNI_DIR = process.env.VELES_HOST_JNI_DIR ?? '';
 const CLASS_NAME = 'me.nagaev.veles.session.loopback.PhoneLoopbackMainKt';
 const TIMEOUT_MS = 30_000;
+
+// OTP-10 Task 11: the enrollment/recovery loopback runs the same child JVM in `pairing`
+// mode, where the phone hosts the production pairing machine, trust repository and
+// activation engine on the real host core. The window draws a fixed code `000042`.
+const PAIRING_MODE = 'pairing';
+const PAIRING_CODE = '000042';
+const EVENT_WINDOW = 0x03;
+const EVENT_TRUST = 0x04;
+const EVENT_PAIRING_STATE = 0x05;
+const EVENT_AUTHENTICATED = 0x01;
+const EVENT_CLOSED = 0x02;
 
 // ---------------------------------------------------------------------------------------------
 // Seed-derived P-256 identities, matching PhoneLoopbackMain.kt
@@ -173,8 +199,13 @@ interface LoopbackProcess {
     stop(): void;
 }
 
-function startPhone(seed: string): LoopbackProcess {
-    const child = spawn(JAVA, ['-cp', CLASSPATH, CLASS_NAME, seed], {
+function startPhone(seed: string, mode?: string): LoopbackProcess {
+    const jvmArguments = ['-cp', CLASSPATH];
+    if (HOST_JNI_DIR !== '') {
+        jvmArguments.push(`-Djava.library.path=${HOST_JNI_DIR}`);
+    }
+    const programArguments = mode === undefined ? [seed] : [seed, mode];
+    const child = spawn(JAVA, [...jvmArguments, CLASS_NAME, ...programArguments], {
         stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
     let buffered = Buffer.alloc(0);
@@ -255,6 +286,18 @@ function isFrame(message: Message, type: number): boolean {
     return message.kind === 0 && message.payload.length > 0 && message.payload[0] === type;
 }
 
+function isEvent(message: Message, code: number): boolean {
+    return message.kind === 2 && message.payload.length > 0 && message.payload[0] === code;
+}
+
+function command(phone: LoopbackProcess, text: string): void {
+    phone.send(1, encoder.encode(text));
+}
+
+function eventText(message: Message): string {
+    return new TextDecoder().decode(message.payload.subarray(1));
+}
+
 function isProtectedRecord(message: Message): boolean {
     return (
         message.kind === 0 &&
@@ -275,7 +318,18 @@ class LoopbackClient {
         client: DerivedIdentity,
         phone: DerivedIdentity,
         received: number[] = [],
+        wired?: { engine: ClientSessionEngine; ephemeral: CryptoKeyPair; nonce: Uint8Array },
     ): Promise<LoopbackClient> {
+        if (wired !== undefined) {
+            return new LoopbackClient(
+                client,
+                phone,
+                wired.ephemeral,
+                wired.nonce,
+                received,
+                wired.engine,
+            );
+        }
         const ephemeral = await crypto.subtle.generateKey(
             { name: 'ECDH', namedCurve: 'P-256' },
             true,
@@ -301,24 +355,27 @@ class LoopbackClient {
         ephemeral: CryptoKeyPair,
         nonce: Uint8Array,
         received: number[],
+        engine?: ClientSessionEngine,
     ) {
         this.ephemeral = ephemeral;
         this.nonce = nonce;
-        this.engine = new ClientSessionEngine({
-            localInstallationId: client.installationId.slice(),
-            sign: (message) => signRbase(client.key, message),
-            expectedPeerId: hexOf(phone.installationId),
-            isCurrent: () => true,
-            lookupPhone: async () => ({ publicKey: phone.point, state: 'active' }),
-            upgradeMirror: async () => undefined,
-            now: () => 0,
-            ephemeral: async () => ephemeral,
-            nonce: () => nonce,
-            handler: {
-                handles: (type) => received.includes(type),
-                handle: async () => undefined,
-            },
-        });
+        this.engine =
+            engine ??
+            new ClientSessionEngine({
+                localInstallationId: client.installationId.slice(),
+                sign: (message) => signRbase(client.key, message),
+                expectedPeerId: hexOf(phone.installationId),
+                isCurrent: () => true,
+                lookupPhone: async () => ({ publicKey: phone.point, state: 'active' }),
+                upgradeMirror: async () => undefined,
+                now: () => 0,
+                ephemeral: async () => ephemeral,
+                nonce: () => nonce,
+                handler: {
+                    handles: (type) => received.includes(type),
+                    handle: async () => undefined,
+                },
+            });
     }
 
     async start(phone: LoopbackProcess): Promise<Uint8Array> {
@@ -501,6 +558,19 @@ async function handshake(phone: LoopbackProcess, seed: string): Promise<Loopback
         RecordType.PULL_EVENTS,
         RecordType.PUSH_EVENT,
     ]);
+    await performHandshake(phone, client);
+    return client;
+}
+
+/**
+ * Drives any client engine through the §11.3 handshake against the loopback phone. The
+ * OTP-10 recovery scenarios pass their own engine (real trust repository, real activation
+ * handler) so the same wire exchange runs against the production client machine.
+ */
+async function performHandshake(
+    phone: LoopbackProcess,
+    client: LoopbackClient,
+): Promise<SessionEffect[]> {
     await client.start(phone);
     const helloMessage = await phone.next((message) => isFrame(message, FrameType.RECONNECT_HELLO));
     await acceptAndRemember(client, helloMessage);
@@ -509,13 +579,288 @@ async function handshake(phone: LoopbackProcess, seed: string): Promise<Loopback
     );
     await client.acceptPhoneSignature(phone, signatureMessage);
     const confirmMessage = await phone.next(isProtectedRecord);
-    await client.acceptPhoneConfirm(confirmMessage);
-    const authenticated = await phone.next(
-        (message) => message.kind === 2 && message.payload[0] === 0x01,
+    const effects = await client.engine.onInbound(confirmMessage.payload);
+    const authenticated = effects.find((effect) => effect.kind === 'authenticated');
+    if (authenticated?.kind !== 'authenticated')
+        throw new Error('the session did not authenticate');
+    const authenticatedEvent = await phone.next((message) => isEvent(message, EVENT_AUTHENTICATED));
+    expect(Array.from(authenticatedEvent.payload.subarray(2, 10))).toEqual(
+        Array.from(client.prefix),
     );
-    expect(Array.from(authenticated.payload.subarray(2, 10))).toEqual(Array.from(client.prefix));
-    return client;
+    // The client's own unprompted records (OTP2-STA-010b step 5) go out after the gate.
+    for (const record of authenticated.unprompted ?? []) {
+        await client.send(phone, record.type, record.body);
+    }
+    return effects;
 }
+
+// ---------------------------------------------------------------------------------------------
+// OTP-10 enrollment and recovery loopback
+// ---------------------------------------------------------------------------------------------
+
+interface PhoneTrustPeer {
+    installationId: string;
+    publicKey: string;
+    label: string;
+    deviceType: number;
+    enrollmentTranscript: string;
+    fingerprint: string;
+    state: string;
+}
+
+interface PhoneTrustSnapshot {
+    identity: { installationId: string; publicKey: string };
+    peers: PhoneTrustPeer[];
+    openHandles: number;
+}
+
+async function phoneTrust(phone: LoopbackProcess): Promise<PhoneTrustSnapshot> {
+    command(phone, 'trust');
+    const message = await phone.next((candidate) => isEvent(candidate, EVENT_TRUST));
+    return JSON.parse(eventText(message)) as PhoneTrustSnapshot;
+}
+
+async function phonePairingState(phone: LoopbackProcess): Promise<string> {
+    command(phone, 'state');
+    const message = await phone.next((candidate) => isEvent(candidate, EVENT_PAIRING_STATE));
+    return eventText(message);
+}
+
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+    if (left.length !== right.length) return false;
+    let difference = 0;
+    for (let index = 0; index < left.length; index += 1) difference |= left[index] ^ right[index];
+    return difference === 0;
+}
+
+async function waitFor(predicate: () => boolean, what: string): Promise<void> {
+    const deadline = Date.now() + TIMEOUT_MS;
+    while (!predicate()) {
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    }
+}
+
+/** Reads one protected record, lets the client engine handle it and forwards every reply. */
+async function receiveProtected(
+    phone: LoopbackProcess,
+    client: LoopbackClient,
+): Promise<SessionEffect[]> {
+    const message = await phone.next(isProtectedRecord);
+    const effects = await client.engine.onInbound(message.payload);
+    for (const effect of effects) {
+        if (effect.kind === 'send') phone.send(0, effect.bytes);
+    }
+    return effects;
+}
+
+interface ReconnectRun {
+    client: LoopbackClient;
+    engine: ClientSessionEngine;
+}
+
+/**
+ * Builds the production client engine for one signed reconnect over the enrolled trust
+ * record: the real recovery-key derivation (from the durable `ET`), the real activation
+ * handler and the real repository transition.
+ */
+async function reconnectClient(
+    trust: Awaited<ReturnType<typeof createTestTrust>>,
+    phoneIdentity: DerivedIdentity,
+    clock: SessionClock,
+    proofs: ProofRegistry,
+): Promise<ReconnectRun> {
+    const peers = await trust.repository.peers();
+    if (peers.length !== 1) throw new Error(`expected one trusted phone, got ${peers.length}`);
+    const peer = peers[0];
+    if (peer === undefined) throw new Error('no trusted phone');
+    const ephemeral = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, [
+        'deriveBits',
+    ]);
+    const nonce = crypto.getRandomValues(new Uint8Array(16));
+    const engine = new ClientSessionEngine({
+        localInstallationId: trustBytes(trust.identity.installationId, 16),
+        expectedPeerId: peer.installationId,
+        isCurrent: () => true,
+        lookupPhone: async (id) =>
+            id === peer.installationId
+                ? {
+                      publicKey: trustBytes(peer.publicKey, 65),
+                      state: peer.state,
+                      et: trustBytes(peer.enrollmentTranscript, 32),
+                  }
+                : undefined,
+        upgradeMirror: (id, proof) => trust.repository.confirm(id, 'phone_active', proof),
+        now: clock.now,
+        ephemeral: async () => ephemeral,
+        nonce: () => nonce,
+        handler: new ActivationEngine({ trust: trust.repository, proofs }),
+        sign: async (message) => {
+            const identity = await trust.keys.read();
+            if (identity === undefined) throw new Error('identity unavailable');
+            return normalizeLowS(
+                new Uint8Array(
+                    await crypto.subtle.sign(
+                        { name: 'ECDSA', hash: 'SHA-256' },
+                        identity.privateKey,
+                        message,
+                    ),
+                ),
+            );
+        },
+    });
+    const client = await LoopbackClient.create(phoneIdentity, phoneIdentity, [], {
+        engine,
+        ephemeral,
+        nonce,
+    });
+    return { client, engine };
+}
+
+async function assertMatchingRecords(
+    snapshot: PhoneTrustSnapshot,
+    trust: Awaited<ReturnType<typeof createTestTrust>>,
+    phoneIdentity: DerivedIdentity,
+    phoneState: string,
+    clientState: string,
+): Promise<void> {
+    expect(snapshot.identity.installationId).toBe(hexOf(phoneIdentity.installationId));
+    expect(snapshot.identity.publicKey).toBe(hexOf(phoneIdentity.point));
+    expect(snapshot.peers).toHaveLength(1);
+    const peer = snapshot.peers[0];
+    expect(peer?.state).toBe(phoneState);
+    expect(peer?.installationId).toBe(trust.identity.installationId);
+    expect(peer?.publicKey).toBe(trust.identity.publicKey);
+    expect(peer?.label).toBe('Chrome');
+    expect(peer?.deviceType).toBe(0x01);
+    expect(snapshot.openHandles).toBe(0);
+
+    const peers = await trust.repository.peers();
+    expect(peers).toHaveLength(1);
+    const mirror = peers[0];
+    expect(mirror?.state).toBe(clientState);
+    expect(mirror?.installationId).toBe(hexOf(phoneIdentity.installationId));
+    expect(mirror?.publicKey).toBe(hexOf(phoneIdentity.point));
+    // Both stores persisted the same public `ET` and independently derive the same fingerprint.
+    expect(mirror?.enrollmentTranscript).toBe(peer?.enrollmentTranscript);
+    expect(mirror?.fingerprint).toBe(peer?.fingerprint);
+    expect(peer?.fingerprint).toBe(
+        await fingerprint(hexOf(phoneIdentity.point), trust.identity.publicKey),
+    );
+}
+
+/**
+ * The enrollment link over the child JVM: `connect` opens the fixed-code window,
+ * `send` writes a frame, and the reader dispatches inbound frames to the link.
+ */
+class LoopbackPairingTransport implements PairingTransport {
+    readonly connectionHandle = 'loopback-enrollment';
+    /** Drops the next inbound frame (the interrupted-activation cut). */
+    dropNext = false;
+    /** Observes each outbound record before the phone can answer it. */
+    onSend: ((record: Uint8Array) => void) | null = null;
+    private readonly listeners = new Set<
+        (record: { connectionHandle: string; bytes: Uint8Array }) => void
+    >();
+    private readonly buffered: Uint8Array[] = [];
+    private running = true;
+
+    constructor(private readonly phone: LoopbackProcess) {
+        void this.read();
+    }
+
+    async connect(): Promise<ConnectorResult<ConnectedEvent>> {
+        command(this.phone, 'pair');
+        await this.phone.next((message) => isEvent(message, EVENT_WINDOW));
+        return {
+            ok: true,
+            event: {
+                type: 'connected',
+                envelope_version: 1,
+                api_version: API_VERSION,
+                request_id: 'loopback-connect',
+                connection_handle: this.connectionHandle,
+            },
+        };
+    }
+
+    async send(_handle: string, record: Uint8Array): Promise<ConnectorResult<SentEvent>> {
+        this.phone.send(0, record);
+        // Runs before the phone's asynchronous answer can reach the reader, so a cut
+        // armed here never races the client's own commit.
+        this.onSend?.(record);
+        return {
+            ok: true,
+            event: {
+                type: 'sent',
+                envelope_version: 1,
+                api_version: API_VERSION,
+                request_id: 'loopback-send',
+                connection_handle: this.connectionHandle,
+            },
+        };
+    }
+
+    async disconnect(): Promise<ConnectorResult<DisconnectedEvent>> {
+        this.running = false;
+        return {
+            ok: true,
+            event: {
+                type: 'disconnected',
+                envelope_version: 1,
+                api_version: API_VERSION,
+                connection_handle: this.connectionHandle,
+            },
+        };
+    }
+
+    onRecord(
+        listener: (record: { connectionHandle: string; bytes: Uint8Array }) => void,
+    ): () => void {
+        this.listeners.add(listener);
+        for (const bytes of this.buffered.splice(0)) {
+            listener({ connectionHandle: this.connectionHandle, bytes });
+        }
+        return () => {
+            this.listeners.delete(listener);
+        };
+    }
+
+    /** Stops dispatching; a pending read never steals a later inbound frame. */
+    close(): void {
+        this.running = false;
+    }
+
+    private async read(): Promise<void> {
+        for (;;) {
+            let message: Message;
+            try {
+                message = await this.phone.next(
+                    (candidate) => this.running && candidate.kind === 0,
+                );
+            } catch {
+                return;
+            }
+            if (!this.running) return;
+            if (this.dropNext) {
+                this.dropNext = false;
+                continue;
+            }
+            const bytes = message.payload;
+            if (this.listeners.size === 0) {
+                this.buffered.push(bytes);
+                continue;
+            }
+            for (const listener of [...this.listeners]) {
+                listener({ connectionHandle: this.connectionHandle, bytes });
+            }
+        }
+    }
+}
+
+type ConnectedEvent = Extract<WireEvent, { type: 'connected' }>;
+type SentEvent = Extract<WireEvent, { type: 'sent' }>;
+type DisconnectedEvent = Extract<WireEvent, { type: 'disconnected' }>;
 
 // ---------------------------------------------------------------------------------------------
 // Tests
@@ -536,6 +881,12 @@ if (CLASSPATH === '' && REQUIRED) {
     });
 } else {
     describe('session loopback', () => {
+        beforeAll(async () => {
+            await initPairingCore(
+                readFileSync(new URL('../../rust-wasm/pkg/veles_crypto_bg.wasm', import.meta.url)),
+            );
+        });
+
         it(
             'handshake, heartbeat, pull/ack, push and app_error cross endpoints',
             async () => {
@@ -584,9 +935,7 @@ if (CLASSPATH === '' && REQUIRED) {
                     // app_error: the phone closes on a terminal application error.
                     const closingPrefix = client.prefix.slice();
                     await client.send(phone, RecordType.APP_ERROR, Uint8Array.of(1, 0, 0));
-                    const closed = await phone.next(
-                        (message) => message.kind === 2 && message.payload[0] === 0x02,
-                    );
+                    const closed = await phone.next((message) => isEvent(message, EVENT_CLOSED));
                     expect(Array.from(closed.payload.subarray(1, 9))).toEqual(
                         Array.from(closingPrefix),
                     );
@@ -613,9 +962,7 @@ if (CLASSPATH === '' && REQUIRED) {
                     const firstPhoneConfirm = new Uint8Array(firstKeys.phoneConfirmKey);
 
                     phone.send(1, encoder.encode('reset'));
-                    await phone.next(
-                        (message) => message.kind === 2 && message.payload[0] === 0x02,
-                    );
+                    await phone.next((message) => isEvent(message, EVENT_CLOSED));
                     const second = await handshake(phone, seed);
                     const secondKeys = second.sessionKeys;
 
@@ -789,6 +1136,192 @@ if (CLASSPATH === '' && REQUIRED) {
                 }
             },
             TIMEOUT_MS,
+        );
+
+        it(
+            'enrollment_full: the phone-hosted machine and the production client reach active',
+            async () => {
+                const seed = 'otp10-loopback-enrollment';
+                const phone = startPhone(seed, PAIRING_MODE);
+                const transport = new LoopbackPairingTransport(phone);
+                try {
+                    const phoneIdentity = await deriveIdentity(
+                        'Veles loopback phone identity v1',
+                        'Veles loopback phone installation v1',
+                        seed,
+                    );
+                    const clock = new SessionClock();
+                    const trust = await createTestTrust(clock);
+                    const proofs = new ProofRegistry();
+                    const mirror: { engine?: ClientSessionEngine } = {};
+                    trust.bindVerifier(async (peer, stage, proof) => {
+                        if (stage === 'complete') {
+                            return proofs.consume(peer.installationId, 'complete', proof);
+                        }
+                        // Production stage binding: only the verified confirm that reported
+                        // the phone active may upgrade the durable mirror.
+                        const confirm = mirror.engine?.verifiedPhoneConfirm ?? null;
+                        return (
+                            stage === 'phone_active' &&
+                            confirm !== null &&
+                            mirror.engine?.verifiedPeerState === PEER_STATE_ACTIVE &&
+                            equalBytes(confirm, proof)
+                        );
+                    });
+
+                    const link = await PairingLink.start({
+                        controller: transport,
+                        repo: trust.repository,
+                        proofs,
+                        code: PAIRING_CODE,
+                        deviceHandle: 'loopback-phone',
+                        clock: clock.now,
+                        tickIntervalMs: 0,
+                        init: async () => undefined,
+                        core: PairingExecution,
+                    });
+
+                    // The fixed code in the window must verify the SPAKE2 confirmation,
+                    // and the production link itself must send the activation commit: no
+                    // manual `machine.commit()` here. `awaiting_complete` is only reached
+                    // once that commit is on the wire.
+                    await waitFor(
+                        () => link.machine.state === 'awaiting_complete' || link.machine.closed,
+                        'the link to send the activation commit',
+                    );
+                    await link.settled();
+                    await waitFor(() => link.machine.closed, 'the enrollment connection to close');
+                    expect(link.machine.failed).toBe(false);
+                    expect(link.machine.fingerprint()).toMatch(
+                        /^[0-9A-F]{4} [0-9A-F]{4} [0-9A-F]{4}$/,
+                    );
+                    expect(await phonePairingState(phone)).toBe('ACTIVE');
+                    await assertMatchingRecords(
+                        await phoneTrust(phone),
+                        trust,
+                        phoneIdentity,
+                        'active',
+                        'active_activation_pending',
+                    );
+
+                    // A signed reconnect without a code upgrades the mirror; both stores end active.
+                    const run = await reconnectClient(trust, phoneIdentity, clock, proofs);
+                    mirror.engine = run.engine;
+                    command(phone, 'reconnect');
+                    await performHandshake(phone, run.client);
+                    expect(run.engine.sessionClass).toBe(SessionClass.FULL);
+                    await assertMatchingRecords(
+                        await phoneTrust(phone),
+                        trust,
+                        phoneIdentity,
+                        'active',
+                        'active',
+                    );
+                } finally {
+                    transport.close();
+                    phone.stop();
+                }
+            },
+            TIMEOUT_MS * 3,
+        );
+
+        it(
+            'interrupted_activation_resumes: a lost activation_complete resumes through recovery',
+            async () => {
+                const seed = 'otp10-loopback-interrupted';
+                const phone = startPhone(seed, PAIRING_MODE);
+                const transport = new LoopbackPairingTransport(phone);
+                try {
+                    const phoneIdentity = await deriveIdentity(
+                        'Veles loopback phone identity v1',
+                        'Veles loopback phone installation v1',
+                        seed,
+                    );
+                    const clock = new SessionClock();
+                    const trust = await createTestTrust(clock);
+                    const proofs = new ProofRegistry();
+                    const mirror: { engine?: ClientSessionEngine } = {};
+                    trust.bindVerifier(async (peer, stage, proof) => {
+                        if (stage === 'complete') {
+                            return proofs.consume(peer.installationId, 'complete', proof);
+                        }
+                        const confirm = mirror.engine?.verifiedPhoneConfirm ?? null;
+                        return (
+                            stage === 'phone_active' &&
+                            confirm !== null &&
+                            mirror.engine?.verifiedPeerState === PEER_STATE_ACTIVE &&
+                            equalBytes(confirm, proof)
+                        );
+                    });
+
+                    const link = await PairingLink.start({
+                        controller: transport,
+                        repo: trust.repository,
+                        proofs,
+                        code: PAIRING_CODE,
+                        deviceHandle: 'loopback-phone',
+                        clock: clock.now,
+                        tickIntervalMs: 0,
+                        init: async () => undefined,
+                        core: PairingExecution,
+                    });
+
+                    // The link itself sends the commit once the prepare verifies. The
+                    // phone verifies that commit and releases activation_complete; the
+                    // link drops that record, so the connection dies mid-activation.
+                    transport.onSend = () => {
+                        if (link.machine.state === 'awaiting_complete') transport.dropNext = true;
+                    };
+                    await waitFor(
+                        () => link.machine.state === 'awaiting_complete',
+                        'the client to wait for activation_complete',
+                    );
+                    expect(await phonePairingState(phone)).toBe('COMMITTED_WAITING_ACK');
+                    await link.abandon();
+                    command(phone, 'disconnect');
+                    expect(await phonePairingState(phone)).toBe('IDLE');
+
+                    // Both sides keep the durable incomplete record for the signed recovery.
+                    expect((await trust.repository.peers())[0]?.state).toBe('pending');
+                    expect((await phoneTrust(phone)).peers[0]?.state).toBe('committed_waiting_ack');
+
+                    // Recovery: the phone owes enrollment_prepare and the pending client re-commits.
+                    const recovery = await reconnectClient(trust, phoneIdentity, clock, proofs);
+                    mirror.engine = recovery.engine;
+                    command(phone, 'reconnect');
+                    await performHandshake(phone, recovery.client);
+                    expect(recovery.engine.sessionClass).toBe(SessionClass.ACTIVATION_RECOVERY);
+                    const prepareEffects = await receiveProtected(phone, recovery.client);
+                    expect(prepareEffects.some((effect) => effect.kind === 'send')).toBe(true);
+                    const completeEffects = await receiveProtected(phone, recovery.client);
+                    expect(completeEffects.some((effect) => effect.kind === 'send')).toBe(true);
+                    await assertMatchingRecords(
+                        await phoneTrust(phone),
+                        trust,
+                        phoneIdentity,
+                        'active',
+                        'active_activation_pending',
+                    );
+
+                    // The first full reconnect after recovery promotes the mirror on the active proof.
+                    const full = await reconnectClient(trust, phoneIdentity, clock, proofs);
+                    mirror.engine = full.engine;
+                    command(phone, 'reconnect');
+                    await performHandshake(phone, full.client);
+                    expect(full.engine.sessionClass).toBe(SessionClass.FULL);
+                    await assertMatchingRecords(
+                        await phoneTrust(phone),
+                        trust,
+                        phoneIdentity,
+                        'active',
+                        'active',
+                    );
+                } finally {
+                    transport.close();
+                    phone.stop();
+                }
+            },
+            TIMEOUT_MS * 3,
         );
     });
 }

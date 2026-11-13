@@ -252,6 +252,45 @@ describe('Chrome trust repository', () => {
         expect((await repo.peers())[0].publicKey).toBe(peer.publicKey);
     });
 
+    it('authenticates a pending record without writing anything', async () => {
+        const s = setup();
+        const repo = s.make();
+        const peer = await candidate();
+        await repo.addPending(peer);
+        const before = structuredClone(s.get());
+
+        await expect(
+            repo.authenticated(peer.installationId, undefined, new Uint8Array([0])),
+        ).rejects.toThrow();
+        expect(s.get()).toEqual(before);
+
+        await repo.authenticated(peer.installationId, 'winrt:opaque', new Uint8Array([1]));
+
+        expect(s.get()).toEqual(before);
+        expect(s.get().peers[0]).toMatchObject({
+            state: 'pending',
+            lastSeenMillis: null,
+            pendingSince: 0,
+            pendingContext: before.peers[0].pendingContext,
+        });
+        expect(s.get().peers[0].platformHint).toBeUndefined();
+    });
+
+    it('rejects a pending authentication from another connector context', async () => {
+        const s = setup();
+        const owner = s.make();
+        const peer = await candidate();
+        await owner.addPending(peer);
+        const before = structuredClone(s.get());
+        const observer = s.make();
+
+        await expect(
+            observer.authenticated(peer.installationId, undefined, new Uint8Array([1])),
+        ).rejects.toThrow();
+
+        expect(s.get()).toEqual(before);
+    });
+
     it('serializes concurrent updates, isolates revocation and publishes nothing on write failure', async () => {
         const s = setup();
         const repo = s.make();
@@ -264,6 +303,22 @@ describe('Chrome trust repository', () => {
         s.fail();
         await expect(repo.revoke(b.installationId)).rejects.toThrow();
         expect(s.get().peers).toHaveLength(1);
+    });
+
+    it('revokePending is conditional under the trust lock', async () => {
+        const s = setup();
+        const repo = s.make();
+        const pending = await candidate();
+        await repo.addPending(pending);
+        expect(await repo.revokePending(pending.installationId)).toBe(true);
+        expect(await repo.revokePending(pending.installationId)).toBe(false);
+        expect(await repo.peers()).toEqual([]);
+
+        const recovered = await candidate();
+        await repo.addPending(recovered);
+        await repo.confirm(recovered.installationId, 'complete', new Uint8Array([1]));
+        expect(await repo.revokePending(recovered.installationId)).toBe(false);
+        expect((await repo.peers())[0].state).toBe('active_activation_pending');
     });
 
     it('requires explicit reset after key loss and never trusts old peers with a new identity', async () => {

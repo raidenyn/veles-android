@@ -37,6 +37,13 @@ jobs:
       - name: Activate pinned Rust toolchain
         working-directory: rust
         run: rustup show active-toolchain
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/rust-tools
+          key: rust-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/toolchain-tools.toml', 'rust/Cargo.lock') }}
+      # protocolCheck runs the loopback child JVM, which loads the real host-JVM
+      # Rust core from this test-only cdylib.
+      - run: ./gradlew rustHostJni
       - name: Assert system Python version
         run: python3 --version && python3 -c 'import sys; assert sys.version_info >= (3, 8), sys.version'
       - run: ./gradlew protocolCheck

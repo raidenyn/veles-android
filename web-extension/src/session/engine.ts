@@ -22,6 +22,7 @@ import {
     rbase as reconnectRbase,
     type ReconnectKeyMaterial,
     type ReconnectKeys,
+    type RecoveryKeys,
 } from './schedule';
 import {
     AppErrorCode,
@@ -77,6 +78,29 @@ const STAGE_UNHANDLED = 'unhandled';
 const STAGE_SEQUENCE = 'sequence';
 const STAGE_DEPENDENCY = 'dependency';
 
+/** The fixed facts of one authenticated session (OTP-10 plan 9b). */
+export interface SessionContext {
+    sessionIdPrefix: Uint8Array;
+    sessionClass: SessionClass;
+    /** The peer installation id, hex-encoded exactly as the trust store spells it. */
+    peerId: string;
+    /** The public enrollment transcript the record carried, or null. */
+    et: Uint8Array | null;
+    /** The `peer_state` the peer reported in its `reconnect_confirm`. */
+    peerState: number;
+    /**
+     * The live OTP2-CRY-019f recovery holder for a non-full class, or null when the record
+     * carried no `ET` and whenever the class is `full` (its holder has just been zeroed).
+     */
+    recovery: RecoveryKeys | null;
+}
+
+/** One record a handler owes the peer as soon as the session is open (OTP2-STA-010b). */
+export interface UnpromptedApplication {
+    type: number;
+    body: Uint8Array;
+}
+
 /** Application records that have a handler. An authorized record without one fails closed. */
 export interface ApplicationHandler {
     handles(type: number): boolean;
@@ -85,6 +109,22 @@ export interface ApplicationHandler {
         body: Uint8Array,
         reply: (type: number, body: Uint8Array) => Promise<void>,
     ): Promise<void>;
+    /**
+     * Optional per-session hook: the engine asks once, when the class is fixed, and uses only
+     * the returned instance for this session's records. The default keeps the same instance.
+     *
+     * A handler receives the context on `authenticated`; the session is open at that point, so
+     * its owner may send an unprompted record through `sendApplication` without any inbound
+     * record (OTP-10 plan 9b).
+     */
+    forSession?(context: SessionContext): ApplicationHandler;
+
+    /**
+     * Records the session-scoped handler owes as soon as the gate opens (OTP2-STA-010b steps
+     * 0 and 5). The engine only reports them on the `authenticated` effect; the session owner
+     * sends each one after it handled the effect.
+     */
+    unprompted?(): UnpromptedApplication[] | Promise<UnpromptedApplication[]>;
 }
 
 /** Effects that a session host turns into transport writes, host callbacks and teardown. */
@@ -95,6 +135,8 @@ export type SessionEffect =
           sessionClass: SessionClass;
           peerId: string;
           sessionIdPrefix: Uint8Array;
+          /** Present only when the session owes an unprompted record at open. */
+          unprompted?: UnpromptedApplication[];
       }
     | { kind: 'deliver'; type: number; body: Uint8Array }
     | { kind: 'terminated'; reason: string }
@@ -108,9 +150,7 @@ export interface ClientEngineDeps {
     expectedPeerId: string;
     /** Generation fence, checked immediately before `upgradeMirror`. */
     isCurrent(): boolean;
-    lookupPhone(
-        id: string,
-    ): Promise<{ publicKey: Uint8Array; state: PhoneRecordState } | undefined>;
+    lookupPhone(id: string): Promise<PhoneRecord | undefined>;
     /** Wraps `repository.confirm(peerId, 'phone_active', proof)` with a session-bound verifier. */
     upgradeMirror(peerId: string, proof: Uint8Array): Promise<void>;
     now(): number;
@@ -130,6 +170,12 @@ type Phase =
 interface PhoneRecord {
     publicKey: Uint8Array;
     state: PhoneRecordState;
+    /**
+     * The public canonical enrollment transcript `ET` (OTP2-CRY-020b) of the
+     * pending, committed or active record. Present means the engine derives the
+     * OTP2-CRY-019f recovery activation keys.
+     */
+    et?: Uint8Array;
 }
 
 /**
@@ -165,6 +211,8 @@ interface EngineState {
     /** True only between that verification and the fixed session class. */
     phoneConfirmFinalizing: boolean;
     authenticated: boolean;
+    /** The session-scoped handler, derived once the session id prefix is fixed. */
+    handler: ApplicationHandler | null;
     nextToken: number;
     outboundSequence: bigint;
     inboundSequence: bigint;
@@ -200,6 +248,7 @@ function freshState(phase: Phase): EngineState {
         verifiedPhoneConfirm: null,
         phoneConfirmFinalizing: false,
         authenticated: false,
+        handler: null,
         nextToken: 0,
         outboundSequence: 0n,
         inboundSequence: 0n,
@@ -243,6 +292,14 @@ function eraseKeyMaterial(material: ReconnectKeyMaterial | null): void {
     material.p2cPrefix.fill(0);
     material.phoneConfirmKey.fill(0);
     material.sessionId.fill(0);
+    eraseRecoveryKeys(material.recovery);
+}
+
+/** OTP2-CRY-019f: zero both recovery keys in place, keeping the holder observable. */
+function eraseRecoveryKeys(recovery: RecoveryKeys | null): void {
+    if (recovery === null) return;
+    recovery.kRecClient.fill(0);
+    recovery.kRecPhone.fill(0);
 }
 
 /** Zeros every engine-owned key array. The AES `CryptoKey`s are not zeroable. */
@@ -253,9 +310,11 @@ function eraseReconnectKeys(keys: ReconnectKeys | null): void {
     keys.p2cPrefix.fill(0);
     keys.phoneConfirmKey.fill(0);
     keys.sessionId.fill(0);
+    eraseRecoveryKeys(keys.recovery);
 }
 
-function equalConstantTime(left: Uint8Array, right: Uint8Array): boolean {
+/** Constant-time byte equality for MACs and fingerprints (OTP2-REC-011a). */
+export function equalConstantTime(left: Uint8Array, right: Uint8Array): boolean {
     if (left.length !== right.length) return false;
     let difference = 0;
     for (let index = 0; index < left.length; index += 1) {
@@ -539,6 +598,15 @@ export class ClientSessionEngine {
         return this.#state.phase === 'closed' && this.#state.keys === null;
     }
 
+    /**
+     * Test-only OTP2-CRY-019f observation: the live recovery holder of the derived keys. It is
+     * the same holder the session context carries for a non-full class, so a test can take it
+     * before the gate and assert its bytes are zeroed once the class is `full`.
+     */
+    get _recoveryKeys(): RecoveryKeys | null {
+        return this.#state.keys?.recovery ?? null;
+    }
+
     /** Test-only read of the next expected inbound sequence (Task 10 effect observations). */
     get _inboundSequence(): bigint {
         return this.#state.inboundSequence;
@@ -574,7 +642,7 @@ export class ClientSessionEngine {
         if (hexOf(hello.installationId) !== this.#deps.expectedPeerId) {
             return this.#failPreAuth();
         }
-        let record: { publicKey: Uint8Array; state: PhoneRecordState } | undefined;
+        let record: PhoneRecord | undefined;
         try {
             record = await this.#deps.lookupPhone(this.#deps.expectedPeerId);
         } catch {
@@ -589,7 +657,11 @@ export class ClientSessionEngine {
             return this.#terminate(STAGE_UNEXPECTED_FRAME);
         }
         state.peerId = this.#deps.expectedPeerId;
-        state.peerRecord = { publicKey: record.publicKey.slice(), state: record.state };
+        state.peerRecord = {
+            publicKey: record.publicKey.slice(),
+            state: record.state,
+            et: record.et?.slice(),
+        };
         state.phoneHello = hello;
         state.transcript = reconnectRbase(frame.payload, state.clientHello);
         state.phase = 'awaiting_phone_signature';
@@ -651,7 +723,12 @@ export class ClientSessionEngine {
         try {
             const shared = await deriveSharedSecret(ephemeral.privateKey, hello.ephemeralPublicKey);
             try {
-                material = await deriveKeyMaterial(shared, hello.nonce, localNonce);
+                material = await deriveKeyMaterial(
+                    shared,
+                    hello.nonce,
+                    localNonce,
+                    state.peerRecord?.et ?? null,
+                );
                 keys = await importKeys(material);
                 // The AES keys are inside non-extractable CryptoKeys now; the
                 // other arrays are owned by `keys` and must not be wiped here.
@@ -855,8 +932,8 @@ export class ClientSessionEngine {
         if (!authorized(opened.type, Direction.PHONE_TO_CLIENT, sessionClass)) {
             return this.#terminate(STAGE_AUTHORIZATION);
         }
-        const handler = this.#deps.handler;
-        if (handler === undefined || !handler.handles(opened.type)) {
+        const handler = state.handler;
+        if (handler === null || !handler.handles(opened.type)) {
             return await this.#terminateUnhandled(state);
         }
 
@@ -1079,7 +1156,7 @@ export class ClientSessionEngine {
         return value === PEER_STATE_ACTIVE || value === PEER_STATE_BELOW_ACTIVE ? value : null;
     }
 
-    #authenticate(state: EngineState): SessionEffect[] {
+    async #authenticate(state: EngineState): Promise<SessionEffect[]> {
         if (this.#state !== state || state.phase === 'closed') return [];
         const expired = this.#expiryFailure(this.#deps.now());
         if (expired !== null) return this.#terminate(expired);
@@ -1091,17 +1168,47 @@ export class ClientSessionEngine {
             return this.#terminate(STAGE_RECORD_INVALID);
         }
         const sessionClass = selectSessionClass(record.state, state.peerState);
+        // OTP2-CRY-019f: the class is only fixed here, so a `full` session zeroes the recovery
+        // keys derived at the handshake. Every other class keeps them for its activation rows.
+        if (sessionClass === SessionClass.FULL) eraseRecoveryKeys(state.keys?.recovery ?? null);
         state.sessionClass = sessionClass;
         state.phoneConfirmFinalizing = false;
         state.authenticated = true;
         state.phase = 'open';
         state.lastActivityAt = this.#deps.now();
+        // OTP-10 plan 9b: the handler gets the fixed session facts once, here, before the
+        // authenticated effect and any inbound record. A full class hands out no recovery keys.
+        const handler = this.#deps.handler;
+        state.handler =
+            handler === undefined
+                ? null
+                : (handler.forSession?.({
+                      sessionIdPrefix: prefix.slice(),
+                      sessionClass,
+                      peerId,
+                      et: record.et?.slice() ?? null,
+                      peerState: state.peerState,
+                      recovery:
+                          sessionClass === SessionClass.FULL
+                              ? null
+                              : (state.keys?.recovery ?? null),
+                  }) ?? handler);
+        // OTP2-STA-010b steps 0/5: the context is fixed here, but the owner sends these after
+        // the effect through `sendApplication`, never from inside `forSession`.
+        let unprompted: UnpromptedApplication[] = [];
+        try {
+            unprompted = (await state.handler?.unprompted?.()) ?? [];
+        } catch {
+            if (this.#state !== state) return [];
+            return this.#terminate(STAGE_DEPENDENCY);
+        }
         return [
             {
                 kind: 'authenticated',
                 sessionClass,
                 peerId,
                 sessionIdPrefix: prefix.slice(),
+                ...(unprompted.length === 0 ? {} : { unprompted }),
             },
         ];
     }
@@ -1205,6 +1312,7 @@ function eraseState(state: EngineState): void {
     state.verifiedPhoneConfirm = null;
     state.phoneConfirmFinalizing = false;
     state.authenticated = false;
+    state.handler = null;
     state.peerState = 0;
     state.nextToken = 0;
     state.outboundSequence = 0n;

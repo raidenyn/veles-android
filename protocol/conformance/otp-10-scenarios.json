@@ -1,0 +1,58 @@
+{
+  "st-en-attempts-five-ok-sixth-rejected": "execute",
+  "st-en-rolling-attempts-boundaries": "execute",
+  "st-en-malformed-point-no-consumption": "execute",
+  "st-en-valid-pb-consumes-before-sensitive-operations": "execute",
+  "st-en-pa-churn-rolling-and-per-connection": "execute",
+  "st-en-second-request-in-flight-rejected": "execute",
+  "st-en-window-expiry-closes": "execute",
+  "st-en-role-mismatch-frame-rejected": "execute",
+  "st-en-client-confirms-in-order": "execute",
+  "st-en-phone-identity-device-type-mismatch": "execute",
+  "st-en-duplicate-installation-rejected": "execute",
+  "st-enrollment-full-success-then-no-otp-on-enrollment-connection": "execute",
+  "st-en-cancel-cancels-pending": "execute",
+  "st-en-window-deadline-pb-299999-allowed": "execute",
+  "st-en-window-deadline-pb-300000-rejected": "execute",
+  "st-en-window-deadline-pb-300001-rejected": "execute",
+  "st-en-window-deadline-cb-299999-allowed": "execute",
+  "st-en-window-deadline-cb-300000-rejected": "execute",
+  "st-en-window-deadline-cb-300001-rejected": "execute",
+  "st-en-enrollment-no-otp-client-receives": "execute",
+  "st-neg-same-connection-pb-after-invalid-point": {
+    "engine-effect": {
+      "terminate": true,
+      "erase": true,
+      "deliver": false
+    }
+  },
+  "st-en-prepare-sent-after-persist-pairing": "execute",
+  "st-en-client-prepare-gate-full-flow": "execute",
+  "st-neg-commit-without-verified-prepare": {
+    "engine-effect": {
+      "terminate": false,
+      "erase": false,
+      "deliver": false
+    }
+  },
+  "st-neg-early-prepare-rejected": "execute",
+  "st-neg-prepare-mismatch-erases": "execute",
+  "st-en-code-one-use-window-closed-after-cb": "execute",
+  "st-en-cb-disconnect-before-identity-repair-only": "execute",
+  "st-en-client-one-sided-pending-cancelled-then-fresh-pairing": "execute",
+  "st-rec-no-peer-record-no-recovery": "execute",
+  "st-en-inactivity-before-identity-repair-only": "execute",
+  "st-neg-client-persist-failure-publishes-nothing": "execute",
+  "st-neg-phone-persist-failure-sends-no-prepare": "execute",
+  "st-en-phone-pending-survives-interruption-with-et": "execute",
+  "st-rec-full-pending-peer-commit-duplicate-no-regression": "execute",
+  "st-rec-commit-lost-recovery": "execute",
+  "st-rec-ack-lost-active-client-direct-ack": "execute",
+  "st-rec-complete-lost-recovery-client": "execute",
+  "st-rec-recovery-session-stays-recovery-only": "execute",
+  "st-rec-pending-expiry-deletes-incomplete": "execute",
+  "st-rec-boot-continuity-loss-deletes-incomplete-only": "execute",
+  "st-rec-recovery-commit-mac-mismatch": "execute",
+  "st-rec-recovery-complete-mac-mismatch": "execute",
+  "st-rec-phone-complete-lost-prepares-then-full-session": "execute"
+}

@@ -40,12 +40,12 @@ What each check runs:
 | `android / lint` | `spotlessCheck`, `detekt`, the raw `android.util.Log` guard, `lintDebug` |
 | `android / unit-tests` | `testDebugUnitTest` |
 | `android / instrumented-tests` | `connectedDebugAndroidTest` on an API 33 emulator (KVM) |
-| `web-extension / lint` | `npm run format:check`, `npm run lint`, `npm run typecheck` |
-| `web-extension / unit-tests` | `npm test`, `npm run build && npm run test:bundle` |
-| `web-extension / browser-tests` | `npm run build`, Playwright Chromium, `npm run test:browser` |
+| `web-extension / lint` | `./gradlew rustWasm`, `npm run format:check`, `npm run lint`, `npm run typecheck` |
+| `web-extension / unit-tests` | `./gradlew rustWasm`, `npm test`, `npm run build && npm run test:bundle` |
+| `web-extension / browser-tests` | `./gradlew rustWasm`, `npm run build`, Playwright Chromium, `npm run test:browser` |
 | `rust / lint` | `rustFormat`, `rustLint` (host, WASM and Android targets) |
 | `rust / unit-tests` | `rustTest` (native and WASM) |
-| `rust / jni-integration` | the clean contract in one job, in this order: `:app:assembleDebug`, `verify-apk-jni.sh`, extension `npm ci && npm run build`, `./gradlew clean`, `assert-clean.sh`, `:app:assembleDebug`, `verify-apk-jni.sh`, then the Rust tool cache refill |
+| `rust / jni-integration` | the clean contract in one job, in this order: `:app:assembleDebug`, `verify-apk-jni.sh`, `rustHostJni`, `rustWasm`, extension `npm ci && npm run build`, `./gradlew clean`, `assert-clean.sh`, `:app:assembleDebug`, `verify-apk-jni.sh`, then the Rust tool cache refill |
 | `protocol / contract-tests` | `protocolCheck` |
 | `native-host / lint` | `bridgeHostToolchainCheck`, `bridgeHostFormat`, `bridgeHostLint` (Linux) |
 | `native-host / unit-tests (linux)` | `bridgeHostTest` |
@@ -60,6 +60,13 @@ What each check runs:
 | `bridge-scaffold / unit-tests` | `bridgeNpmTest`, `bridgeRustTest` |
 | `supply-chain / build` | `verify/verify-supply-chain.sh` and the report upload (`build-supply-chain.yml`, shared with `publish-release.yml`) |
 | `tooling / unit-tests` | `node --test verify/test/workflow-contracts.test.mjs`, `./gradlew scriptsTest` |
+
+The extension jobs import the generated WASM package, so each one activates the pinned
+Rust toolchain, restores `build/rust-tools` and runs `./gradlew rustWasm` before `npm ci`
+and the TS commands. `build-web-extension.yml` does the same before its build/package
+chain. `check-rust.yml`'s `jni-integration` builds both test-only Rust outputs
+(`rustHostJni`, `rustWasm`) before it builds the extension, and the clean contract still
+removes them afterwards.
 
 Each command that ran in CI before the split runs in exactly one check workflow. The workflow contract
 suite (`verify/test/workflow-contracts.test.mjs`) holds that inventory and fails if a command is lost or

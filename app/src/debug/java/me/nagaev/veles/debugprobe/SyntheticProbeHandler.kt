@@ -2,6 +2,7 @@ package me.nagaev.veles.debugprobe
 
 import me.nagaev.veles.session.ApplicationHandler
 import me.nagaev.veles.session.RecordType
+import me.nagaev.veles.session.SessionContext
 import me.nagaev.veles.session.SessionReject
 
 internal const val PROBE_TAG = "VelesProbe"
@@ -91,13 +92,13 @@ internal class SyntheticProbeHandler private constructor(
         ledger: SyntheticEventLedger = SyntheticEventLedger(),
     ) : this(localInstallationId, clock, random, log, ledger, null)
 
-    override fun forSession(sessionIdPrefix: ByteArray): ApplicationHandler = SyntheticProbeHandler(
+    override fun forSession(context: SessionContext): ApplicationHandler = SyntheticProbeHandler(
         localInstallationId = localInstallationId,
         clock = clock,
         random = random,
         log = log,
         ledger = ledger,
-        sessionIdPrefix = sessionIdPrefix.copyOf(),
+        sessionIdPrefix = context.sessionIdPrefix.copyOf(),
     )
 
     override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire || type == RecordType.EVENT_ACK.wire

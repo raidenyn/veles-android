@@ -71,6 +71,21 @@ Veles supports multi-device delivery of OTPs via external device toolchains:
 - **`native-bridge/`** — Tauri 2.x headless Native Messaging host (Windows & macOS).
 - **`verify/`** — Supply-chain policy checks (SBOM, license compliance, script audits).
 
+### Web extension
+
+The extension source imports the generated WASM core, so build the package first from
+the repository root:
+
+```bash
+./gradlew rustWasm
+cd web-extension
+npm ci
+npm run build       # or: npm run package (build + deterministic zip)
+```
+
+`npm run typecheck`, `npm test`, `npm run test:bundle` and the Playwright browser check
+resolve the same import and all require `rustWasm` beforehand.
+
 Refer to [docs/ci.md](docs/ci.md) and individual subdirectories for component-specific build steps.
 
 ---

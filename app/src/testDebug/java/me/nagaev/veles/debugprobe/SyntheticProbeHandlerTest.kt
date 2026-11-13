@@ -14,6 +14,8 @@ import me.nagaev.veles.session.PhoneSessionEngine
 import me.nagaev.veles.session.PreAuthCodec
 import me.nagaev.veles.session.RecordType
 import me.nagaev.veles.session.Role
+import me.nagaev.veles.session.SessionClass
+import me.nagaev.veles.session.SessionContext
 import me.nagaev.veles.session.SessionEffect
 import me.nagaev.veles.session.SignatureFrame
 import me.nagaev.veles.session.TestClient
@@ -62,6 +64,16 @@ class SyntheticProbeHandlerTest {
         clock = { epochMillis },
         random = random,
         log = log,
+    )
+
+    /** The fixed facts of one authenticated debug session; only the prefix matters here. */
+    private fun context(prefix: ByteArray = ByteArray(8) { (0x40 + it).toByte() }) = SessionContext(
+        sessionIdPrefix = prefix,
+        sessionClass = SessionClass.FULL,
+        peerId = TrustEncoding.hex(installationId),
+        et = null,
+        peerState = TestClient.PEER_STATE_ACTIVE,
+        recovery = null,
     )
 
     private fun TestScope.host(
@@ -128,7 +140,7 @@ class SyntheticProbeHandlerTest {
     fun pullReturnsOneSection81Event() = runTest {
         // The engine gives every handler a session-scoped instance; the prefix is only for
         // the log line and never enters the event body.
-        val session = handler().forSession(ByteArray(8) { (0x40 + it).toByte() })
+        val session = handler().forSession(context(ByteArray(8) { (0x40 + it).toByte() }))
         var type = -1
         var body = ByteArray(0)
         session.handle(RecordType.PULL_REQUEST.wire, ByteArray(0)) { replyType, replyBody ->
@@ -155,7 +167,7 @@ class SyntheticProbeHandlerTest {
     @Test
     fun pullLogsMarkerEventAndSessionPrefix() = runTest {
         val lines = mutableListOf<String>()
-        val session = handler { lines += it }.forSession(ByteArray(8) { (0x40 + it).toByte() })
+        val session = handler { lines += it }.forSession(context(ByteArray(8) { (0x40 + it).toByte() }))
         session.handle(RecordType.PULL_REQUEST.wire, ByteArray(0)) { _, _ -> }
 
         assertEquals(1, lines.size)

@@ -19,9 +19,19 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import me.nagaev.veles.BuildConfig
 import me.nagaev.veles.R
+import me.nagaev.veles.pairing.ActivationEngine
+import me.nagaev.veles.pairing.PairingAdmission
+import me.nagaev.veles.pairing.PairingConnection
+import me.nagaev.veles.pairing.PairingCore
+import me.nagaev.veles.pairing.PairingLimits
+import me.nagaev.veles.pairing.PairingWindow
+import me.nagaev.veles.pairing.PhonePairingMachine
+import me.nagaev.veles.pairing.ProofRegistry
+import me.nagaev.veles.pairing.VelesPairingCore
 import me.nagaev.veles.permissions.PermissionsActivity
 import me.nagaev.veles.session.BuildSessionExtensions
 import me.nagaev.veles.session.IdentitySigner
@@ -29,6 +39,7 @@ import me.nagaev.veles.session.LocalRecordState
 import me.nagaev.veles.session.PeerLookup
 import me.nagaev.veles.session.PeerRecord
 import me.nagaev.veles.session.PhoneSessionEngine
+import me.nagaev.veles.session.composeApplicationHandlers
 import me.nagaev.veles.trust.ActivationVerifier
 import me.nagaev.veles.trust.AndroidIdentityKeyStore
 import me.nagaev.veles.trust.InstallationTrustRepository
@@ -40,6 +51,7 @@ import java.security.SecureRandom
 internal class SharingService : Service() {
     private var gatt: SharingGattServer? = null
     private var host: SessionHost? = null
+    private var pairing: PairingEndpoint? = null
     private var sessionScope: CoroutineScope? = null
     private var registered = false
     private val preferences get() = getSharedPreferences("sharing", MODE_PRIVATE)
@@ -116,18 +128,34 @@ internal class SharingService : Service() {
     }
 
     /**
-     * The production session path. No activation implementation exists in OTP-09, and no
-     * activation step is performed, so the verifier is an explicit reject-all: OTP-10 replaces
-     * it with the transcript verifier. The installation id is read once, before the first link
-     * is admitted, because the engine factory is not suspending.
+     * The production session path. The repository's verifier is the session-bound proof
+     * registry the pairing machine and the recovery activation engine fill; the debug
+     * `BuildSessionExtensions` and `ProbeReceiver` repositories deliberately stay reject-all
+     * (OTP-10 plan 9d). The installation id is read once, before the first link is admitted,
+     * because the engine factory is not suspending.
+     *
+     * The activation handler is always built and composed with the build-type extension handler
+     * (the debug probe), so a release build with a null extension still activates.
      */
     private fun sessionHost(transport: SessionTransport): SessionHost {
-        val repository = createAndroidTrustRepository(this, ActivationVerifier { _, _, _ -> false })
+        val proofs = ProofRegistry()
+        val repository = createAndroidTrustRepository(
+            this,
+            ActivationVerifier { peer, step, proof -> proofs.consume(peer, step, proof) },
+        )
         val localInstallationId = runBlocking { TrustEncoding.bytes(repository.identity().installationId) }
         val keyStore = AndroidIdentityKeyStore()
-        val handler = BuildSessionExtensions.applicationHandler(this)
+        val activation = ActivationEngine(repository, proofs)
+        val handler = composeApplicationHandlers(activation, BuildSessionExtensions.applicationHandler(this))
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         sessionScope = scope
+        // One window and one admission for the service; the native core is resolved only
+        // when a pairing_request actually starts an execution.
+        val pairing = PairingEndpoint(
+            trust = repository,
+            proofs = proofs,
+            onPairFingerprint = BuildSessionExtensions::publishPairFingerprint,
+        )
         val host = SessionHost(
             scope,
             transport,
@@ -143,9 +171,15 @@ internal class SharingService : Service() {
             },
             repository,
             SystemClock::elapsedRealtime,
+            pairingFactory = { gen -> pairing.connection(gen.serial) },
+            onSessionClosed = { sessionId -> proofs.revoke(sessionId) },
         )
+        this.pairing = pairing
         this.host = host
         BuildSessionExtensions.attach(host)
+        BuildSessionExtensions.attachPairing(pairing) {
+            scope.launch { host.cancelPairings() }
+        }
         return host
     }
 
@@ -164,8 +198,12 @@ internal class SharingService : Service() {
      * falls back to a forced erasure, so a suspended Keystore call cannot leave keys behind.
      */
     private fun shutdownSessions() {
+        // The host closes every live pairing execution; the window then erases the code.
         host?.let { runBlocking { it.shutdown() } }
         host = null
+        BuildSessionExtensions.detachPairing()
+        pairing?.shutdown()
+        pairing = null
         sessionScope?.cancel()
         sessionScope = null
     }
@@ -197,6 +235,9 @@ internal class SharingService : Service() {
                         TrustState.PENDING -> LocalRecordState.PENDING
                         TrustState.COMMITTED_WAITING_ACK -> LocalRecordState.COMMITTED_WAITING_ACK
                     },
+                    // OTP2-CRY-019f: the public `ET` persisted with the pending/committed record
+                    // (and kept on `active`) is what binds the session's recovery activation keys.
+                    et = TrustEncoding.bytes(peer.enrollmentTranscript),
                 )
             }
         }
@@ -210,4 +251,43 @@ internal class SharingService : Service() {
 
         override fun close(gen: ConnectionGeneration) = server.close(gen)
     }
+}
+
+/**
+ * The production pairing endpoint: one window and one admission for the whole service,
+ * and one core resolved lazily on the first `pairing_request` that survives admission.
+ *
+ * Constructing this object never touches `VelesCrypto`: the window and the admission are
+ * pure state, and the core is only reached when a machine calls `start`. That keeps a
+ * Robolectric-hosted service start free of the JNI library while still giving every
+ * connection the same phone-wide budgets and window.
+ */
+internal class PairingEndpoint(
+    private val clock: () -> Long = SystemClock::elapsedRealtime,
+    private val trust: InstallationTrustRepository,
+    private val proofs: ProofRegistry,
+    coreFactory: () -> PairingCore = { VelesPairingCore() },
+    private val onPairFingerprint: (String) -> Unit = {},
+) {
+    private val limits = PairingLimits()
+    private val core: PairingCore by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { coreFactory() }
+    private val admission = PairingAdmission(limits, clock)
+
+    internal val window = PairingWindow(clock)
+
+    /** One connection's machine; [conn] is the process-unique generation serial. */
+    fun connection(conn: Long): PairingConnection = PhonePairingMachine(
+        window = window,
+        admission = admission,
+        conn = conn,
+        trust = trust,
+        coreProvider = { core },
+        clock = clock,
+        limits = limits,
+        proofs = proofs,
+        onPairFingerprint = onPairFingerprint,
+    )
+
+    /** Erases the pairing code and the pairing id; live executions are closed by the host. */
+    fun shutdown() = window.cancel()
 }

@@ -4,9 +4,16 @@ import { resolve } from 'node:path';
 
 import { Direction, RecordType, SessionClass, recordTypeFromWire } from '../../src/session/wire';
 import { SessionReject } from '../../src/session/reject';
-import { confirmation, rbase as reconnectRbase } from '../../src/session/schedule';
+import {
+    confirmation,
+    concat,
+    hmacSha256,
+    rbase as reconnectRbase,
+} from '../../src/session/schedule';
 import { RECORD_HEADER_BYTES, RECORD_MAX_BYTES } from '../../src/session/record';
 import type { ApplicationHandler, SessionEffect } from '../../src/session/engine';
+import { ActivationEngine, composeHandlers } from '../../src/pairing/activation';
+import { ProofRegistry } from '../../src/pairing/proofs';
 import {
     FakeClock,
     PhoneHarness,
@@ -30,6 +37,7 @@ import {
 
 const PROTOCOL_ROOT = resolve(import.meta.dirname, '../../../protocol');
 const INVENTORY = resolve(PROTOCOL_ROOT, 'conformance/otp-09-scenarios.json');
+const OTP10_INVENTORY = resolve(PROTOCOL_ROOT, 'conformance/otp-10-scenarios.json');
 const RECORD_PREFIX = 'durable_client_record:';
 const EVENT_BYTES = 79;
 const RECORD_TAG_BYTES = 16;
@@ -60,7 +68,41 @@ function loadFixtures(path: string): Fixture[] {
 }
 
 const FIXTURES: Fixture[] = [...loadFixtures('records.json'), ...loadFixtures('reconnect.json')];
-const INVENTORY_ENTRIES = JSON.parse(readFileSync(INVENTORY, 'utf8')) as Record<string, unknown>;
+const ENROLLMENT_FIXTURES: Fixture[] = loadFixtures('enrollment.json');
+const INVENTORY_ENTRIES = readInventory(INVENTORY);
+const OTP10_INVENTORY_ENTRIES = readInventory(OTP10_INVENTORY);
+/** An OTP-10 entry of an id overrides the OTP-09 entry of the same id. */
+const EFFECTIVE_INVENTORY: Record<string, unknown> = {
+    ...INVENTORY_ENTRIES,
+    ...OTP10_INVENTORY_ENTRIES,
+};
+const SESSION_IDS = new Set(FIXTURES.map((fixture) => fixture.id));
+const ENROLLMENT_IDS = new Set(ENROLLMENT_FIXTURES.map((fixture) => fixture.id));
+/** The OTP-09 runner executes `records.json`/`reconnect.json` ids only. */
+const EXECUTION_INVENTORY: Record<string, unknown> = Object.fromEntries(
+    Object.entries(EFFECTIVE_INVENTORY).filter(([id]) => SESSION_IDS.has(id)),
+);
+/** The five trace-validation self-checks stay with the OTP-02 fixture runner. */
+const FIXTURE_SELF_CHECK_IDS = [
+    'st-neg-unknown-event',
+    'st-neg-nonmonotonic-time',
+    'st-neg-timeout-early',
+    'st-neg-unknown-machine',
+    'st-neg-step-expect-wrong',
+];
+/** The OTP-09 inventory defers implementation work to a later change. */
+const OTP09_DEFERRAL = /^deferred:OTP-[0-9]+(?:\/[0-9]+)?$/;
+/** The OTP-10 inventory defers a scenario to the plan task that will execute it. */
+const OTP10_DEFERRAL = /^deferred:Task [0-9]+$/;
+
+function readInventory(path: string): Record<string, unknown> {
+    return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+}
+
+function classificationOf(entry: unknown, deferral: RegExp): boolean {
+    if (typeof entry === 'string') return entry === 'execute' || deferral.test(entry);
+    return engineEffectOf(entry) !== null;
+}
 
 const byId = (id: string): Fixture => {
     const fixture = FIXTURES.find((candidate) => candidate.id === id);
@@ -347,6 +389,7 @@ const MAPPED_SIMULATE_KEYS = new Set([
     'event_known',
     'pull_response',
     'continuity_token_matches',
+    'act_mac_ok',
 ]);
 
 interface StepOutcome {
@@ -381,6 +424,8 @@ interface RunObservations {
     steps: StepOutcome[];
     authenticated: boolean;
     sessionClass: SessionClass | null;
+    /** Every class fixed at a gate in this fixture, across reconnects. */
+    sessionClasses: SessionClass[];
     terminations: string[];
     /** Peer byte decoded from the client's own emitted reconnect_confirm records. */
     clientConfirmPeerStates: number[];
@@ -394,6 +439,7 @@ interface RunObservations {
     continuityMatched: boolean;
     continuityLost: boolean;
     deletedIncomplete: boolean;
+    erasedIncomplete: boolean;
     upgrades: number;
     storeState: string;
     /** State the repository loaded from durable storage before any session upgrade. */
@@ -440,6 +486,8 @@ type DurableState = 'pending' | 'active_activation_pending' | 'active';
 interface DurableRecord {
     publicKey: Uint8Array;
     state: DurableState;
+    /** OTP2-CRY-019f public enrollment transcript, when the fixture carries one. */
+    et?: Uint8Array;
     /** Boot continuity token recorded when the record was written. */
     continuityToken: string;
 }
@@ -452,6 +500,7 @@ class DurableClientStore {
         this.records.set(key, {
             publicKey: new Uint8Array(record.publicKey),
             state: record.state,
+            ...(record.et === undefined ? {} : { et: new Uint8Array(record.et) }),
             continuityToken: record.continuityToken,
         });
     }
@@ -463,6 +512,7 @@ class DurableClientStore {
             : {
                   publicKey: new Uint8Array(record.publicKey),
                   state: record.state,
+                  ...(record.et === undefined ? {} : { et: new Uint8Array(record.et) }),
                   continuityToken: record.continuityToken,
               };
     }
@@ -499,7 +549,11 @@ class ClientRepository {
         if (this.deletedIncomplete) {
             durable.delete(peerId);
         } else if (record !== undefined) {
-            this.store.set(peerId, { publicKey: record.publicKey, state: record.state });
+            this.store.set(peerId, {
+                publicKey: record.publicKey,
+                state: record.state,
+                ...(record.et === undefined ? {} : { et: new Uint8Array(record.et) }),
+            });
         }
     }
 
@@ -518,6 +572,7 @@ class ClientRepository {
         this.durable.write(this.peerId, {
             publicKey: record.publicKey,
             state: record.state as DurableState,
+            ...(record.et === undefined ? {} : { et: new Uint8Array(record.et) }),
             continuityToken: bootToken,
         });
     }
@@ -535,6 +590,7 @@ class ClientScenario {
         steps: [],
         authenticated: false,
         sessionClass: null,
+        sessionClasses: [],
         terminations: [],
         clientConfirmPeerStates: [],
         delivered: false,
@@ -546,13 +602,21 @@ class ClientScenario {
         continuityMatched: true,
         continuityLost: false,
         deletedIncomplete: false,
+        erasedIncomplete: false,
         upgrades: 0,
         storeState: '',
         reloadedState: '',
         durableState: '',
     };
 
-    private generation: { harness: PhoneHarness; handler: ScenarioHandler } | null = null;
+    private generation: {
+        harness: PhoneHarness;
+        handler: ScenarioHandler;
+        activation: ActivationEngine;
+    } | null = null;
+    private readonly proofs = new ProofRegistry();
+    private activationSends = new Set<number>();
+    private activationConfirms = 0;
     private durable: DurableClientStore | null = null;
     private repository: ClientRepository | null = null;
     private phoneIdentityPair: CryptoKeyPair | null = null;
@@ -609,6 +673,7 @@ class ClientScenario {
         this.durable.seed(this.peerId, {
             publicKey: rawPublic,
             state: this.persistedState as DurableState,
+            ...(persistedOf(this.fixture).et === undefined ? {} : { et: new Uint8Array(32) }),
             continuityToken: this.persistedToken,
         });
     }
@@ -652,20 +717,51 @@ class ClientScenario {
             );
         }
         const handler = new ScenarioHandler();
+        const activation = new ActivationEngine({
+            trust: {
+                peers: async () => {
+                    const live = this.repository?.store.get(this.peerId ?? '');
+                    return live === undefined
+                        ? []
+                        : [{ installationId: this.peerId ?? '', state: live.state }];
+                },
+                confirm: async (peerId) => {
+                    const live = this.repository?.store.get(peerId);
+                    if (live === undefined)
+                        throw new Error('activation confirm for an unknown peer');
+                    live.state = 'active_activation_pending';
+                    this.activationConfirms += 1;
+                    this.repository?.persist(this.processToken);
+                },
+                revoke: async (peerId) => {
+                    // OTP2-CRY-019g: a wrong recovery MAC deletes only the incomplete mirror.
+                    const live = this.repository?.store.get(peerId);
+                    if (live !== undefined && live.state === 'pending') {
+                        this.observations.erasedIncomplete = true;
+                    }
+                    this.persistedState = 'deleted';
+                    this.observations.storeState = 'deleted';
+                    this.repository?.delete();
+                },
+            },
+            proofs: this.proofs,
+        });
         const harness = await PhoneHarness.create({
             state: durableRecord.state,
             clock: this.clock,
-            handler,
+            handler: composeHandlers(activation, handler),
             store: this.repository.store,
             phoneIdentity: identity,
             phoneId: this.peerId,
+            ...(durableRecord.et === undefined ? {} : { et: durableRecord.et }),
         });
         this.observations.generations += 1;
         this.observations.authenticated = false;
         this.observations.sessionClass = null;
         this.expectedRx = 0n;
         this.started = null;
-        this.generation = { harness, handler };
+        this.activationSends = new Set<number>();
+        this.generation = { harness, handler, activation };
         return this.generation;
     }
 
@@ -800,6 +896,7 @@ class ClientScenario {
                 if (authenticated?.kind === 'authenticated') {
                     this.observations.authenticated = true;
                     this.observations.sessionClass = authenticated.sessionClass;
+                    this.observations.sessionClasses.push(authenticated.sessionClass);
                     this.expectedRx = 1n;
                     this.observations.upgrades = Math.max(
                         this.observations.upgrades,
@@ -817,7 +914,7 @@ class ClientScenario {
                 if (type === null || sequence === null) {
                     throw new Error('protected_record without record_type or sequence');
                 }
-                const body = this.inboundBody(type, step, eventCount);
+                const body = await this.inboundBody(type, step, eventCount);
                 const record = await sealPhoneRecord(this.live().harness, type, sequence, body, {
                     tagOk: step.simulate.tag_ok !== 'false',
                     lengthOk: step.simulate.length_ok !== 'false',
@@ -836,6 +933,16 @@ class ClientScenario {
         }
 
         const classified = classify(effects);
+        for (const sent of classified.sentTypes) {
+            if (
+                sent === RecordType.ENROLLMENT_PREPARE ||
+                sent === RecordType.ACTIVATION_COMMIT ||
+                sent === RecordType.ACTIVATION_COMPLETE ||
+                sent === RecordType.ACTIVATION_ACK
+            ) {
+                this.activationSends.add(sent);
+            }
+        }
         if (classified.terminated !== null) {
             this.observations.terminations.push(classified.terminated);
         }
@@ -899,6 +1006,16 @@ class ClientScenario {
 
     private async send(type: number, step: Step): Promise<SessionEffect[]> {
         const { harness, handler } = this.live();
+        // COMMIT/ACK are observations, never fabricated: the activation handler must already
+        // have emitted them (OTP2-STA-010b steps 1 and 5).
+        if (type === RecordType.ACTIVATION_COMMIT || type === RecordType.ACTIVATION_ACK) {
+            if (!this.activationSends.has(type)) {
+                throw new Error(
+                    `${this.fixture.id}: the fixture observes a ${type.toString(16)} send the activation handler never made`,
+                );
+            }
+            return [];
+        }
         const count = Number(step.simulate.event_count ?? 0);
         const body =
             type === RecordType.PULL_EVENTS
@@ -913,7 +1030,11 @@ class ClientScenario {
         return harness.engine.sendApplication(type, body);
     }
 
-    private inboundBody(type: number, step: Step, eventCount: number | null): Uint8Array {
+    private async inboundBody(
+        type: number,
+        step: Step,
+        eventCount: number | null,
+    ): Promise<Uint8Array> {
         const { harness, handler } = this.live();
         if (type === RecordType.PULL_EVENTS) {
             return pullEventsBody(harness.phone.installationId, eventCount ?? 0, handler);
@@ -931,7 +1052,30 @@ class ClientScenario {
         if (type === RecordType.PHONE_POLICY_STATE) {
             return policyBody(step.simulate.pull_response === 'true');
         }
+        if (type === RecordType.ENROLLMENT_PREPARE) {
+            return this.activationMac(type, 0, step.simulate.act_mac_ok !== 'false');
+        }
+        if (type === RecordType.ACTIVATION_COMPLETE) {
+            return this.activationMac(type, 2, step.simulate.act_mac_ok !== 'false');
+        }
         return new Uint8Array(0);
+    }
+
+    /** The phone-side activation MAC, recomputed from this session's recovery keys and ET. */
+    private async activationMac(type: number, stage: number, macOk = true): Promise<Uint8Array> {
+        const { harness } = this.live();
+        const recovery = harness.keys?.recovery;
+        const et = harness.et;
+        if (recovery === null || recovery === undefined || et === null) {
+            throw new Error(`${this.fixture.id}: activation record without recovery keys`);
+        }
+        const key =
+            type === RecordType.ACTIVATION_COMMIT || type === RecordType.ACTIVATION_ACK
+                ? recovery.kRecClient
+                : recovery.kRecPhone;
+        const mac = await hmacSha256(key, concat(et, Uint8Array.of(stage)));
+        if (!macOk) mac[mac.length - 1] ^= 0x01;
+        return mac;
     }
 
     /** True only for the §7.3 phone→client application records. */
@@ -982,9 +1126,14 @@ function flipSignature(signature: Uint8Array): Uint8Array {
 
 const CLIENT_EFFECTS: Record<string, (run: RunObservations) => boolean> = {
     mutual_authentication_complete: (run) => run.authenticated,
-    set_class_full: (run) => run.sessionClass === SessionClass.FULL,
-    set_class_full_pending_peer: (run) => run.sessionClass === SessionClass.FULL_PENDING_PEER,
-    set_class_activation_recovery: (run) => run.sessionClass === SessionClass.ACTIVATION_RECOVERY,
+    set_class_full: (run) =>
+        run.sessionClass === SessionClass.FULL || run.sessionClasses.includes(SessionClass.FULL),
+    set_class_full_pending_peer: (run) =>
+        run.sessionClass === SessionClass.FULL_PENDING_PEER ||
+        run.sessionClasses.includes(SessionClass.FULL_PENDING_PEER),
+    set_class_activation_recovery: (run) =>
+        run.sessionClass === SessionClass.ACTIVATION_RECOVERY ||
+        run.sessionClasses.includes(SessionClass.ACTIVATION_RECOVERY),
     terminate_session: (run) => run.terminations.some((reason) => reason !== 'app_error'),
     erase_session_keys: (run) => run.keysErased,
     counter_not_advanced: (run) => counterNotAdvanced(run.steps),
@@ -1046,10 +1195,39 @@ const CLIENT_EFFECTS: Record<string, (run: RunObservations) => boolean> = {
     record_upgraded_fully_active: (run) => run.storeState === 'active' && run.upgrades > 0,
     phone_active_proof_received: (run) => run.upgrades > 0,
     reset_session_slot: (run) => run.generations > 1,
+    enrollment_prepare_processed: (run) =>
+        run.steps.some((step) => step.deliveredTypes.includes(RecordType.ENROLLMENT_PREPARE)),
+    prepare_verified: (run) =>
+        run.steps.some(
+            (step) => step.accepted && step.deliveredTypes.includes(RecordType.ENROLLMENT_PREPARE),
+        ),
+    activation_commit_sent: (run) =>
+        run.steps.some((step) => step.sentTypes.includes(RecordType.ACTIVATION_COMMIT)),
+    activation_complete_processed: (run) =>
+        run.steps.some((step) => step.deliveredTypes.includes(RecordType.ACTIVATION_COMPLETE)),
+    activation_ack_sent: (run) =>
+        run.steps.some((step) => step.sentTypes.includes(RecordType.ACTIVATION_ACK)),
+    record_active_client: (run) =>
+        run.steps.some(
+            (step) =>
+                step.snapshot.get('durable_client_record:main') === 'active_activation_pending',
+        ),
+    activation_pending_flag_set: (run) =>
+        run.steps.some(
+            (step) =>
+                step.snapshot.get('durable_client_record:main') === 'active_activation_pending',
+        ),
+    reconnect_confirm_sent_peer_state_below_active: (run) =>
+        run.clientConfirmPeerStates.includes(0x02),
+    erase_enrollment_remnants: () => false,
     reconnect_confirm_sent_peer_state_active: (run) =>
         run.clientConfirmPeerStates.includes(PEER_STATE_ACTIVE),
     delete_incomplete_materials: (run) => run.deletedIncomplete,
-    erase_incomplete_materials: () => false,
+    erase_incomplete_materials: (run) => run.erasedIncomplete,
+    reject_activation_mac_mismatch: (run) =>
+        run.steps.some(
+            (step) => step.terminated === 'authorization' && step.simulate.act_mac_ok === 'false',
+        ),
 };
 
 /**
@@ -1117,26 +1295,91 @@ function finalSnapshot(run: RunObservations): Map<string, string> {
 
 describe('OTP-09 scenario inventory', () => {
     it('inventoryCoversEveryFixtureId', () => {
-        expect(Object.keys(INVENTORY_ENTRIES).sort()).toEqual(
-            FIXTURES.map((fixture) => fixture.id).sort(),
+        // Coverage is per fixture file: the OTP-09 inventory owns records.json/reconnect.json,
+        // the OTP-10 inventory owns enrollment.json (minus the five OTP-02 fixture self-checks)
+        // and the ids OTP-09 deferred to OTP-10.
+        expect(Object.keys(INVENTORY_ENTRIES).every((id) => SESSION_IDS.has(id))).toBe(true);
+        const coveredSessionIds = new Set([
+            ...Object.keys(INVENTORY_ENTRIES),
+            ...Object.keys(OTP10_INVENTORY_ENTRIES).filter((id) => SESSION_IDS.has(id)),
+        ]);
+        expect([...coveredSessionIds].sort()).toEqual([...SESSION_IDS].sort());
+        const otp10EnrollmentIds = Object.keys(OTP10_INVENTORY_ENTRIES)
+            .filter((id) => !SESSION_IDS.has(id))
+            .sort();
+        expect(otp10EnrollmentIds).toEqual(
+            [...ENROLLMENT_IDS].filter((id) => !FIXTURE_SELF_CHECK_IDS.includes(id)).sort(),
         );
         for (const [id, entry] of Object.entries(INVENTORY_ENTRIES)) {
-            if (typeof entry === 'string') {
-                expect(
-                    entry === 'execute' || entry.startsWith('deferred:OTP-'),
-                    `${id} classification`,
-                ).toBe(true);
-            } else {
-                expect(engineEffectOf(entry), `${id} engine-effect shape`).not.toBeNull();
-            }
+            expect(classificationOf(entry, OTP09_DEFERRAL), `OTP-09 ${id} classification`).toBe(
+                true,
+            );
+        }
+        for (const [id, entry] of Object.entries(OTP10_INVENTORY_ENTRIES)) {
+            expect(classificationOf(entry, OTP10_DEFERRAL), `OTP-10 ${id} classification`).toBe(
+                true,
+            );
         }
         expect(
             Object.values(INVENTORY_ENTRIES).filter((entry) => entry === 'execute'),
         ).toHaveLength(21);
     });
 
+    it('otp10InventoryOwnsTheFormerOtp09DeferralsWithoutOverlap', () => {
+        // OTP-10 is implemented: the ten former OTP-09 deferrals now live only in the
+        // OTP-10 inventory (no OTP-09 entry may still override them).
+        const deferredToOtp10 = Object.entries(INVENTORY_ENTRIES)
+            .filter(([, entry]) => entry === 'deferred:OTP-10')
+            .map(([id]) => id)
+            .sort();
+        const overlapping = Object.keys(OTP10_INVENTORY_ENTRIES)
+            .filter((id) => id in INVENTORY_ENTRIES)
+            .sort();
+        expect(overlapping).toEqual(deferredToOtp10);
+        const executedOtp09 = Object.entries(INVENTORY_ENTRIES)
+            .filter(([, entry]) => entry === 'execute')
+            .map(([id]) => id);
+        expect(
+            Object.keys(OTP10_INVENTORY_ENTRIES).filter((id) => executedOtp09.includes(id)),
+        ).toEqual([]);
+        expect(
+            Object.keys(OTP10_INVENTORY_ENTRIES).filter((id) => SESSION_IDS.has(id)),
+        ).toHaveLength(10);
+    });
+
+    it('nothingIsDeferredToOtp10', () => {
+        // OTP-10 is implemented: the merged inventory owns every former deferral as an
+        // executed scenario or an explicit engine-effect assertion.
+        expect(
+            Object.entries(INVENTORY_ENTRIES).filter(([, entry]) => entry === 'deferred:OTP-10'),
+        ).toEqual([]);
+        expect(
+            Object.values(OTP10_INVENTORY_ENTRIES).filter(
+                (entry) => typeof entry === 'string' && OTP10_DEFERRAL.test(entry),
+            ),
+        ).toEqual([]);
+    });
+
+    it('enrollmentTracesBelongToTheEnrollmentRunners', () => {
+        for (const id of FIXTURE_SELF_CHECK_IDS) {
+            expect(ENROLLMENT_IDS.has(id), `self-check ${id} must be an enrollment fixture`).toBe(
+                true,
+            );
+            expect(
+                OTP10_INVENTORY_ENTRIES[id],
+                `self-check ${id} stays in the OTP-02 runner`,
+            ).toBeUndefined();
+        }
+        expect(Object.keys(INVENTORY_ENTRIES).filter((id) => ENROLLMENT_IDS.has(id))).toEqual([]);
+        const owned = new Set([
+            ...SESSION_IDS,
+            ...[...ENROLLMENT_IDS].filter((id) => !FIXTURE_SELF_CHECK_IDS.includes(id)),
+        ]);
+        expect(Object.keys(EFFECTIVE_INVENTORY).sort()).toEqual([...owned].sort());
+    });
+
     it('everyEffectNameInAnExecutedClientScenarioIsMapped', () => {
-        const executed = Object.entries(INVENTORY_ENTRIES).filter(
+        const executed = Object.entries(EXECUTION_INVENTORY).filter(
             ([id, entry]) =>
                 (entry === 'execute' || engineEffectOf(entry) !== null) &&
                 roleOf(byId(id)) === 'client',
@@ -1154,23 +1397,28 @@ describe('OTP-09 scenario inventory', () => {
     });
 
     it('clientRoleScenariosAreDrivenByTheTypeScriptRunner', () => {
-        const client = Object.entries(INVENTORY_ENTRIES)
-            .filter(([, entry]) => entry === 'execute')
-            .map(([id]) => id)
-            .filter((id) => roleOf(byId(id)) === 'client');
-        expect(client.sort()).toEqual(
-            [
-                'st-rec-client-activation-pending-upgrades-on-phone-proof',
-                'st-rec-client-full-pull-delivers',
-                'st-rec-client-mirror-durable-across-restart',
-                'st-rec-direction-mismatch-terminates',
-            ].sort(),
+        const executed = Object.entries(EXECUTION_INVENTORY).filter(
+            ([, entry]) => entry === 'execute',
         );
+        const phone = executed.filter(([id]) => roleOf(byId(id)) === 'phone');
+        const client = executed.filter(([id]) => roleOf(byId(id)) === 'client');
+        expect(phone.length + client.length, 'every execute id belongs to one runner').toBe(
+            executed.length,
+        );
+        // The client-id set is read from the inventory (the fixture role of every execute entry),
+        // not a fixed list, so an OTP-10 entry that flips a recovery trace to `execute` reaches
+        // this runner without editing the test.
+        const inventoryClientIds = executed
+            .filter(([id]) => roleOf(byId(id)) === 'client')
+            .map(([id]) => id)
+            .sort();
+        expect(inventoryClientIds.length).toBeGreaterThan(0);
+        expect(client.map(([id]) => id).sort()).toEqual(inventoryClientIds);
     });
 });
 
 describe('client conformance scenarios', () => {
-    for (const [id, entry] of Object.entries(INVENTORY_ENTRIES)) {
+    for (const [id, entry] of Object.entries(EXECUTION_INVENTORY)) {
         const fixture = byId(id);
         if (roleOf(fixture) !== 'client') continue;
         const endpoint = engineEffectOf(entry);
@@ -1233,7 +1481,7 @@ describe('client conformance scenarios', () => {
     }
 
     it('deferred scenarios are printed with their owning task', () => {
-        const deferred = Object.entries(INVENTORY_ENTRIES)
+        const deferred = Object.entries(EFFECTIVE_INVENTORY)
             .filter(([, entry]) => typeof entry === 'string' && entry.startsWith('deferred:'))
             .sort(([left], [right]) => left.localeCompare(right));
         for (const [id, owner] of deferred) {
