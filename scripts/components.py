@@ -236,6 +236,34 @@ def _load_json_object(path, what):
     return data
 
 
+def _check_node_bases(bases, nodes):
+    """`--node-bases`: known nodes mapped to null or a full 40-hex commit SHA."""
+    for node, value in bases.items():
+        if node not in nodes:
+            raise ValueError("--node-bases: unknown node %r" % (node,))
+        if value is None:
+            continue
+        if not isinstance(value, str) or not SHA_RE.match(value):
+            raise ValueError(
+                "--node-bases: %s must be null or a 40-hex commit SHA, got %r"
+                % (node, value)
+            )
+    return bases
+
+
+def _check_evidence_notes(notes, nodes):
+    """`--evidence-notes`: known nodes mapped to one of the two evidence notes."""
+    for node, note in notes.items():
+        if node not in nodes:
+            raise ValueError("--evidence-notes: unknown node %r" % (node,))
+        if note not in ("never passed", "incompatible map"):
+            raise ValueError(
+                "--evidence-notes: %s must be 'never passed' or 'incompatible map', got %r"
+                % (node, note)
+            )
+    return notes
+
+
 def _select_nodes(cmap, files, node_head, bases, notes, cwd):
     """Result and (base, reason) per node from the full diff and optional per-node evidence."""
     result = {}
@@ -285,6 +313,9 @@ def main(argv=None, cwd=None):
             _load_json_object(args.evidence_notes, "--evidence-notes")
             if getattr(args, "evidence_notes", None) else {}
         )
+        if bases is not None:
+            _check_node_bases(bases, cmap["nodes"])
+        _check_evidence_notes(notes, cmap["nodes"])
     except (ValueError, OSError) as error:
         print("components: invalid input: %s" % error, file=sys.stderr)
         return 1

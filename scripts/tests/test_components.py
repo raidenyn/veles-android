@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -471,6 +473,88 @@ class CliTest(unittest.TestCase):
                 self.assertEqual(rc, 1)
                 with open(out) as handle:
                     self.assertEqual(sorted(handle.read().split()), sorted(n + "=true" for n in NODES))
+
+
+class AuxiliaryInputValidationTest(unittest.TestCase):
+    """--node-bases and --evidence-notes are validated before anything is written."""
+
+    def run_changed(self, extra):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "out")
+            summary = os.path.join(tmp, "summary.md")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rc = main(
+                    [
+                        "changed", "--base", "0" * 40,
+                        "--github-output", out, "--summary-out", summary,
+                    ] + extra,
+                    cwd=REPO,
+                )
+            return rc, stderr.getvalue(), os.path.exists(out), os.path.exists(summary)
+
+    def test_node_bases_reject_unknown_node(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_json(tmp, "bases.json", {"nope": "a" * 40})
+            rc, stderr, out_exists, summary_exists = self.run_changed(["--node-bases", path])
+        self.assertEqual(rc, 1)
+        self.assertIn("nope", stderr)
+        self.assertIn("--node-bases", stderr)
+        self.assertFalse(out_exists)
+        self.assertFalse(summary_exists)
+
+    def test_node_bases_reject_invalid_values(self):
+        for value in (7, "", "abc", "A" * 40, "1" * 39, "1" * 41, True):
+            with self.subTest(value=value):
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = write_json(tmp, "bases.json", {"android": value})
+                    rc, stderr, out_exists, _ = self.run_changed(["--node-bases", path])
+                self.assertEqual(rc, 1)
+                self.assertIn("--node-bases", stderr)
+                self.assertIn("android", stderr)
+                self.assertFalse(out_exists)
+
+    def test_node_bases_accept_null_and_full_sha(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_json(tmp, "bases.json", {"android": None, "rust": "a" * 40})
+            rc, stderr, out_exists, _ = self.run_changed(["--node-bases", path])
+        self.assertEqual(rc, 0, stderr)
+        self.assertTrue(out_exists)
+
+    def test_evidence_notes_reject_unknown_node(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_json(tmp, "notes.json", {"nope": "never passed"})
+            rc, stderr, out_exists, summary_exists = self.run_changed(
+                ["--evidence-notes", path]
+            )
+        self.assertEqual(rc, 1)
+        self.assertIn("nope", stderr)
+        self.assertIn("--evidence-notes", stderr)
+        self.assertFalse(out_exists)
+        self.assertFalse(summary_exists)
+
+    def test_evidence_notes_reject_invalid_values(self):
+        for value in ("failed", "", None, 7, "Never passed"):
+            with self.subTest(value=value):
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = write_json(tmp, "notes.json", {"android": value})
+                    rc, stderr, out_exists, _ = self.run_changed(
+                        ["--evidence-notes", path]
+                    )
+                self.assertEqual(rc, 1)
+                self.assertIn("--evidence-notes", stderr)
+                self.assertIn("android", stderr)
+                self.assertFalse(out_exists)
+
+    def test_evidence_notes_accept_the_two_documented_notes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_json(
+                tmp, "notes.json",
+                {"android": "never passed", "rust": "incompatible map"},
+            )
+            rc, stderr, out_exists, _ = self.run_changed(["--evidence-notes", path])
+        self.assertEqual(rc, 0, stderr)
+        self.assertTrue(out_exists)
 
 
 class PerNodeSelectionTest(unittest.TestCase):
