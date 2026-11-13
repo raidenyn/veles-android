@@ -26,12 +26,12 @@ Delivery: four separate pull requests in this order: PR 1 (groups 1-2), PR 1b (g
 
 ## 3. PR 1b: move the protocol specification under `protocol/`
 
-- [ ] 3.1 Produce the reference inventory (`git grep -n "docs/protocol"` excluding `native-bridge/feasibility/evidence/`, `openspec/changes/archive/`, `docs/superpowers/` and other dated records) and record it in the PR
-- [ ] 3.2 `git mv docs/protocol protocol/docs` (14 tracked files) with no stub left behind; confirm `components.py check` still passes
-- [ ] 3.3 Update live references: Kotlin, Rust, TypeScript and `.mjs` comments, the `build.gradle.kts` input, `protocol/checks/evidence.mjs` path resolution including its fallback branch, `protocol/v1/manifest.json` and `binary-layouts.json` document references, `protocol/README.md`, the host README and live documents
-- [ ] 3.4 Update fixture description strings: edit the generator source for generator-owned `protocol/v1/fixtures/crypto.json`, regenerate, keep generated and committed fixtures equal, and leave frozen evidence untouched
-- [ ] 3.5 Run `protocolCheck`, `protocolFreshEvidenceCheck`, `rustTest`, the host and web-extension test suites and the reference audit (no live `docs/protocol` match remains)
-- [ ] 3.6 Run the mandatory local lint checks and the commitlint check of the future squash message, record the rollback (revert) in the PR body, and open PR 1b titled `refactor(protocol): move the protocol specification under protocol/`
+- [x] 3.1 Produce the reference inventory (`git grep -n "docs/protocol"` excluding `native-bridge/feasibility/evidence/`, `openspec/changes/archive/`, `docs/superpowers/` and other dated records) and record it in the PR
+- [x] 3.2 `git mv docs/protocol protocol/docs` (14 tracked files) with no stub left behind; confirm `components.py check` still passes
+- [x] 3.3 Update live references: Kotlin, Rust, TypeScript and `.mjs` comments, the `build.gradle.kts` input, `protocol/checks/evidence.mjs` path resolution including its fallback branch, `protocol/v1/manifest.json` and `binary-layouts.json` document references, `protocol/README.md`, the host README and live documents
+- [x] 3.4 Update fixture description strings: edit the generator source for generator-owned `protocol/v1/fixtures/crypto.json`, regenerate, keep generated and committed fixtures equal, and leave frozen evidence untouched
+- [x] 3.5 Run `protocolCheck`, `protocolFreshEvidenceCheck`, `rustTest`, the host and web-extension test suites and the reference audit (no live `docs/protocol` match remains)
+- [x] 3.6 Run the mandatory local lint checks and the commitlint check of the future squash message, record the rollback (revert) in the PR body, and open PR 1b titled `refactor(protocol): move the protocol specification under protocol/`
 
 ## 4. PR 2: spikes and the Rust build extraction
 

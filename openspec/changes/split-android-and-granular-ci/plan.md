@@ -161,11 +161,11 @@
 - Move: `docs/protocol/` -> `protocol/docs/` (14 tracked files)
 - Modify: live references listed by the inventory (Kotlin/Rust/TS/`.mjs` comments, `build.gradle.kts`, `protocol/checks/evidence.mjs`, `protocol/v1/manifest.json`, `protocol/v1/binary-layouts.json`, `protocol/README.md`, `native-bridge/host/README.md`, live docs), the fixture generator and `protocol/v1/fixtures/crypto.json`
 
-- [ ] **Step 1: Inventory**: `git grep -n "docs/protocol" -- . ':!native-bridge/feasibility/evidence' ':!openspec/changes/archive' ':!docs/superpowers'` saved to the PR body; list excluded historical files.
-- [ ] **Step 2: Failing check first**: write `protocol/checks/spec-location.test.mjs` asserting `protocol/docs/veles-v1.md` exists, `docs/protocol` does not, and `buildEvidenceInventory` resolves the spec from `protocol/docs`; run `node --test protocol/checks/spec-location.test.mjs`. Expected: FAIL.
-- [ ] **Step 3:** wire `protocol/checks/spec-location.test.mjs` into the enumerated test list of `protocol/checks/check.mjs` (next to `contract.test.mjs`, `bridge.test.mjs`, `state.test.mjs`, `crypto.test.mjs`); `git mv docs/protocol protocol/docs`; update the references (`evidence.mjs` resolves `join(root, "docs", "protocol")` paths and its fallback branch to `protocol/docs`); update fixture description strings in the generator source and regenerate `crypto.json` so generated and committed fixtures stay equal.
-- [ ] **Step 4: Verify**: `./gradlew protocolCheck protocolFreshEvidenceCheck rustTest bridgeHostTest`, `npm test` in `web-extension`, `python3 -I scripts/components.py check`, and the inventory command again. Expected: all pass and no live match remains.
-- [ ] **Step 5: Commit and PR** `refactor(protocol): move the protocol specification under protocol/`; mark the PR body with the revert rollback; run the PR gate of Task 7 steps 1-3.
+- [x] **Step 1: Inventory**: `git grep -n "docs/protocol" -- . ':!native-bridge/feasibility/evidence' ':!openspec/changes/archive' ':!docs/superpowers'` saved to the PR body; list excluded historical files.
+- [x] **Step 2: Failing check first**: write `protocol/checks/spec-location.test.mjs` asserting `protocol/docs/veles-v1.md` exists, `docs/protocol` does not, and `buildEvidenceInventory` resolves the spec from `protocol/docs`; run `node --test protocol/checks/spec-location.test.mjs`. Expected: FAIL.
+- [x] **Step 3:** wire `protocol/checks/spec-location.test.mjs` into the enumerated test list of `protocol/checks/check.mjs` (next to `contract.test.mjs`, `bridge.test.mjs`, `state.test.mjs`, `crypto.test.mjs`); `git mv docs/protocol protocol/docs`; update the references (`evidence.mjs` resolves `join(root, "docs", "protocol")` paths and its fallback branch to `protocol/docs`); update fixture description strings in the generator source and regenerate `crypto.json` so generated and committed fixtures stay equal.
+- [x] **Step 4: Verify**: `./gradlew protocolCheck protocolFreshEvidenceCheck rustTest bridgeHostTest`, `npm test` in `web-extension`, `python3 -I scripts/components.py check`, and the inventory command again. Expected: all pass and no live match remains.
+- [x] **Step 5: Commit and PR** `refactor(protocol): move the protocol specification under protocol/`; mark the PR body with the revert rollback; run the PR gate of Task 7 steps 1-3.
 
 ## Task 9: PR 2 spikes [tasks 4.1-4.4]
 
