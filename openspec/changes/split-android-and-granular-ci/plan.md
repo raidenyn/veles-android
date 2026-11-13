@@ -203,10 +203,10 @@
 **Interfaces:**
 - Produces: shim content `#!/bin/sh` + `exec "$(dirname "$0")/../gradlew" "$@"` and `@call "%~dp0..\gradlew.bat" %*`; shared script registering `installGitHooks` with unchanged behaviour (sets `core.hooksPath` to `.githooks` only when unset, warns otherwise, no-op when `CI=true`).
 
-- [ ] **Step 1: Failing contract test**: `android shims delegate to the root wrapper, are not symlinks, use LF and the repository has exactly one gradle-wrapper.jar`; run `node --test verify/test/workflow-contracts.test.mjs`. Expected: FAIL.
-- [ ] **Step 2:** Create the shims (`chmod +x android/gradlew`), `android/.gitattributes` (`gradlew text eol=lf`, `gradlew.bat text eol=lf`), the shared hook script (moved from the root task) and the provisional map entries; run `python3 -I scripts/components.py check`.
-- [ ] **Step 3: Verify hooks in the old layout**: with a scratch clone, no `core.hooksPath` -> `./gradlew assembleDebug` sets `.githooks`; custom path -> warning and unchanged; `CI=true` -> unchanged. Expected as stated.
-- [ ] **Step 4: Commit** `build(android): add the wrapper shims and a shared hook installer`.
+- [x] **Step 1: Failing contract test**: `android shims delegate to the root wrapper, are not symlinks, use LF and the repository has exactly one gradle-wrapper.jar`; run `node --test verify/test/workflow-contracts.test.mjs`. Expected: FAIL.
+- [x] **Step 2:** Create the shims (`chmod +x android/gradlew`), `android/.gitattributes` (`gradlew text eol=lf`, `gradlew.bat text eol=lf`), the shared hook script (moved from the root task) and the provisional map entries; run `python3 -I scripts/components.py check`.
+- [x] **Step 3: Verify hooks in the old layout**: with a scratch clone, no `core.hooksPath` -> `./gradlew assembleDebug` sets `.githooks`; custom path -> warning and unchanged; `CI=true` -> unchanged. Expected as stated.
+- [x] **Step 4: Commit** `build(android): add the wrapper shims and a shared hook installer`.
 
 ## Task 12: Layout cut-over (single commit) [task 5.3]
 
