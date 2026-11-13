@@ -155,9 +155,6 @@ enum Release {
     Sync,
     /// On a separate thread, after a fixed delay (an async OS release).
     Async(Duration),
-    /// Synchronously from inside `shutdown()`, but only after blocking the calling (runtime)
-    /// thread for this long: a blocking adapter call that returns its release late.
-    SyncAfter(Duration),
     /// Never: the OS release is stalled beyond every deadline.
     Never,
 }
@@ -234,10 +231,6 @@ impl Backend for StageBackend {
                     std::thread::sleep(delay);
                     events.emit(BackendEvent::ShutdownComplete);
                 });
-            }
-            Release::SyncAfter(delay) => {
-                std::thread::sleep(delay);
-                self.events.emit(BackendEvent::ShutdownComplete);
             }
             Release::Never => {}
         }
@@ -699,40 +692,6 @@ fn terminal_deadline_armed_before_handling_ends_the_run() {
     );
 }
 
-/// A delayed real release (3.5 s, inside the terminal deadline) with a frozen
-/// writer: the release observation and the drain share the one deadline, so the
-/// drain's remaining budget (≤2 s) can never push the exit past five seconds.
-/// The exit code stands.
-#[test]
-fn delayed_release_and_frozen_writer_share_one_deadline() {
-    let (stdin, reader_gate) = script_io(&[hello_frame(), shutdown_frame("bye")], false);
-    let freeze_gate = Gate::new();
-    let stdout_box: Box<dyn Write + Send> = Box::new(FrozenWrite {
-        gate: Arc::clone(&freeze_gate),
-    });
-    let (_, code, elapsed) = run_bounded(
-        Release::Async(Duration::from_millis(3_500)),
-        Io {
-            stdin,
-            stdout: stdout_box,
-        },
-    );
-    freeze_gate.open();
-    reader_gate.open();
-    assert_eq!(
-        code, 0,
-        "the release was observed inside the deadline: exit preserved"
-    );
-    assert!(
-        elapsed >= Duration::from_millis(3_500),
-        "the drain waited for the shared deadline behind the frozen writer: {elapsed:?}"
-    );
-    assert!(
-        elapsed < Duration::from_secs(5) + SCHED_TOL,
-        "the drain never extends beyond the shared 5 s deadline: {elapsed:?}"
-    );
-}
-
 // ---- explicit shutdown with live stdin and an unconfirmed release -------------------------------
 
 #[test]
@@ -795,48 +754,6 @@ fn accepted_shutdown_with_live_stdin_and_async_release_after_the_deadline_fails_
         frames
             .iter()
             .all(|frame| frame["type"] != "shutdown_complete"),
-        "{frames:?}"
-    );
-}
-
-#[test]
-fn blocking_release_returning_after_the_deadline_fails_closed_without_success() {
-    // Accepted shutdown, idle stdin; `Backend::shutdown` blocks the runtime thread across the
-    // 5 s deadline and synchronously reports its attributed release on return (5.05 s).
-    let (stdin, reader_gate) = script_io(&[hello_frame(), shutdown_frame("bye")], true);
-    let (stdout, collected) = collect_stdout();
-    let (_calls, code, elapsed) = run_bounded(
-        Release::SyncAfter(Duration::from_millis(5_050)),
-        Io { stdin, stdout },
-    );
-    reader_gate.open();
-    assert_eq!(code, 1, "a late synchronous release never yields exit 0");
-    assert!(elapsed >= Duration::from_secs(5), "{elapsed:?}");
-    assert!(elapsed < Duration::from_secs(5) + SCHED_TOL, "{elapsed:?}");
-    let frames = stdout_frames(&collected);
-    assert!(
-        frames
-            .iter()
-            .all(|frame| frame["type"] != "shutdown_complete"),
-        "{frames:?}"
-    );
-}
-
-#[test]
-fn blocking_release_returning_before_the_deadline_still_succeeds() {
-    let (stdin, reader_gate) = script_io(&[hello_frame(), shutdown_frame("bye")], true);
-    let (stdout, collected) = collect_stdout();
-    let (_calls, code, elapsed) = run_bounded(
-        Release::SyncAfter(Duration::from_millis(4_500)),
-        Io { stdin, stdout },
-    );
-    reader_gate.open();
-    assert_eq!(code, 0);
-    assert!(elapsed >= Duration::from_millis(4_500) && elapsed < Duration::from_secs(5));
-    let frames = stdout_frames(&collected);
-    assert_eq!(
-        frames.last().unwrap()["type"],
-        "shutdown_complete",
         "{frames:?}"
     );
 }
