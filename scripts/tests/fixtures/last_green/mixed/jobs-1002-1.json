@@ -1,0 +1,26 @@
+{
+  "total_count": 3,
+  "jobs": [
+    {
+      "id": 21,
+      "run_attempt": 1,
+      "name": "web-extension / lint",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 22,
+      "run_attempt": 1,
+      "name": "web-extension / unit-tests",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 23,
+      "run_attempt": 1,
+      "name": "web-extension / browser-tests",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ]
+}

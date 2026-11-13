@@ -1,0 +1,41 @@
+{
+  "total_count": 2,
+  "workflow_runs": [
+    {
+      "id": 1001,
+      "name": "CI",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "c1",
+      "head_branch": "feature",
+      "head_repository": {
+        "full_name": "veles/veles"
+      },
+      "run_attempt": 1,
+      "pull_requests": [
+        {
+          "number": 7
+        }
+      ]
+    },
+    {
+      "id": 1002,
+      "name": "CI",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "c1",
+      "head_branch": "feature",
+      "head_repository": {
+        "full_name": "veles/veles"
+      },
+      "run_attempt": 1,
+      "pull_requests": [
+        {
+          "number": 7
+        }
+      ]
+    }
+  ]
+}
