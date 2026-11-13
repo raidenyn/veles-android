@@ -916,6 +916,8 @@ test('ci.yml changes job declares exactly the three read permissions', async () 
 });
 
 async function assertPushSelection(source) {
+  const select = namedStep(componentJobBlock(source, 'changes'), 'Select affected nodes');
+  assert.match(select, /^          CI_LAST_GREEN: \$\{\{ vars\.CI_LAST_GREEN \}\}$/m, 'the changes job must pass the CI_LAST_GREEN repository variable to last_green.py');
   const push = await runSelection(source, { event: 'push' });
   assert.equal(push.status, 0, `the push selection step must succeed: ${push.stderr}`);
   assert.deepEqual(push.calls.filter((call) => call.includes('last_green.py')), [], 'a push must never call last_green.py');
@@ -957,7 +959,18 @@ test('ci.yml selects every node on push without calling last_green', async () =>
   const notAll = source.replace('--base "$BASE" --head HEAD --all --summary-out', '--base "$BASE" --head HEAD --summary-out');
   assert.notEqual(notAll, source, 'the missing --all mutation must change ci.yml');
   await assert.rejects(assertPushSelection(notAll), /--all/);
+
+  const noKillSwitch = source.replace('          CI_LAST_GREEN: ${{ vars.CI_LAST_GREEN }}\n', '');
+  assert.notEqual(noKillSwitch, source, 'the dropped kill-switch mutation must change ci.yml');
+  await assert.rejects(assertPushSelection(noKillSwitch), /CI_LAST_GREEN/);
 });
+
+function runFailureStep(source, changedStatus) {
+  return spawnSync('bash', ['-eo', 'pipefail', '-c', jobStepScript(source, 'changes', 'Fail on unaccounted changed paths')], {
+    encoding: 'utf8',
+    env: { ...process.env, CHANGED_STATUS: changedStatus },
+  });
+}
 
 async function assertOutputsBeforeFailure(source) {
   const changes = componentJobBlock(source, 'changes');
@@ -966,11 +979,22 @@ async function assertOutputsBeforeFailure(source) {
   assert.ok(indices.every((index) => index !== -1), 'changes must keep the select -> check -> fail steps');
   assert.ok(indices[0] < indices[1] && indices[1] < indices[2], 'changes must keep the step order select -> check -> fail');
   assert.match(namedStep(changes, 'Fail on unaccounted changed paths'), /CHANGED_STATUS: \$\{\{ steps\.select\.outputs\.changed-status \}\}/, 'the failure step must read the selection status');
-  const run = await runSelection(source, { event: 'pull_request', componentsExit: 1 });
-  assert.equal(run.status, 0, 'the select step must not fail before the outputs are written');
-  assert.match(run.output, /^android=true$/m, 'the node outputs must be written before the failure');
-  assert.match(run.output, /^changed-status=1$/m, 'the selection status must be written before the failure');
-  assert.match(run.summary, /\| node \| selection \| base \| reason \|/, 'the step summary must be appended');
+  // The select step captures every status itself, so it succeeds after writing the outputs even when the
+  // lookup and the selection both fail; only the final job-level step may fail the job.
+  for (const [label, options] of [
+    ['selection failure', { event: 'pull_request', componentsExit: 1 }],
+    ['lookup and selection failure', { event: 'pull_request', lastGreenExit: 1, componentsExit: 1 }],
+  ]) {
+    const run = await runSelection(source, options);
+    assert.equal(run.status, 0, `the select step must not fail before the outputs are written (${label}): ${run.stderr}`);
+    assert.match(run.output, /^android=true$/m, `the node outputs must be written before the failure (${label})`);
+    assert.match(run.output, /^changed-status=1$/m, `the selection status must be written before the failure (${label})`);
+    assert.match(run.summary, /\| node \| selection \| base \| reason \|/, `the step summary must be appended (${label})`);
+  }
+  // Execute the final failure step with both statuses: zero passes, any non-zero fails the job.
+  assert.equal(runFailureStep(source, '0').status, 0, 'the failure step must pass on a zero selection status');
+  assert.equal(runFailureStep(source, '1').status, 1, 'the failure step must fail on a non-zero selection status');
+  assert.equal(runFailureStep(source, '2').status, 1, 'the failure step must fail on any non-zero selection status');
 }
 
 test('ci.yml writes outputs before the unaccounted-path failure', async () => {
@@ -979,6 +1003,14 @@ test('ci.yml writes outputs before the unaccounted-path failure', async () => {
   const uncaptured = source.replaceAll(' || status=$?', '');
   assert.notEqual(uncaptured, source, 'the uncaptured-status mutation must change ci.yml');
   await assert.rejects(assertOutputsBeforeFailure(uncaptured), /must not fail/);
+
+  // A failure step without its `exit 1` would leave the job green after an unaccounted path.
+  const noExit = source.replace(
+    '            echo "::error::changed paths are not owned, global or unowned in .github/components.json (every node was selected)"\n            exit 1\n',
+    '            echo "::error::changed paths are not owned, global or unowned in .github/components.json (every node was selected)"\n',
+  );
+  assert.notEqual(noExit, source, 'the dropped-exit mutation must change ci.yml');
+  await assert.rejects(assertOutputsBeforeFailure(noExit), /failure step/);
 });
 
 function assertReleaseBuildSelection(source) {
@@ -1038,13 +1070,41 @@ test('ci-ok accepts skipped needs and rejects failure and cancelled', async () =
 // on the caller or on a called job runs under several names, a caller that does not reuse a workflow has
 // no single source of job names, and a job entry the block parser does not recognize could hide a real
 // job, so every such shape throws instead of inventing a name.
+
+// Top-level keys of a job block sit at indent 4. The shared mapping parser understands quoted keys, so a
+// `"strategy":` spelling cannot slip a matrix past the derivation.
+function jobLevelEntries(block) {
+  return block.split('\n').map(mappingEntry).filter((entry) => entry?.indent === 4);
+}
+
+function assertNoMatrix(file, id, block) {
+  const matrix = jobLevelEntries(block).find((entry) => entry.key === 'strategy');
+  assert.equal(matrix, undefined, `${file} job ${id} declares a matrix strategy, so it has no single display name`);
+}
+
+// A job the derivation reads must resolve to exactly one display name. A nested reusable-workflow call
+// adds another `<outer> / <inner> / ...` level, a block scalar or duplicate name hides the reported name,
+// and any of those must fail loudly instead of being flattened into the wrong name.
+function assertResolvableJobBlock(file, id, block) {
+  assertNoMatrix(file, id, block);
+  const entries = jobLevelEntries(block);
+  assert.ok(!entries.some((entry) => entry.key === 'uses'), `${file} job ${id} calls a reusable workflow, so its reported job names cannot be derived`);
+  const names = entries.filter((entry) => entry.key === 'name');
+  assert.ok(names.length <= 1, `${file} job ${id} declares more than one name`);
+  if (names.length === 1) {
+    const name = names[0].value.trim();
+    assert.ok(name !== '' && !name.startsWith('|') && !name.startsWith('>'), `${file} job ${id} has a name shape that cannot be resolved`);
+    assert.ok(!name.includes('${{'), `${file} job ${id} has a dynamic name, which cannot be declared`);
+  }
+}
+
 async function derivedJobNames(callerName, ciSource = null) {
   const source = ciSource ?? executableYaml(await workflow('ci.yml'));
   assertStrictJobEntries('ci.yml', source);
   const callers = workflowJobBlocks(source);
   const caller = callers[callerName];
   assert.ok(caller, `ci.yml must define the ${callerName} caller job`);
-  assert.doesNotMatch(caller, /^    strategy:/m, `ci.yml job ${callerName} declares a matrix strategy, so it reports several jobs`);
+  assertNoMatrix('ci.yml', callerName, caller);
   assert.match(caller, new RegExp(`^    name: ${escapeRegexp(callerName)}\\s*$`, 'm'), `ci.yml must report the ${callerName} node as ${callerName} / <job>`);
   const uses = caller.match(/^    uses: \.\/\.github\/workflows\/([^\s/]+\.yml)\s*$/m);
   assert.ok(uses, `ci.yml job ${callerName} must reuse a repository workflow`);
@@ -1078,9 +1138,8 @@ function calledJobNames(file, source) {
   const jobs = workflowJobBlocks(source);
   assert.ok(Object.keys(jobs).length > 0, `${file} must declare at least one job`);
   const names = Object.entries(jobs).map(([id, block]) => {
-    assert.doesNotMatch(block, /^    strategy:/m, `${file} job ${id} declares a matrix strategy, so it has no single display name`);
+    assertResolvableJobBlock(file, id, block);
     const declared = block.match(/^    name: (.+)$/m)?.[1].trim();
-    assert.ok(declared === undefined || !declared.includes('${{'), `${file} job ${id} has a dynamic name, which cannot be declared`);
     return declared ?? id;
   });
   assert.equal(new Set(names).size, names.length, `${file} must not repeat a job display name`);
@@ -1125,6 +1184,27 @@ test("declared jobs equal the jobs of each ci.yml caller's reusable workflow", a
   const callerMatrix = ci.replace('  rust:\n    name: rust\n', '  rust:\n    name: rust\n    strategy:\n      matrix:\n        os: [ubuntu-latest]\n');
   assert.notEqual(callerMatrix, ci, 'the caller-matrix mutation must change ci.yml');
   await assert.rejects(derivedJobNames('rust', executableYaml(callerMatrix)), /matrix/);
+
+  // Negative: the parser recognizes quoted mapping keys, so a quoted `"strategy":` cannot evade the check
+  // on either the caller or a called job.
+  const quotedCallerMatrix = ci.replace('  rust:\n    name: rust\n', '  rust:\n    name: rust\n    "strategy":\n      matrix:\n        os: [ubuntu-latest]\n');
+  assert.notEqual(quotedCallerMatrix, ci, 'the quoted caller-matrix mutation must change ci.yml');
+  await assert.rejects(derivedJobNames('rust', executableYaml(quotedCallerMatrix)), /matrix/);
+  const quotedJobMatrix = rust.replace('  jni-integration:\n    name: jni-integration\n', '  jni-integration:\n    name: jni-integration\n    "strategy":\n      matrix:\n        os: [ubuntu-latest]\n');
+  assert.notEqual(quotedJobMatrix, rust, 'the quoted job-matrix mutation must change the workflow');
+  assert.throws(() => calledJobNames('check-rust.yml', executableYaml(quotedJobMatrix)), /matrix/);
+
+  // Negative: a called job that is itself a reusable-workflow call adds another name level, and a name
+  // shape the derivation cannot resolve (a block scalar or a duplicate key) throws instead of guessing.
+  const nested = rust.replace('  jni-integration:\n    name: jni-integration\n', '  jni-integration:\n    name: jni-integration\n    uses: ./.github/workflows/check-tooling.yml\n');
+  assert.notEqual(nested, rust, 'the nested reusable-workflow mutation must change the workflow');
+  assert.throws(() => calledJobNames('check-rust.yml', executableYaml(nested)), /reusable workflow/);
+  const blockName = rust.replace('  jni-integration:\n    name: jni-integration\n', '  jni-integration:\n    name: |\n      jni-integration\n');
+  assert.notEqual(blockName, rust, 'the block-scalar-name mutation must change the workflow');
+  assert.throws(() => calledJobNames('check-rust.yml', executableYaml(blockName)), /name shape/);
+  const duplicateName = rust.replace('  jni-integration:\n    name: jni-integration\n', '  jni-integration:\n    name: jni-integration\n    name: jni-integration-renamed\n');
+  assert.notEqual(duplicateName, rust, 'the duplicate-name mutation must change the workflow');
+  assert.throws(() => calledJobNames('check-rust.yml', executableYaml(duplicateName)), /more than one name/);
 });
 
 test('every pre-split CI command runs in exactly one check workflow', async () => {
