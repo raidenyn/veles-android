@@ -160,6 +160,7 @@ rust/scripts/assert-clean.sh
 python3 -I scripts/commitlint.py --message "feat(app): add thing"      # validate a message (or --file PATH); exit 0 valid, 1 invalid
 python3 -I scripts/components.py check                                  # every tracked file is owned by a node in .github/components.json
 python3 -I scripts/components.py changed --base <sha>                   # <node>=true|false per component for a diff
+python3 -I scripts/last_green.py --pr <n> --head <sha> --head-repo <owner/name> --head-ref <ref>  # per-node last green heads (CI; needs GITHUB_TOKEN)
 ```
 
 Clean APK assembly now requires rustup/cargo and NDK r29 (`rustJni` is a dependency of
@@ -180,7 +181,7 @@ component is built exactly once per invocation in its own reusable workflow:
 
 | Workflow | Role |
 |---|---|
-| `ci.yml` | PR/master orchestrator: a `changes` job (`scripts/components.py`) selects component nodes, each calls its `check-<node>.yml`; `commit-guard` on master pushes; required aggregate `ci-ok` (see `docs/ci.md`) |
+| `ci.yml` | PR/master orchestrator: a `changes` job (`scripts/components.py`) selects component nodes, each calls its `check-<node>.yml`; PR runs skip nodes unchanged since their last green head (`scripts/last_green.py`), master pushes run every node; `commit-guard` on master pushes; required aggregate `ci-ok` (see `docs/ci.md`). `CI_LAST_GREEN=off` disables last-green selection (kill switch and rollback) |
 | `pr-title.yml` | required check: the PR title + body (the future squash commit) must be a Conventional Commit |
 | `check-android.yml`, `check-web-extension.yml`, `check-rust.yml`, `check-protocol.yml`, `check-installer.yml`, `check-bridge-scaffold.yml`, `check-tooling.yml` | per-node lint/test checks; never upload release products |
 | `check-native-host.yml` | OTP-24 production host, the `native-host` node: Linux `lint`/`unit-tests`/`build-contract`, `windows-2025`/`macos-26` `unit-tests` (format + lint + test) and `compile` (`bridgeHostBuild`); CI artifacts `native-host-windows` (exe + `SHA256SUMS`) / `native-host-macos` (mode-preserving tar + `SHA256SUMS`, plus archive sidecar). No installer, no Tauri |

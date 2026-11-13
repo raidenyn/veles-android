@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readdir, readFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -734,8 +736,13 @@ function assertComponentCi(source, nodes) {
   const changes = jobs.changes;
   assert.ok(changes, 'ci.yml must define the changes job');
   assert.match(changes, /fetch-depth:\s*0/, 'changes needs the full history');
+  assert.deepEqual(jobPermissions(changes), ['contents: read', 'actions: read', 'pull-requests: read'], 'changes must declare exactly the three read permissions it needs');
   assert.match(changes, /python3 -I scripts\/components\.py check/, 'changes must check the component map');
-  assert.match(changes, /python3 -I scripts\/components\.py changed --base "\$BASE" --github-output "\$GITHUB_OUTPUT"/, 'changes must select nodes');
+  assert.match(changes, /python3 -I scripts\/last_green\.py --pr "\$PR_NUMBER" --head "\$PR_HEAD_SHA" --head-repo "\$PR_HEAD_REPO" --head-ref "\$PR_HEAD_REF" --out bases\.json --notes-out notes\.json/, 'changes must look up each node\'s last green head');
+  assert.match(changes, /::warning::last-green evidence unavailable; selecting every node/, 'a failed lookup must warn and select every node');
+  assert.match(changes, /python3 -I scripts\/components\.py changed --base "\$BASE" --head HEAD --node-head "\$PR_HEAD_SHA" --node-bases bases\.json --evidence-notes notes\.json --summary-out summary\.md --github-output "\$GITHUB_OUTPUT"/, 'changes must select nodes per last green');
+  assert.match(changes, /python3 -I scripts\/components\.py changed --base "\$BASE" --head HEAD --all --summary-out summary\.md --github-output "\$GITHUB_OUTPUT"/, 'push and fallback must select every node');
+  assert.match(changes, /cat summary\.md >> "\$GITHUB_STEP_SUMMARY"/, 'changes must explain the selection in the job summary');
   assert.match(changes, /git merge-base "origin\/\$BASE_REF" HEAD/, 'PR base must be the merge base');
   assert.match(changes, /BASE="\$BEFORE"/, 'push base must be github.event.before');
   for (const node of nodes) {
@@ -794,6 +801,235 @@ test('ci.yml calls one change-gated check workflow per component node and gates 
     const mutated = mutate(source);
     assert.notEqual(mutated, source, `mutation "${label}" must change ci.yml`);
     assert.throws(() => assertComponentCi(mutated, CI_NODES), `the contract must reject "${label}"`);
+  }
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// Last-green selection in the ci.yml changes job: permissions, push/PR/fallback routing, outputs written
+// before the unaccounted-path failure, and the unchanged release-build.yml selection.
+
+function componentJobBlock(source, name) {
+  const block = workflowJobBlocks(executableYaml(source))[name];
+  assert.ok(block, `workflow must define the ${name} job`);
+  return block;
+}
+
+function namedStep(jobText, name) {
+  const step = steps(jobText).find((candidate) => candidate.some((line) => {
+    const entry = mappingEntry(line);
+    return entry?.key === 'name' && entry.value.trim() === name;
+  }));
+  assert.ok(step, `job must define the "${name}" step`);
+  return step.join('\n');
+}
+
+function jobStepScript(source, jobName, stepName) {
+  // runCommands keeps the block-scalar marker (`|`) as the first line; drop it before executing.
+  return runCommands(namedStep(componentJobBlock(source, jobName), stepName)).join('\n').replace(/^[>|][^\n]*\n/, '');
+}
+
+// Run the changes selection script with stubbed git/python3 commands. The stub records every call, writes
+// the node outputs before returning (like components.py on an unaccounted path) and exits with the asked
+// status. `bash -eo pipefail` matches the default GitHub Actions shell.
+async function runSelection(source, { event = 'pull_request', lastGreenExit = 0, componentsExit = 0 } = {}) {
+  const directory = await mkdtemp(join(tmpdir(), 'ci-select-'));
+  try {
+    const python = join(directory, 'python3');
+    const git = join(directory, 'git');
+    await writeFile(python, `#!/bin/sh
+printf '%s\\n' "$*" >> "$CALL_LOG"
+case "$*" in
+  *last_green.py*) exit ${lastGreenExit} ;;
+  *components.py*)
+    printf 'android=true\\n' >> "$GITHUB_OUTPUT"
+    printf '| node | selection | base | reason |\\n' > summary.md
+    exit ${componentsExit}
+    ;;
+esac
+exit 0
+`);
+    await writeFile(git, "#!/bin/sh\nprintf 'mergebase-sha\\n'\n");
+    await chmod(python, 0o755);
+    await chmod(git, 0o755);
+    const outputPath = join(directory, 'output');
+    const summaryPath = join(directory, 'step-summary');
+    const callLog = join(directory, 'calls.log');
+    await writeFile(outputPath, '');
+    await writeFile(summaryPath, '');
+    await writeFile(callLog, '');
+    const result = spawnSync('bash', ['-eo', 'pipefail', '-c', jobStepScript(source, 'changes', 'Select affected nodes')], {
+      cwd: directory,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        CALL_LOG: callLog,
+        GITHUB_OUTPUT: outputPath,
+        GITHUB_STEP_SUMMARY: summaryPath,
+        EVENT_NAME: event,
+        BASE_REF: 'master',
+        BEFORE: 'before-sha',
+        PR_NUMBER: '7',
+        PR_HEAD_SHA: 'head-sha',
+        PR_HEAD_REPO: 'fork/repo',
+        PR_HEAD_REF: 'feature',
+        CI_LAST_GREEN: '',
+        GITHUB_TOKEN: 'token',
+      },
+    });
+    return {
+      status: result.status,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      calls: (await readFile(callLog, 'utf8')).split('\n').filter(Boolean),
+      output: await readFile(outputPath, 'utf8'),
+      summary: await readFile(summaryPath, 'utf8'),
+    };
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+function assertChangesPermissions(source) {
+  assert.match(source, /^permissions:\n  contents: read$/m, 'ci.yml must default to read-only contents');
+  const changes = componentJobBlock(source, 'changes');
+  assert.deepEqual(jobPermissions(changes), ['contents: read', 'actions: read', 'pull-requests: read'], 'the changes job must declare exactly the three read permissions');
+  assert.doesNotMatch(changes, /\$\{\{\s*secrets\.|^\s*secrets:/m, 'the changes job must use no secret so fork pull requests work');
+}
+
+test('ci.yml changes job declares exactly the three read permissions', async () => {
+  const source = await workflow('ci.yml');
+  assertChangesPermissions(source);
+  const mutations = {
+    'missing actions': (text) => text.replace('      actions: read\n', ''),
+    'missing pull requests': (text) => text.replace('      pull-requests: read\n', ''),
+    'missing job mapping': (text) => text.replace(/    permissions:\n      contents: read\n      actions: read\n      pull-requests: read\n/, ''),
+    'write contents': (text) => text.replace('      contents: read\n      actions: read', '      contents: write\n      actions: read'),
+    'extra permission': (text) => text.replace('      pull-requests: read\n', '      pull-requests: read\n      id-token: write\n'),
+    'secret token': (text) => text.replace('          GITHUB_TOKEN: ${{ github.token }}', '          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}'),
+  };
+  for (const [label, mutate] of Object.entries(mutations)) {
+    const mutated = mutate(source);
+    assert.notEqual(mutated, source, `mutation "${label}" must change ci.yml`);
+    assert.throws(() => assertChangesPermissions(mutated), `the contract must reject "${label}"`);
+  }
+});
+
+async function assertPushSelection(source) {
+  const push = await runSelection(source, { event: 'push' });
+  assert.equal(push.status, 0, `the push selection step must succeed: ${push.stderr}`);
+  assert.deepEqual(push.calls.filter((call) => call.includes('last_green.py')), [], 'a push must never call last_green.py');
+  const components = push.calls.filter((call) => call.includes('components.py changed'));
+  assert.equal(components.length, 1, 'a push must run exactly one selection command');
+  assert.ok(components[0].includes('--all'), 'a push must select every node with --all');
+  assert.ok(components[0].includes('--base before-sha'), 'a push must validate the before..after range');
+  assert.match(push.output, /^changed-status=0$/m, 'a push must write the selection status');
+
+  const pr = await runSelection(source, { event: 'pull_request' });
+  assert.equal(pr.status, 0, `the pull request selection step must succeed: ${pr.stderr}`);
+  const lastGreen = pr.calls.filter((call) => call.includes('last_green.py'));
+  assert.equal(lastGreen.length, 1, 'a pull request must run last_green.py once');
+  assert.match(lastGreen[0], /--pr 7 --head head-sha --head-repo fork\/repo --head-ref feature --out bases\.json --notes-out notes\.json$/, 'the lookup must receive the PR number, head and head repository/ref');
+  const selected = pr.calls.filter((call) => call.includes('components.py changed'));
+  assert.equal(selected.length, 1, 'a pull request must run exactly one selection command');
+  assert.match(selected[0], /--base mergebase-sha --head HEAD --node-head head-sha --node-bases bases\.json --evidence-notes notes\.json --summary-out summary\.md/, 'the normal path must diff each node from its evidence head');
+  assert.ok(!selected[0].includes('--all'), 'the normal path must not select every node');
+}
+
+test('ci.yml selects every node on push without calling last_green', async () => {
+  const source = await workflow('ci.yml');
+  await assertPushSelection(source);
+
+  const fallback = await runSelection(source, { event: 'pull_request', lastGreenExit: 1 });
+  assert.equal(fallback.status, 0, `the fallback selection step must succeed: ${fallback.stderr}`);
+  assert.match(fallback.stdout, /::warning::last-green evidence unavailable; selecting every node/, 'a failed lookup must warn');
+  const fallbackSelection = fallback.calls.filter((call) => call.includes('components.py changed'));
+  assert.equal(fallbackSelection.length, 1);
+  assert.ok(fallbackSelection[0].includes('--all'), 'a failed lookup must select every node');
+
+  const unguarded = source.replace(
+    '          if [ "$EVENT_NAME" = pull_request ]; then\n            mode=last-green\n',
+    '          if true; then\n            mode=last-green\n',
+  );
+  assert.notEqual(unguarded, source, 'the unguarded mutation must change ci.yml');
+  await assert.rejects(assertPushSelection(unguarded), /never call last_green/);
+
+  const notAll = source.replace('--base "$BASE" --head HEAD --all --summary-out', '--base "$BASE" --head HEAD --summary-out');
+  assert.notEqual(notAll, source, 'the missing --all mutation must change ci.yml');
+  await assert.rejects(assertPushSelection(notAll), /--all/);
+});
+
+async function assertOutputsBeforeFailure(source) {
+  const changes = componentJobBlock(source, 'changes');
+  const order = ['- name: Select affected nodes', '- name: Check the component map', '- name: Fail on unaccounted changed paths'];
+  const indices = order.map((name) => changes.indexOf(name));
+  assert.ok(indices.every((index) => index !== -1), 'changes must keep the select -> check -> fail steps');
+  assert.ok(indices[0] < indices[1] && indices[1] < indices[2], 'changes must keep the step order select -> check -> fail');
+  assert.match(namedStep(changes, 'Fail on unaccounted changed paths'), /CHANGED_STATUS: \$\{\{ steps\.select\.outputs\.changed-status \}\}/, 'the failure step must read the selection status');
+  const run = await runSelection(source, { event: 'pull_request', componentsExit: 1 });
+  assert.equal(run.status, 0, 'the select step must not fail before the outputs are written');
+  assert.match(run.output, /^android=true$/m, 'the node outputs must be written before the failure');
+  assert.match(run.output, /^changed-status=1$/m, 'the selection status must be written before the failure');
+  assert.match(run.summary, /\| node \| selection \| base \| reason \|/, 'the step summary must be appended');
+}
+
+test('ci.yml writes outputs before the unaccounted-path failure', async () => {
+  const source = await workflow('ci.yml');
+  await assertOutputsBeforeFailure(source);
+  const uncaptured = source.replaceAll(' || status=$?', '');
+  assert.notEqual(uncaptured, source, 'the uncaptured-status mutation must change ci.yml');
+  await assert.rejects(assertOutputsBeforeFailure(uncaptured), /must not fail/);
+});
+
+function assertReleaseBuildSelection(source) {
+  const changes = componentJobBlock(source, 'changes');
+  assert.match(changes, /python3 -I scripts\/components\.py changed --base "\$BEFORE" --github-output "\$GITHUB_OUTPUT"/, 'release-build.yml must keep the plain before-based selection');
+  assert.doesNotMatch(changes, /--node-bases|--all\b|last_green\.py/, 'release-build.yml must not use last-green or select-all');
+}
+
+test('release-build.yml still selects with components.py changed --base before', async () => {
+  const ci = await workflow('ci.yml');
+  const release = await workflow('release-build.yml');
+  assertReleaseBuildSelection(release);
+  // The command inventory distinguishes the two selection variants: only ci.yml runs --node-bases/--all,
+  // and only release-build.yml keeps the plain before-based selection.
+  const sources = { 'ci.yml': ci, 'release-build.yml': release };
+  const owners = (pattern) => Object.entries(sources)
+    .filter(([, source]) => shellCommands(executableYaml(source)).some((run) => pattern.test(run)))
+    .map(([name]) => name);
+  assert.deepEqual(owners(/components\.py changed[^\n]*--node-bases bases\.json/), ['ci.yml'], 'only ci.yml selects per node');
+  assert.deepEqual(owners(/components\.py changed[^\n]*--all\b/), ['ci.yml'], 'only ci.yml selects every node');
+  assert.deepEqual(owners(/components\.py changed --base "\$BEFORE" --github-output/), ['release-build.yml'], 'only release-build.yml keeps the before-based selection');
+  const mutated = release.replace('--base "$BEFORE" --github-output', '--base "$BEFORE" --all --github-output');
+  assert.notEqual(mutated, release, 'the select-all mutation must change release-build.yml');
+  assert.throws(() => assertReleaseBuildSelection(mutated), /plain before-based selection/);
+});
+
+function assertCiOkContract(source) {
+  const script = jobStepScript(source, 'ci-ok', 'Require every selected node to pass');
+  const verdict = (changesResult, results) => spawnSync('bash', ['-eo', 'pipefail', '-c', script], {
+    encoding: 'utf8',
+    env: { ...process.env, CHANGES_RESULT: changesResult, RESULTS: results },
+  }).status;
+  assert.equal(verdict('success', 'success skipped success'), 0, 'skipped needs must not fail ci-ok');
+  assert.equal(verdict('success', 'failure'), 1, 'a failed need must fail ci-ok');
+  assert.equal(verdict('success', 'cancelled'), 1, 'a cancelled need must fail ci-ok');
+  assert.equal(verdict('failure', 'success skipped'), 1, 'a failed changes job must fail ci-ok');
+  assert.equal(verdict('cancelled', 'success'), 1, 'a cancelled changes job must fail ci-ok');
+}
+
+test('ci-ok accepts skipped needs and rejects failure and cancelled', async () => {
+  const source = await workflow('ci.yml');
+  assertCiOkContract(source);
+  const mutations = {
+    'cancelled accepted': (text) => text.replace('failure|cancelled)', 'failure)'),
+    'failure accepted': (text) => text.replace('failure|cancelled)', 'cancelled)'),
+    'changes result ignored': (text) => text.replace('if [ "$CHANGES_RESULT" != success ]', 'if false'),
+  };
+  for (const [label, mutate] of Object.entries(mutations)) {
+    const mutated = mutate(source);
+    assert.notEqual(mutated, source, `mutation "${label}" must change ci.yml`);
+    assert.throws(() => assertCiOkContract(mutated), `the contract must reject "${label}"`);
   }
 });
 
