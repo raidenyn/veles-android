@@ -1,6 +1,6 @@
 //! Task 1 contract tests (OTP-24 production crate): strict JSON intake, canonical base64,
 //! opaque payload ownership, Native Messaging framing and the request/event envelope
-//! vocabulary of `docs/protocol/veles-v1.md` section 10. Shared shared-fixture vectors from
+//! vocabulary of `protocol/docs/veles-v1.md` section 10. Shared shared-fixture vectors from
 //! `protocol/v1/fixtures/bridge.json` drive the size-boundary verdicts.
 
 use std::io::{Cursor, Read, Result as IoResult, Write};

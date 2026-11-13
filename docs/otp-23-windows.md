@@ -139,7 +139,7 @@ suite: 150 passed (four radio tests ignored by default). Windows opt-in radio su
 suite including synthetic fixture boundary coverage and `spotlessCheck detekt
 lintDebug` passed. Production bridge formatting/lint and the connector API check
 also passed. The final Opus review is recorded in
-[`protocol/reviews/otp-23-windows-opus.md`](protocol/reviews/otp-23-windows-opus.md).
+[`protocol/docs/reviews/otp-23-windows-opus.md`](../protocol/docs/reviews/otp-23-windows-opus.md).
 Known physical failures above are intentional feasibility evidence,
 not green acceptance claims.
 

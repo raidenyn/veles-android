@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema": "veles.protocol.fixtures",
-  "description": "Bridge (Native Messaging envelope v1) fixtures: negotiation offer validation, canonical base64 records, bound below/at/above cases, host event shape, and lifecycle/order/count traces (driven end-to-end by checks/bridge.test.mjs). Synthetic identifiers only. See docs/protocol/veles-v1.md sections 10 (OTP2-BRD-*).",
+  "description": "Bridge (Native Messaging envelope v1) fixtures: negotiation offer validation, canonical base64 records, bound below/at/above cases, host event shape, and lifecycle/order/count traces (driven end-to-end by checks/bridge.test.mjs). Synthetic identifiers only. See protocol/docs/veles-v1.md sections 10 (OTP2-BRD-*).",
   "fixtures": [
     {
       "id": "brd-req-hello-pre-ready-valid",

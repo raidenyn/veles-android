@@ -1,6 +1,6 @@
 // Test-only binary descriptor interpreter for the Veles protocol contract
 // (OTP-02 Plan Task 2). Never imported by product code; not a reference codec.
-// Wire rules come from docs/protocol/veles-v1.md via protocol/v1/binary-layouts.json.
+// Wire rules come from protocol/docs/veles-v1.md via protocol/v1/binary-layouts.json.
 
 class BinaryStageError extends Error {
   constructor(stage, message) {

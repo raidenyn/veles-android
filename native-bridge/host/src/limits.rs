@@ -1,5 +1,5 @@
 //! Named protocol ceilings of the portable parsing layer, mirroring `protocol/v1/limits.json`
-//! (docs/protocol/veles-v1.md). Every value here is echoed by the shared fixture checks and the
+//! (protocol/docs/veles-v1.md). Every value here is echoed by the shared fixture checks and the
 //! host contract tests; nothing in this layer silently hardcodes an untracked limit.
 
 /// One Native Messaging JSON message, both directions: byte length 1..=65,536

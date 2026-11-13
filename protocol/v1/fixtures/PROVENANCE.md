@@ -1,6 +1,6 @@
 # Crypto fixture provenance (OTP-02 Plan Task 5)
 
-Normative source: `docs/protocol/veles-v1.md` (the sole frozen authority for
+Normative source: `protocol/docs/veles-v1.md` (the sole frozen authority for
 wire encodings). This PROVENANCE file, the Task 5 fixture set, generators and
 cross-checkers are a DRAFT pending controller/final review: they record
 evidence, make no acceptance claim of their own, and can never override the

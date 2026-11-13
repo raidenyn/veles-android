@@ -22,7 +22,7 @@ data class Started(val handle: Handle, val point: ByteArray)
 class PairingCoreException(message: String) : IllegalStateException(message)
 
 /**
- * The narrow OTP-03 pairing boundary (`docs/protocol/otp-03-api.md`). Tests build
+ * The narrow OTP-03 pairing boundary (`protocol/docs/otp-03-api.md`). Tests build
  * consumers against this interface; [VelesPairingCore] is the only production
  * implementation, and it is the only pairing code that touches `VelesCrypto`.
  */

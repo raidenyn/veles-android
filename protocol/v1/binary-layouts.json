@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema": "veles.protocol.binary_layouts",
-  "document": "docs/protocol/veles-v1.md",
+  "document": "protocol/docs/veles-v1.md",
   "description": "Test-only descriptor-driven binary layout inventory for protocol v1 (OTP-02 Plan Task 2). Derived from the normative document; a disagreement with veles-v1.md is a defect that fails the checks and is never resolved in the descriptor's favor.",
   "byte_order": "unsigned big-endian (Veles network order). RFC 9382's little-endian len() quoting (TT, enrollment salt) is not a wire framing here and is exercised by the Task 5 crypto fixtures.",
   "value_rules": {

@@ -1,6 +1,6 @@
 // Wire constants of the Veles reconnect protocol, mirroring the Kotlin
 // `me.nagaev.veles.session.Wire` enums. Values are the frozen wire numbers from
-// docs/protocol/veles-v1.md sections 4, 7 and 11.
+// protocol/docs/veles-v1.md sections 4, 7 and 11.
 
 /** Wire roles: the phone is SPAKE2 party A and the client is party B (§3). */
 export const Role = {

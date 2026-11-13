@@ -1,4 +1,4 @@
-//! Native Messaging envelope v1 (docs/protocol/veles-v1.md section 10): strict request parsing
+//! Native Messaging envelope v1 (protocol/docs/veles-v1.md section 10): strict request parsing
 //! and deterministic event serialisation. Records stay opaque bytes; nothing here interprets them.
 
 use serde_json::{Map, Value, json};

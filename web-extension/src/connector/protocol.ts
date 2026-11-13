@@ -1,6 +1,6 @@
 // Strict validation for the frozen Veles Native Messaging envelope v1.
 //
-// Normative source: docs/protocol/veles-v1.md section 10 (OTP2-BRD-*) and
+// Normative source: protocol/docs/veles-v1.md section 10 (OTP2-BRD-*) and
 // protocol/v1/envelope.schema.json. This module validates host -> connector
 // events. It never interprets record bytes: `record_base64` remains opaque
 // transport data and is only checked for canonical encoding and size.

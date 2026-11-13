@@ -1,7 +1,7 @@
 // Numeric ceilings for the bridge envelope and the connector's own stores.
 //
 // The `BRIDGE_*` values mirror `protocol/v1/limits.json` and the RFC-fixed
-// ceilings in `docs/protocol/veles-v1.md` section 10.4. They describe the
+// ceilings in `protocol/docs/veles-v1.md` section 10.4. They describe the
 // native host process. The `CONNECTOR_*` values are the connector's own
 // admission bounds; they are equal to or stricter than the host bounds and
 // must never be widened without a contract change.

@@ -2267,7 +2267,7 @@ package cannot exhibit without product code) — stays
 `specified_awaiting_controller_review` with only its anchor in
 `evidence_ids`. No entry claims `reviewed` or `accepted` in this
 revision: independent reviews and user acceptance are explicitly pending
-and tracked in the review records (`docs/protocol/reviews/`). Fixed
+and tracked in the review records (`protocol/docs/reviews/`). Fixed
 ceilings live in `protocol/v1/limits.json` with `origin`
 marking RFC-fixed values versus builder choices.
 

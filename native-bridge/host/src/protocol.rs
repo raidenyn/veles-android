@@ -1,4 +1,4 @@
-//! Native Messaging envelope v1 (docs/protocol/veles-v1.md section 10): strict request parsing
+//! Native Messaging envelope v1 (protocol/docs/veles-v1.md section 10): strict request parsing
 //! and deterministic event serialisation. Records stay opaque bytes (`crate::buffer::Payload`);
 //! nothing here interprets them. The decoding ceiling is the envelope admission bound
 //! ([`limits::DECODED_RECORD_MAX_BYTES`]); the 4,096-byte GATT send ceiling is enforced by the

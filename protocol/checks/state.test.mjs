@@ -1,7 +1,7 @@
 // OTP-02 Plan Task 4 — enrollment, reconnect and protected-state contract suite.
 // Test-only; never imported by product code. Run: node --test protocol/checks/state.test.mjs
 //
-// Expectations below are derived from docs/protocol/veles-v1.md (normative) —
+// Expectations below are derived from protocol/docs/veles-v1.md (normative) —
 // section 3.5 (attempt/rate accounting), section 5 (enrollment/activation/recovery),
 // section 6 (reconnect), section 7 (record format), section 11 (state transition
 // tables). The committed trace fixtures under protocol/v1/fixtures/ are the

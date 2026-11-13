@@ -159,10 +159,12 @@ export function buildEvidenceInventory(root, opts = {}) {
   const manifest = load(root, "manifest.json");
   const docPath = opts.doc ?? "veles-v1.md";
   let doc;
+  // The specification lives inside the protocol node: <repo>/protocol/docs.
+  // A detached caller may flatten that layout to <root>/docs only.
   try {
-    doc = readFileSync(join(root, "..", "..", "docs", "protocol", docPath), "utf8");
+    doc = readFileSync(join(root, "..", "docs", docPath), "utf8");
   } catch {
-    doc = readFileSync(join(root, "docs", "protocol", docPath), "utf8");
+    doc = readFileSync(join(root, "docs", docPath), "utf8");
   }
   const anchors = new Set([...doc.matchAll(/<a id="(sec-[^"]+)"/g)].map((m) => m[1]));
   const fixtureRefs = new Map();

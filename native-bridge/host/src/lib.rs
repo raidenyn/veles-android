@@ -2,7 +2,7 @@
 //!
 //! Task 1 (2026-10-31-otp24-production-bridge) establishes the strict portable parsing layer:
 //! frame bounds, strict JSON intake, canonical base64, opaque payload ownership and the
-//! request/event envelope vocabulary of `docs/protocol/veles-v1.md` section 10. Task 2 adds
+//! request/event envelope vocabulary of `protocol/docs/veles-v1.md` section 10. Task 2 adds
 //! opaque GATT fragmentation and owned-buffer budgets. Task 3 adds the bounded runtime
 //! ingress (`ingress.rs`: reader frame staging with priority terminals and backend event
 //! staging with reserved controls per accepted token), the writer-aware output queue

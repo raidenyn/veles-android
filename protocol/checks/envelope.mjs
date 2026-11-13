@@ -1,7 +1,7 @@
 // Test-only Native Messaging envelope validation and bridge lifecycle checks
 // for the Veles protocol contract (OTP-02 Plan Task 3). Never imported by
 // product code; not a reference codec and not a competing bridge
-// implementation. Normative source: docs/protocol/veles-v1.md section 10
+// implementation. Normative source: protocol/docs/veles-v1.md section 10
 // (Native Messaging envelope v1, OTP2-BRD-*) via protocol/v1/envelope.schema.json.
 
 import { readFileSync } from "node:fs";

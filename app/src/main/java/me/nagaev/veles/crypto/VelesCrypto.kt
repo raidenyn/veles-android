@@ -8,7 +8,7 @@ internal object VelesCrypto {
     @JvmStatic
     external fun reverseBytes(input: ByteArray): ByteArray
 
-    /** Version-1 pairing command API; see docs/protocol/otp-03-api.md. */
+    /** Version-1 pairing command API; see protocol/docs/otp-03-api.md. */
     @JvmStatic
     external fun pairingCommand(input: ByteArray): ByteArray
 }

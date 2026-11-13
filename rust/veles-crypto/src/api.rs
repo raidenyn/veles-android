@@ -1,4 +1,4 @@
-//! Bounded process-local FFI command dispatcher. See docs/protocol/otp-03-api.md.
+//! Bounded process-local FFI command dispatcher. See protocol/docs/otp-03-api.md.
 use crate::spake2::{Error, Pairing, Role};
 use std::{
     collections::BTreeMap,
