@@ -13,15 +13,22 @@
 // vectors must be able to write the forbidden form.
 //
 // Usage:
-//   node scripts/check-mac-comparisons.mjs [--root DIR]
+//   node scripts/check-mac-comparisons.mjs [--scan DIR ...] [--root DIR]
 //   node scripts/check-mac-comparisons.mjs --file FILE [--file FILE ...]
+//
+// `--scan DIR` is repeatable and scans exactly the given directories: each one
+// must exist, and a missing directory is an environment error (exit 2). Without
+// `--scan`, the built-in `DEFAULT_ROOTS` are scanned relative to `--root` (the
+// current directory by default); missing default roots are skipped silently so
+// the guard still works in partial checkouts. An empty scan set is an
+// environment error (exit 2) rather than a silent pass.
 //
 // Exit 0 when clean, 1 with `path:line: text` lines on violations.
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
-const DEFAULT_ROOTS = ['app/src/main', 'web-extension/src'];
+const DEFAULT_ROOTS = ['android/app/src/main', 'web-extension/src'];
 const SKIPPED_DIRECTORIES = new Set(['.git', 'build', 'coverage', 'dist', 'node_modules']);
 const SOURCE_EXTENSIONS = new Set(['.kt', '.ts']);
 
@@ -139,9 +146,13 @@ function main() {
     const args = process.argv.slice(2);
     let root = process.cwd();
     const explicit = [];
+    const scans = [];
     for (let index = 0; index < args.length; index += 1) {
         if (args[index] === '--root') {
             root = resolve(args[index + 1] ?? '.');
+            index += 1;
+        } else if (args[index] === '--scan') {
+            scans.push(resolve(args[index + 1] ?? '.'));
             index += 1;
         } else if (args[index] === '--file') {
             explicit.push(resolve(args[index + 1] ?? '.'));
@@ -152,19 +163,40 @@ function main() {
         }
     }
 
-    const paths = explicit.length > 0 ? explicit : DEFAULT_ROOTS.map((path) => join(root, path));
-    const existing = [];
-    for (const path of paths) {
-        if (existsSync(path)) {
-            existing.push(path);
-            continue;
+    let paths;
+    if (explicit.length > 0) {
+        for (const path of explicit) {
+            if (!existsSync(path)) {
+                console.error(`check-mac-comparisons: no such file or directory ${path}`);
+                process.exit(2);
+            }
         }
-        if (explicit.length > 0) {
-            console.error(`check-mac-comparisons: no such file or directory ${path}`);
+        paths = explicit;
+    } else if (scans.length > 0) {
+        // An explicit scan is a contract: a missing directory means the caller's
+        // layout is wrong (or the directory was renamed), so fail loudly instead
+        // of passing because nothing was scanned.
+        for (const path of scans) {
+            let isDirectory = false;
+            try {
+                isDirectory = statSync(path).isDirectory();
+            } catch {
+                isDirectory = false;
+            }
+            if (!isDirectory) {
+                console.error(`check-mac-comparisons: no such directory ${path}`);
+                process.exit(2);
+            }
+        }
+        paths = scans;
+    } else {
+        paths = DEFAULT_ROOTS.map((path) => join(root, path)).filter((path) => existsSync(path));
+        if (paths.length === 0) {
+            console.error(`check-mac-comparisons: no directories to scan under ${root}`);
             process.exit(2);
         }
     }
-    const violations = fileSet(existing).flatMap((path) =>
+    const violations = fileSet(paths).flatMap((path) =>
         scanSource(path, readFileSync(path, 'utf8')),
     );
     for (const violation of violations) {
