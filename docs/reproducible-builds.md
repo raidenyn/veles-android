@@ -386,7 +386,7 @@ build/rust                  build/rust-tools
 web-extension/dist          web-extension/rust-wasm/pkg
 native-bridge/src-tauri/target   native-bridge/dist
 native-bridge/host/target        native-bridge/host/build
-app/build/generated/jniLibs      app/build/outputs/apk
+android/app/build/generated/jniLibs  android/app/build/outputs/apk
 ```
 
 ## Pinned toolchain
@@ -423,8 +423,8 @@ The 1d verification cargo tools (`cargo-cyclonedx`, `cargo-deny`) install the sa
 Generated output boundaries are intentionally narrow:
 
 - **Android JNI**: `./gradlew rustJni` builds exactly the three ABI filters declared in
-  `app/build.gradle.kts` (`arm64-v8a`, `armeabi-v7a`, `x86_64`) into
-  `app/build/generated/jniLibs/<abi>/libveles_crypto.so`. This is the *only* JNI output
+  `android/app/build.gradle.kts` (`arm64-v8a`, `armeabi-v7a`, `x86_64`) into
+  `android/app/build/generated/jniLibs/<abi>/libveles_crypto.so`. This is the *only* JNI output
   path; `:app:assembleDebug`/`assembleRelease` depend on `rustJni` so a clean build always
   regenerates it.
 - **Rust package**: `./gradlew rustPackage` stages the three JNI libraries and the
@@ -438,7 +438,7 @@ Generated output boundaries are intentionally narrow:
 - **Local caches**: `build/rust/target` (the Cargo build cache) and `build/rust-tools`
   (the auxiliary-CLI install cache) live under the top-level `build/` directory, which is
   already gitignored; `rust/scripts/assert-clean.sh` asserts none of these generated paths
-  (nor `app/build/generated/jniLibs`, nor `app/build/outputs/apk`) survive `./gradlew clean`.
+  (nor `android/app/build/generated/jniLibs`, nor `android/app/build/outputs/apk`) survive `./gradlew clean`.
 
 The web-extension's npm dependencies are exact-pinned in `web-extension/package.json`
 (no `^`/`~`) and resolved via the committed `package-lock.json`. The deterministic

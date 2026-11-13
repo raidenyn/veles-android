@@ -33,7 +33,7 @@ From the repository root:
 ```
 The output APK is generated at:
 ```
-app/build/outputs/apk/debug/app-debug.apk
+android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ### Run Unit Tests
@@ -58,7 +58,7 @@ See [docs/releasing.md](docs/releasing.md) for signing configuration and release
 
 2. Install the debug APK:
    ```bash
-   adb install -r app/build/outputs/apk/debug/app-debug.apk
+   adb install -r android/app/build/outputs/apk/debug/app-debug.apk
    ```
 
 3. Open **Veles** and complete the permission flow:

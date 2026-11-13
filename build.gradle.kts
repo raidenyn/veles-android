@@ -444,7 +444,7 @@ val sessionLoopbackCheck = tasks.register<Exec>("sessionLoopbackCheck") {
     doFirst {
         val classpathFile = sessionLoopbackClasspathFile.asFile
         check(classpathFile.isFile) {
-            "sessionLoopbackCheck: missing ${classpathFile.path}; run :app:sessionLoopbackClasspath"
+            "sessionLoopbackCheck: missing ${classpathFile.path}; run ./gradlew :android:app:sessionLoopbackClasspath"
         }
         environment("VELES_LOOPBACK_CLASSPATH", classpathFile.readText().trim())
         environment("VELES_LOOPBACK_REQUIRED", "1")

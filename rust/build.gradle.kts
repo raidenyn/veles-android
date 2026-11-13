@@ -20,7 +20,7 @@ val buildRoot: DirectoryProperty = objects.directoryProperty().apply { set(repoR
 val rustTargetDir = buildRoot.dir("rust/target")
 val rustToolsDir = buildRoot.dir("rust-tools")
 val wasmPackageDir = repoRoot.dir("web-extension/rust-wasm/pkg")
-// Single source of truth for the Android NDK version: app/build.gradle.kts reads the
+// Single source of truth for the Android NDK version: android/app/build.gradle.kts reads the
 // same file.
 val ndkVersion = rustDir.file("ndk-version").asFile.readText().trim()
 val windowsExecutableSuffix = if (System.getProperty("os.name").startsWith("Windows")) ".exe" else ""

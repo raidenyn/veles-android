@@ -2,7 +2,7 @@
 .gradle
 .idea
 build
-app/build
+android/app/build
 captures
 *.iml
 node_modules

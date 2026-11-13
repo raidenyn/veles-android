@@ -6,8 +6,8 @@ PACKAGE=me.nagaev.veles.debug
 ./gradlew rustJniConformance assembleDebug assembleDebugAndroidTest
 ABI="$(adb -s "$SERIAL" shell getprop ro.product.cpu.abi | tr -d '\r')"
 case "$ABI" in arm64-v8a|x86_64) ;; *) echo "Unsupported conformance ABI: $ABI" >&2; exit 2 ;; esac
-adb -s "$SERIAL" install --no-streaming -r app/build/outputs/apk/debug/app-debug.apk
-adb -s "$SERIAL" install --no-streaming -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb -s "$SERIAL" install --no-streaming -r android/app/build/outputs/apk/debug/app-debug.apk
+adb -s "$SERIAL" install --no-streaming -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 TEMP=/data/local/tmp/veles-otp03-conformance.so
 LIB=/data/user/0/$PACKAGE/code_cache/veles-otp03-conformance.so
 cleanup() {

@@ -130,16 +130,16 @@ describe('MAC comparison rule', () => {
         const root = join(scratch, 'root');
         writeRoot(
             root,
-            'app/src/main/Clean.kt',
+            'android/app/src/main/Clean.kt',
             'if (MessageDigest.isEqual(mac, expected)) true\n',
         );
-        writeRoot(root, 'app/src/test/Unsafe.kt', 'if (mac == expected) true\n');
+        writeRoot(root, 'android/app/src/test/Unsafe.kt', 'if (mac == expected) true\n');
         expect(run(['--root', root]).status).toBe(0);
 
-        writeRoot(root, 'app/src/main/Unsafe.kt', 'if (mac == expected) true\n');
+        writeRoot(root, 'android/app/src/main/Unsafe.kt', 'if (mac == expected) true\n');
         const result = run(['--root', root]);
         expect(result.status).toBe(1);
-        expect(result.output).toContain('app/src/main/Unsafe.kt:1');
-        expect(result.output).not.toContain('app/src/test/Unsafe.kt');
+        expect(result.output).toContain('android/app/src/main/Unsafe.kt:1');
+        expect(result.output).not.toContain('android/app/src/test/Unsafe.kt');
     });
 });

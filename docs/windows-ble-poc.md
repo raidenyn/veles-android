@@ -58,8 +58,8 @@ USB debugging authorized. Build Android on Linux, not on the Windows PC.
 JAVA_HOME=/home/dev/.jdk/zulu21 ./gradlew \
   --init-script native-bridge/feasibility/scripts/isolated-device.gradle \
   assembleDebug assembleDebugAndroidTest
-adb -s SERIAL install -r -g app/build/outputs/apk/debug/app-debug.apk
-adb -s SERIAL install -r -g app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb -s SERIAL install -r -g android/app/build/outputs/apk/debug/app-debug.apk
+adb -s SERIAL install -r -g android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 adb -s SERIAL shell am instrument -w \
   -e class me.nagaev.veles.sharing.SharingFeasibilityTest -e otp23 true \
   me.nagaev.veles.otp23.test/androidx.test.runner.AndroidJUnitRunner
