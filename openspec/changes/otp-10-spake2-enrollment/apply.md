@@ -31,7 +31,7 @@
 - **Remaining**:
   - `1.8` — `verify/verify-supply-chain.sh` pending: the script pins Node 26.8.1 / npm 11.19.0; this container has Node 26.13.1 / npm 11.20.0. The other 1.8 checks (mutant APK guard, mutant package file-set guard, `components.py check`, SBOM docs) are done.
   - `7.5` — the macOS physical run is blocked at the macOS Bluetooth privacy grant for the ad-hoc-signed development host; the Windows run (7.4) and the instrumented test (7.2) passed and are recorded in `docs/otp-10-physical-runs.md`.
-  - `8.1` — PR title/body; the PR has not been opened (waiting on the user).
+  - `8.1` — PR opened: https://github.com/raidenyn/veles-android/pull/141 (Conventional Commit title/body; the body lists the physical-run evidence and what was not run).
   - `8.2` — sync delta specs and archive after verification.
 
 ---
