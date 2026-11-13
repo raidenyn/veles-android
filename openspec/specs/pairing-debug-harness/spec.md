@@ -1,7 +1,7 @@
 # pairing-debug-harness Specification
 
 ## Purpose
-TBD — introduced by the OTP-10 change; describe its purpose here.
+Debug-only Android and Chrome controls that open a pairing window, show the code on screen, cancel an attempt, and clear a stranded trust record, while keeping that whole surface out of release artifacts.
 
 ## Requirements
 

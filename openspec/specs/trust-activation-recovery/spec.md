@@ -1,7 +1,7 @@
 # trust-activation-recovery Specification
 
 ## Purpose
-TBD — introduced by the OTP-10 change; describe its purpose here.
+Durable activation of an enrolled pair, plus the recovery that lets an interrupted activation resume without a new code or expire without granting partial OTP access.
 
 ## Requirements
 

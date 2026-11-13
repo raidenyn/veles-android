@@ -1,7 +1,7 @@
 # pairing-window-admission Specification
 
 ## Purpose
-TBD — introduced by the OTP-10 change; describe its purpose here.
+The phone's single SPAKE2 pairing window: its lifetime, the six-digit code, the attempt and per-connection budgets, and the generic rejection that makes every pre-confirmation failure indistinguishable.
 
 ## Requirements
 

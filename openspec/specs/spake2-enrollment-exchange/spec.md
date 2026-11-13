@@ -1,7 +1,7 @@
 # spake2-enrollment-exchange Specification
 
 ## Purpose
-TBD — introduced by the OTP-10 change; describe its purpose here.
+The one-time enrollment exchange between the phone and the Chrome connector: SPAKE2 through the OTP-03 core, confirmation in both directions, persist-first enrollment records bound to both identities, and the duplicate-installation refusal.
 
 ## Requirements
 
