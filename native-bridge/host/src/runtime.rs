@@ -502,6 +502,11 @@ where
         Arc::clone(&waker),
     );
     let watchdog = config.watchdog.as_ref();
+    // Every deadline decision in the loop reads this one clock. Production is the process
+    // clock; unit tests substitute a controllable one so the gate can be driven without
+    // waiting. (The idle park below stays on real time: it is a wait, not a decision, and it
+    // is only ever fed a production clock.)
+    let clock = SystemClock;
     // The absolute terminal deadline of the input that decides the exit: set on every
     // handled input, so it always equals the winning (exit-deciding) handle's deadline —
     // armed before `Core::handle` can touch the backend at all.
@@ -513,7 +518,7 @@ where
 
     let code = loop {
         if let Some(deadline) = shutdown_deadline
-            && Instant::now() >= deadline
+            && clock.now() >= deadline
             && let Some(code) = core.abort_pending_shutdown()
         {
             // The release was not confirmed within five seconds of the accepted request:
@@ -530,6 +535,7 @@ where
                 watchdog,
                 &mut exit_deadline,
                 &mut shutdown_deadline,
+                &clock,
             )
         {
             break code;
@@ -541,6 +547,7 @@ where
                 watchdog,
                 &mut exit_deadline,
                 &mut shutdown_deadline,
+                &clock,
             )
         {
             break code;
@@ -550,13 +557,14 @@ where
         // an idle moment that continuous traffic would never provide.
         if core
             .next_deadline()
-            .is_some_and(|deadline| Instant::now() >= deadline)
+            .is_some_and(|deadline| clock.now() >= deadline)
             && let Some(code) = handle_input(
                 &mut core,
                 Input::Tick,
                 watchdog,
                 &mut exit_deadline,
                 &mut shutdown_deadline,
+                &clock,
             )
         {
             break code;
@@ -573,6 +581,7 @@ where
                     watchdog,
                     &mut exit_deadline,
                     &mut shutdown_deadline,
+                    &clock,
                 ) {
                     break code;
                 }
@@ -589,6 +598,7 @@ where
                     watchdog,
                     &mut exit_deadline,
                     &mut shutdown_deadline,
+                    &clock,
                 ) {
                     break code;
                 }
@@ -603,6 +613,7 @@ where
                 watchdog,
                 &mut exit_deadline,
                 &mut shutdown_deadline,
+                &clock,
             ) {
                 break code;
             }
@@ -626,7 +637,7 @@ where
     };
 
     // ---- bounded exit: observe the real release, drain the output, never join threads ----
-    let deadline = exit_deadline.unwrap_or_else(|| Instant::now() + EXIT_DEADLINE);
+    let deadline = exit_deadline.unwrap_or_else(|| clock.now() + EXIT_DEADLINE);
     let code = bounded_exit(
         &mut core,
         &receiver,
@@ -658,6 +669,7 @@ fn handle_input<B: Backend>(
     watchdog: &dyn HangWatchdog,
     exit_deadline: &mut Option<Instant>,
     shutdown_deadline: &mut Option<Instant>,
+    clock: &dyn Clock,
 ) -> Option<i32> {
     // A pending explicit shutdown keeps its original deadline (armed when the request was
     // accepted); every other input arms a fresh one before the core can touch the backend.
@@ -665,19 +677,19 @@ fn handle_input<B: Backend>(
         // The pending handshake's deadline is checked BEFORE the input can reach the core:
         // once it expired no input — least of all a late attributed `ShutdownComplete` — may
         // complete the handshake or be accepted. Fail closed, nothing emitted.
-        if Instant::now() >= deadline
+        if clock.now() >= deadline
             && let Some(code) = core.abort_pending_shutdown()
         {
             *exit_deadline = Some(deadline);
             return Some(code);
         }
     }
-    let deadline = shutdown_deadline.unwrap_or_else(|| Instant::now() + EXIT_DEADLINE);
+    let deadline = shutdown_deadline.unwrap_or_else(|| clock.now() + EXIT_DEADLINE);
     if shutdown_deadline.is_none() {
         watchdog.arm(deadline);
     }
     *exit_deadline = Some(deadline);
-    let code = core.handle(input, Instant::now());
+    let code = core.handle(input, clock.now());
     if code.is_none() {
         if core.shutdown_pending() {
             // Post-handle consistency on the actual monotonic clock: a backend call that
@@ -687,7 +699,7 @@ fn handle_input<B: Backend>(
             // the call: a backend only stages events into the ingress, and the success frame
             // is emitted solely when the runtime later dispatches the drained terminal
             // through this function, whose pre-dispatch gate above rejects it once expired.
-            if Instant::now() >= deadline
+            if clock.now() >= deadline
                 && let Some(code) = core.abort_pending_shutdown()
             {
                 *shutdown_deadline = Some(deadline);
@@ -805,7 +817,14 @@ mod tests {
     use crate::buffer::Payload;
     use crate::ingress::BackendEvents;
 
-    struct NullBackend;
+    /// A backend with no OS work. `spend_on_shutdown` models a blocking adapter call: it
+    /// consumes that much *clock* time inside `shutdown` (there is no real wait) and then
+    /// reports its attributed release synchronously, on return.
+    #[derive(Default)]
+    struct NullBackend {
+        spend_on_shutdown: Option<(Arc<OffsetClock>, Duration)>,
+        events: Option<BackendEvents>,
+    }
 
     impl Backend for NullBackend {
         fn normalize_target(&self, _hint: &str) -> Option<NormalizedTarget> {
@@ -816,7 +835,45 @@ mod tests {
         fn connect(&mut self, _conn: Token, _target: &Target) {}
         fn write_fragments(&mut self, _conn: Token, _send: Token, _frames: Vec<Payload>) {}
         fn disconnect(&mut self, _conn: Token) {}
-        fn shutdown(&mut self) {}
+        fn shutdown(&mut self) {
+            if let Some((clock, spent)) = &self.spend_on_shutdown {
+                clock.spend(*spent);
+                if let Some(events) = &self.events {
+                    events.emit(BackendEvent::ShutdownComplete);
+                }
+            }
+        }
+    }
+
+    /// A clock that starts at one fixed instant and only advances when a test (or the fake
+    /// backend, modelling a blocking adapter call) spends time on it. Nothing reads the real
+    /// clock, so every gate below is decided by scripted instants alone.
+    struct OffsetClock {
+        base: Instant,
+        spent_ms: std::sync::atomic::AtomicU64,
+    }
+
+    impl OffsetClock {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                base: Instant::now(),
+                spent_ms: std::sync::atomic::AtomicU64::new(0),
+            })
+        }
+
+        fn spend(&self, spent: Duration) {
+            self.spent_ms.fetch_add(
+                spent.as_millis() as u64,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
+    }
+
+    impl Clock for OffsetClock {
+        fn now(&self) -> Instant {
+            self.base
+                + Duration::from_millis(self.spent_ms.load(std::sync::atomic::Ordering::SeqCst))
+        }
     }
 
     struct NoWatchdog;
@@ -831,6 +888,7 @@ mod tests {
         events: BackendEvents,
         receiver: BackendReceiver,
         out: Arc<OutQueue>,
+        clock: Arc<dyn Clock>,
         exit_deadline: Option<Instant>,
         shutdown_deadline: Option<Instant>,
     }
@@ -847,15 +905,22 @@ mod tests {
                 &NoWatchdog,
                 &mut self.exit_deadline,
                 &mut self.shutdown_deadline,
+                self.clock.as_ref(),
             )
         }
 
-        /// Hello + accepted shutdown: handshake pending, deadline armed by `handle_input`.
-        fn pending() -> Self {
+        /// Hello accepted: the core is Ready and no request is pending.
+        fn ready(
+            spend_on_shutdown: Option<(Arc<OffsetClock>, Duration)>,
+            clock: Arc<dyn Clock>,
+        ) -> Self {
             let (events, receiver) = BackendEvents::new();
             let out = OutQueue::new(MAX_QUEUED_MESSAGES, MAX_QUEUED_BYTES);
             let core = Core::new(
-                NullBackend,
+                NullBackend {
+                    spend_on_shutdown,
+                    events: Some(events.clone()),
+                },
                 out.clone(),
                 CoreConfig {
                     bridge_version: "runtime-unit/0".into(),
@@ -868,15 +933,18 @@ mod tests {
                 events,
                 receiver,
                 out,
+                clock,
                 exit_deadline: None,
                 shutdown_deadline: None,
             };
-            let hello =
-                r#"{"envelope_version":1,"type":"hello","request_id":"h","api_versions":[1]}"#;
-            assert_eq!(fixture.input(frame(hello)), None);
-            let bye =
-                r#"{"envelope_version":1,"api_version":1,"type":"shutdown","request_id":"bye"}"#;
-            assert_eq!(fixture.input(frame(bye)), None);
+            assert_eq!(fixture.input(frame(HELLO)), None);
+            fixture
+        }
+
+        /// Hello + accepted shutdown: handshake pending, deadline armed by `handle_input`.
+        fn pending() -> Self {
+            let mut fixture = Self::ready(None, Arc::new(SystemClock));
+            assert_eq!(fixture.input(frame(BYE)), None);
             assert!(fixture.shutdown_deadline.is_some(), "handshake pending");
             fixture
         }
@@ -884,9 +952,15 @@ mod tests {
         /// The attributed release (emitted after the claim), as the runtime would pop it.
         fn release(&mut self) -> Input {
             self.events.emit(BackendEvent::ShutdownComplete);
+            self.take_release()
+        }
+
+        /// Pops the release the backend already emitted, without emitting another: a test
+        /// using this form requires the adapter itself to have reported it.
+        fn take_release(&mut self) -> Input {
             match self.receiver.pop_event(Some(Duration::ZERO)) {
                 BackendPop::Event(event) => Input::Backend(event),
-                BackendPop::Timeout => panic!("release was not delivered"),
+                BackendPop::Timeout => panic!("the backend did not report the release"),
             }
         }
 
@@ -1172,6 +1246,55 @@ mod tests {
         assert_eq!(fixture.output_types(), vec!["ready", "shutdown_complete"]);
     }
 
+    /// A blocking adapter call that returns *before* the terminal deadline, driven by the
+    /// injected clock: `shutdown` consumes 4 s of clock time (no real wait) and reports its
+    /// release on return, so the handshake still completes.
+    #[test]
+    fn blocking_release_returning_before_the_deadline_still_succeeds() {
+        let clock = OffsetClock::new();
+        let mut fixture = Fixture::ready(
+            Some((Arc::clone(&clock), Duration::from_secs(4))),
+            clock.clone(),
+        );
+        assert_eq!(
+            fixture.input(frame(BYE)),
+            None,
+            "the call returned inside the deadline: the handshake stays armed"
+        );
+        assert!(fixture.core.shutdown_pending());
+        // The backend reported the attributed release on return; take exactly that one.
+        let release = fixture.take_release();
+        assert_eq!(fixture.input(release), Some(EXIT_OK));
+        assert_eq!(
+            fixture.output_types(),
+            vec!["ready", "shutdown_complete"],
+            "the protocol exit and its last output stand"
+        );
+    }
+
+    /// The same blocking call returning *across* the deadline: the post-handle consistency
+    /// gate fails the handshake closed, with no `shutdown_complete` and no real wait.
+    #[test]
+    fn blocking_release_returning_after_the_deadline_fails_closed_without_success() {
+        let clock = OffsetClock::new();
+        let mut fixture = Fixture::ready(
+            Some((Arc::clone(&clock), Duration::from_millis(5_050))),
+            clock.clone(),
+        );
+        assert_eq!(
+            fixture.input(frame(BYE)),
+            Some(EXIT_HOST_FAILURE),
+            "a call returning across the deadline fails closed"
+        );
+        assert_eq!(
+            fixture.output_types(),
+            vec!["ready"],
+            "no shutdown_complete after a failed handshake"
+        );
+        assert!(!fixture.core.shutdown_complete_received());
+        assert!(!fixture.core.shutdown_pending(), "the handshake is aborted");
+    }
+
     #[test]
     fn attributed_release_after_the_pending_deadline_fails_closed_without_success() {
         let mut fixture = Fixture::pending();
@@ -1218,7 +1341,7 @@ mod tests {
         let (_events, receiver) = BackendEvents::new();
         let out = OutQueue::new(MAX_QUEUED_MESSAGES, MAX_QUEUED_BYTES);
         let mut core = Core::new(
-            NullBackend,
+            NullBackend::default(),
             out,
             CoreConfig {
                 bridge_version: "runtime-unit/0".into(),
@@ -1235,6 +1358,7 @@ mod tests {
             &watchdog,
             &mut exit_deadline,
             &mut shutdown_deadline,
+            &SystemClock,
         );
         let after = Instant::now();
         assert!(code.is_some(), "EOF is terminal");
@@ -1347,8 +1471,8 @@ mod tests {
         assert_eq!(WATCHDOG_GRACE, Duration::from_millis(100));
         // Worst-case enforced kill of a wedged host: deadline + grace (+ scheduling).
         assert_eq!(EXIT_DEADLINE + WATCHDOG_GRACE, Duration::from_millis(5_100));
-        // The cooperative exit always disarms inside the reserve, i.e. strictly before the
-        // watchdog may fire; the two layers can never race.
+        // A drain-driven exit has the reserve between its own deadline and the watchdog's
+        // backstop. The reserve is a scheduling margin, not a guarantee against long stalls.
         assert!(EXIT_DISARM_RESERVE > WATCHDOG_GRACE);
         assert!(EXIT_DISARM_RESERVE + WATCHDOG_GRACE <= EXIT_DEADLINE);
     }
@@ -1623,6 +1747,7 @@ mod tests {
                 &watchdog,
                 &mut exit_deadline,
                 &mut shutdown_deadline,
+                &SystemClock,
             );
         }
         log.lock().unwrap().clone()
