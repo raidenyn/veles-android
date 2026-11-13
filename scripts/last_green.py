@@ -192,11 +192,23 @@ def _validate_run(run):
         raise LastGreenError("workflow run lacks status or event")
     if not isinstance(run.get("head_sha"), str) or not run["head_sha"]:
         raise LastGreenError("workflow run lacks head_sha")
-    if not isinstance(run.get("head_branch"), str) or not run["head_branch"]:
+    if "head_branch" not in run:
         raise LastGreenError("workflow run lacks head_branch")
-    repository = run.get("head_repository")
-    if not isinstance(repository, dict) or not isinstance(repository.get("full_name"), str):
-        raise LastGreenError("workflow run lacks head_repository.full_name")
+    branch = run["head_branch"]
+    if branch is not None and (not isinstance(branch, str) or not branch):
+        raise LastGreenError("workflow run has a malformed head_branch")
+    if "head_repository" not in run:
+        raise LastGreenError("workflow run lacks head_repository")
+    repository = run["head_repository"]
+    # A deleted or inaccessible fork legitimately reports null here; such a run
+    # can still belong to the PR through a non-empty pull_requests list.
+    if repository is not None:
+        if (
+            not isinstance(repository, dict)
+            or not isinstance(repository.get("full_name"), str)
+            or not repository["full_name"]
+        ):
+            raise LastGreenError("workflow run has a malformed head_repository")
     pulls = run.get("pull_requests")
     if not isinstance(pulls, list):
         raise LastGreenError("workflow run lacks pull_requests")

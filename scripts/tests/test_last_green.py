@@ -329,6 +329,28 @@ class EligibilityTest(unittest.TestCase):
         case.write("jobs-1001-1.json", jobs)
         self.assertEqual(find(case.api())["android"], NodeEvidence(None, "never passed"))
 
+    def test_null_head_repository_keeps_valid_evidence(self):
+        case = Case(self, "green")
+        runs = case.read("runs-c1.json")
+        null_run = dict(runs["workflow_runs"][0])
+        null_run["id"] = 9001
+        null_run["head_repository"] = None
+        null_run["head_branch"] = None
+        runs["workflow_runs"] = [null_run] + runs["workflow_runs"]
+        case.write("runs-c1.json", runs)
+        case.write("jobs-9001-1.json", {"total_count": 0, "jobs": []})
+        self.assertEqual(find(case.api())["android"], NodeEvidence("c1", None))
+
+    def test_empty_pull_requests_without_repository_not_associated(self):
+        case = Case(self, "green")
+        runs = case.read("runs-c1.json")
+        run = runs["workflow_runs"][0]
+        run["pull_requests"] = []
+        run["head_repository"] = None
+        run["head_branch"] = None
+        case.write("runs-c1.json", runs)
+        self.assertEqual(find(case.api())["android"], NodeEvidence(None, "never passed"))
+
     def test_attempt_mismatch_rejects_run(self):
         case = Case(self, "green")
         jobs = case.read("jobs-1001-1.json")
@@ -621,6 +643,16 @@ class OutcomeTest(unittest.TestCase):
             del jobs["jobs"][0]["run_attempt"]
             case.write("jobs-1001-1.json", jobs)
 
+        def malformed_repository(case):
+            runs = case.read("runs-c1.json")
+            runs["workflow_runs"][0]["head_repository"] = "veles/veles"
+            case.write("runs-c1.json", runs)
+
+        def absent_repository(case):
+            runs = case.read("runs-c1.json")
+            del runs["workflow_runs"][0]["head_repository"]
+            case.write("runs-c1.json", runs)
+
         for label, mutate in (
             ("missing workflow_runs", missing_list),
             ("missing run_attempt", missing_attempt),
@@ -628,6 +660,8 @@ class OutcomeTest(unittest.TestCase):
             ("pull_requests entry is null", malformed_pull_request),
             ("missing job conclusion", missing_conclusion),
             ("missing job run_attempt", missing_job_attempt),
+            ("head_repository is a string", malformed_repository),
+            ("missing head_repository", absent_repository),
         ):
             with self.subTest(problem=label):
                 case = Case(self, "green")
