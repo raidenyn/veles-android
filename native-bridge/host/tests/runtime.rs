@@ -699,40 +699,6 @@ fn terminal_deadline_armed_before_handling_ends_the_run() {
     );
 }
 
-/// A delayed real release (3.5 s, inside the terminal deadline) with a frozen
-/// writer: the release observation and the drain share the one deadline, so the
-/// drain's remaining budget (≤2 s) can never push the exit past five seconds.
-/// The exit code stands.
-#[test]
-fn delayed_release_and_frozen_writer_share_one_deadline() {
-    let (stdin, reader_gate) = script_io(&[hello_frame(), shutdown_frame("bye")], false);
-    let freeze_gate = Gate::new();
-    let stdout_box: Box<dyn Write + Send> = Box::new(FrozenWrite {
-        gate: Arc::clone(&freeze_gate),
-    });
-    let (_, code, elapsed) = run_bounded(
-        Release::Async(Duration::from_millis(3_500)),
-        Io {
-            stdin,
-            stdout: stdout_box,
-        },
-    );
-    freeze_gate.open();
-    reader_gate.open();
-    assert_eq!(
-        code, 0,
-        "the release was observed inside the deadline: exit preserved"
-    );
-    assert!(
-        elapsed >= Duration::from_millis(3_500),
-        "the drain waited for the shared deadline behind the frozen writer: {elapsed:?}"
-    );
-    assert!(
-        elapsed < Duration::from_secs(5) + SCHED_TOL,
-        "the drain never extends beyond the shared 5 s deadline: {elapsed:?}"
-    );
-}
-
 // ---- explicit shutdown with live stdin and an unconfirmed release -------------------------------
 
 #[test]
