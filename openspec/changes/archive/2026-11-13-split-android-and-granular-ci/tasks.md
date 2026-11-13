@@ -77,5 +77,5 @@ Commit discipline for this group: 5.1 and 5.2 are prepared in the old layout and
 
 ## 7. Wrap-up
 
-- [ ] 7.1 Verify the change (`/opsx:verify`) and archive it after PRs 1, 1b, 2 and 3 have merged
+- [x] 7.1 Verify the change (`/opsx:verify`) and archive it after PRs 1, 1b, 2 and 3 have merged
 - [ ] 7.2 Follow-up, not a prerequisite for archive: when no in-flight PR needs them and the next Android release tag contains the migration, remove the inert `legacy-release` and `retired-paths` entries in a cleanup change
