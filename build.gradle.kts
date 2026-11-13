@@ -615,7 +615,7 @@ val protocolContractCheck = tasks.register<Exec>("protocolContractCheck") {
         fileTree(protocolDir.dir("checks")) { include("**/*.mjs") },
         fileTree(protocolDir.dir("tools")) { include("**/*.mjs", "**/*.py") },
         fileTree(protocolDir.dir("v1")) { include("**/*.json") },
-        layout.projectDirectory.file("docs/protocol/veles-v1.md"),
+        layout.projectDirectory.file("protocol/docs/veles-v1.md"),
     )
     // The command deletes and recreates evidence, so Gradle must never reuse it.
     outputs.upToDateWhen { false }

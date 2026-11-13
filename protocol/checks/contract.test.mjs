@@ -1,7 +1,7 @@
 // OTP-02 Plan Task 2 — canonical fixture and binary validation contract suite.
 // Test-only; never imported by product code. Run: node --test protocol/checks/contract.test.mjs
 //
-// Every expectation below is derived from docs/protocol/veles-v1.md (normative)
+// Every expectation below is derived from protocol/docs/veles-v1.md (normative)
 // and protocol/v1/{limits,manifest}.json. The committed fixtures under
 // protocol/v1/fixtures/ are the shared truth; this suite is their interpreter.
 
@@ -41,9 +41,9 @@ test("evidence inventory covers all requirements and rejects dangling anchors an
   try {
     const v1 = join(root, "protocol", "v1");
     mkdirSync(join(v1, "fixtures"), { recursive: true });
-    mkdirSync(join(root, "docs", "protocol"), { recursive: true });
+    mkdirSync(join(root, "protocol", "docs"), { recursive: true });
     copyFileSync(join(v1Root, "manifest.json"), join(v1, "manifest.json"));
-    copyFileSync(join(checksDir, "..", "..", "docs", "protocol", "veles-v1.md"), join(root, "docs", "protocol", "veles-v1.md"));
+    copyFileSync(join(checksDir, "..", "..", "protocol", "docs", "veles-v1.md"), join(root, "protocol", "docs", "veles-v1.md"));
     const normal = buildEvidenceInventory(v1);
     assert.equal(normal.entries.length, 156);
     assert.ok(normal.documentary_only_count > 0, "documentary-only requirements must be explicit, not papered over");

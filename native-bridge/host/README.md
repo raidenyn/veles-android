@@ -4,7 +4,7 @@ Production Native Messaging host for the Veles Android OTP app: a headless stdio
 that Chrome launches to relay BLE scan/connect/GATT-send requests to the phone. The crate
 is the portable control plane only — no Tauri, no platform BLE stack, no simulator switch.
 
-- `docs/protocol/veles-v1.md` — wire protocol (framing, envelopes, exit-code contract
+- `protocol/docs/veles-v1.md` — wire protocol (framing, envelopes, exit-code contract
   OTP2-BRD-032).
 - `native-bridge/host/tests/process.rs` — the process-contract acceptance suite below.
 - `docs/superpowers/plans/2026-10-31-otp24-production-bridge.md` — task plan; platform

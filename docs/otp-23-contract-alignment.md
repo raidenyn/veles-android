@@ -41,7 +41,7 @@ Inventory of everything that mentions or implements fragment sizing, **before** 
 
 | Kind | Item | Fragmentation-relevant? | Result |
 |---|---|---|---|
-| Specification | `docs/protocol/veles-v1.md` OTP2-GAT-003/010/011 | Yes: `MTU − 3 − 4` with no 512 clamp | **Revised** (profile revision 2) |
+| Specification | `protocol/docs/veles-v1.md` OTP2-GAT-003/010/011 | Yes: `MTU − 3 − 4` with no 512 clamp | **Revised** (profile revision 2) |
 | Specification | RFC bridge, OTP-02/06/23/24/25 sections | Yes (Tauri runtime, background wording, packaging) | **Revised** |
 | Specification | `otp-06-transport.md` | Yes: "exactly MTU-7" | **Revised** |
 | Descriptor | `protocol/v1/limits.json` | Yes | **Revised** (+3 limits) |

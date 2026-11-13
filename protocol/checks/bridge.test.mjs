@@ -2,7 +2,7 @@
 // suite. Test-only; never imported by product code.
 // Run: node --test protocol/checks/bridge.test.mjs
 //
-// Normative source: docs/protocol/veles-v1.md section 10 (Native Messaging
+// Normative source: protocol/docs/veles-v1.md section 10 (Native Messaging
 // envelope v1, OTP2-BRD-*) and protocol/v1/{envelope.schema,limits}.json.
 // Tests DRIVE actual request/event negotiation (createBridgeHost), actual byte
 // framing (decodeHostFrame) and actual trace-derived ordering/counters

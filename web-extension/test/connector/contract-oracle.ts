@@ -3,7 +3,7 @@
 // This deliberately does not call the production request validator. Its field
 // sets, patterns and byte bounds are transcribed from the frozen
 // `protocol/v1/envelope.schema.json` plus the normative UTF-8 byte rules in
-// `docs/protocol/veles-v1.md`, so a production serializer regression cannot
+// `protocol/docs/veles-v1.md`, so a production serializer regression cannot
 // validate itself.
 
 const REQUEST_ID = /^[A-Za-z0-9._-]{1,64}$/;

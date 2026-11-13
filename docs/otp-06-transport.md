@@ -19,7 +19,7 @@ are explicit. There is no scan, location, bonding, or network requirement.
 
 ## GATT contract
 
-Use the frozen UUIDs and properties in `docs/protocol/veles-v1.md`, section 9.
+Use the frozen UUIDs and properties in `protocol/docs/veles-v1.md`, section 9.
 Clients must negotiate MTU >=185, then enable notifications through the notify
 characteristic's CCCD before sending records. Setup must complete within five
 seconds. The ninth client is refused; reads, prepared writes, execute writes,

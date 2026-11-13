@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { buildEvidenceInventory } from "../checks/evidence.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const docPath = join(root, "docs", "protocol", "veles-v1.md");
+const docPath = join(root, "protocol", "docs", "veles-v1.md");
 const manifestPath = join(root, "protocol", "v1", "manifest.json");
 const limitsPath = join(root, "protocol", "v1", "limits.json");
 

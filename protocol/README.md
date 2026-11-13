@@ -2,7 +2,7 @@
 
 Machine-readable and test-support artifacts for the Veles external-device
 protocol contract (OTP-02). The normative authority is
-[`docs/protocol/veles-v1.md`](../docs/protocol/veles-v1.md); everything here is
+[`protocol/docs/veles-v1.md`](docs/veles-v1.md); everything here is
 derived from it or from the approved RFC
 (`docs/rfcs/2026-08-21-otp-external-devices.md`) and can never override either.
 
@@ -10,8 +10,8 @@ derived from it or from the approved RFC
 
 Provided in this revision is test-only contract evidence for Tasks 1-6 plus
 the final fix wave for the independent Opus review
-(`docs/protocol/reviews/otp-02-opus.md`; per-finding dispositions:
-`docs/protocol/reviews/otp-02-disposition.md`). It remains subject to
+(`protocol/docs/reviews/otp-02-opus.md`; per-finding dispositions:
+`protocol/docs/reviews/otp-02-disposition.md`). It remains subject to
 controller re-review and user acceptance; no artifact claims that Gate A or
 Gate D is complete.
 
@@ -54,7 +54,7 @@ Gate D is complete.
 - `v1/envelope.schema.json` (Task 3) — strict JSON Schema 2020-12 for every
   Native Messaging envelope message (16 message branches, unknown fields
   reject, `additionalProperties: false` throughout); derived from
-  `docs/protocol/veles-v1.md` section 10 and never overriding it.
+  `protocol/docs/veles-v1.md` section 10 and never overriding it.
 - `v1/fixtures/bridge.json` (Task 3) — bridge fixtures (new fixture category
   `bridge`): pre/hello-only negotiation offers and limits (below/at/above),
   canonical-base64 vectors (zero pad bits valid, nonzero pad bits reject,
@@ -184,7 +184,7 @@ still supplies the required independent reviews and user acceptance.
 
 1. **RFC** (`docs/rfcs/2026-08-21-otp-external-devices.md`) governs product
    and security requirements.
-2. **`docs/protocol/veles-v1.md`** governs exact wire encodings (bytes,
+2. **`protocol/docs/veles-v1.md`** governs exact wire encodings (bytes,
    bounds, constants, state effects) inside those requirements.
 3. **JSON files here** are derived inventories of (2); a disagreement between
    them is a defect that fails the (future) checks and requires correcting the
@@ -228,7 +228,7 @@ still supplies the required independent reviews and user acceptance.
 
 ## Related documents
 
-- Normative contract: [`docs/protocol/veles-v1.md`](../docs/protocol/veles-v1.md)
+- Normative contract: [`protocol/docs/veles-v1.md`](docs/veles-v1.md)
 - Approved design: `docs/superpowers/specs/2026-10-23-otp-02-protocol-contract-design.md`
 - Plan: `docs/superpowers/plans/2026-10-23-otp-02-protocol-contract.md`
 - Authoritative RFC: `docs/rfcs/2026-08-21-otp-external-devices.md` (includes the approved revocation clarification)
@@ -239,4 +239,4 @@ still supplies the required independent reviews and user acceptance.
 owns the `frag-r2-*` family and two amended revision-1 vectors (`--check` fails on drift, `--write`
 updates the committed file after review). Manifest evidence ids are derived, so
 `tools/sync-manifest-evidence.mjs` rewrites them (`--check` is part of `checks/check.mjs`). The
-descriptor expression is `min(negotiated_MTU - 3, 512) - 4`; see `docs/protocol/veles-v1.md` OTP2-GAT-010.
+descriptor expression is `min(negotiated_MTU - 3, 512) - 4`; see `protocol/docs/veles-v1.md` OTP2-GAT-010.

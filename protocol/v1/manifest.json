@@ -9,7 +9,7 @@
     "reviewed",
     "accepted"
   ],
-  "status": "116 requirement entries carry closed fixture/check evidence references (specified_evidence_collected); 40 are deliberately documentary-only — traceability text, registry clauses, and product-level constraints this OTP-02 contract package cannot exhibit without product code (specified_awaiting_controller_review). No entry claims reviewed or accepted: the scoped re-review of the fix wave and user acceptance remain pending; per-finding dispositions live in docs/protocol/reviews/otp-02-disposition.md.",
+  "status": "116 requirement entries carry closed fixture/check evidence references (specified_evidence_collected); 40 are deliberately documentary-only — traceability text, registry clauses, and product-level constraints this OTP-02 contract package cannot exhibit without product code (specified_awaiting_controller_review). No entry claims reviewed or accepted: the scoped re-review of the fix wave and user acceptance remain pending; per-finding dispositions live in protocol/docs/reviews/otp-02-disposition.md.",
   "entries": [
     {
       "id": "OTP2-CON-001",

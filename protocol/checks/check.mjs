@@ -89,6 +89,7 @@ if (!process.argv.includes('--evidence-only')) {
     run(process.execPath, [
         '--test',
         'protocol/checks/contract.test.mjs',
+        'protocol/checks/spec-location.test.mjs',
         'protocol/checks/bridge.test.mjs',
         'protocol/checks/state.test.mjs',
         'protocol/checks/crypto.test.mjs',
