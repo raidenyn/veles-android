@@ -22,8 +22,9 @@
 //!    [`Core::shutdown_complete_received`] observation, per the Task 5 prerequisite cleanup)
 //!    and, inside the same deadline, at most [`DRAIN_MAX`] — two seconds — draining the
 //!    output queue through the writer, with the drain-driven path ending
-//!    [`EXIT_DISARM_RESERVE`] before the deadline so its final disarm has a scheduling
-//!    margin ahead of the watchdog backstop. If the release is not observed by the deadline,
+//!    [`EXIT_DISARM_RESERVE`] before the deadline (or keeping at least [`DRAIN_FLOOR`] when the
+//!    release lands inside the reserve) so its final disarm has a scheduling margin ahead of
+//!    the watchdog backstop. If the release is not observed by the deadline,
 //!    the host fails closed with exit 1 regardless of the core's code; otherwise the core's
 //!    protocol exit (0/2/3/4) stands.
 //! 2. An independent process-level [`HangWatchdog`] (the enforcement layer): it is armed —
@@ -102,9 +103,18 @@ const DRAIN_MAX: Duration = Duration::from_secs(2);
 /// any scheduling delay larger than that grace would turn a successful cleanup into
 /// `EXIT_HOST_FAILURE`. The reserve buys the drain-driven path a scheduling margin of this
 /// size. It is a margin, not a guarantee: a release observed inside the last
-/// [`EXIT_DISARM_RESERVE`] of the window has no drain left, and a stall longer than the
-/// reserve remains the watchdog's to enforce.
+/// [`EXIT_DISARM_RESERVE`] of the window keeps only [`DRAIN_FLOOR`] (or the little that is
+/// left) instead of the reserve, and a stall longer than the reserve remains the watchdog's to
+/// enforce.
 const EXIT_DISARM_RESERVE: Duration = Duration::from_millis(500);
+
+/// Minimum drain window a released exit keeps when the release is observed inside
+/// [`EXIT_DISARM_RESERVE`]. The drain only has to give a healthy writer one scheduling slot to
+/// flush what is already queued; with no window at all a successful run can exit 0 while its
+/// last frames — the `shutdown_complete` completion — are dropped with the killed writer
+/// (reproduced with a release just past the reserve boundary). It stays well below the reserve,
+/// so a drain-driven exit keeps most of its margin, and it is capped by the shared deadline.
+const DRAIN_FLOOR: Duration = Duration::from_millis(250);
 
 /// The independent watchdog's safety margin after the terminal deadline: an exactly-on-time
 /// bounded exit performs its final disarm within microseconds of the deadline, so the
@@ -120,6 +130,10 @@ const _: () = assert!(WATCHDOG_GRACE.as_millis() <= 100);
 // The reserve is meant to absorb a scheduling delay of the final drain return and disarm,
 // not merely to end before the backstop: a few watchdog graces of margin.
 const _: () = assert!(EXIT_DISARM_RESERVE.as_millis() >= 4 * WATCHDOG_GRACE.as_millis());
+// The floor is a flush window, not a second reserve: it must stay inside the reserve and cover
+// several watchdog graces of scheduling delay for the writer wake-up it exists to allow.
+const _: () = assert!(DRAIN_FLOOR.as_millis() < EXIT_DISARM_RESERVE.as_millis());
+const _: () = assert!(DRAIN_FLOOR.as_millis() >= 2 * WATCHDOG_GRACE.as_millis());
 
 /// The independent process-level watchdog seam (review fix: the exit deadline must hold even
 /// when its clock starts before terminal handling can call a blocking adapter). The core
@@ -729,10 +743,11 @@ fn terminal_input(kind: InputTerminal) -> Input {
 /// backend's real `ShutdownComplete` (post-exit drained into the core) until it, and — inside
 /// the same window — at most two seconds of stdout drain, with the drain-driven path ending
 /// [`EXIT_DISARM_RESERVE`] before the deadline so its final disarm has a scheduling margin
-/// ahead of the watchdog backstop (a margin, not a proof: a release observed inside the
-/// reserve leaves no drain, and a stall past the reserve is the watchdog's to enforce).
-/// Missing cleanup fails closed (exit 1); observed cleanup preserves the core's protocol
-/// exit. No thread is joined.
+/// ahead of the watchdog backstop. A release observed inside the reserve instead keeps
+/// [`DRAIN_FLOOR`] (or the window left) so a healthy writer can still flush its last frames;
+/// the reserve is a margin, not a proof: a stall past the reserve is the watchdog's to
+/// enforce. Missing cleanup fails closed (exit 1); observed cleanup preserves the core's
+/// protocol exit. No thread is joined.
 ///
 /// `clock` and `drain` are seams: production passes [`SystemClock`] and the [`OutQueue`];
 /// tests pass a fixed instant and a recording drain, so the deadline arithmetic and the exit
@@ -786,12 +801,16 @@ struct ExitSeams<'a> {
     drain: &'a dyn Drain,
 }
 
-/// The drain's own bound: at most [`DRAIN_MAX`] from the moment the release was observed and
-/// never later than [`EXIT_DISARM_RESERVE`] before the shared terminal deadline, so the
-/// drain-driven exit normally disarms a scheduling margin ahead of the watchdog backstop.
-/// Both limits are pure arithmetic on the two instants.
+/// The drain's own bound: at most [`DRAIN_MAX`] from the moment the release was observed, never
+/// later than [`EXIT_DISARM_RESERVE`] before the shared terminal deadline (so a drain-driven
+/// exit normally disarms a scheduling margin ahead of the watchdog backstop), and never shorter
+/// than [`DRAIN_FLOOR`], or the window left to the deadline when that is shorter — a healthy
+/// writer must always get the chance to flush what is queued. All limits are arithmetic on the
+/// two instants.
 fn drain_deadline(now: Instant, total_deadline: Instant) -> Instant {
-    (now + DRAIN_MAX).min(total_deadline - EXIT_DISARM_RESERVE)
+    let reserved = total_deadline - EXIT_DISARM_RESERVE;
+    let floor = (now + DRAIN_FLOOR).min(total_deadline);
+    (now + DRAIN_MAX).min(reserved.max(floor))
 }
 
 /// Precedence when both are latched: a failed stdout delivery dominates an output overflow.
@@ -1034,44 +1053,46 @@ mod tests {
         }
     }
 
-    /// The drain never gets a fresh budget and never lands on the watchdog's enforcement
-    /// instant: `min(release + 2 s, deadline - reserve)`, for every release instant in the
-    /// window. Pure arithmetic — no clock is read.
+    /// The drain never gets a fresh budget, never extends the terminal deadline, and always
+    /// keeps a flush window: `min(release + 2 s, max(deadline - reserve, release + floor))`.
+    /// Pure arithmetic — no clock is read.
     #[test]
     fn drain_deadline_shares_the_terminal_deadline_and_keeps_the_disarm_reserve() {
         let t0 = Instant::now();
         let total = t0 + EXIT_DEADLINE;
+        let reserved = total - EXIT_DISARM_RESERVE;
         let cases = [
             (t0, t0 + DRAIN_MAX),
             (
                 t0 + Duration::from_millis(2_000),
                 t0 + Duration::from_millis(4_000),
             ),
+            (t0 + Duration::from_millis(2_500), reserved),
+            (t0 + Duration::from_millis(3_500), reserved),
+            // Inside the reserve from here on: the floor keeps a flush window.
             (
-                t0 + Duration::from_millis(2_500),
-                total - EXIT_DISARM_RESERVE,
+                t0 + Duration::from_millis(4_500),
+                t0 + Duration::from_millis(4_750),
             ),
-            (
-                t0 + Duration::from_millis(3_500),
-                total - EXIT_DISARM_RESERVE,
-            ),
-            (
-                t0 + Duration::from_millis(4_999),
-                total - EXIT_DISARM_RESERVE,
-            ),
-            (total, total - EXIT_DISARM_RESERVE),
+            (t0 + Duration::from_millis(4_999), total),
+            (total, total),
         ];
         for (now, expected) in cases {
             let deadline = drain_deadline(now, total);
             assert_eq!(deadline, expected, "drain deadline from {now:?}");
             assert!(deadline <= now + DRAIN_MAX, "never a fresh budget");
-            assert!(
-                deadline <= total - EXIT_DISARM_RESERVE,
-                "never inside the disarm reserve"
-            );
-            // The drain-driven exit keeps at least a watchdog grace between its own
-            // deadline and the backstop.
-            assert!(deadline + WATCHDOG_GRACE <= total);
+            assert!(deadline <= total, "never past the terminal deadline");
+            if now < total {
+                assert!(
+                    deadline > now,
+                    "every released exit keeps a flush window for the writer"
+                );
+            }
+            if now + DRAIN_FLOOR <= reserved {
+                // Well before the reserve boundary the drain ends with the reserve intact.
+                assert_eq!(deadline, (now + DRAIN_MAX).min(reserved));
+                assert!(deadline + WATCHDOG_GRACE <= total);
+            }
         }
     }
 
@@ -1117,6 +1138,10 @@ mod tests {
         assert!(
             drain.deadline() - released_at <= DRAIN_MAX,
             "the drain never extends the exit beyond its own bound"
+        );
+        assert!(
+            drain.deadline() > released_at,
+            "the writer always gets a window to flush the last frames"
         );
     }
 
