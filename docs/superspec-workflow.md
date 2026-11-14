@@ -491,16 +491,26 @@ A push at any step returns to babysitting. Every push runs the repository's pre-
 
 ### Required checks and green
 
-Discover the required checks of the pull request's base branch from the rulesets endpoint:
+Discover the required checks of the pull request's base branch from **every source that can apply to it**, and
+combine them:
 
 ```bash
+# Rulesets
 gh api repos/<owner>/<repository>/rules/branches/<base>
+
+# Classic branch protection
+gh api repos/<owner>/<repository>/branches/<base>/protection/required_status_checks
 ```
 
-Read the `required_status_checks` rule's contexts. The classic branch-protection endpoint
-(`.../branches/<base>/protection/required_status_checks`) returns `404 Not Found` for a token without
-repository admin, and a 404 does not distinguish "no protection" from "no permission" — so the rulesets call
-is authoritative, and when it also fails, ask the user.
+Rulesets and classic branch protection can coexist and both are enforced, so a successful rulesets response
+does not establish that classic protection adds no check. The required set is the **union** of the check
+contexts every source reports: the `required_status_checks` rule's contexts from the rulesets response, and the
+`contexts` from the classic response. Neither source may be skipped or assumed empty.
+
+The classic endpoint returns `404 Not Found` for a token without repository admin, and a 404 does not
+distinguish "no protection" from "no permission". When a source cannot be read, or the sources together cannot
+establish a complete inventory, stop and ask the user; use the answered inventory and do not fall back to the
+readable source alone or treat the missing source as empty. An unestablished inventory is not green.
 
 Green is fail-closed: the pull request is green only when **every required check has a successful result for
 the pull request's current head commit**. For the evidence, record the head commit (`headRefOid`) and each
@@ -603,20 +613,26 @@ A cycle is a set of reads, not one command:
 |---|---|
 | `gh pr view <number> --json state,headRefOid,statusCheckRollup,reviewDecision,reviews,comments` | lifecycle (`OPEN`, `MERGED`, `CLOSED`), the current head commit, every check's name and conclusion, the review decision, reviews with their author and the commit they saw, conversation comments |
 | `gh api repos/<owner>/<repository>/pulls/<number>/comments --paginate` | inline code-review comments with file, line and body |
-| GraphQL `reviewThreads` | each thread's `isResolved` and `isOutdated`, its file, line and comments |
-| `gh api repos/<owner>/<repository>/rules/branches/<base>` | the required check contexts; read once per base branch |
+| GraphQL `reviewThreads`, then each thread's comments | each thread's id, `isResolved` and `isOutdated`, its file, line and its comments; both connections are paged |
+| `gh api repos/<owner>/<repository>/rules/branches/<base>` and the classic protection endpoint | each source's required check contexts, combined into one required set; read once per base branch |
 | `gh api repos/<owner>/<repository>/collaborators/<login>/permission` | a commenter's permission for the trust filter |
 
 ```bash
 gh api graphql -f query='
-query($o: String!, $r: String!, $num: Int!) {
+query($o: String!, $r: String!, $num: Int!, $threadCursor: String) {
   repository(owner: $o, name: $r) {
     pullRequest(number: $num) {
-      reviewThreads(first: 100) {
+      reviewThreads(first: 100, after: $threadCursor) {
         totalCount
+        pageInfo { hasNextPage endCursor }
         nodes {
+          id
           isResolved isOutdated path line
-          comments(first: 50) { nodes { author { login } body createdAt } }
+          comments(first: 50) {
+            totalCount
+            pageInfo { hasNextPage endCursor }
+            nodes { author { login } body createdAt }
+          }
         }
       }
     }
@@ -624,11 +640,31 @@ query($o: String!, $r: String!, $num: Int!) {
 }' -f o=<owner> -f r=<repository> -F num=<number>
 ```
 
+Then page each thread's comments with its id:
+
+```bash
+gh api graphql -f query='
+query($t: ID!, $commentCursor: String) {
+  node(id: $t) {
+    ... on PullRequestReviewThread {
+      comments(first: 50, after: $commentCursor) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        nodes { author { login } body createdAt }
+      }
+    }
+  }
+}' -f t=<thread-id> -f commentCursor=<endCursor>
+```
+
 The demonstrated connection limits are `reviewThreads(first: 100)`, `comments(first: 50)` per thread,
 `items(first: 100)` and `views(first: 20)`; only small connections were ever read in one page, so a fixed
-`first: 100` read is not proof that a connection is complete. Whenever `totalCount` or `pageInfo.hasNextPage`
-says there is more, page with `after` until `hasNextPage` is false and compare the count you read with
-`totalCount` before reporting the state.
+`first: 100` read is not proof that a connection is complete. Page both connections: add
+`-f threadCursor=<endCursor>` to the first query until `reviewThreads.pageInfo.hasNextPage` is false, then page
+each thread's comments independently with its `id` as `<thread-id>` and `-f commentCursor=<endCursor>` until
+that thread's `comments.pageInfo.hasNextPage` is false. Compare the counts you read with each `totalCount`, and
+do not report a state, act on a comment or conclude a thread has no more comments while a `hasNextPage` is
+true or a count is short. A truncated read is not complete.
 
 ### What to do with the state
 
