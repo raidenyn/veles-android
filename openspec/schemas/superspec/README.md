@@ -15,7 +15,7 @@ OpenSpec manages the "what" (proposal → specs → design → tasks), while Sup
 Two alternatives were considered:
 
 - **Adding custom fields to config.yaml** (e.g., `skill_bindings`): The OpenSpec CLI doesn't recognize these fields — no validation, no discoverability, and multiple SKILL.md files would need modification to read them.
-- **Directly modifying opsx skill files**: Highly invasive, affects all changes, and gets overwritten on SKILL.md upgrades.
+- **Directly modifying the OpenSpec skill files** (`openspec-*`): Highly invasive, affects all changes, and gets overwritten on SKILL.md upgrades.
 
 A custom schema leverages OpenSpec's **natively supported project-level schema mechanism**:
 - The CLI validates the schema structure

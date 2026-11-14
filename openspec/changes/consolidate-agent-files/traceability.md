@@ -55,18 +55,64 @@ documentation. These facts move into the owning node's `AGENTS.md`; a pointer is
 | E5 | The retired `build-toolchain-manifest.yml` workflow, with `release.yml`, `release-native-installers.yml` and `build-native-host.yml`: they are retired and trigger nothing | `CLAUDE.md` only as prose; otherwise only `verify/test/workflow-contracts.test.mjs` (a negative assertion) and frozen plans/specs | `scripts/AGENTS.md` (with the workflow ownership table, row 3); if Task 5 judges the list obsolete it becomes `dropped: retired-workflow inventory is enforced by verify/test/workflow-contracts.test.mjs` — the reason must be written in this row | written |
 | E6 | The class names `SeedCallback` (`BankHandlerDatabase.SeedCallback.onCreate`) and `TestResultFlow` (singleton observed by `TestViewModel`, reset in `onCleared()` and by `PermissionsViewModel.verifySensitiveAccess`) | `CLAUDE.md` only as prose; otherwise source code and frozen specs/plans | `android/AGENTS.md` (rows 6, 7 and 12) | written |
 
-## Live-reference sweep exclusions (for Task 12)
+## Live-reference sweep (Task 12)
 
-Reminder only, so Task 12 Step 1 does not "fix" frozen evidence. When the live-reference sweep
-(`grep -rnE 'CLAUDE\.md|CONTRIBUTION\.md|\.opencode|\.claude/commands|/opsx:'`) reports hits in these
-locations, they are **frozen evidence and stay untouched**; list them as exclusions rather than editing
-them:
+Search, run from the repository root (broadened with `CLAUDE.local.md`; `__pycache__` excluded because
+compiled copies are not source):
 
-- `docs/superpowers/plans/` and `docs/superpowers/specs/`
-- `docs/otp-23-contract-alignment.md`
-- `protocol/docs/reviews/`
-- `native-bridge/feasibility/evidence/`
-- archived changes under `openspec/changes/archive/`
+```bash
+grep -rnE 'CLAUDE\.md|CONTRIBUTION\.md|\.opencode|\.claude/commands|/opsx:|CLAUDE\.local\.md' \
+  --exclude-dir=build --exclude-dir=node_modules --exclude-dir=.git .
+grep -rni 'opsx' --exclude-dir=build --exclude-dir=node_modules --exclude-dir=.git .
+```
 
-Every other hit is live and must be updated to its new destination (`AGENTS.md`, `.agents/rules/…`) or
-to the OpenSpec 2 skill name (`/openspec-propose`, …), never to `/opsx:<name>`.
+The second search is the safety net for mentions like "opsx skill files" that do not match `/opsx:`.
+
+After this task, 146 hits remain in tracked files outside this change directory: **0 live, 43
+intentional, 103 frozen**. The hits under `.superpowers/sdd/plan/` (briefs, reports, review diffs) are
+git-ignored working artifacts (`.gitignore` line 17) and historical records, so they are not repository
+content and are left alone; `.agents/skills/openspec-*` mention "opsx <verb>" only as a trigger phrase
+inside generated skill descriptions and must never be hand-edited.
+
+### Live references updated (2)
+
+| File | Before | After |
+|---|---|---|
+| `docs/otp-23-lifecycle-scenarios.md:34` | `(see CLAUDE.md "Stable Signing Identities")` | `(see native-bridge/installer/macos/AGENTS.md "Signing identity and TCC (macOS)"; Android signing is in android/AGENTS.md)` — the macOS file is the canonical home of the signing identity and TCC rules (D4); the Android half is `android/AGENTS.md` |
+| `openspec/schemas/superspec/README.md:18` | "Directly modifying opsx skill files" | "Directly modifying the OpenSpec skill files (`openspec-*`)" — the 2.0 skill names, not the retired `/opsx:` commands |
+
+### Intentional exceptions kept (43)
+
+Every hit below is negative guidance, a test of a retired path, or a description of the retire map. None
+of them tells a reader to open or create a legacy file.
+
+| File:line | Hits | Why it stays |
+|---|---|---|
+| `AGENTS.md:40–41,45` | 3 | Warns that a `CLAUDE.md`/`CLAUDE.local.md` in a parent folder hides `AGENTS.md`, and forbids `/init` (which can create a nested `CLAUDE.md`) |
+| `CONTRIBUTING.md:72–73` | 2 | The same Claude Code caveat, contributor-facing |
+| `.github/components.json:71–75` | 2 | `basename-owners` maps `CLAUDE.md`/`CLAUDE.local.md` to `docs`, so a new nested legacy file still selects the docs node |
+| `.github/components.json:385–392` | 3 | `retired-paths` entries for `CLAUDE.md`, `CONTRIBUTION.md` and `.opencode/`: a reintroduced file still selects `docs` |
+| `docs/ci.md:148` | 1 | Describes the `basename-owners` mechanism above |
+| `docs/AGENTS.md:10–11` | 2 | Records which legacy files the agent-file check rejects |
+| `docs/AGENTS.md:80–85` | 4 | Records the `superspec` fork and the `/opsx:` → skill-name rewrite, including the `grep -rn '/opsx:' openspec/schemas` verification |
+| `docs/checks/check_agent_files.py:76–77,339` | 3 | The checker's own rules: `LEGACY_BASENAMES`, `LEGACY_PATHS` and the `CONTRIBUTION.md` → `CONTRIBUTING.md` message |
+| `docs/checks/test_check_agent_files.py` (16 hits) | 16 | Tests that the legacy-file rules fire; they must construct the retired paths |
+| `scripts/tests/test_components.py` (7 hits) | 7 | Tests of `retired-paths` and `basename-owners` |
+
+### Frozen locations left untouched (103)
+
+| Location | Hits | Why |
+|---|---|---|
+| `docs/superpowers/plans/`, `docs/superpowers/specs/` | 35 | Frozen plans and design records: they describe the tree as it was |
+| `docs/otp-23-contract-alignment.md` | 1 | Frozen contract-alignment report |
+| `protocol/docs/reviews/` | 2 | Frozen external review of the protocol contract |
+| `native-bridge/feasibility/evidence/` | 14 | Frozen feasibility evidence, including raw review JSON: editing it would break its checksums |
+| `openspec/changes/archive/` | 51 | Archived changes are closed records; rewriting them falsifies history |
+
+### Verification
+
+- `grep -rn '/opsx:' openspec/schemas` → no hits (exit 1).
+- `docs/AGENTS.md` "The `superspec` schema fork" section records the fork, the skill-name rewrite and the
+  re-apply-after-reinstall instruction.
+- `python3 docs/checks/check_agent_files.py --root .` → exit 0.
+- `python3 -I scripts/components.py check` → exit 0.
