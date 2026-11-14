@@ -16,14 +16,14 @@
 
 ## 3. Repo-wide rules, OpenCode config and ownership entries (design migration step 3)
 
-- [ ] 3.1 Add `.gitattributes` forcing `eol=lf` for `.agents/**`, `**/AGENTS.md` and `opencode.json`.
-- [ ] 3.2 Create `.agents/rules/repo-conventional-commits.md` and `repo-no-time-based-tests.md` (no sleeps or wall-clock dependence; inject a clock), each with frontmatter `trigger: always_on` only and one concern per file.
-- [ ] 3.3 Create `.agents/rules/repo-pre-push-checks.md` ("find the nodes you touched with `python3 -I scripts/components.py changed --base $(git merge-base origin/master HEAD)` and run the checks listed in the `AGENTS.md` of each, including nodes selected because of shared inputs such as `gradle/`, `gradlew`, `.java-version` or workflow files"; no Gradle, Cargo or npm command) and `repo-signing-keys.md` ("never regenerate, replace or commit signing keys; see the node files").
-- [ ] 3.4 Create `.agents/rules/android-lint-before-push.md` with `trigger: glob`, `globs: ["android/**"]` and `paths: ["android/**"]` carrying the Android PR lint gate (`./gradlew spotlessCheck detekt lintDebug` plus the raw `android.util.Log` guard from `check-android.yml`).
-- [ ] 3.5 Add the symlink `.claude/rules` → `../.agents/rules`; keep `.claude/settings.json` a regular file.
-- [ ] 3.6 Add `opencode.json` containing only `$schema` and one `plugins` entry: `opencode-rules` constrained to the supported range (`>=2.0.0 <3`) from 1.3 with `additionalRuleDirectories: [".agents/rules"]`.
-- [ ] 3.7 Prepare the content of `.github/CODEOWNERS` (covering `opencode.json`, `.claude/`, `.mcp.json`, `.agents/` and `**/AGENTS.md`) but do not commit it yet: it sits under the global `.github/` prefix and its `global-overrides` entry may only name the `docs` node, which exists from task 5.1, so it is committed with the docs-node activation in task 7.5.
-- [ ] 3.8 Smoke-test from the repo root: Claude Code and OpenCode receive the `repo-*` rules at start and the Android rule only after reading a file under `android/`; record the observed result.
+- [x] 3.1 Add `.gitattributes` forcing `eol=lf` for `.agents/**`, `**/AGENTS.md` and `opencode.json`.
+- [x] 3.2 Create `.agents/rules/repo-conventional-commits.md` and `repo-no-time-based-tests.md` (no sleeps or wall-clock dependence; inject a clock), each with frontmatter `trigger: always_on` only and one concern per file.
+- [x] 3.3 Create `.agents/rules/repo-pre-push-checks.md` ("find the nodes you touched with `python3 -I scripts/components.py changed --base $(git merge-base origin/master HEAD)` and run the checks listed in the `AGENTS.md` of each, including nodes selected because of shared inputs such as `gradle/`, `gradlew`, `.java-version` or workflow files"; no Gradle, Cargo or npm command) and `repo-signing-keys.md` ("never regenerate, replace or commit signing keys; see the node files").
+- [x] 3.4 Create `.agents/rules/android-lint-before-push.md` with `trigger: glob`, `globs: ["android/**"]` and `paths: ["android/**"]` carrying the Android PR lint gate (`./gradlew spotlessCheck detekt lintDebug` plus the raw `android.util.Log` guard from `check-android.yml`).
+- [x] 3.5 Add the symlink `.claude/rules` → `../.agents/rules`; keep `.claude/settings.json` a regular file.
+- [x] 3.6 Add `opencode.json` containing only `$schema` and one `plugins` entry: `opencode-rules` constrained to the supported range (`>=2.0.0 <3`) from 1.3 with `additionalRuleDirectories: [".agents/rules"]`.
+- [x] 3.7 Prepare the content of `.github/CODEOWNERS` (covering `opencode.json`, `.claude/`, `.mcp.json`, `.agents/` and `**/AGENTS.md`) but do not commit it yet: it sits under the global `.github/` prefix and its `global-overrides` entry may only name the `docs` node, which exists from task 5.1, so it is committed with the docs-node activation in task 7.5.
+- [x] 3.8 Smoke-test from the repo root: Claude Code and OpenCode receive the `repo-*` rules at start and the Android rule only after reading a file under `android/`; record the observed result.
 
 ## 4. Guidance files and CLAUDE.md migration (design migration step 4)
 
