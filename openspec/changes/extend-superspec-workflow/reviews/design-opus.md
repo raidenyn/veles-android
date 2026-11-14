@@ -56,3 +56,12 @@ The specs review (Opus round 1) required two clarifications in this design: the 
 ## Accepted by the user (design final state)
 
 The user accepted the final state (option 1). Approved content: design.md sha256 dbe2950ea84021b3d17c2d5e8662fcc3d465bf64d8aeb8e0fc1da62c4ac23431. Late edits not seen by Sol: the four low clarifications from Opus pass 3.
+
+## Accepted by the user (record settlement, 2026-11-14)
+
+The user accepted this record's two bookkeeping differences as-is:
+
+- The design was judged against `proposal.md` sha256 `ec2f1fb5bf201895830d9753e41522f8d488b6569f94b991bbb9552c2e984ab3`; the proposal was later reopened and re-approved as sha256 `8ec310f828da45f2eea046d672379083b8335a56b0ecab5a00df303c1e824946` (pass 2) after the user's decisions (keep the 4,096-byte cap and add a task to compact the size tests; add `/docs/superspec-workflow.md`, `/openspec/config.yaml` and `/openspec/schemas/` to CODEOWNERS). Those decisions are already normative in this design (D2, D12) and did not change its final content.
+- The design's final content sha256 `dbe2950ea84021b3d17c2d5e8662fcc3d465bf64d8aeb8e0fc1da62c4ac23431` was accepted by the user in "Accepted by the user (design final state)" above. That acceptance is recorded here; this note is not a new reviewer approval and adds no approval line.
+
+No recorded hash was rewritten or recomputed. `verify.md` records both accepted differences; the specs records carry the analogous accepted design-upstream difference.
