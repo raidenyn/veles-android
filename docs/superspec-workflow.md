@@ -253,7 +253,8 @@ The `gh api graphql` path prints GitHub's own scope message instead; the fix is 
 
 The URL gives the owner and the project number. Query `user(login: <owner>)`; when that returns null the
 owner is an organization, so query `organization(login: <owner>)` instead. Keep each item's id, its issue
-number and state, and its Status option name.
+number, its issue's repository, its state, and its Status option name; the repository is copied into the
+`tracker.md` `Repository` line and every later issue write names it.
 
 ```bash
 gh api graphql -f query='
@@ -265,7 +266,7 @@ query($o: String!, $n: Int!, $cursor: String) {
         pageInfo { hasNextPage endCursor }
         nodes {
           id
-          content { ... on Issue { number state title } }
+          content { ... on Issue { number state title repository { nameWithOwner } } }
           fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name optionId } }
         }
       }
@@ -358,8 +359,9 @@ until the context is complete, and write the substantive findings into the brain
 ### Issue-only intake
 
 When the user names an issue instead of a board, resolve the repository explicitly: from the issue URL, or
-from the checkout's remote for a bare issue number, asking when that is ambiguous. Then list the projects that
-contain the issue:
+from the checkout's remote for a bare issue number, asking when that is ambiguous. Record the resolved
+`<owner>/<repository>` in `tracker.md`; that issue's repository — never the checkout's — is what every issue
+write names. Then list the projects that contain the issue:
 
 ```bash
 gh api graphql -f query='
@@ -393,9 +395,10 @@ first status write, so an interrupted intake resumes from it. It records the tra
 ```
 
 `tracker.md` is not a planning artifact: it is not reviewed, it is in no approval hash, and adding or changing
-it makes no record stale. The implementation PR line is added after finalize confirms an open pull request,
-then committed and pushed as part of that PR before the merge. `openspec validate --all` tolerates
-`tracker.md` and `reviews/`.
+it makes no record stale. Its `Repository` line is an issue write target, not a note: it records the issue's
+own repository, read at intake, and every issue write of the change names it with `--repo`. The implementation
+PR line is added after finalize confirms an open pull request, then committed and pushed as part of that PR
+before the merge. `openspec validate --all` tolerates `tracker.md` and `reviews/`.
 
 ### Statuses and their guards
 
@@ -445,9 +448,14 @@ mutation($p: ID!, $i: ID!, $f: ID!, $v: String!) {
   ) { projectV2Item { id } }
 }' -f p=<project-id> -f i=<item-id> -f f=<status-field-id> -f v=<option-id>
 
-# Close the issue with a closing comment.
-gh issue close <number> --reason completed --comment "<text>"
+# Close the issue with a closing comment. --repo is the issue's own repository
+# from tracker.md; the checkout's repository is never assumed for an issue write.
+gh issue close <number> --repo <owner>/<repository> --reason completed --comment "<text>"
 ```
+
+Every issue write names the issue's repository with `--repo` (or an equivalent issue URL that carries it).
+When the issue's repository cannot be established — no `Repository` line, or an issue that does not resolve
+to one — stop and ask instead of writing.
 
 ### Reconcile at the start of every intake
 
@@ -455,7 +463,8 @@ Fetch first (`git fetch`), then read the `tracker.md` files of **archived** chan
 branch, not from a possibly stale checkout.
 
 For every project item whose Status is In Review and whose recorded implementation PR is merged: make sure the
-issue is closed (closing it with a comment that links the PR if the merge did not), then set Status Done last.
+issue is closed (closing it with a comment that links the PR if the merge did not, using the `Repository` line
+of that change's `tracker.md`), then set Status Done last.
 This is the only cross-item write authorized, it writes nothing to the repository, and it is idempotent — a
 session that finds the issue already closed or the card already Done treats that as success, so an overlap
 with a session that is still monitoring succeeds for both.
@@ -569,7 +578,8 @@ After each push, return to babysitting.
 
 For finalize outcome `merge-locally`, tracked or not: after the local merge run the same sync, archive (once)
 and doc review on the default branch. Ask the user before any push to the default branch; after the user
-agrees, commit and push. For tracked work, close the issue and then set Done only after that push succeeds.
+agrees, commit and push. For tracked work, close the issue in the repository recorded in `tracker.md` and then
+set Done only after that push succeeds.
 
 - **Push rejected** (for example by branch protection): report it, do not retry and do not bypass the
   protection, offer a follow-up pull request, and leave the issue open and the card In Progress.
@@ -583,9 +593,9 @@ agrees, commit and push. For tracked work, close the issue and then set Done onl
 
 For tracked work, when the implementation pull request is merged and sync, archive and doc review are
 complete: make sure the issue is closed first — closing it with a comment that links the pull request if the
-merge did not — and then set the project item's Status to Done **last**, so the item stays In Review until both
-writes succeed. Both writes are idempotent. If closing the issue fails, the card stays In Review and a later
-reconcile retries.
+merge did not, with `--repo` set to the `Repository` line of `tracker.md` — and then set the project item's
+Status to Done **last**, so the item stays In Review until both writes succeed. Both writes are idempotent. If
+closing the issue fails, the card stays In Review and a later reconcile retries.
 
 Report and mark nothing Done when the pull request was merged before sync, archive and doc review were
 completed, or was closed without merging; the user decides how to proceed. For untracked work there is no
