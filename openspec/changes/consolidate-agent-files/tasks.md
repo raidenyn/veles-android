@@ -8,11 +8,11 @@
 
 ## 2. Migrate OpenSpec to 2.x skills-only (design migration step 2)
 
-- [ ] 2.1 Run `openspec update --dry-run` and compare with the expected ≈61–63 changes (delete 10 `.claude/commands/opsx/*`, 10 `.opencode/commands/*`, 10 `.opencode/skills/*` and the 10 real `.claude/skills/*` folders; add 10 `.agents/skills/*`, 10 `.claude/skills/*` symlinks and `.agents/skills/.openspec-target`). The generated skill set depends on the user-wide `~/.config/openspec/config.json` workflow list (this machine yields 11 skills including `openspec-update-change`); record the workflow list used and the resulting skill names, and align them with the documented list (4.9, 6.5).
-- [ ] 2.2 In `.github/components.json` add temporary `unowned` entries for every new path outside a node (`.agents/`, `.gitattributes`, `opencode.json`, root `AGENTS.md`, `native-bridge/AGENTS.md`), keeping the existing `.claude/` and `.opencode/` entries; confirm `python3 -I scripts/components.py check` passes.
-- [ ] 2.3 Run `openspec update`, update the `/opsx:<name>` references in `openspec/schemas/superspec/` instructions and templates to the skill names (`/openspec-propose`, …) so the schema never points at the commands this step deletes, and commit the result together with 2.2 as one `chore(openspec): …` commit. `.agents/skills/*` is generated and must never be hand-edited.
-- [ ] 2.4 Re-run `openspec update` and confirm it changes no file; record the CLI version and the empty result for `verify.md`.
-- [ ] 2.5 Confirm `git status` shows `.claude/skills/*` as symlinks into `.agents/skills/*`, no `.claude/commands/` and no `.opencode/`.
+- [x] 2.1 Run `openspec update --dry-run` and compare with the expected ≈61–63 changes (delete 10 `.claude/commands/opsx/*`, 10 `.opencode/commands/*`, 10 `.opencode/skills/*` and the 10 real `.claude/skills/*` folders; add 10 `.agents/skills/*`, 10 `.claude/skills/*` symlinks and `.agents/skills/.openspec-target`). The generated skill set depends on the user-wide `~/.config/openspec/config.json` workflow list (this machine yields 11 skills including `openspec-update-change`); record the workflow list used and the resulting skill names, and align them with the documented list (4.9, 6.5).
+- [x] 2.2 In `.github/components.json` add temporary `unowned` entries for every new path outside a node (`.agents/`, `.gitattributes`, `opencode.json`, root `AGENTS.md`, `native-bridge/AGENTS.md`), keeping the existing `.claude/` and `.opencode/` entries; confirm `python3 -I scripts/components.py check` passes.
+- [x] 2.3 Run `openspec update`, update the `/opsx:<name>` references in `openspec/schemas/superspec/` instructions and templates to the skill names (`/openspec-propose`, …) so the schema never points at the commands this step deletes, and commit the result together with 2.2 as one `chore(openspec): …` commit. `.agents/skills/*` is generated and must never be hand-edited.
+- [x] 2.4 Re-run `openspec update` and confirm it changes no file; record the CLI version and the empty result for `verify.md`.
+- [x] 2.5 Confirm `git status` shows `.claude/skills/*` as symlinks into `.agents/skills/*`, no `.claude/commands/` and no `.opencode/`.
 
 ## 3. Repo-wide rules, OpenCode config and ownership entries (design migration step 3)
 
