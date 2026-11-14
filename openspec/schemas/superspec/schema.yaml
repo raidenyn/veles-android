@@ -244,6 +244,19 @@ artifacts:
          committed (no unstaged files in the worktree). Cite the
          commit range if known.
 
+      6. **Review records**: Audit every planning file against its
+         records in the change's `reviews/`, per the *Revision
+         binding* audit checklist in `docs/superspec-workflow.md`
+         and `.agents/rules/repo-superspec-review-gate.md`: every
+         planning file has an approved record from every reviewer
+         the record header's preset lists, the file's own hash and
+         every recorded upstream hash recompute with the documented
+         hash command to the values on disk, the recorded upstream
+         set is the full upstream set, and no critical or high
+         finding is open. Missing records, stale hashes, a smaller
+         upstream set, a missing reviewer and unresolved critical
+         or high findings are FAIL.
+
       Recommended convergence loop:
       - PASS → /openspec-continue-change advances to the finalize artifact, which
         executes the git-side closeout directly (merge worktree →
@@ -262,7 +275,7 @@ artifacts:
       See docs/workflow-details.md for the full convergence pattern.
 
       If `openspec-verify-change` skill is unavailable, fall back to
-      running the 5 checks manually and recording results in verify.md.
+      running the 6 checks manually and recording results in verify.md.
     requires:
       - apply
 
@@ -640,6 +653,38 @@ apply:
   tracks: tasks.md
   instruction: |
     Before implementing, set up an isolated workspace and executor:
+
+    0a. **Review pre-flight — the review gate must be satisfied**:
+
+       Read `.agents/rules/repo-superspec-review-gate.md` and the
+       *Revision binding* section of `docs/superspec-workflow.md`
+       (including its audit checklist) before this step. Refuse to
+       start apply unless all three conditions below hold. If one
+       fails, stop, name the condition and the file or record that
+       fails it, and do not create the worktree or dispatch an
+       executor.
+
+       a. **Approved from every reviewer**: the plan has an
+          approved record in the change's `reviews/` from every
+          reviewer the record header's preset lists — not only the
+          first one. A missing reviewer refuses the start.
+
+       b. **The approval is current**: recompute the plan's own
+          hash and every upstream hash recorded in the approval
+          with the hash command in *Revision binding* of
+          `docs/superspec-workflow.md`, and require each value to
+          match the file on disk. The recorded upstream set must be
+          the full upstream set — every earlier planning file:
+          brainstorm, proposal, design, specs, tasks. A stale hash
+          or a smaller set refuses the start: the plan must be
+          revalidated before apply, and a recorded hash is never
+          rewritten to make it match.
+
+       c. **A coding model is confirmed**: the user confirmed that
+          this session runs on a coding model. A fresh session in
+          which the user starts apply and says they are on a
+          coding model counts as that confirmation; otherwise ask
+          once and wait for the answer.
 
     0. **Pre-flight — commit change artifacts to feature branch**:
 

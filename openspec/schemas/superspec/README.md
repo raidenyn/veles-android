@@ -76,7 +76,7 @@ This is achieved through context injection (appending directives when invoking t
 ```bash
 /openspec-ff-change my-feature    # End-to-end: create directory + brainstorm + proposal + design + specs + tasks + plan
 /openspec-apply-change            # worktree + subagent-driven-development (writes apply.md)
-/openspec-verify-change           # 5 OpenSpec checks (writes verify.md; requires apply.md)
+/openspec-verify-change           # 6 OpenSpec checks (writes verify.md; requires apply.md)
 /openspec-continue-change         # → finalize (the git-side closeout: merges worktree → feature branch, pushes branch, updates PR if one exists, writes finalize.md, posts code-reviewer comment if PR exists; v4)
 /openspec-archive-change          # sync delta specs + archive change dir
 ```

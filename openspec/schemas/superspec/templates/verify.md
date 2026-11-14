@@ -76,11 +76,38 @@ Scenarios in `specs/*.md`:
 
 ---
 
+## 6. Review Records (review gate)
+
+Audit every planning file against `.agents/rules/repo-superspec-review-gate.md` and the
+*Revision binding* audit checklist in `docs/superspec-workflow.md`. Recompute hashes with the
+documented hash command; never rewrite a recorded hash. One row per artifact and listed reviewer:
+
+| Artifact | Reviewer | Hash state | Open critical or high findings |
+|---|---|---|---|
+| — | — | current / stale / no record | none / `<count and summary>` |
+
+- [ ] Every planning file has an approved record from every reviewer the record header lists
+- [ ] Every recorded hash — the file's own and each upstream file's — matches the file on disk
+- [ ] The recorded upstream set is the full upstream set
+- [ ] No critical or high finding is open
+
+**Failed items** (FAIL if any):
+
+| Artifact | Failure |
+|---|---|
+| — | — |
+
+---
+
 ## Overall Decision
 
 - [ ] ✅ PASS — ready to proceed via /openspec-continue-change to the finalize artifact, then /openspec-archive-change
 - [ ] ⚠️ PASS WITH WARNINGS — can proceed but note: `<explanation>`
 - [ ] ❌ FAIL — return to the failed artifact, fix, then re-run verify
+
+**Check 6 (Review Records) gate**: a missing record or reviewer, a stale hash, an upstream set
+smaller than the full set, or an open critical or high finding makes this decision FAIL — no other
+check can offset it.
 
 **Next step**:
 

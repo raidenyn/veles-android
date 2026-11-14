@@ -73,7 +73,7 @@ There is also one **fallback**:
        │         │
        ▼         ▼
     ┌──────────┐ ┌──────────┐
-    │  design  │ │  verify  │ ◄── openspec-verify-change (5 checks)
+    │  design  │ │  verify  │ ◄── openspec-verify-change (6 checks)
     │(optional)│ └────┬─────┘
     └──────────┘      │
                       ▼
@@ -205,13 +205,14 @@ Before invoking verify, the executor writes a minimal `apply.md` receipt per `op
 
 #### 3-4. Verification — Invoke `openspec-verify-change` (produces `verify.md`)
 
-5 checks:
+6 checks:
 
 1. **Structural validation**: `openspec validate --all --json` all PASS
 2. **Task completion**: All `- [ ]` in `tasks.md` changed to `- [x]`
 3. **Delta spec sync state**: Has `changes/<name>/specs/` been synced to `openspec/specs/`?
 4. **Design / specs coherence**: Spot-check that design decisions and spec requirements are consistent (non-blocking warning)
 5. **Implementation signal**: No unstaged files in the worktree
+6. **Review records**: Every planning file has an approved, current record from every reviewer its record header lists; every recorded hash (the file's own and each upstream file's) matches the file on disk; the upstream set is the full set; no critical or high finding is open
 
 If any check fails, go back to the corresponding artifact, fix it, and re-run verify.
 
