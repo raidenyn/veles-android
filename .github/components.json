@@ -28,18 +28,23 @@
     "site/",
     "openspec/",
     "native-bridge/feasibility/",
+    "native-bridge/AGENTS.md",
     "README.md",
     "BUILD.md",
     "CONTRIBUTING.md",
     "CONTRIBUTION.md",
     "LICENSE",
     "CLAUDE.md",
+    "AGENTS.md",
     ".gitignore",
     ".dockerignore",
+    ".gitattributes",
     ".claude/",
+    ".agents/",
     ".idea/",
     ".opencode/",
-    ".superpowers/"
+    ".superpowers/",
+    "opencode.json"
   ],
   "nodes": {
     "android": {

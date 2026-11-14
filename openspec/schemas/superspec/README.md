@@ -74,32 +74,32 @@ This is achieved through context injection (appending directives when invoking t
 
 ### Quick Flow (Recommended)
 ```bash
-/opsx:ff my-feature    # End-to-end: create directory + brainstorm + proposal + design + specs + tasks + plan
-/opsx:apply            # worktree + subagent-driven-development (writes apply.md)
-/opsx:verify           # 5 OpenSpec checks (writes verify.md; requires apply.md)
-/opsx:continue         # → finalize (the git-side closeout: merges worktree → feature branch, pushes branch, updates PR if one exists, writes finalize.md, posts code-reviewer comment if PR exists; v4)
-/opsx:archive          # sync delta specs + archive change dir
+/openspec-ff-change my-feature    # End-to-end: create directory + brainstorm + proposal + design + specs + tasks + plan
+/openspec-apply-change            # worktree + subagent-driven-development (writes apply.md)
+/openspec-verify-change           # 5 OpenSpec checks (writes verify.md; requires apply.md)
+/openspec-continue-change         # → finalize (the git-side closeout: merges worktree → feature branch, pushes branch, updates PR if one exists, writes finalize.md, posts code-reviewer comment if PR exists; v4)
+/openspec-archive-change          # sync delta specs + archive change dir
 ```
 
 ### Step-by-Step Flow
 ```bash
-/opsx:new my-feature --schema superspec
-/opsx:continue         # → brainstorm (interactive conversation)
-/opsx:continue         # → proposal
-/opsx:continue         # → design (optional, only when technical decisions need explanation)
-/opsx:continue         # → specs
-/opsx:continue         # → tasks
-/opsx:continue         # → plan
-/opsx:apply            # writes apply.md
-/opsx:verify           # writes verify.md (requires apply.md)
-/opsx:continue         # → finalize (the git-side closeout: merges worktree → feature branch, pushes branch, updates PR if one exists, writes finalize.md, posts code-reviewer comment if PR exists; v4)
-/opsx:archive          # sync delta specs + archive change dir
+/openspec-new-change my-feature --schema superspec
+/openspec-continue-change         # → brainstorm (interactive conversation)
+/openspec-continue-change         # → proposal
+/openspec-continue-change         # → design (optional, only when technical decisions need explanation)
+/openspec-continue-change         # → specs
+/openspec-continue-change         # → tasks
+/openspec-continue-change         # → plan
+/openspec-apply-change            # writes apply.md
+/openspec-verify-change           # writes verify.md (requires apply.md)
+/openspec-continue-change         # → finalize (the git-side closeout: merges worktree → feature branch, pushes branch, updates PR if one exists, writes finalize.md, posts code-reviewer comment if PR exists; v4)
+/openspec-archive-change          # sync delta specs + archive change dir
 ```
 
 ### Switching Back to spec-driven
 ```bash
 # Use a different schema for a single change
-/opsx:new my-simple-fix --schema spec-driven
+/openspec-new-change my-simple-fix --schema spec-driven
 
 # Or change the project default
 # openspec/config.yaml: schema: spec-driven
@@ -127,13 +127,13 @@ The apply phase requires `plan` rather than `tasks` because the executor needs m
 
 The OpenSpec CLI builds its DAG strictly from the `artifacts:` list, and the `ApplyPhase` zod schema has no `generates` field — so the apply phase alone cannot mark itself complete or be referenced by another artifact's `requires`. In v1 this manifested as `verify.requires: [plan]` plus an inline comment saying "actually verify needs apply, but the schema can't say so." Agents predictably ran verify before apply.
 
-v2 solves this by representing apply twice: a real artifact (`generates: apply.md`, `requires: [plan]`) so `verify.requires: [apply]` is honest, *and* the existing `apply:` top-level block so `/opsx:apply` CLI behavior is unchanged (the handler reads `schema.apply.instruction` and would not see the artifact's instruction). To avoid drift, the canonical body lives in the `apply:` block; the apply artifact's instruction is a short redirect.
+v2 solves this by representing apply twice: a real artifact (`generates: apply.md`, `requires: [plan]`) so `verify.requires: [apply]` is honest, *and* the existing `apply:` top-level block so `/openspec-apply-change` CLI behavior is unchanged (the handler reads `schema.apply.instruction` and would not see the artifact's instruction). To avoid drift, the canonical body lives in the `apply:` block; the apply artifact's instruction is a short redirect.
 
 ### Why finalize Is a DAG Artifact (v3)
 
-In v2 the post-verify git closeout (PR creation / merge / worktree cleanup) lived only in the apply: block's step 5 — a place an agent that just ran `/opsx:verify` typically doesn't re-read. The verify artifact's PASS bullets said "proceed" without naming the next call site, so agents routinely jumped straight to `/opsx:archive`, skipping `superpowers:finishing-a-development-branch` entirely.
+In v2 the post-verify git closeout (PR creation / merge / worktree cleanup) lived only in the apply: block's step 5 — a place an agent that just ran `/openspec-verify-change` typically doesn't re-read. The verify artifact's PASS bullets said "proceed" without naming the next call site, so agents routinely jumped straight to `/openspec-archive-change`, skipping `superpowers:finishing-a-development-branch` entirely.
 
-v3 promotes `finalize` to a real DAG artifact (`generates: finalize.md`, `requires: [verify]`). `/opsx:continue` surfaces its instruction after verify completes, which invokes `superpowers:finishing-a-development-branch` and records the outcome. The recommended retrospective guidance moves from the apply: block (where it was misplaced — apply ends with verify) into finalize's instruction, where it belongs as a pre-archive activity. `/opsx:archive` is unchanged; it remains an OpenSpec CLI command that runs after finalize and is documented in `docs/workflow-details.md` Phase 6 with the canonical archive-before-merge golden path.
+v3 promotes `finalize` to a real DAG artifact (`generates: finalize.md`, `requires: [verify]`). `/openspec-continue-change` surfaces its instruction after verify completes, which invokes `superpowers:finishing-a-development-branch` and records the outcome. The recommended retrospective guidance moves from the apply: block (where it was misplaced — apply ends with verify) into finalize's instruction, where it belongs as a pre-archive activity. `/openspec-archive-change` is unchanged; it remains an OpenSpec CLI command that runs after finalize and is documented in `docs/workflow-details.md` Phase 6 with the canonical archive-before-merge golden path.
 
 ### Why We Own the Git-Side Closeout's Logic Instead of Calling the Skill (v4)
 

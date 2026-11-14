@@ -83,15 +83,15 @@ There is also one **fallback**:
                   └──────────┘
                       │
                       ▼
-                  /opsx:archive  (not in DAG; OpenSpec CLI)
+                  /openspec-archive-change  (not in DAG; OpenSpec CLI)
 ```
 
 **Key points**:
 
 - `design` is an **optional leaf**. Brainstorm still attempts to pre-populate design.md, but tasks no longer hard-depend on it (`tasks.requires: [specs]`). Per OpenSpec conventions: `design.md` is only written when non-trivial technical decisions need explanation.
-- `apply` is a **real DAG node** as of schema v2. It generates `apply.md` (a minimal receipt — iteration counter, worktree, branch, commit range, task counts) so the DAG can honestly express "verify depends on apply having run." The canonical `/opsx:apply` instruction body still lives in the top-level `apply:` phase block; the apply artifact's own instruction is a short redirect to avoid drift.
+- `apply` is a **real DAG node** as of schema v2. It generates `apply.md` (a minimal receipt — iteration counter, worktree, branch, commit range, task counts) so the DAG can honestly express "verify depends on apply having run." The canonical `/openspec-apply-change` instruction body still lives in the top-level `apply:` phase block; the apply artifact's own instruction is a short redirect to avoid drift.
 - `verify` requires `apply` (was `plan` in v1). The OpenSpec CLI will refuse to surface verify as a `ready` artifact until `apply.md` exists.
-- `finalize` is a **real DAG node** as of schema v3. It generates `finalize.md` (a minimal git-closeout receipt: outcome, PR URL, final branch state) and requires `verify`. `/opsx:continue` surfaces finalize's instruction after verify completes. As of schema v4 (see §4 Step 4 and §6 Design Choice #6), that instruction executes the git-side closeout directly (merge worktree → feature branch, push the branch — updating an existing spec pre-review PR if one exists, or creating a remote tracking branch otherwise — and post a code-reviewer comment when a PR is present); `superpowers:finishing-a-development-branch` is retained as a manual escape hatch only. `/opsx:archive` is the lifecycle close that follows finalize and is not in the DAG (it remains an OpenSpec CLI command).
+- `finalize` is a **real DAG node** as of schema v3. It generates `finalize.md` (a minimal git-closeout receipt: outcome, PR URL, final branch state) and requires `verify`. `/openspec-continue-change` surfaces finalize's instruction after verify completes. As of schema v4 (see §4 Step 4 and §6 Design Choice #6), that instruction executes the git-side closeout directly (merge worktree → feature branch, push the branch — updating an existing spec pre-review PR if one exists, or creating a remote tracking branch otherwise — and post a code-reviewer comment when a PR is present); `superpowers:finishing-a-development-branch` is retained as a manual escape hatch only. `/openspec-archive-change` is the lifecycle close that follows finalize and is not in the DAG (it remains an OpenSpec CLI command).
 - The convergence loop (apply → verify → loop back on code-fixable FAILs, capped at 5 iterations) is documented in `docs/workflow-details.md`. The schema enforces the file-existence dependency; the iteration decision is made by the agent or by a future loop-runner command (not in scope for v2 or v3).
 
 ---
@@ -120,7 +120,7 @@ This decision logic is documented in the "When Not to Create a Spec" section of 
 ### Step 1: Create a Change + Enter Brainstorming
 
 ```bash
-/opsx:new my-feature --schema superspec
+/openspec-new-change my-feature --schema superspec
 # → Creates openspec/changes/my-feature/ empty directory + .openspec.yaml
 # → Displays brainstorm artifact instructions
 ```
@@ -128,7 +128,7 @@ This decision logic is documented in the "When Not to Create a Spec" section of 
 Then:
 
 ```bash
-/opsx:continue
+/openspec-continue-change
 # → Triggers the brainstorm artifact
 # → Instruction says "use the Skill tool to invoke superpowers:brainstorming"
 # → Enters multi-turn interactive conversation: context exploration → clarify questions → 2-3 approaches + trade-offs → approve design
@@ -142,7 +142,7 @@ Then:
 
 ### Step 2: Sequentially Produce proposal → specs → tasks → plan
 
-You can `/opsx:continue` step by step (with human review opportunity at each step), or `/opsx:ff` to fill in all remaining artifacts at once.
+You can `/openspec-continue-change` step by step (with human review opportunity at each step), or `/openspec-ff-change` to fill in all remaining artifacts at once.
 
 | Step | Output | Key rules |
 |---|---|---|
@@ -150,7 +150,7 @@ You can `/opsx:continue` step by step (with human review opportunity at each ste
 | 2b | `specs/<capability>/spec.md` | 4 delta types (ADDED / MODIFIED / REMOVED / RENAMED); each requirement includes SHALL/MUST + `#### Scenario:` |
 | 2c (opt) | `design.md` | Only written when technical decisions need explanation; brainstorm may have already pre-populated it |
 | 2d | `tasks.md` | Coarse-grained checkboxes (`- [ ] X.Y description`), tracked during apply |
-| 2e | `plan.md` | `/opsx:continue` triggers `superpowers:writing-plans`, breaking tasks into 2-5 minute micro-steps |
+| 2e | `plan.md` | `/openspec-continue-change` triggers `superpowers:writing-plans`, breaking tasks into 2-5 minute micro-steps |
 
 After completion, run:
 
@@ -164,7 +164,7 @@ openspec validate --all --json
 ### Step 3: Apply (Implementation Phase)
 
 ```bash
-/opsx:apply
+/openspec-apply-change
 ```
 
 This triggers the steps in [schema.yaml](./schema.yaml) `apply.instruction`:
@@ -219,7 +219,7 @@ If any check fails, go back to the corresponding artifact, fix it, and re-run ve
 
 ### Step 4: Finalization
 
-`/opsx:continue` after verify completes surfaces the `finalize` artifact's instruction. As of schema v4, the instruction executes **the git-side closeout** directly — it does NOT invoke `superpowers:finishing-a-development-branch` in the canonical flow.
+`/openspec-continue-change` after verify completes surfaces the `finalize` artifact's instruction. As of schema v4, the instruction executes **the git-side closeout** directly — it does NOT invoke `superpowers:finishing-a-development-branch` in the canonical flow.
 
 #### 4-1. Canonical git-side closeout sequence (executed by the schema)
 
@@ -253,7 +253,7 @@ Same as v3 — write a short `retrospective.md` in the change directory before `
 ### Step 5: Archive
 
 ```bash
-/opsx:archive my-feature
+/openspec-archive-change my-feature
 ```
 
 Behavior:
@@ -265,7 +265,7 @@ Behavior:
 - Moves `changes/my-feature/` to `changes/archive/YYYY-MM-DD-my-feature/`
 - History is frozen; the unix timeline is treated as the source of truth
 
-`/opsx:archive` does NOT merge git branches and does NOT create PRs. The git-side closeout is the `finalize` artifact's responsibility (Step 4-1 above).
+`/openspec-archive-change` does NOT merge git branches and does NOT create PRs. The git-side closeout is the `finalize` artifact's responsibility (Step 4-1 above).
 
 #### Canonical PR-review golden path (v4)
 
@@ -276,19 +276,19 @@ Behavior:
    onboarding comment; finalize.md records Outcome: pr-updated, Final
    state: pr-updated; worktree is removed during finalize)
 3. [PAUSE: human code review on the PR; reviewer approves]
-4. /opsx:archive on the feature branch (syncs delta specs, moves change
+4. /openspec-archive-change on the feature branch (syncs delta specs, moves change
    dir; new commits land on the feature branch)
 5. Push the archive commits to update the PR
 6. PR merge (gh pr merge --squash --delete-branch or GitHub UI)
 ```
 
-This is the PR-pre-review variant of the golden path — applicable when a team uses the optional spec pre-review PR pattern (PR opened manually between plan and apply). A **no-PR variant** also exists: step 2 ends with finalize.md recording `PR comment: skipped (no PR)` instead of posting a comment, and step 3 onward becomes the user's choice — they can `gh pr create` after finalize to enter the PR-review variant late, or skip the PR entirely (run `/opsx:archive` on the feature branch and merge locally). The schema-executed closeout is identical in both variants.
+This is the PR-pre-review variant of the golden path — applicable when a team uses the optional spec pre-review PR pattern (PR opened manually between plan and apply). A **no-PR variant** also exists: step 2 ends with finalize.md recording `PR comment: skipped (no PR)` instead of posting a comment, and step 3 onward becomes the user's choice — they can `gh pr create` after finalize to enter the PR-review variant late, or skip the PR entirely (run `/openspec-archive-change` on the feature branch and merge locally). The schema-executed closeout is identical in both variants.
 
 The archive-before-merge ordering keeps the PR's diff complete: every commit that went into the change (implementation, finalize.md, archive sync) is in the PR. If the PR is merged before archive runs, the archive commits would have to be authored on main after the fact — recoverable but loses the unified audit trail. Note that step 7 from v3 ("local worktree cleanup if still present") is no longer needed in the git-side closeout because the worktree is removed during finalize itself.
 
 #### Local-merge variant (acceptable for solo / local-only changes)
 
-If the user falls back to the escape hatch and picks the skill's Option 1 (Merge locally), the skill performs the merge into the integration branch inline and removes the worktree. `/opsx:archive` then runs on the integration branch directly. This inverts the archive/merge order vs. the canonical git-side closeout path. Acceptable for solo or local-only changes where the PR audit trail isn't relevant.
+If the user falls back to the escape hatch and picks the skill's Option 1 (Merge locally), the skill performs the merge into the integration branch inline and removes the worktree. `/openspec-archive-change` then runs on the integration branch directly. This inverts the archive/merge order vs. the canonical git-side closeout path. Acceptable for solo or local-only changes where the PR audit trail isn't relevant.
 
 ---
 
@@ -297,13 +297,13 @@ If the user falls back to the escape hatch and picks the skill's Option 1 (Merge
 | Scenario | Command |
 |---|---|
 | **After first clone** | `bash scripts/install-git-hooks.sh` |
-| New change (interactive, step by step) | `/opsx:new <name> --schema superspec` then `/opsx:continue` several times |
-| New change (auto-fill all artifacts at once) | `/opsx:ff <name>` |
-| Resume an interrupted change | `/opsx:continue <name>` |
-| Enter implementation | `/opsx:apply <name>` |
-| Manual verify | `/opsx:verify <name>` |
-| Archive | `/opsx:archive <name>` |
-| Use the native OpenSpec schema (skip brainstorm) | `/opsx:new <name> --schema spec-driven` |
+| New change (interactive, step by step) | `/openspec-new-change <name> --schema superspec` then `/openspec-continue-change` several times |
+| New change (auto-fill all artifacts at once) | `/openspec-ff-change <name>` |
+| Resume an interrupted change | `/openspec-continue-change <name>` |
+| Enter implementation | `/openspec-apply-change <name>` |
+| Manual verify | `/openspec-verify-change <name>` |
+| Archive | `/openspec-archive-change <name>` |
+| Use the native OpenSpec schema (skip brainstorm) | `/openspec-new-change <name> --schema spec-driven` |
 | View all project schemas | `openspec schemas` |
 | View current change progress | `openspec status --change <name> --json` |
 | List active changes | `openspec list` |
@@ -333,15 +333,15 @@ TDD and code-review are originally hidden inside subagent-driven-development (on
 
 In schema v1, `verify.requires: [plan]` was a deliberate lie — the comment said "this edge exists only for the graph; actually verify must run after apply." That was unenforceable: agents read the DAG, saw verify reachable as soon as plan was done, and ran verify before apply.
 
-In v2, `apply` is promoted to a real artifact (generating `apply.md`, a minimal receipt) so `verify.requires: [apply]` is honest. The schema graph and the actual sequencing now agree. The top-level `apply:` block is preserved so `/opsx:apply` continues to surface the canonical worktree+subagent instruction body — the apply artifact's own instruction is a short redirect to keep a single source of truth.
+In v2, `apply` is promoted to a real artifact (generating `apply.md`, a minimal receipt) so `verify.requires: [apply]` is honest. The schema graph and the actual sequencing now agree. The top-level `apply:` block is preserved so `/openspec-apply-change` continues to surface the canonical worktree+subagent instruction body — the apply artifact's own instruction is a short redirect to keep a single source of truth.
 
 This change also unlocks the documented apply → verify → repeat convergence loop, since `verify.md` outcomes can now feed cleanly back into a re-run of apply with an incremented iteration counter. See `docs/workflow-details.md` for the loop pattern.
 
 ### 6. Finalize is a real artifact, not a hidden phase (v3)
 
-In v2, post-verify git closeout (PR creation, worktree cleanup) was reachable only via the apply: block's step 5 prose, which an agent that just ran `/opsx:verify` typically doesn't re-read. The verify artifact's instruction said "proceed" on PASS without naming the next call site, and verify.md's convergence-loop reminder only covered FAIL paths. As a result, agents (and humans) routinely jumped straight to `/opsx:archive`, skipping `superpowers:finishing-a-development-branch` and leaving the branch and PR unfinished.
+In v2, post-verify git closeout (PR creation, worktree cleanup) was reachable only via the apply: block's step 5 prose, which an agent that just ran `/openspec-verify-change` typically doesn't re-read. The verify artifact's instruction said "proceed" on PASS without naming the next call site, and verify.md's convergence-loop reminder only covered FAIL paths. As a result, agents (and humans) routinely jumped straight to `/openspec-archive-change`, skipping `superpowers:finishing-a-development-branch` and leaving the branch and PR unfinished.
 
-In v3, `finalize` is promoted to a real DAG artifact (`generates: finalize.md`, `requires: [verify]`). `/opsx:continue` surfaces its instruction after verify completes; that instruction invokes `superpowers:finishing-a-development-branch` and records the outcome. No new slash command is needed — the existing OpenSpec workflow vocabulary already gives the call site.
+In v3, `finalize` is promoted to a real DAG artifact (`generates: finalize.md`, `requires: [verify]`). `/openspec-continue-change` surfaces its instruction after verify completes; that instruction invokes `superpowers:finishing-a-development-branch` and records the outcome. No new slash command is needed — the existing OpenSpec workflow vocabulary already gives the call site.
 
 This change also moves the recommended retrospective guidance from the apply: block (where it was misplaced — apply ends with verify, not with archive) into finalize's instruction, where it logically belongs as a pre-archive activity.
 
@@ -351,26 +351,26 @@ Promoting finalize to an artifact (v3) made the call site discoverable but kept 
 
 ### Migration from schema v1
 
-If a project pinned to schema v1 has in-flight changes whose `verify.md` was authored before v2 landed but no `apply.md` exists in the change directory, `/opsx:verify` will report the change as blocked under v2 (missing required artifact `apply`).
+If a project pinned to schema v1 has in-flight changes whose `verify.md` was authored before v2 landed but no `apply.md` exists in the change directory, `/openspec-verify-change` will report the change as blocked under v2 (missing required artifact `apply`).
 
-Migration: author a minimal `apply.md` by hand from `openspec/schemas/superspec/templates/apply.md` — set `Iteration: 1`, fill the worktree path, branch, commit range, and task counts from the existing implementation, then re-run `/opsx:verify`. This is a one-time migration cost per in-flight change; no archived changes are affected.
+Migration: author a minimal `apply.md` by hand from `openspec/schemas/superspec/templates/apply.md` — set `Iteration: 1`, fill the worktree path, branch, commit range, and task counts from the existing implementation, then re-run `/openspec-verify-change`. This is a one-time migration cost per in-flight change; no archived changes are affected.
 
 ### Migration from schema v2
 
-If a project pinned to schema v2 has in-flight changes that already have `verify.md` but no `finalize.md`, `/opsx:continue` under v3 will report finalize as the next ready artifact and refuse to advance further. Migration:
+If a project pinned to schema v2 has in-flight changes that already have `verify.md` but no `finalize.md`, `/openspec-continue-change` under v3 will report finalize as the next ready artifact and refuse to advance further. Migration:
 
 1. Author a minimal `finalize.md` by hand from `openspec/schemas/superspec/templates/finalize.md`. Fill the fields from the actual branch state — pick the outcome that matches what was already done (e.g., `pr-created` if a PR exists), copy branch state from `git status` / `gh pr view`, and record current worktree state.
-2. Re-run `/opsx:continue`; it should now advance past finalize, and the change is ready for `/opsx:archive`.
+2. Re-run `/openspec-continue-change`; it should now advance past finalize, and the change is ready for `/openspec-archive-change`.
 
 This is a one-time migration cost per in-flight v2 change; no archived changes are affected.
 
 ### Migration from schema v3
 
-In-flight v3 changes that already have `finalize.md` are unaffected — the file exists and `/opsx:continue` advances past finalize. Re-running finalize on those changes is optional.
+In-flight v3 changes that already have `finalize.md` are unaffected — the file exists and `/openspec-continue-change` advances past finalize. Re-running finalize on those changes is optional.
 
 For v3 changes mid-flight with no `finalize.md`:
 
-1. `/opsx:continue` under v4 will surface the new git-side closeout instruction. If your workflow matches the git-side closeout (feature branch + worktree), the schema executes the git-side closeout automatically — no manual finalize.md authoring needed. This works whether or not you opened a spec pre-review PR between plan and apply; when a PR exists it gets updated and the onboarding comment is posted, when no PR exists the push creates the remote tracking branch and the comment subroutine self-skips.
+1. `/openspec-continue-change` under v4 will surface the new git-side closeout instruction. If your workflow matches the git-side closeout (feature branch + worktree), the schema executes the git-side closeout automatically — no manual finalize.md authoring needed. This works whether or not you opened a spec pre-review PR between plan and apply; when a PR exists it gets updated and the onboarding comment is posted, when no PR exists the push creates the remote tracking branch and the comment subroutine self-skips.
 2. If a structural prerequisite is missing (you started on the integration branch, or are in detached HEAD), use the escape hatch documented in the finalize instruction.
 
 If you previously ran the v3 finalize and ended up with the two-branch schism (an orphan branch on remote and a PR from a different branch), the recommended cleanup is:
