@@ -72,9 +72,9 @@
 
 ## 8. Live reference migration
 
-- [ ] 8.1 Search the whole repository (excluding build outputs and frozen evidence) for `CLAUDE.md`, `CONTRIBUTION.md`, `.opencode`, `.claude/commands` and `/opsx:` and list every live hit, including `docs/otp-23-lifecycle-scenarios.md`; classify `docs/superpowers/plans|specs` and `docs/otp-23-contract-alignment.md` explicitly as live or frozen.
-- [ ] 8.2 Update each live hit to the new destination or skill name; leave archived and frozen evidence (`docs/` evidence, `protocol/docs/reviews/`, `native-bridge/feasibility/evidence/`, archived changes) unchanged and list the exclusions.
-- [ ] 8.3 Confirm no `/opsx:<name>` reference remains in `openspec/schemas/superspec/` instructions and templates (changed in 2.3) and that the fork of the third-party schema is recorded in `docs/AGENTS.md`.
+- [x] 8.1 Search the whole repository (excluding build outputs and frozen evidence) for `CLAUDE.md`, `CONTRIBUTION.md`, `.opencode`, `.claude/commands` and `/opsx:` and list every live hit, including `docs/otp-23-lifecycle-scenarios.md`; classify `docs/superpowers/plans|specs` and `docs/otp-23-contract-alignment.md` explicitly as live or frozen.
+- [x] 8.2 Update each live hit to the new destination or skill name; leave archived and frozen evidence (`docs/` evidence, `protocol/docs/reviews/`, `native-bridge/feasibility/evidence/`, archived changes) unchanged and list the exclusions.
+- [x] 8.3 Confirm no `/opsx:<name>` reference remains in `openspec/schemas/superspec/` instructions and templates (changed in 2.3) and that the fork of the third-party schema is recorded in `docs/AGENTS.md`.
 
 ## 9. Verification (inputs for `verify.md`)
 
