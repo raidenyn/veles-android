@@ -60,7 +60,15 @@ PLUGIN_NAME = "opencode-rules"
 PLUGIN_OPTION_DIRS = "additionalRuleDirectories"
 
 CODEOWNERS = ".github/CODEOWNERS"
-CODEOWNER_PATTERNS = ("/opencode.json", "/.claude/", "/.agents/", "**/AGENTS.md")
+CODEOWNER_PATTERNS = (
+    "/opencode.json",
+    "/.claude/",
+    "/.agents/",
+    "**/AGENTS.md",
+    "/docs/superspec-workflow.md",
+    "/openspec/config.yaml",
+    "/openspec/schemas/",
+)
 CODEOWNER_MCP_PATTERN = "/.mcp.json"
 MCP_JSON = ".mcp.json"
 # One representative path per required pattern, used to apply GitHub's last-match rule.
@@ -70,6 +78,9 @@ CODEOWNER_SAMPLE_PATHS = (
     ("/.agents/", ".agents/rules/repo-conventional-commits.md"),
     ("**/AGENTS.md", "android/AGENTS.md"),
     ("**/AGENTS.md", "native-bridge/host/AGENTS.md"),
+    ("/docs/superspec-workflow.md", "docs/superspec-workflow.md"),
+    ("/openspec/config.yaml", "openspec/config.yaml"),
+    ("/openspec/schemas/", "openspec/schemas/superspec/schema.yaml"),
 )
 
 PLUGIN_MENTION_FILES = (ROOT_AGENTS, "CONTRIBUTING.md")

@@ -17,6 +17,7 @@ CHECKS = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, CHECKS)
 
 from check_agent_files import (  # noqa: E402
+    CODEOWNER_SAMPLE_PATHS,
     NESTED_EXCLUSIVE_DOCS,
     NODE_FILES,
     NOTICE_NESTED,
@@ -136,6 +137,9 @@ EXPECTED_CODEOWNER_PATTERNS = (
     "/.mcp.json",
     "/.agents/",
     "**/AGENTS.md",
+    "/docs/superspec-workflow.md",
+    "/openspec/config.yaml",
+    "/openspec/schemas/",
 )
 OPENCODE_PACKAGE = "opencode-rules@>=2.0.0 <3"
 
@@ -1159,7 +1163,14 @@ class AgentFileCheckTest(unittest.TestCase):
                 self.assertEqual(len(findings), 1, findings)
 
     def test_codeowners_missing_entry_fails(self):
-        for pattern in ("/.claude/", "**/AGENTS.md", "/.agents/"):
+        for pattern in (
+            "/.claude/",
+            "**/AGENTS.md",
+            "/.agents/",
+            "/docs/superspec-workflow.md",
+            "/openspec/config.yaml",
+            "/openspec/schemas/",
+        ):
             with self.subTest(pattern=pattern):
                 patterns = [item for item in EXPECTED_CODEOWNER_PATTERNS if item != pattern]
                 files = clean_files()
@@ -1208,11 +1219,28 @@ class AgentFileCheckTest(unittest.TestCase):
         files = clean_files()
         files[".github/CODEOWNERS"] = codeowners_text() + "*\n"
         findings = check_repo(self.repo(files))
-        self.assertEqual(len(findings), 5, findings)
+        # One finding per sample path, not per required pattern: the clean fixture has no
+        # `.mcp.json`, so that pattern's sample is never added.
+        self.assertEqual(len(findings), len(CODEOWNER_SAMPLE_PATHS), findings)
         self.assertTrue(all(finding.path == ".github/CODEOWNERS" for finding in findings), findings)
         self.assertTrue(
             any("last matching rule `*`" in finding.message for finding in findings), findings
         )
+        for sample in (
+            "docs/superspec-workflow.md",
+            "openspec/config.yaml",
+            "openspec/schemas/superspec/schema.yaml",
+        ):
+            self.assert_finding(findings, "error", ".github/CODEOWNERS", sample)
+
+    def test_codeowners_broader_line_does_not_count(self):
+        # A broader `/openspec/` line covers the files but is not the required literal pattern.
+        patterns = [item for item in EXPECTED_CODEOWNER_PATTERNS if item != "/openspec/schemas/"]
+        files = clean_files()
+        files[".github/CODEOWNERS"] = codeowners_text(patterns) + "/openspec/ @raidenyn\n"
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".github/CODEOWNERS", "/openspec/schemas/")
+        self.assertEqual(len(findings), 1, findings)
 
     def test_codeowners_restating_line_with_owner_passes(self):
         files = clean_files()
