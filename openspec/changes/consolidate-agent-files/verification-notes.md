@@ -29,6 +29,11 @@ otherwise. Nothing in this file is inferred from documentation unless the row sa
 - `.claude/rules` → `../.agents/rules`
 - `opencode.json` copied verbatim from the repository root
 
+The matrix rows below were produced from that state. **Afterwards**, for the manual-discovery
+exercise only, a `## Rules` section was added to the fixture's `AGENTS.md` and `android/AGENTS.md`
+with the line "If your tool does not load scoped rules, read `.agents/rules/rust-token.md` by hand.";
+that edit is described in its own section and does not belong to the matrix runs.
+
 Probe prompt template, with `<file>` substituted per scenario:
 
 ```text
@@ -47,9 +52,9 @@ OPENCODE_CONFIG_DIR=/tmp/opencode/verify-matrix-cfg opencode --standalone run -m
 
 ## Scoping matrix (task 9.5)
 
-`✓` = tokens the model actually printed. Tokens in *italics* were **not** printed. Every row is a
-fresh session; the extra `description` key in `bridge-token.md` produced no parser error or warning
-in either tool.
+Every row is a fresh session; the tokens shown are the ones the model actually printed, except the
+italic token in row 4, which was not printed. The extra `description` key in `bridge-token.md`
+produced no parser error or warning in either tool.
 
 | # | Scenario (fixture) | Claude Code 2.1.325 | OpenCode 2.3.0 + `opencode-rules` 2.0.0 | Expected |
 |---|---|---|---|---|
@@ -57,11 +62,45 @@ in either tool.
 | 2 | Root session, read `rust/x.txt` | `MARKER-REPO-ZZ`, `MARKER-RUST-ZZ` | `ROOTGUIDE-ZZ`, `MARKER-REPO-ZZ`, `MARKER-RUST-ZZ` | REPO + RUST, no BRIDGE — **met by both** |
 | 3 | Root session, read `native-bridge/host/x.txt` then `native-bridge/installer/x.txt` | `ROOTGUIDE-ZZ`, `MARKER-REPO-ZZ`, `MARKER-BRIDGE-ZZ` | `ROOTGUIDE-ZZ`, `MARKER-REPO-ZZ`, `MARKER-BRIDGE-ZZ` | REPO + BRIDGE, parent scope reaches both children — **met by both**, extra key tolerated |
 | 4 | Root session, read `rust/x.txt` twice | `MARKER-REPO-ZZ`, `MARKER-RUST-ZZ` (once each) | `ROOTGUIDE-ZZ`, `MARKER-REPO-ZZ` — *`MARKER-RUST-ZZ` missing* | REPO + RUST each exactly once — **Claude Code met, OpenCode deviates** (see below) |
-| 5 | Session started inside `android/` | guidance lines `Root guidance token: ROOTGUIDE-ZZ` and `Android node guidance token: ANDROIDGUIDE-ZZ`; rule markers `NONE` | guidance line `Android node guidance token: ANDROIDGUIDE-ZZ` only; rule markers `NONE` | no rule marker; `ANDROIDGUIDE-ZZ` present; root chain "may or may not" — Claude Code: both files; OpenCode: node file only |
-| 6 | Root session reading `rust/x.txt` with `opencode.json` moved aside (plugin-unavailable proxy) | not run (no plugin layer) | rule markers `NONE`; model answered `Root guidance token: ROOTGUIDE-ZZ` from `AGENTS.md` | no rule markers, discovery through `AGENTS.md` — **met** |
+| 5 | Session started inside `android/` | guidance lines `Root guidance token: ROOTGUIDE-ZZ` and `Android node guidance token: ANDROIDGUIDE-ZZ`; rule markers `NONE` | guidance line `Android node guidance token: ANDROIDGUIDE-ZZ` only; rule markers `NONE` | no rule marker; `ANDROIDGUIDE-ZZ` present; the ancestor chain is required (D5c and the spec) — Claude Code loads both files (2/2 runs), **OpenCode deviates** by loading the node file only (3/3 runs) |
+| 6 | Root session reading `rust/x.txt` with `opencode.json` moved aside (plugin-unavailable proxy) | not run (no plugin layer) | rule markers `NONE`; model answered `Root guidance token: ROOTGUIDE-ZZ` from `AGENTS.md` | no rule markers — **met**; the discovery fallback is exercised separately below |
 
 Scenario 1 also shows that both tools load a nested `AGENTS.md` when a file beside it is read
 (`ANDROIDGUIDE-ZZ` appears without any instruction to open `android/AGENTS.md`).
+
+### No-read baseline (activation timing)
+
+The post-read rows above cannot by themselves show *when* a rule appears, so a root session that
+reads no file was run first. Both tools delivered the always-on rule only:
+
+```bash
+# Claude Code — from /tmp/opencode/verify-matrix
+claude -p 'Reply with exactly the marker tokens of every workspace rule active in this conversation,
+  one per line, or NONE. Do not read any file and do not use any tool.' --output-format text
+```
+
+```text
+ROOTGUIDE-ZZ
+MARKER-REPO-ZZ
+```
+
+```bash
+# OpenCode — from /tmp/opencode/verify-matrix
+OPENCODE_CONFIG_DIR=/tmp/opencode/verify-matrix-cfg opencode --standalone run -m openai/gpt-6.1-sol \
+  'Reply with exactly the marker tokens of every workspace rule active in this conversation,
+   one per line, or NONE. Do not read any file and do not use any tool.'
+```
+
+```text
+ROOTGUIDE-ZZ
+MARKER-REPO-ZZ
+```
+
+No `MARKER-RUST-ZZ` and no `MARKER-BRIDGE-ZZ` before any read in either tool. Together with the
+post-read rows (RUST after a `rust/` read, BRIDGE after `native-bridge/` reads, neither after an
+`android/` read) this establishes the activation order for these three fixture rules. It does **not**
+establish anything about the real rules beyond the repository probes below, which have their own
+no-read baseline.
 
 ### Scenario 4 in OpenCode — observed defect (reported, not fixed)
 
@@ -87,14 +126,19 @@ the same file twice in one OpenCode session can silently lose the scoped rule; t
 
 ### Scenario 5 — node-folder start, per tool
 
-| Tool | `AGENTS.md` files loaded with cwd `android/` | Rule files delivered |
-|---|---|---|
-| Claude Code 2.1.325 | root `AGENTS.md` **and** `android/AGENTS.md` | none |
-| OpenCode 2.3.0 | `android/AGENTS.md` **only** — the root `AGENTS.md` (node map, plugin pointer) is not loaded | none |
+| Tool | `AGENTS.md` files loaded with cwd `android/` | Rule files delivered | Runs |
+|---|---|---|---|
+| Claude Code 2.1.325 | root `AGENTS.md` **and** `android/AGENTS.md` | none | 2/2 |
+| OpenCode 2.3.0 | `android/AGENTS.md` **only** — the root `AGENTS.md` (node map, plugin pointer) is not loaded | none | 3/3 |
 
-So the spec line "the `AGENTS.md` chain still loads" holds fully for Claude Code and only partially
-for OpenCode: the node file, its start-at-root notice and its rule list are present, but the root
-file is not. Reported as a limitation, no file changed.
+The expectation is unchanged: design D5c and the spec require the **ancestor chain** to load when the
+agent starts inside a node folder, and neither tool delivers a rule file. Claude Code meets it.
+**OpenCode deviates from D5c and from the spec's "`AGENTS.md` chain still loads" requirement**: three
+consecutive fresh sessions started in `android/` saw the node guidance only, never the root file, so
+the node map and the root's plugin/discovery pointers are absent in exactly the degraded state the
+requirement is about. The node file's own start-at-root notice and rule list are present, which is
+the documented mitigation, but that does not satisfy the chain requirement. Reproduced 3/3; reported
+as an observed deviation, no guidance file changed.
 
 ## OpenCode: plugin configuration caveats (tasks 9.2)
 
@@ -112,17 +156,82 @@ Supporting output: `opencode debug config` merges `/home/dev/.config/opencode/op
 "Observed caveat" already written in `docs/AGENTS.md`: configure the plugin once, at project level.
 All OpenCode matrix runs above therefore used the isolated config directory **plus** `--standalone`.
 
+## Plugin-unavailable manual discovery (the scenario 6 fallback)
+
+Scenario 6 only proves that no rule is delivered. The spec's "Plugin unavailable" scenario also
+requires that the agent can **find** the rule through guidance, so the fallback was exercised. The
+fixture's guidance was given the pointer line an agent would follow:
+
+```text
+# AGENTS.md (fixture root)
+
+Root guidance token: ROOTGUIDE-ZZ
+
+## Rules
+
+If your tool does not load scoped rules, read `.agents/rules/rust-token.md` by hand.
+```
+
+`android/AGENTS.md` received the same `## Rules` line, for the node-folder variant. `opencode.json`
+was moved aside again (`mv opencode.json opencode.json.off`) for the duration and restored afterwards.
+
+**Root start** — command and observed trace, from `/tmp/opencode/verify-matrix`:
+
+```bash
+OPENCODE_CONFIG_DIR=/tmp/opencode/verify-matrix-cfg opencode --standalone run -m openai/gpt-6.1-sol \
+  'What marker token does the rust workspace rule carry? Reply with the exact token and nothing else.'
+```
+
+```text
+> build · gpt-6.1-sol
+→ Read .agents/rules/rust-token.md
+MARKER-RUST-ZZ
+```
+
+2/2 fresh sessions: the agent followed the `AGENTS.md` pointer, read the rule file and reported
+`MARKER-RUST-ZZ`. The prompt names neither the rule file nor its path.
+
+**Node-folder start** — same prompt, from `/tmp/opencode/verify-matrix/android`:
+
+```text
+> build · gpt-6.1-sol
+✗ Read .agents/rules/rust-token.md failed
+  Error: File not found: .agents/rules/rust-token.md — the folder /tmp/opencode/verify-matrix/android/.agents does not exist.
+→ Read /tmp/opencode/verify-matrix/.agents/rules/rust-token.md
+MARKER-RUST-ZZ
+```
+
+2/2 fresh sessions recovered and reported `MARKER-RUST-ZZ`, but both first tried the listed path
+verbatim and failed, because `.agents/rules/...` is written relative to the repository root while the
+working directory was `android/`; one run found it with a `**/rust-token.md` glob, the other with the
+resolved absolute path. The fallback therefore **works with one extra step**; the listed path is not
+directly readable from a node folder. This is an observed detail of the existing guidance wording,
+reported here for the owner; no guidance file was changed.
+
+Verdict for the fallback: **observed to work** at the root (2/2) and at a node start (2/2, after a
+failed first path attempt). No failure of the fallback had to be recorded.
+
 ## Real-repository probes (tasks 9.1, 9.2)
 
-Run from the repository root, read-only, one tool call each:
+Run from the repository root, one tool call each. The first probe reads no file, so it measures the
+start-of-session state; the second reads `android/AGENTS.md`.
 
 | Tool | Probe | Observed |
 |---|---|---|
-| Claude Code 2.1.325 | read `android/AGENTS.md`, list delivered rule files | `repo-pre-push-checks.md`, `repo-no-time-based-tests.md`, `repo-signing-keys.md`, `repo-conventional-commits.md`, `android-lint-before-push.md` |
-| OpenCode 2.3.0 (isolated config + `--standalone`) | same | `repo-pre-push-checks.md`, `repo-no-time-based-tests.md`, `repo-signing-keys.md`, `repo-conventional-commits.md`, `android-lint-before-push.md` |
+| Claude Code 2.1.325 | **no file read**, list delivered rule files | `repo-conventional-commits.md`, `repo-no-time-based-tests.md`, `repo-pre-push-checks.md`, `repo-signing-keys.md` — no `android-lint-before-push.md` |
+| OpenCode 2.3.0 (isolated config + `--standalone`) | **no file read**, same question | the same four files, no `android-lint-before-push.md` |
+| Claude Code 2.1.325 | read `android/AGENTS.md`, list delivered rule files | the same four **plus** `android-lint-before-push.md` |
+| OpenCode 2.3.0 (isolated config + `--standalone`) | same | the same four **plus** `android-lint-before-push.md` |
 
-Both tools therefore deliver all four `repo-*` rules at start and add `android-lint-before-push.md`
-only after an `android/` read, with no `.claude/CLAUDE.md` and no `CLAUDE.md` anywhere in the chain.
+The no-read probe establishes that all four `repo-*` rules are present before any read. The post-read
+probe is the only one of each pair that contains `android-lint-before-push.md`, which establishes that
+it is delivered after an `android/` read in both tools. Neither probe alone would show the ordering;
+together they do, for these five files. Not established by these probes: the exact moment within a
+turn at which the Android rule is injected, and delivery of any other node rule (no other node rule
+exists in this repository). No `.claude/CLAUDE.md` and no `CLAUDE.md` exists anywhere in the chain.
+
+Claude Code's no-read answer first printed a garbled list, then said "Correction: the second file name
+has a typo" and printed the four correct names once each — a model correction, not a second delivery.
 
 ## Skills
 
@@ -183,6 +292,27 @@ code coverage, not a Windows observation.
 
 ## Idempotence (task 2.4)
 
+Two separate observations, taken at different points in the change, and they are not the same
+evidence:
+
+**(a) The actual second `openspec update`** (task 2, Step 4 — the real command, not a dry run), run
+after the schema edits:
+
+```text
+$ openspec update
+✓ All 2 tool(s) up to date (v2.0.0)
+  Tools: claude, opencode
+
+Use --force to refresh files anyway.
+Note: 1 more workflow is available (onboard).
+exit=0
+```
+
+`git status --short` was captured before and after that run and was byte-identical (`diff` clean), so
+the real command wrote nothing. Source: `.superpowers/sdd/plan/task-2-report.md`.
+
+**(b) Dry-run confirmation** (this task), on the committed tree:
+
 ```text
 $ openspec --version
 2.0.0
@@ -190,7 +320,8 @@ $ openspec update --dry-run
 No changes: skills are up to date.        # exit 0
 ```
 
-`git status --short` was empty before and after. No generated file changed.
+`git status --short` was empty before and after. This reconfirms (a) without writing; the evidence
+that the real command rewrites nothing is (a)'s before/after status diff, not this dry run.
 
 ## Traceability table (task 9.6)
 
@@ -226,22 +357,24 @@ exit 0
 |---|---|
 | Claude Code scoping matrix (scenarios 1–5) | **observed**, 2.1.325 |
 | OpenCode scoping matrix (scenarios 1–3, 6) | **observed**, 2.3.0 + plugin 2.0.0 |
+| No-read baseline (fixture and repository) | **observed** in both tools — always-on rule only, no scoped rule before a read |
 | OpenCode scenario 4 | **observed deviation** — scoped rule lost when the same file is read twice |
 | Nested `AGENTS.md` loads on read | **observed** in both tools |
-| Node-folder start behaviour | **observed** in both tools (OpenCode omits the root file) |
+| Node-folder start behaviour | **observed**: no rule file in either tool; Claude Code loads the ancestor chain, **OpenCode deviates** by loading the node file only (3/3 runs) |
 | OpenCode duplicate-global-plugin and `--standalone` caveats | **observed** |
-| Plugin-unavailable behaviour (rules not delivered, `AGENTS.md` still discoverable) | **observed** as a proxy by removing the project `opencode.json` |
+| Plugin unavailable: scoped rules stop being delivered | **observed** as a proxy by removing the project `opencode.json` (no rule markers) |
+| Plugin unavailable: manual discovery through guidance | **observed** — root start 2/2 and node start 2/2 read `.agents/rules/rust-token.md` and reported `MARKER-RUST-ZZ`; the node start needed a retry because the listed path is root-relative |
 | Skill symlink layout (11 links, targets, modes, skill parity) | **observed** structurally in the repository |
 | Skills listed twice | **not determinable**; recorded as unverified |
 | Antigravity `AGENTS.md`, rules, skills, node map | **documentation-only / blocker** |
 | Windows symlinks, check warning, `openspec update`, native scoping | **not run / blocker** |
-| `openspec update` idempotence | **observed** (`No changes: skills are up to date.`) |
+| `openspec update` idempotence | **observed** — real second run exited 0 with a byte-identical before/after status (task 2 report); dry run on the committed tree reports no changes |
 | Traceability completeness | **observed** (19/19 `written`, destinations exist) |
 
 ## Node-folder limitation, per tool
 
 | Tool | Started in `android/` |
 |---|---|
-| Claude Code 2.1.325 | loads root and node `AGENTS.md`; delivers no rule file; the notice and the node rule list tell the agent to read `android-lint-before-push.md` by hand |
-| OpenCode 2.3.0 | loads only `android/AGENTS.md`; delivers no rule file; same notice and list mitigate, but the root node map and OpenCode plugin pointer are not loaded |
+| Claude Code 2.1.325 | loads root and node `AGENTS.md` (meets D5c); delivers no rule file; the notice and the node rule list tell the agent to read `android-lint-before-push.md` by hand |
+| OpenCode 2.3.0 | loads only `android/AGENTS.md` — **deviates from D5c (3/3 runs)**; delivers no rule file; the node file's notice and list mitigate, but the root node map and plugin pointer are absent, and a hand-read of a listed `.agents/rules/…` path fails once from this folder before it resolves |
 | Antigravity | unverified (blocker) |
