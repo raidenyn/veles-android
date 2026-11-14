@@ -32,6 +32,10 @@ TBD - created by archiving change component-releases-and-conventional-commits. U
 - **WHEN** the `bridge-scaffold`, `supply-chain` and `tooling` nodes run
 - **THEN** they report `bridge-scaffold / lint`, `bridge-scaffold / unit-tests`, the supply-chain policy check and `tooling / unit-tests`
 
+#### Scenario: Docs node
+- **WHEN** the `docs` node runs
+- **THEN** it reports `docs / agent-files` (the agent-file layout check) and `docs / unit-tests` (the tests of that check), and it reports no release or build job
+
 #### Scenario: Declared checks drift
 - **WHEN** a check workflow adds, removes or renames a job without updating the node's declared check names
 - **THEN** the workflow contract suite fails
@@ -46,13 +50,17 @@ Every command run by `ci.yml` and `build-native-host.yml` before this change SHA
 - **WHEN** `rust / jni-integration` runs
 - **THEN** `assembleDebug` and the extension build precede `./gradlew clean`, which precedes `assert-clean.sh`, which precedes the second `assembleDebug` and JNI verification
 ### Requirement: Workflow contract suites move with the workflows
-Every change that moves, renames or deletes a workflow SHALL update, in the same commit, `verify/test/workflow-contracts.test.mjs`, both `test_build_contract.py` suites and the workflow scopes of `verify/check-remote-code.mjs`, preserving their negative tests.
+Every change that adds, moves, renames or deletes a workflow SHALL update, in the same commit, `verify/test/workflow-contracts.test.mjs`, both `test_build_contract.py` suites and the workflow scopes of `verify/check-remote-code.mjs`, preserving their negative tests.
 
 #### Scenario: Retired workflow name
 - **WHEN** `build-native-host.yml` is deleted
 - **THEN** no suite or scanner scope refers to it and the equivalent checks target `check-native-host.yml` and `check-installer.yml`
+
+#### Scenario: New docs workflow
+- **WHEN** `check-docs.yml` is added
+- **THEN** `verify/test/workflow-contracts.test.mjs` and the workflow scopes of `verify/check-remote-code.mjs` cover it, with a negative test that fails when the workflow installs any package from a registry at run time (including the OpenSpec CLI), and the checker script under `docs/checks/` is inside the scanner's scopes
 ### Requirement: Change-based node selection
-A `changes` job SHALL run the component map check on every run and compute affected nodes with `scripts/components.py`, without rename detection. For the first run of a pull request it MUST diff against the merge base with the base branch; for later runs of a pull request it MUST select each node as the `pr-last-green-selection` capability defines; for a push to `master` it MUST select every node. Ownership validation of the full changed-path set MUST run in every mode, and the node outputs MUST be written before a validation failure fails the job. Each node MUST run only when selected. A changed path MUST select, in CI: every node whose `paths` or `ci-paths` contain it; every node when it is `global` or `ci-global`, unless `global-overrides` lists the nodes it selects instead; the nodes its `retired-paths` entry lists; and no node when it is `unowned`. Every node MUST be selected when a global path without an override changed, when a changed path is not accounted for, or when the base is missing or all zeros. The path scenarios below state the nodes a path selects on the first run of a pull request, except the two that name a push; later pull request runs additionally skip nodes that have green evidence, as `pr-last-green-selection` defines, and a push to `master` selects every node whatever the paths.
+A `changes` job SHALL run the component map check on every run and compute affected nodes with `scripts/components.py`, without rename detection. For the first run of a pull request it MUST diff against the merge base with the base branch; for later runs of a pull request it MUST select each node as the `pr-last-green-selection` capability defines; for a push to `master` it MUST select every node. Ownership validation of the full changed-path set MUST run in every mode, and the node outputs MUST be written before a validation failure fails the job. Each node MUST run only when selected. A changed path MUST select, in CI: every node whose `paths` or `ci-paths` contain it; every node when it is `global` or `ci-global`, unless `global-overrides` lists the nodes it selects instead; and, for an exact file name listed in `global-overrides` whether or not it is also global, exactly the listed nodes, taking precedence over every node whose `paths` contain it; plus, for every node that a `basename-owners` entry lists for the changed file's basename, that node in addition to all of the above; the nodes its `retired-paths` entry lists; and no node when it is `unowned`. A changed `AGENTS.md` that `global-overrides` lists MUST select exactly the nodes the entry names: `docs` for every nested `AGENTS.md`, and `docs` plus `native-host` for `native-bridge/host/AGENTS.md`, whose content the `native-host / build-contract` check reads. Every node MUST be selected when a global path without an override changed, when a changed path is not accounted for, or when the base is missing or all zeros. The path scenarios below state the nodes a path selects on the first run of a pull request, except the two that name a push; later pull request runs additionally skip nodes that have green evidence, as `pr-last-green-selection` defines, and a push to `master` selects every node whatever the paths.
 
 #### Scenario: Extension-only PR
 - **WHEN** a PR changes only `web-extension/src/`
@@ -72,7 +80,7 @@ A `changes` job SHALL run the component map check on every run and compute affec
 
 #### Scenario: Root build file
 - **WHEN** a PR changes only the root `build.gradle.kts`
-- **THEN** every node runs except `android`
+- **THEN** every node runs except `android` and `docs`
 
 #### Scenario: Lint configuration change
 - **WHEN** a PR changes only `android/config/detekt/detekt.yml`
@@ -84,7 +92,7 @@ A `changes` job SHALL run the component map check on every run and compute affec
 
 #### Scenario: Component map edit
 - **WHEN** a PR changes only `.github/components.json`
-- **THEN** only `tooling` runs
+- **THEN** `tooling` and `docs` run, because dropping an override must fail the docs check on the pull request
 
 #### Scenario: Root editor configuration
 - **WHEN** a PR changes only the root `.editorconfig`
@@ -108,7 +116,51 @@ A `changes` job SHALL run the component map check on every run and compute affec
 
 #### Scenario: Documentation only
 - **WHEN** the first run of a PR changes only `README.md`, `docs/ci.md` or files under `openspec/`
+- **THEN** only `docs` runs and `ci-ok` passes once it is green
+
+#### Scenario: Path that no node selects
+- **WHEN** the first run of a PR changes only `LICENSE` or files under `site/`
 - **THEN** no node runs and `ci-ok` passes
+
+#### Scenario: Agent guidance edit
+- **WHEN** a PR changes only `.agents/rules/repo-conventional-commits.md`, the root `AGENTS.md` or `opencode.json`
+- **THEN** only `docs` runs
+
+#### Scenario: Nested AGENTS.md selects only docs
+- **WHEN** a PR changes only one of `android/AGENTS.md`, `web-extension/AGENTS.md`, `rust/AGENTS.md`, `protocol/AGENTS.md`, `native-bridge/AGENTS.md`, `native-bridge/installer/AGENTS.md`, `native-bridge/installer/macos/AGENTS.md`, `native-bridge/installer/windows/AGENTS.md`, `verify/AGENTS.md` or `scripts/AGENTS.md`
+- **THEN** only `docs` runs and no `android`, `web-extension`, `rust`, `protocol`, `native-host`, `installer`, `bridge-scaffold`, `supply-chain` or `tooling` job starts, although a node's `paths` contain the file, because `global-overrides` lists each nested `AGENTS.md`
+
+#### Scenario: Host AGENTS.md also selects native-host
+- **WHEN** a PR changes only `native-bridge/host/AGENTS.md`
+- **THEN** `docs` and `native-host` run and the other nodes do not, so a removed string that `native-host / build-contract` requires fails in the PR
+
+#### Scenario: New guidance or CLAUDE.md anywhere
+- **WHEN** a PR adds `rust/new-dir/AGENTS.md`, `site/AGENTS.md` or `android/CLAUDE.md`
+- **THEN** `docs` runs in addition to any node whose `paths` contain the file, because `basename-owners` maps those basenames to `docs`
+
+#### Scenario: AGENTS.md together with code
+- **WHEN** a PR changes `android/AGENTS.md` and `android/app/src/main/Foo.kt`
+- **THEN** `android` runs because of the code change and `docs` runs because of the guidance change
+
+#### Scenario: AGENTS.md edit after green evidence
+- **WHEN** a later PR run changes only `rust/AGENTS.md` and `android` has green evidence
+- **THEN** `android` is skipped and `docs` runs
+
+#### Scenario: Docs workflow edit
+- **WHEN** a PR changes only `.github/workflows/check-docs.yml`
+- **THEN** `docs`, `tooling`, `installer` and `supply-chain` run and the other nodes do not, because the installer contract suite reads every workflow and the scanner scans it
+
+#### Scenario: CODEOWNERS edit
+- **WHEN** a PR changes only `.github/CODEOWNERS`
+- **THEN** only `docs` runs, because `global-overrides` maps it to `docs`
+
+#### Scenario: Documentation read by a gate
+- **WHEN** a PR changes only `docs/reproducible-builds.md`, which the host build-contract suite reads
+- **THEN** `docs` and `native-host` run
+
+#### Scenario: Legacy agent file removed
+- **WHEN** a PR deletes `CLAUDE.md`, `CONTRIBUTION.md` or files under `.opencode/`
+- **THEN** the paths are accounted for through `retired-paths` and `docs` runs
 
 #### Scenario: Markdown inside a node folder
 - **WHEN** a PR changes only `native-bridge/installer/README.md`

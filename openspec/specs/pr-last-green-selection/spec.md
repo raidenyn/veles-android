@@ -21,7 +21,7 @@ For every `ci.yml` run of a pull request after the first, the `changes` job SHAL
 
 #### Scenario: Android passed, docs pushed
 - **WHEN** `android` was green on the previous pull request head and the next push changes only `docs/ci.md`
-- **THEN** `android` is skipped
+- **THEN** `android` is skipped and `docs` is selected
 
 #### Scenario: Android passed, web extension pushed
 - **WHEN** `android` was green on the previous head and the next push changes only `web-extension/src/`
@@ -34,7 +34,6 @@ For every `ci.yml` run of a pull request after the first, the `changes` job SHAL
 #### Scenario: Master movement is ignored
 - **WHEN** `master` advanced with changes to `android/` after the evidence head and the pull request itself did not touch `android/`
 - **THEN** `android` is skipped
-
 ### Requirement: Green means one complete run attempt
 A node SHALL count as green on an evidence head only when, in a single attempt of a completed `ci.yml` run triggered by the `pull_request` event for that head, every job of the node's expected job set has conclusion `success` and no additional job of that node exists. Skipped, neutral, cancelled, failed, missing and in-progress jobs MUST NOT count, and jobs of different runs or attempts MUST NOT be combined.
 
