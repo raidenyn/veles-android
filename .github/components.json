@@ -9,42 +9,80 @@
   ],
   "ci-global": [],
   "global-overrides": {
+    ".github/CODEOWNERS": [
+      "docs"
+    ],
     ".github/components.json": [
-      "tooling"
+      "tooling",
+      "docs"
+    ],
+    ".github/workflows/build-android.yml": [
+      "android",
+      "tooling",
+      "installer"
     ],
     ".github/workflows/check-android.yml": [
       "android",
       "tooling",
       "installer"
     ],
-    ".github/workflows/build-android.yml": [
-      "android",
+    ".github/workflows/check-docs.yml": [
+      "docs",
       "tooling",
-      "installer"
+      "installer",
+      "supply-chain"
+    ],
+    "android/AGENTS.md": [
+      "docs"
+    ],
+    "native-bridge/host/AGENTS.md": [
+      "docs",
+      "native-host"
+    ],
+    "native-bridge/installer/AGENTS.md": [
+      "docs"
+    ],
+    "native-bridge/installer/macos/AGENTS.md": [
+      "docs"
+    ],
+    "native-bridge/installer/windows/AGENTS.md": [
+      "docs"
+    ],
+    "protocol/AGENTS.md": [
+      "docs"
+    ],
+    "rust/AGENTS.md": [
+      "docs"
+    ],
+    "scripts/AGENTS.md": [
+      "docs"
+    ],
+    "verify/AGENTS.md": [
+      "docs"
+    ],
+    "web-extension/AGENTS.md": [
+      "docs"
+    ]
+  },
+  "basename-owners": {
+    "AGENTS.md": [
+      "docs"
+    ],
+    "CLAUDE.md": [
+      "docs"
+    ],
+    "CLAUDE.local.md": [
+      "docs"
     ]
   },
   "unowned": [
-    "docs/",
     "site/",
-    "openspec/",
-    "native-bridge/feasibility/",
-    "native-bridge/AGENTS.md",
-    "README.md",
-    "BUILD.md",
-    "CONTRIBUTING.md",
-    "CONTRIBUTION.md",
     "LICENSE",
-    "CLAUDE.md",
-    "AGENTS.md",
     ".gitignore",
     ".dockerignore",
-    ".gitattributes",
-    ".claude/",
-    ".agents/",
     ".idea/",
-    ".opencode/",
     ".superpowers/",
-    "opencode.json"
+    "native-bridge/feasibility/"
   ],
   "nodes": {
     "android": {
@@ -116,7 +154,8 @@
         "verify/check-remote-code.mjs",
         "verify/generate-sboms.sh",
         "verify/verify-sboms.mjs",
-        "verify/verify-supply-chain.sh"
+        "verify/verify-supply-chain.sh",
+        "docs/otp-25-installers.md"
       ],
       "release-paths": [
         "native-bridge/host/.gitignore",
@@ -201,6 +240,9 @@
         "build.gradle.kts",
         "settings.gradle.kts",
         "gradle.properties"
+      ],
+      "ci-paths": [
+        "docs/reproducible-builds.md"
       ],
       "jobs": [
         "lint",
@@ -287,6 +329,9 @@
         "settings.gradle.kts",
         "gradle.properties"
       ],
+      "ci-paths": [
+        "docs/checks/"
+      ],
       "jobs": [
         "build"
       ]
@@ -308,6 +353,26 @@
       "jobs": [
         "unit-tests"
       ]
+    },
+    "docs": {
+      "release": false,
+      "paths": [
+        "docs/",
+        "openspec/",
+        "AGENTS.md",
+        ".agents/",
+        ".claude/",
+        "opencode.json",
+        ".gitattributes",
+        "README.md",
+        "BUILD.md",
+        "CONTRIBUTING.md",
+        "native-bridge/AGENTS.md"
+      ],
+      "jobs": [
+        "agent-files",
+        "unit-tests"
+      ]
     }
   },
   "retired-paths": {
@@ -316,6 +381,15 @@
     ],
     "config/detekt/": [
       "android"
+    ],
+    "CLAUDE.md": [
+      "docs"
+    ],
+    "CONTRIBUTION.md": [
+      "docs"
+    ],
+    ".opencode/": [
+      "docs"
     ]
   }
 }

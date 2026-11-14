@@ -11,11 +11,14 @@ provisioned into `build/native-bridge/installer/tools/nsis`; unsigned inputs are
 From the repository root (Windows runner or a Windows host):
 
 ```bash
-./gradlew bridgeInstallerTest bridgeInstallerScriptsTest
+./gradlew bridgeInstallerTest
 # UNSIGNED producer (needs the approved tracked release-windows.json):
 ./gradlew bridgeInstallerUnsigned
 ./gradlew bridgeInstallerPackageFixture
 ```
+
+`bridgeInstallerScriptsTest` is disabled on Windows (`build.gradle.kts` sets
+`enabled = installerPlatform != "windows"`); run the Python script suites on Linux or macOS.
 
 The producers never sign: `sign-windows` in the owner-only `publish-release.yml` (`native-release`
 environment) is the only place the installer is signed, and the release gate is `gate-installer`.

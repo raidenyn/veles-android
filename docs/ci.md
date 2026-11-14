@@ -29,6 +29,7 @@ ci.yml
 ├── bridge-scaffold    check-bridge-scaffold.yml lint | unit-tests
 ├── supply-chain       build-supply-chain.yml    build (SBOM, licence, audit and remote-code policy)
 ├── tooling            check-tooling.yml         unit-tests
+├── docs               check-docs.yml            agent-files | unit-tests
 ├── commit-guard       push to master only
 └── ci-ok              always()
 ```
@@ -61,6 +62,8 @@ What each check runs:
 | `bridge-scaffold / unit-tests` | `bridgeNpmTest`, `bridgeRustTest` |
 | `supply-chain / build` | `verify/verify-supply-chain.sh` and the report upload (`build-supply-chain.yml`, shared with `publish-release.yml`) |
 | `tooling / unit-tests` | `node --test verify/test/workflow-contracts.test.mjs`, `./gradlew scriptsTest` |
+| `docs / agent-files` | `python3 docs/checks/check_agent_files.py --root .` |
+| `docs / unit-tests` | `python3 -m unittest discover -s docs/checks -p 'test_*.py'` |
 
 The extension jobs import the generated WASM package, so each one activates the pinned
 Rust toolchain, restores `build/rust-tools` and runs `./gradlew rustWasm` before `npm ci`
@@ -119,17 +122,35 @@ The rules for each changed path:
 | Changed path matches | Selects |
 |---|---|
 | a node's `paths` | that node (and every other node that lists it) |
-| a node's `ci-paths` | that node; these are check-only inputs (lint config, verifier scripts) that never cut a release |
+| a node's `ci-paths` | that node; these are check-only inputs (lint config, verifier scripts, documentation a gate reads) that never cut a release |
 | a node's `release-paths` | nothing in CI; these are release-only inputs (they still count for release attribution) |
-| `global-overrides` | exactly the listed nodes instead of every node; the path still counts for release attribution through `global` |
-| `retired-paths` | the listed nodes; the prefix is accounted for validation even when the files no longer exist |
-| `global` (`.github/`, root Gradle files, `gradle/`, the wrapper, `.java-version`) | every node |
+| `global-overrides` | exactly the listed nodes instead of every node, or, for a file some node's `paths` already own, instead of those nodes; it applies to global paths and to owned files alike and never changes release attribution |
+| `basename-owners` | the listed nodes in addition to the nodes a file's path selects, for any file with that basename in any directory; never changes release attribution |
+| `retired-paths` | the listed nodes; a prefix or an exact file name is accounted for validation even when it no longer exists |
+| `global` (`.github/`, `gradle/`, the wrapper, `.java-version`) | every node |
 | `ci-global` | every node; check-only, never cuts a release |
-| `unowned` (`docs/`, `openspec/`, `README.md`, ...) | nothing |
+| `unowned` (`site/`, `LICENSE`, `.gitignore`, ...) | nothing |
 | nothing above (unaccounted) | every node, and `changes` fails after writing the outputs |
 
-Current overrides: `.github/components.json` selects `tooling`; `.github/workflows/check-android.yml` and
-`.github/workflows/build-android.yml` select `android`, `tooling` and `installer`.
+The root build files (`build.gradle.kts`, `settings.gradle.kts`, `gradle.properties`) are not global: they
+are paths of every node except `android` and `docs`, because the docs check is plain Python and does not
+use Gradle.
+
+Current overrides: `.github/components.json` selects `tooling` and `docs`;
+`.github/workflows/check-android.yml` and `.github/workflows/build-android.yml` select `android`,
+`tooling` and `installer`; `.github/workflows/check-docs.yml` selects `docs`, `tooling`, `installer` and
+`supply-chain`, because the installer contract suite reads every workflow and the remote-code scanner
+scans it; `.github/CODEOWNERS` selects `docs`; every nested node `AGENTS.md` selects `docs` and
+`native-bridge/host/AGENTS.md` also selects `native-host`, whose build-contract suite reads it, so
+editing agent guidance never runs a code node. `docs/AGENTS.md` and `native-bridge/AGENTS.md` need no
+override because `docs` owns them through its `paths`.
+
+`basename-owners` maps `AGENTS.md`, `CLAUDE.md` and `CLAUDE.local.md` to `docs`, so a new nested guidance
+file or a `/init` output selects the docs check on its pull request even when no override exists yet.
+
+A path that a gate reads from a `docs`-owned file is added to the reading node's `ci-paths`, so a
+documentation-only edit cannot pass pull request CI and fail on `master`: `docs/reproducible-builds.md`
+selects `native-host` in addition to `docs`, and `docs/otp-25-installers.md` selects `installer`.
 
 Every node also declares `jobs`, its expected job display names without the `<node> / ` prefix; the
 workflow contract suite derives them from the reusable workflow each caller invokes and fails on drift,
@@ -138,8 +159,9 @@ on a matrix job and on any shape it cannot derive.
 Because every workflow file is under `.github/`, a workflow edit selects every node unless a
 `global-overrides` entry names it. The two Android workflows select only `android`, `tooling` and
 `installer`, because the tooling workflow contract suite and the installer `scripts-tests` read them.
-Every other workflow, such as `ci.yml`, `check-rust.yml`, `build-rust.yml` and `publish-release.yml`,
-stays global and still selects every node, including `native-host / build-contract` and
+`check-docs.yml` selects `docs`, `tooling`, `installer` and `supply-chain` for the same reason. Every
+other workflow, such as `ci.yml`, `check-rust.yml`, `build-rust.yml` and `publish-release.yml`, stays
+global and still selects every node, including `native-host / build-contract` and
 `installer / scripts-tests`, which own the two Python build-contract suites.
 
 Node jobs use `if: !cancelled() && needs.changes.outputs.<node> == 'true'`, so when `changes` writes its

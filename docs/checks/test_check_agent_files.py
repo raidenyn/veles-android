@@ -1,0 +1,1254 @@
+"""Tests for the repository agent-file layout check (parts 1, 2 and 3).
+
+Each fixture is a throwaway git repository, so tests exercise the same git calls the
+real run uses without touching this checkout. Stdlib only; Python 3.8 compatible.
+"""
+import contextlib
+import io
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+CHECKS = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, CHECKS)
+
+from check_agent_files import (  # noqa: E402
+    NESTED_EXCLUSIVE_DOCS,
+    NODE_FILES,
+    NOTICE_NESTED,
+    NOTICE_ROOT,
+    SCOPES,
+    check_codeowners,
+    check_links,
+    check_opencode,
+    check_plugin_mentions,
+    check_repo,
+    list_files,
+    list_links,
+    main,
+    parse_documented_skills,
+    parse_frontmatter,
+)
+
+# The brief's literals, repeated here so a wrong constant cannot satisfy its own fixture.
+EXPECTED_NOTICE_ROOT = (
+    "> **Run your agent from the repository root.** Scoped rules in `.agents/rules/` load only from there."
+)
+EXPECTED_NOTICE_NESTED = (
+    "> **Run your agent from the repository root.** Scoped rules in `.agents/rules/` load only from there; "
+    "if you started in this folder, read this folder's rule files listed below by hand."
+)
+EXPECTED_NODE_FILES = (
+    "android/AGENTS.md",
+    "web-extension/AGENTS.md",
+    "rust/AGENTS.md",
+    "protocol/AGENTS.md",
+    "native-bridge/AGENTS.md",
+    "native-bridge/host/AGENTS.md",
+    "native-bridge/installer/AGENTS.md",
+    "native-bridge/installer/macos/AGENTS.md",
+    "native-bridge/installer/windows/AGENTS.md",
+    "verify/AGENTS.md",
+    "scripts/AGENTS.md",
+    "docs/AGENTS.md",
+)
+EXPECTED_EXCLUSIVE = ("docs/AGENTS.md", "native-bridge/AGENTS.md")
+# The brief's scope map, repeated here so a wrong constant cannot satisfy its own fixture.
+EXPECTED_SCOPES = {
+    "repo": None,
+    "android": "android/**",
+    "web-extension": "web-extension/**",
+    "rust": "rust/**",
+    "protocol": "protocol/**",
+    "native-bridge": "native-bridge/**",
+    "host": "native-bridge/host/**",
+    "installer": "native-bridge/installer/**",
+    "macos": "native-bridge/installer/macos/**",
+    "windows": "native-bridge/installer/windows/**",
+    "verify": "verify/**",
+    "scripts": "scripts/**",
+    "docs": "docs/**",
+}
+EXPECTED_SCOPE_AGENTS = {
+    "repo": "AGENTS.md",
+    "android": "android/AGENTS.md",
+    "web-extension": "web-extension/AGENTS.md",
+    "rust": "rust/AGENTS.md",
+    "protocol": "protocol/AGENTS.md",
+    "native-bridge": "native-bridge/AGENTS.md",
+    "host": "native-bridge/host/AGENTS.md",
+    "installer": "native-bridge/installer/AGENTS.md",
+    "macos": "native-bridge/installer/macos/AGENTS.md",
+    "windows": "native-bridge/installer/windows/AGENTS.md",
+    "verify": "verify/AGENTS.md",
+    "scripts": "scripts/AGENTS.md",
+    "docs": "docs/AGENTS.md",
+}
+RULE_SIZE_MAX = 24000
+# The brief's documented OpenSpec skill list, repeated here so a wrong parser cannot satisfy
+# its own fixture. `docs/AGENTS.md` is the authoritative source at check time.
+EXPECTED_OPENSPEC_SKILLS = (
+    "openspec-apply-change",
+    "openspec-archive-change",
+    "openspec-bulk-archive-change",
+    "openspec-continue-change",
+    "openspec-explore",
+    "openspec-ff-change",
+    "openspec-new-change",
+    "openspec-propose",
+    "openspec-sync-specs",
+    "openspec-update-change",
+    "openspec-verify-change",
+)
+# The Global Constraints override targets, repeated here verbatim.
+EXPECTED_OVERRIDE_TARGETS = {
+    "android/AGENTS.md": ["docs"],
+    "web-extension/AGENTS.md": ["docs"],
+    "rust/AGENTS.md": ["docs"],
+    "protocol/AGENTS.md": ["docs"],
+    "native-bridge/host/AGENTS.md": ["docs", "native-host"],
+    "native-bridge/installer/AGENTS.md": ["docs"],
+    "native-bridge/installer/macos/AGENTS.md": ["docs"],
+    "native-bridge/installer/windows/AGENTS.md": ["docs"],
+    "verify/AGENTS.md": ["docs"],
+    "scripts/AGENTS.md": ["docs"],
+    ".github/CODEOWNERS": ["docs"],
+    ".github/components.json": ["tooling", "docs"],
+    ".github/workflows/check-docs.yml": ["docs", "tooling", "installer", "supply-chain"],
+}
+EXPECTED_CODEOWNER_PATTERNS = (
+    "/opencode.json",
+    "/.claude/",
+    "/.mcp.json",
+    "/.agents/",
+    "**/AGENTS.md",
+)
+OPENCODE_PACKAGE = "opencode-rules@>=2.0.0 <3"
+
+
+def skill_section(skills):
+    lines = ["## OpenSpec skills", ""]
+    lines.extend("- `%s`" % name for name in skills)
+    return lines
+
+
+def nested_text(node, notice=EXPECTED_NOTICE_NESTED, rules=True, skills=None):
+    if skills is None and node == "docs":
+        skills = EXPECTED_OPENSPEC_SKILLS
+    lines = ["# %s/AGENTS.md" % node, ""]
+    if notice is not None:
+        lines.extend([notice, ""])
+    lines.extend(["## Commands", "", "None.", ""])
+    if rules:
+        lines.extend(["## Rules", "", "Follow `.agents/rules/`."])
+    else:
+        lines.extend(["## Notes", "", "No rules section here."])
+    if skills is not None:
+        lines.extend([""] + skill_section(skills))
+    return "\n".join(lines) + "\n"
+
+
+def contributing_text(mention=True):
+    lines = ["# Contributing", ""]
+    if mention:
+        lines.extend(
+            [
+                "- **OpenCode** needs the `opencode-rules` plugin at the range pinned in `opencode.json`.",
+                "",
+            ]
+        )
+    lines.extend(["## Build", "", "Run the build."])
+    return "\n".join(lines) + "\n"
+
+
+def opencode_text(
+    package=OPENCODE_PACKAGE,
+    plugins=None,
+    extra=None,
+    directories=(".agents/rules",),
+):
+    if plugins is None:
+        plugins = [{"package": package, "options": {"additionalRuleDirectories": list(directories)}}]
+    data = {"$schema": "https://opencode.ai/config.json", "plugins": plugins}
+    if extra:
+        data.update(extra)
+    return json.dumps(data, indent=2) + "\n"
+
+
+def codeowners_text(patterns=None):
+    patterns = tuple(EXPECTED_CODEOWNER_PATTERNS if patterns is None else patterns)
+    return "# Agent guidance and configuration.\n" + "".join(
+        "%-24s @raidenyn\n" % pattern for pattern in patterns
+    )
+
+
+def root_text(dirs=None, target_lines=None, notice=EXPECTED_NOTICE_ROOT, mention=True):
+    dirs = list(EXPECTED_NODE_FILES if dirs is None else dirs)
+    lines = ["# AGENTS.md", ""]
+    if notice is not None:
+        lines.extend([notice, ""])
+    lines.extend(["## Node map", ""])
+    for path in dirs:
+        node = path[: -len("/AGENTS.md")]
+        lines.append("- `%s/` — the %s node." % (node, node))
+    if mention:
+        lines.extend(
+            [
+                "",
+                "## Tools",
+                "",
+                "- **OpenCode** needs the `opencode-rules` plugin at the range pinned in `opencode.json`.",
+            ]
+        )
+    lines.extend(["", "## Rules", "", "Repo-wide rules live in `.agents/rules/`."])
+    if target_lines is not None:
+        while len(lines) < target_lines:
+            lines.append("Filler line for the line cap.")
+        if len(lines) != target_lines:
+            raise AssertionError("base root text is already %d lines" % len(lines))
+    return "\n".join(lines) + "\n"
+
+
+def default_overrides():
+    overrides = {
+        path: ["docs"] for path in EXPECTED_NODE_FILES if path not in EXPECTED_EXCLUSIVE
+    }
+    for path, target in EXPECTED_OVERRIDE_TARGETS.items():
+        overrides[path] = list(target)
+    return overrides
+
+
+def components_json(overrides=None):
+    return json.dumps(
+        {"since": "0" * 40, "global-overrides": default_overrides() if overrides is None else overrides},
+        indent=2,
+    ) + "\n"
+
+
+def rule_text(frontmatter, body=""):
+    """A rule file whose frontmatter is ``frontmatter`` verbatim (no leading `---`)."""
+    return "---\n" + frontmatter + "---\n" + body
+
+
+def repo_rule_text(trigger="always_on"):
+    return rule_text("trigger: %s\n" % trigger)
+
+
+def node_rule_text(pattern, trigger="glob"):
+    return rule_text(
+        'trigger: %s\nglobs:\n  - "%s"\npaths:\n  - "%s"\n' % (trigger, pattern, pattern)
+    )
+
+
+def listed(text, *names):
+    """The AGENTS.md text with rule-file mentions appended to its last (``## Rules``) section."""
+    lines = text.rstrip("\n").split("\n") + [""]
+    for name in names:
+        lines.append("- `.agents/rules/%s` — scoped rule for this folder." % name)
+    return "\n".join(lines) + "\n"
+
+
+def with_rule(files, name, text, scope):
+    """Add a rule file and list it in the AGENTS.md of its scope."""
+    files[".agents/rules/" + name] = text
+    agents_path = EXPECTED_SCOPE_AGENTS[scope]
+    files[agents_path] = listed(files[agents_path], name)
+    return files
+
+
+def sized_rule(size):
+    """A valid `repo-*` rule padded with body text to exactly ``size`` bytes."""
+    base = repo_rule_text()
+    padding = size - len(base)
+    if padding < 0:
+        raise AssertionError("size %d is smaller than the %d-byte header" % (size, len(base)))
+    filler = "x" * 79 + "\n"
+    text = base + filler * (padding // len(filler)) + "x" * (padding % len(filler))
+    if len(text) != size:
+        raise AssertionError("fixture is %d bytes, expected %d" % (len(text), size))
+    return text
+
+
+def clean_files(skills=None):
+    skills = list(EXPECTED_OPENSPEC_SKILLS if skills is None else skills)
+    files = {
+        "AGENTS.md": root_text(),
+        "CONTRIBUTING.md": contributing_text(),
+        ".github/components.json": components_json(),
+        ".github/CODEOWNERS": codeowners_text(),
+        "opencode.json": opencode_text(),
+        ".claude/settings.json": json.dumps({"enabledPlugins": {}}, indent=2) + "\n",
+        ".agents/skills/.openspec-target": "claude\n",
+    }
+    for path in EXPECTED_NODE_FILES:
+        node = path[: -len("/AGENTS.md")]
+        files[path] = nested_text(node, skills=skills if node == "docs" else None)
+    for name in skills:
+        files[".agents/skills/%s/SKILL.md" % name] = "# %s\n\nGenerated skill fixture.\n" % name
+    return files
+
+
+def default_symlinks(skills=None):
+    skills = list(EXPECTED_OPENSPEC_SKILLS if skills is None else skills)
+    links = {".claude/rules": "../.agents/rules"}
+    for name in skills:
+        links[".claude/skills/" + name] = "../../.agents/skills/" + name
+    return links
+
+
+def write_text(root, rel, text):
+    full = os.path.join(root, rel)
+    parent = os.path.dirname(full)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(full, "w", encoding="utf-8", newline="") as handle:
+        handle.write(text)
+
+
+def make_repo(tmp, files, symlinks=None):
+    """Create a committed fixture repository under ``tmp`` and return its path."""
+    root = tempfile.mkdtemp(prefix="repo-", dir=tmp)
+    config = os.path.join(tmp, "gitconfig-empty")
+    with open(config, "w", encoding="utf-8") as handle:
+        handle.write("")
+
+    env = dict(os.environ)
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX"):
+        env.pop(name, None)
+    env.update(
+        {
+            "GIT_CONFIG_GLOBAL": config,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_AUTHOR_NAME": "Fixture",
+            "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+            "GIT_COMMITTER_NAME": "Fixture",
+            "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+            "GIT_AUTHOR_DATE": "2026-01-01T00:00:00+00:00",
+            "GIT_COMMITTER_DATE": "2026-01-01T00:00:00+00:00",
+        }
+    )
+
+    def git(*args):
+        result = subprocess.run(
+            ["git"] + list(args),
+            cwd=root,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if result.returncode != 0:
+            raise AssertionError(
+                "git %s failed: %s" % (" ".join(args), result.stderr.decode("utf-8", "replace"))
+            )
+        return result.stdout.decode("utf-8", "replace")
+
+    git("init", "-q", "-b", "master")
+    git("config", "core.autocrlf", "false")
+    git("config", "core.symlinks", "true")
+    for rel, text in files.items():
+        write_text(root, rel, text)
+    for rel, target in (symlinks or {}).items():
+        full = os.path.join(root, rel)
+        parent = os.path.dirname(full)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        os.symlink(target, full)
+    git("add", "-A")
+    git("commit", "-q", "--no-verify", "-m", "test: fixture")
+    return root
+
+
+def git_output(root, *args):
+    """Run git in ``root`` with the test process's (isolated) environment."""
+    result = subprocess.run(
+        ["git"] + list(args), cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            "git %s failed: %s" % (" ".join(args), result.stderr.decode("utf-8", "replace"))
+        )
+    return result.stdout.decode("utf-8", "replace")
+
+
+class AgentFileCheckTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="veles-agent-files-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        # Isolate every git call this process makes, including the checker's own queries, so a
+        # developer's global config, excludes file or attributes cannot change the results.
+        config = os.path.join(self.tmp, "gitconfig-empty")
+        with open(config, "w", encoding="utf-8") as handle:
+            handle.write("")
+        self._saved_env = {}
+        for name, value in (("GIT_CONFIG_GLOBAL", config), ("GIT_CONFIG_NOSYSTEM", "1")):
+            self._saved_env[name] = os.environ.get(name)
+            os.environ[name] = value
+        self.addCleanup(self._restore_git_env)
+
+    def _restore_git_env(self):
+        for name, value in self._saved_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    def repo(self, files=None, symlinks=None, skills=None):
+        if files is None:
+            files = clean_files(skills)
+        if symlinks is None:
+            symlinks = default_symlinks(skills)
+        return make_repo(self.tmp, files, symlinks)
+
+    def assert_finding(self, findings, severity, path, fragment):
+        matching = [
+            finding for finding in findings if finding.path == path and fragment in finding.message
+        ]
+        self.assertEqual(
+            len(matching),
+            1,
+            "expected one finding for %s containing %r, got %r" % (path, fragment, findings),
+        )
+        self.assertEqual(matching[0].severity, severity, matching[0])
+
+    def test_constants_are_exact(self):
+        self.assertEqual(NOTICE_ROOT, EXPECTED_NOTICE_ROOT)
+        self.assertEqual(NOTICE_NESTED, EXPECTED_NOTICE_NESTED)
+        self.assertEqual(tuple(NODE_FILES), EXPECTED_NODE_FILES)
+        self.assertEqual(tuple(NESTED_EXCLUSIVE_DOCS), EXPECTED_EXCLUSIVE)
+
+    def test_clean_fixture_passes(self):
+        root = self.repo()
+        self.assertEqual(check_repo(root), [])
+        self.assertEqual(check_repo(root, platform="win32"), [])
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(main(["--root", root]), 0)
+        self.assertEqual(output.getvalue(), "")
+
+    def test_nested_claude_md_fails(self):
+        files = clean_files()
+        files["android/CLAUDE.md"] = "# Legacy guidance\n"
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", "android/CLAUDE.md", "legacy agent file")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_claude_local_and_dot_claude_md_fail(self):
+        files = clean_files()
+        files["CLAUDE.md"] = "# Legacy\n"
+        files["CLAUDE.local.md"] = "# Local legacy\n"
+        files[".claude/CLAUDE.md"] = "# Nested legacy\n"
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", "CLAUDE.md", "legacy agent file")
+        self.assert_finding(findings, "error", "CLAUDE.local.md", "legacy agent file")
+        self.assert_finding(findings, "error", ".claude/CLAUDE.md", "legacy agent file")
+        self.assertEqual(len(findings), 3, findings)
+
+    def test_contribution_md_fails(self):
+        files = clean_files()
+        files["CONTRIBUTION.md"] = "# Wrong spelling\n"
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", "CONTRIBUTION.md", "CONTRIBUTING.md")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_opencode_dir_and_claude_commands_fail(self):
+        files = clean_files()
+        files[".opencode/agent/reviewer.md"] = "---\n---\n"
+        files[".claude/commands/fix-issue.md"] = "# Fix\n"
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".opencode/agent/reviewer.md", "legacy agent tooling path")
+        self.assert_finding(findings, "error", ".claude/commands/fix-issue.md", "legacy agent tooling path")
+        self.assertEqual(len(findings), 2, findings)
+
+    def test_root_line_boundaries(self):
+        files = clean_files()
+        files["AGENTS.md"] = root_text(target_lines=60)
+        self.assertEqual(check_repo(self.repo(files)), [])
+        cases = ((61, "warning", "cap is 60 lines"), (120, "warning", "cap is 60 lines"), (121, "error", "hard limit is 120 lines"))
+        for count, severity, fragment in cases:
+            with self.subTest(lines=count):
+                files = clean_files()
+                files["AGENTS.md"] = root_text(target_lines=count)
+                findings = check_repo(self.repo(files))
+                self.assert_finding(findings, severity, "AGENTS.md", fragment)
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_nested_missing_rules_section_fails(self):
+        files = clean_files()
+        files["scripts/AGENTS.md"] = nested_text("scripts", rules=False)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", "scripts/AGENTS.md", "missing a `## Rules` section")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_crlf_agents_md_notice_still_matches(self):
+        files = clean_files()
+        files["AGENTS.md"] = root_text().replace("\n", "\r\n")
+        files["web-extension/AGENTS.md"] = nested_text("web-extension").replace("\n", "\r\n")
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_missing_notice_fails(self):
+        files = clean_files()
+        files["AGENTS.md"] = root_text(notice=None)
+        files["rust/AGENTS.md"] = nested_text("rust", notice=None)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", "AGENTS.md", "missing the run-from-root notice")
+        self.assert_finding(findings, "error", "rust/AGENTS.md", "missing the nested run-from-root notice")
+        self.assertEqual(len(findings), 2, findings)
+
+    def test_missing_node_file_fails(self):
+        files = clean_files()
+        del files["verify/AGENTS.md"]
+        files["AGENTS.md"] = root_text(dirs=[p for p in EXPECTED_NODE_FILES if p != "verify/AGENTS.md"])
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", "verify/AGENTS.md", "required AGENTS.md")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_unlisted_nested_agents_md_fails(self):
+        files = clean_files()
+        files["extra/AGENTS.md"] = nested_text("extra")
+        overrides = default_overrides()
+        overrides["extra/AGENTS.md"] = ["docs"]
+        files[".github/components.json"] = components_json(overrides)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", "extra/AGENTS.md", "not listed in the root node map")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_extra_nested_agents_md_without_notice_or_rules_fails(self):
+        # A tracked nested AGENTS.md beyond the fixed 12 is still a nested agent file: listing it
+        # in the node map and the component map must not excuse missing notice and `## Rules`.
+        files = clean_files()
+        files["extra/AGENTS.md"] = "# extra/AGENTS.md\n\n## Commands\n\nNone.\n"
+        files["AGENTS.md"] = root_text(dirs=list(EXPECTED_NODE_FILES) + ["extra/AGENTS.md"])
+        overrides = default_overrides()
+        overrides["extra/AGENTS.md"] = ["docs"]
+        files[".github/components.json"] = components_json(overrides)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", "extra/AGENTS.md", "missing the nested run-from-root notice"
+        )
+        self.assert_finding(findings, "error", "extra/AGENTS.md", "missing a `## Rules` section")
+        self.assertEqual(len(findings), 2, findings)
+
+    def test_listed_missing_file_fails(self):
+        files = clean_files()
+        files["AGENTS.md"] = root_text(dirs=list(EXPECTED_NODE_FILES) + ["ghost/AGENTS.md"])
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", "ghost/AGENTS.md", "listed in the root node map")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_nested_without_override_fails(self):
+        overrides = default_overrides()
+        del overrides["android/AGENTS.md"]
+        files = clean_files()
+        files[".github/components.json"] = components_json(overrides)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", "android/AGENTS.md", "global-overrides")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_main_reports_findings(self):
+        files = clean_files()
+        files["CLAUDE.md"] = "# Legacy\n"
+        root = self.repo(files)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = main(["--root", root])
+        self.assertEqual(code, 1)
+        printed = output.getvalue().splitlines()
+        self.assertEqual(len(printed), 1, printed)
+        self.assertTrue(printed[0].startswith("error CLAUDE.md: "), printed)
+
+    def test_invalid_root_reports_environment_failure(self):
+        missing = os.path.join(self.tmp, "does-not-exist")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = main(["--root", missing])
+        self.assertEqual(code, 1)
+        lines = output.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith("error %s: " % missing), lines)
+
+        broken = os.path.join(self.tmp, "broken-repo")
+        os.makedirs(broken)
+        write_text(broken, ".git", "gitdir: /nonexistent/veles\n")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = main(["--root", broken])
+        self.assertEqual(code, 1)
+        printed = output.getvalue()
+        self.assertTrue(printed.startswith("error %s: " % broken), printed)
+        self.assertIn("not a git repository", printed)
+
+    def test_list_files_ignores_ignored_and_keeps_untracked(self):
+        files = clean_files()
+        files[".gitignore"] = "build/\n"
+        root = self.repo(files, symlinks={"docs/link.md": "AGENTS.md"})
+        write_text(root, "untracked.md", "# New\n")
+        write_text(root, "build/out.txt", "ignored\n")
+        listed = list_files(root)
+        self.assertIn("AGENTS.md", listed)
+        self.assertIn("untracked.md", listed)
+        self.assertNotIn("build/out.txt", listed)
+        self.assertIn("docs/link.md", listed)
+        self.assertEqual([path for path in listed if path.endswith("/")], [])
+        self.assertIn("docs/link.md", list_links(root))
+        self.assertNotIn("AGENTS.md", list_links(root))
+
+    def test_list_files_drops_nested_worktree_directory_entry(self):
+        root = self.repo()
+        nested = os.path.join(root, "nested-wt")
+        os.makedirs(nested)
+        # A nested repository is enough: git reports it as the directory entry `nested-wt/`,
+        # never as files inside it, so list_files must drop the entry rather than call it a file.
+        git_output(nested, "init", "-q")
+        raw = git_output(root, "ls-files", "-z", "-co", "--exclude-standard").split("\0")
+        self.assertIn("nested-wt/", raw)
+        listed = list_files(root)
+        self.assertNotIn("nested-wt/", listed)
+        self.assertEqual([path for path in listed if path.startswith("nested-wt/")], [])
+
+    def test_untracked_symlink_is_reported_as_link(self):
+        root = self.repo()
+        os.symlink("AGENTS.md", os.path.join(root, "new-link.md"))
+        write_text(root, "new-file.md", "# New\n")
+        self.assertIn("new-link.md", list_files(root))
+        self.assertIn("new-link.md", list_links(root))
+        self.assertNotIn("new-file.md", list_links(root))
+
+    def test_scopes_map_is_exact(self):
+        self.assertEqual(SCOPES, EXPECTED_SCOPES)
+
+    def test_frontmatter_parses_supported_forms(self):
+        block = '---\ntrigger: glob\nglobs:\n  - "android/**"\npaths:\n  - "android/**"\n---\n'
+        self.assertEqual(
+            parse_frontmatter(block),
+            {"trigger": "glob", "globs": ["android/**"], "paths": ["android/**"]},
+        )
+        flow = (
+            '---\ntrigger: glob\nglobs: ["android/**", "android/app/**"]\n'
+            'paths: ["android/**"]\n---\n'
+        )
+        self.assertEqual(
+            parse_frontmatter(flow),
+            {"trigger": "glob", "globs": ["android/**", "android/app/**"], "paths": ["android/**"]},
+        )
+        spaced = "---\n\ntrigger: always_on\n\n---\n"
+        self.assertEqual(parse_frontmatter(spaced), {"trigger": "always_on"})
+
+    def test_frontmatter_decodes_quoted_escapes(self):
+        text = (
+            '---\ntrigger: glob\nglobs: ["android/\\"quoted\\"/**", "android/\\\\x"]\n'
+            'paths:\n  - "android/\\\\y"\n---\n'
+        )
+        self.assertEqual(
+            parse_frontmatter(text),
+            {
+                "trigger": "glob",
+                "globs": ['android/"quoted"/**', "android/\\x"],
+                "paths": ["android/\\y"],
+            },
+        )
+
+    def test_frontmatter_rejects_unsupported_yaml(self):
+        cases = {
+            "anchor": "---\ntrigger: &anchor glob\n---\n",
+            "alias": "---\ntrigger: *anchor\n---\n",
+            "double-quoted scalar": '---\ntrigger: "always_on"\n---\n',
+            "colon in value": "---\ntrigger: x: y\n---\n",
+            "two spaces before a value": "---\ntrigger:  &anchor glob\n---\n",
+            "nested map": "---\ntrigger:\n  glob: x\n---\n",
+            "duplicate key": "---\ntrigger: always_on\ntrigger: glob\n---\n",
+            "unquoted block item": "---\ntrigger: glob\nglobs:\n  - android/**\n---\n",
+            "unquoted flow item": "---\ntrigger: glob\nglobs: [android/**]\n---\n",
+            "invalid flow escape": '---\ntrigger: glob\nglobs: ["android/\\q"]\n---\n',
+            "invalid block escape": '---\ntrigger: glob\nglobs:\n  - "android/\\q"\n---\n',
+            "empty block list": '---\ntrigger: glob\nglobs:\npaths:\n  - "android/**"\n---\n',
+            "tab indentation": '---\ntrigger: always_on\n\tglobs: ["android/**"]\n---\n',
+            "single-quoted scalar": "---\ntrigger: 'always_on'\n---\n",
+            "missing opening delimiter": "trigger: always_on\n---\n",
+            "missing closing delimiter": "---\ntrigger: always_on\n",
+        }
+        for label, text in cases.items():
+            with self.subTest(label):
+                with self.assertRaises(ValueError):
+                    parse_frontmatter(text)
+
+    def test_frontmatter_strips_bom(self):
+        text = "\ufeff" + node_rule_text("android/**")
+        self.assertEqual(
+            parse_frontmatter(text),
+            {"trigger": "glob", "globs": ["android/**"], "paths": ["android/**"]},
+        )
+        files = with_rule(clean_files(), "android-bom.md", text, "android")
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_crlf_rule_parses(self):
+        lf = node_rule_text("android/**")
+        crlf = lf.replace("\n", "\r\n")
+        self.assertEqual(parse_frontmatter(crlf), parse_frontmatter(lf))
+        self.assertEqual(parse_frontmatter(crlf)["globs"], ["android/**"])
+        files = with_rule(clean_files(), "android-crlf.md", crlf, "android")
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_rule_in_subdirectory_fails(self):
+        files = clean_files()
+        files[".agents/rules/android/extra.md"] = node_rule_text("android/**")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".agents/rules/android/extra.md", "subdirectory")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_unknown_scope_name_fails(self):
+        cases = (
+            ("unknown-topic.md", "known scope"),
+            ("README.md", "known scope"),
+            ("android-topic.txt", "does not end with `.md`"),
+        )
+        for name, fragment in cases:
+            with self.subTest(name=name):
+                files = clean_files()
+                files[".agents/rules/" + name] = repo_rule_text()
+                findings = check_repo(self.repo(files))
+                self.assert_finding(findings, "error", ".agents/rules/" + name, fragment)
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_scope_resolved_by_longest_known_prefix(self):
+        cases = (
+            ("web-extension-x.md", "web-extension"),
+            ("native-bridge-x.md", "native-bridge"),
+            ("host-x.md", "host"),
+        )
+        for name, scope in cases:
+            with self.subTest(name=name):
+                pattern = EXPECTED_SCOPES[scope]
+                files = with_rule(clean_files(), name, node_rule_text(pattern), scope)
+                self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_rule_size_boundaries(self):
+        for size, clean in ((RULE_SIZE_MAX, True), (RULE_SIZE_MAX + 1, False)):
+            with self.subTest(size=size):
+                text = sized_rule(size)
+                self.assertEqual(len(text), size)
+                files = with_rule(clean_files(), "repo-sized.md", text, "repo")
+                findings = check_repo(self.repo(files))
+                if clean:
+                    self.assertEqual(findings, [])
+                else:
+                    self.assert_finding(findings, "error", ".agents/rules/repo-sized.md", "size cap")
+                    self.assertEqual(len(findings), 1, findings)
+
+    def test_rule_over_24000_bytes_fails(self):
+        files = with_rule(clean_files(), "repo-large.md", sized_rule(30000), "repo")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".agents/rules/repo-large.md", "size cap")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_unknown_frontmatter_key_fails(self):
+        text = rule_text("trigger: always_on\nkeywords: otp\n")
+        files = with_rule(clean_files(), "repo-keywords.md", text, "repo")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".agents/rules/repo-keywords.md", "keywords")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_repo_rule_with_globs_fails(self):
+        for key in ("globs", "paths"):
+            with self.subTest(key=key):
+                text = rule_text("trigger: always_on\n%s: [\"android/**\"]\n" % key)
+                files = with_rule(clean_files(), "repo-scoped.md", text, "repo")
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings, "error", ".agents/rules/repo-scoped.md", "must not set `%s`" % key
+                )
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_repo_rule_must_be_always_on(self):
+        files = with_rule(clean_files(), "repo-glob.md", repo_rule_text("glob"), "repo")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".agents/rules/repo-glob.md", "always_on")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_node_rule_globs_must_be_list(self):
+        # A quoted glob is outside the frontmatter grammar and fails as invalid frontmatter;
+        # a plain scalar is a YAML string and fails the list requirement.
+        cases = (
+            (
+                'trigger: glob\nglobs: "android/**"\npaths:\n  - "android/**"\n',
+                "invalid frontmatter",
+            ),
+            (
+                'trigger: glob\nglobs: android\npaths:\n  - "android/**"\n',
+                "`globs` must be a YAML list",
+            ),
+        )
+        for frontmatter, fragment in cases:
+            with self.subTest(fragment=fragment):
+                files = with_rule(
+                    clean_files(), "android-string-globs.md", rule_text(frontmatter), "android"
+                )
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings, "error", ".agents/rules/android-string-globs.md", fragment
+                )
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_node_rule_scalar_paths_fails(self):
+        cases = (
+            (
+                'trigger: glob\nglobs:\n  - "android/**"\npaths: "android/**"\n',
+                "invalid frontmatter",
+            ),
+            (
+                'trigger: glob\nglobs:\n  - "android/**"\npaths: android\n',
+                "`paths` must be a YAML list",
+            ),
+        )
+        for frontmatter, fragment in cases:
+            with self.subTest(fragment=fragment):
+                files = with_rule(
+                    clean_files(), "android-string-paths.md", rule_text(frontmatter), "android"
+                )
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings, "error", ".agents/rules/android-string-paths.md", fragment
+                )
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_node_rule_globs_paths_must_match(self):
+        text = rule_text('trigger: glob\nglobs:\n  - "android/**"\npaths:\n  - "android/app/**"\n')
+        files = with_rule(clean_files(), "android-mismatch.md", text, "android")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings,
+            "error",
+            ".agents/rules/android-mismatch.md",
+            '`paths` must be exactly ["android/**"]',
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_node_rule_pattern_must_equal_scope(self):
+        files = with_rule(
+            clean_files(), "rust-wrong-pattern.md", node_rule_text("android/**"), "rust"
+        )
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings,
+            "error",
+            ".agents/rules/rust-wrong-pattern.md",
+            '`globs` must be exactly ["rust/**"]',
+        )
+        self.assert_finding(
+            findings,
+            "error",
+            ".agents/rules/rust-wrong-pattern.md",
+            '`paths` must be exactly ["rust/**"]',
+        )
+        self.assertEqual(len(findings), 2, findings)
+
+    def test_brace_expansion_fails(self):
+        text = rule_text(
+            'trigger: glob\nglobs:\n  - "android/{app,core}/**"\n'
+            'paths:\n  - "android/{app,core}/**"\n'
+        )
+        files = with_rule(clean_files(), "android-braces.md", text, "android")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", ".agents/rules/android-braces.md", "`globs` must not use brace expansion"
+        )
+        self.assert_finding(
+            findings, "error", ".agents/rules/android-braces.md", "`paths` must not use brace expansion"
+        )
+        self.assertEqual(len(findings), 2, findings)
+
+    def test_node_rule_requires_trigger_glob(self):
+        cases = {
+            "missing": rule_text('globs:\n  - "android/**"\npaths:\n  - "android/**"\n'),
+            "always_on": rule_text(
+                'trigger: always_on\nglobs:\n  - "android/**"\npaths:\n  - "android/**"\n'
+            ),
+        }
+        for label, text in cases.items():
+            with self.subTest(label):
+                files = with_rule(clean_files(), "android-trigger.md", text, "android")
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings, "error", ".agents/rules/android-trigger.md", "trigger: glob"
+                )
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_rule_not_listed_by_scope_agents_md_fails(self):
+        # Cross-folder "read this rule" pointers neither count as a listing nor fail the check.
+        files = clean_files()
+        files[".agents/rules/android-test.md"] = node_rule_text("android/**")
+        for agents_path in ("AGENTS.md", "rust/AGENTS.md", "protocol/AGENTS.md"):
+            files[agents_path] = listed(files[agents_path], "android-test.md")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", ".agents/rules/android-test.md", "is not listed in android/AGENTS.md"
+        )
+        self.assertEqual(len(findings), 1, findings)
+        files["android/AGENTS.md"] = listed(files["android/AGENTS.md"], "android-test.md")
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_repo_rules_listed_by_root(self):
+        files = clean_files()
+        files[".agents/rules/repo-test-rule.md"] = repo_rule_text()
+        files["android/AGENTS.md"] = listed(files["android/AGENTS.md"], "repo-test-rule.md")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", ".agents/rules/repo-test-rule.md", "is not listed in AGENTS.md"
+        )
+        self.assertEqual(len(findings), 1, findings)
+        files["AGENTS.md"] = listed(files["AGENTS.md"], "repo-test-rule.md")
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_listed_rule_file_missing_fails(self):
+        files = clean_files()
+        files["android/AGENTS.md"] = listed(files["android/AGENTS.md"], "android-ghost.md")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".agents/rules/android-ghost.md", "does not exist")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_reference_must_match_whole_rule_path(self):
+        # `.agents/rules/repo-x.md.bak` is not a mention of `repo-x.md`: it must not satisfy the
+        # listing, and it must not be reported as a missing rule file either.
+        files = clean_files()
+        files[".agents/rules/repo-x.md"] = repo_rule_text()
+        files["AGENTS.md"] = listed(files["AGENTS.md"], "repo-x.md.bak")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", ".agents/rules/repo-x.md", "is not listed in AGENTS.md"
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+        files["AGENTS.md"] = listed(files["AGENTS.md"], "repo-x.md")
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_reference_prefix_does_not_fail_as_missing(self):
+        files = clean_files()
+        files["android/AGENTS.md"] = listed(files["android/AGENTS.md"], "android-ghost.md.bak")
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_empty_topic_fails(self):
+        files = clean_files()
+        files[".agents/rules/repo-.md"] = repo_rule_text()
+        files["AGENTS.md"] = listed(files["AGENTS.md"], "repo-.md")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".agents/rules/repo-.md", "empty topic")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_oversized_rule_skips_content_parsing(self):
+        # Content that would add an invalid-frontmatter finding if it were parsed at all.
+        text = "not a frontmatter block\n" + "y" * RULE_SIZE_MAX + "\n"
+        files = with_rule(clean_files(), "repo-huge.md", text, "repo")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".agents/rules/repo-huge.md", "size cap")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_check_functions_accept_the_real_tree_shape(self):
+        root = self.repo()
+        files = list_files(root)
+        self.assertEqual(check_links(root, files, "linux"), [])
+        self.assertEqual(check_opencode(root), [])
+        self.assertEqual(check_codeowners(root), [])
+        self.assertEqual(check_plugin_mentions(root), [])
+
+    def test_documented_skill_section_parses(self):
+        text = "# x\n\n## OpenSpec skills\n\n- `alpha`\n- `beta`\n\n## Next\n\n- `gamma`\n"
+        self.assertEqual(parse_documented_skills(text), ("alpha", "beta"))
+        self.assertEqual(parse_documented_skills(nested_text("docs")), EXPECTED_OPENSPEC_SKILLS)
+        self.assertEqual(parse_documented_skills(""), ())
+
+    def test_missing_rules_symlink_fails(self):
+        symlinks = default_symlinks()
+        del symlinks[".claude/rules"]
+        findings = check_repo(self.repo(symlinks=symlinks))
+        self.assert_finding(findings, "error", ".claude/rules", "is missing")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_rules_regular_file_fails_on_linux_warns_on_windows(self):
+        # The index still records mode 120000; only the worktree is a regular-file stand-in,
+        # which is what a Windows checkout without core.symlinks/Developer Mode produces.
+        root = self.repo()
+        os.unlink(os.path.join(root, ".claude/rules"))
+        write_text(root, ".claude/rules", "../.agents/rules")
+        findings = check_repo(root, platform="linux")
+        self.assert_finding(findings, "error", ".claude/rules", "is not a symlink")
+        self.assertEqual(len(findings), 1, findings)
+
+        findings = check_repo(root, platform="win32")
+        self.assert_finding(findings, "warning", ".claude/rules", "is not a symlink")
+        self.assert_finding(findings, "warning", ".claude/rules", "core.symlinks=true")
+        self.assert_finding(findings, "warning", ".claude/rules", "Developer Mode")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_wrong_symlink_target_fails(self):
+        symlinks = default_symlinks()
+        symlinks[".claude/rules"] = "../.agents/rulez"
+        findings = check_repo(self.repo(symlinks=symlinks))
+        self.assert_finding(findings, "error", ".claude/rules", "points to")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_skill_without_link_fails(self):
+        files = clean_files()
+        files[".agents/skills/local-skill/SKILL.md"] = "# local\n"
+        findings = check_repo(self.repo(files, default_symlinks()))
+        self.assert_finding(findings, "error", ".claude/skills/local-skill", "is missing")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_untracked_skill_with_link_is_not_a_false_positive(self):
+        root = self.repo()
+        write_text(root, ".agents/skills/local-skill/SKILL.md", "# local\n")
+        os.symlink(
+            "../../.agents/skills/local-skill", os.path.join(root, ".claude/skills/local-skill")
+        )
+        self.assertEqual(check_repo(root), [])
+
+    def test_orphan_claude_skill_link_fails(self):
+        symlinks = default_symlinks()
+        symlinks[".claude/skills/openspec-ghost"] = "../../.agents/skills/openspec-ghost"
+        findings = check_repo(self.repo(symlinks=symlinks))
+        self.assert_finding(findings, "error", ".claude/skills/openspec-ghost", "orphan")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_wrong_skill_link_target_fails(self):
+        symlinks = default_symlinks()
+        symlinks[".claude/skills/openspec-apply-change"] = (
+            "../../.agents/skills/openspec-archive-change"
+        )
+        findings = check_repo(self.repo(symlinks=symlinks))
+        self.assert_finding(findings, "error", ".claude/skills/openspec-apply-change", "points to")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_skill_set_must_equal_documented_list(self):
+        extra = "openspec-extra-change"
+        files, symlinks = clean_files(), default_symlinks()
+        files[".agents/skills/%s/SKILL.md" % extra] = "# extra\n"
+        symlinks[".claude/skills/" + extra] = "../../.agents/skills/" + extra
+        findings = check_repo(self.repo(files, symlinks))
+        self.assert_finding(
+            findings, "error", ".agents/skills/" + extra, "not listed under `## OpenSpec skills`"
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+        # Adding the skill and its doc bullet together passes.
+        skills = list(EXPECTED_OPENSPEC_SKILLS) + [extra]
+        self.assertEqual(check_repo(self.repo(clean_files(skills), default_symlinks(skills))), [])
+
+        # A skill that still exists but was dropped from the doc fails in the other direction.
+        dropped = "openspec-verify-change"
+        files, symlinks = clean_files(), default_symlinks()
+        del files[".agents/skills/%s/SKILL.md" % dropped]
+        del symlinks[".claude/skills/" + dropped]
+        findings = check_repo(self.repo(files, symlinks))
+        self.assert_finding(
+            findings,
+            "error",
+            ".agents/skills/" + dropped,
+            "is listed under `## OpenSpec skills` in docs/AGENTS.md but is missing",
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+        # Updating the doc together with the skill set passes.
+        skills = [name for name in EXPECTED_OPENSPEC_SKILLS if name != dropped]
+        self.assertEqual(check_repo(self.repo(clean_files(skills), default_symlinks(skills))), [])
+
+    def test_settings_json_symlink_fails(self):
+        files = clean_files()
+        del files[".claude/settings.json"]
+        symlinks = default_symlinks()
+        symlinks[".claude/settings.json"] = "settings-target.json"
+        findings = check_repo(self.repo(files, symlinks))
+        self.assert_finding(findings, "error", ".claude/settings.json", "must not be a symlink")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_settings_worktree_symlink_fails(self):
+        # The index still records a regular file (100644); only the unstaged worktree entry is
+        # a symlink, so the index-only link test would miss it.
+        root = self.repo()
+        os.unlink(os.path.join(root, ".claude/settings.json"))
+        os.symlink("settings-target.json", os.path.join(root, ".claude/settings.json"))
+        findings = check_repo(root)
+        self.assert_finding(findings, "error", ".claude/settings.json", "must not be a symlink")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_openspec_target_marker_excluded(self):
+        root = self.repo()
+        self.assertEqual(check_repo(root), [])
+        self.assertIn(".agents/skills/.openspec-target", list_files(root))
+        self.assertFalse(any(".openspec-target" in found.path for found in check_repo(root)))
+        files = clean_files()
+        del files[".agents/skills/.openspec-target"]
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_override_target_sets_exact(self):
+        cases = (
+            ("native-bridge/host/AGENTS.md", ["docs"], "native-bridge/host/AGENTS.md", "native-host"),
+            ("android/AGENTS.md", ["android"], "android/AGENTS.md", "expected exactly"),
+            (
+                ".github/workflows/check-docs.yml",
+                ["docs", "tooling"],
+                ".github/workflows/check-docs.yml",
+                "supply-chain",
+            ),
+            (".github/components.json", ["tooling"], ".github/components.json", "expected exactly"),
+        )
+        for key, target, path, fragment in cases:
+            with self.subTest(key=key):
+                overrides = default_overrides()
+                overrides[key] = target
+                files = clean_files()
+                files[".github/components.json"] = components_json(overrides)
+                findings = check_repo(self.repo(files))
+                self.assert_finding(findings, "error", path, "global-overrides")
+                self.assert_finding(findings, "error", path, fragment)
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_codeowners_missing_entry_fails(self):
+        for pattern in ("/.claude/", "**/AGENTS.md", "/.agents/"):
+            with self.subTest(pattern=pattern):
+                patterns = [item for item in EXPECTED_CODEOWNER_PATTERNS if item != pattern]
+                files = clean_files()
+                files[".github/CODEOWNERS"] = codeowners_text(patterns)
+                findings = check_repo(self.repo(files))
+                self.assert_finding(findings, "error", ".github/CODEOWNERS", pattern)
+                self.assertEqual(len(findings), 1, findings)
+
+        # `/.mcp.json` is required only when that file exists.
+        without_mcp = [item for item in EXPECTED_CODEOWNER_PATTERNS if item != "/.mcp.json"]
+        files = clean_files()
+        files[".github/CODEOWNERS"] = codeowners_text(without_mcp)
+        self.assertEqual(check_repo(self.repo(files)), [])
+        files[".mcp.json"] = "{}\n"
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".github/CODEOWNERS", "/.mcp.json")
+        self.assertEqual(len(findings), 1, findings)
+
+        files = clean_files()
+        del files[".github/CODEOWNERS"]
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".github/CODEOWNERS", "is missing")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_codeowners_pattern_without_owner_fails(self):
+        # A bare pattern matches files but assigns no reviewer, so it is not coverage.
+        patterns = [item for item in EXPECTED_CODEOWNER_PATTERNS if item != "/.agents/"]
+        files = clean_files()
+        files[".github/CODEOWNERS"] = codeowners_text(patterns) + "/.agents/\n"
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", ".github/CODEOWNERS", "has no owner on the `/.agents/` pattern"
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_opencode_extra_key_fails(self):
+        files = clean_files()
+        files["opencode.json"] = opencode_text(extra={"model": "x"})
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", "opencode.json", "unexpected key `model`")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_opencode_second_plugin_fails(self):
+        entry = {
+            "package": OPENCODE_PACKAGE,
+            "options": {"additionalRuleDirectories": [".agents/rules"]},
+        }
+        files = clean_files()
+        files["opencode.json"] = opencode_text(plugins=[entry, dict(entry)])
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", "opencode.json", "exactly one")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_opencode_unpinned_fails(self):
+        cases = (
+            ("", "no version constraint"),
+            ("@latest", "dist-tag"),
+            ("@*", "unbounded"),
+            ("@^1.0.0", "below 2.0.0"),
+            ("@>=1.0.0 <3", "below 2.0.0"),
+            ("@<=2.9.9", "below 2.0.0"),
+            ("@2.1.0", "exact pin"),
+            ("@=2.1.0 <3", "exact pin"),
+            ("@>=2.1.0 <=2.1.0", "exact pin"),
+            ("@2.1.0 >=2 <3", "exact pin"),
+            ("@>2.1.0 <2.1.2", "exact pin"),
+            ("@>=2.1.0 <2.1.1", "exact pin"),
+            ("@>2.1.0 <=2.1.1", "exact pin"),
+            ("@>2.0.0 <2.0.2", "exact pin"),
+            ("@>=2.0.0 <4", "3.0.0 and above"),
+            ("@3.x", "3.0.0 and above"),
+            ("@>=3.0.0", "no upper bound"),
+            ("@^2.0.0-beta.1", "not a semver range"),
+            ("@v2.0.0", "`v` prefix"),
+        )
+        for suffix, fragment in cases:
+            with self.subTest(spec=suffix):
+                files = clean_files()
+                files["opencode.json"] = opencode_text(package="opencode-rules" + suffix)
+                findings = check_repo(self.repo(files))
+                self.assert_finding(findings, "error", "opencode.json", fragment)
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_opencode_range_accepted(self):
+        specs = (
+            ">=2.0.0 <3",
+            ">= 2.0.0 < 3",
+            ">1 <3",
+            "^2.0.0",
+            "^2",
+            "~2.1.0",
+            "2.x",
+            "2.1.x",
+            ">=2.1.0 <3.0.0",
+            "~2",
+            ">=2.0.0 <2.1.0",
+            ">2.0.0 <2.0.3",
+            ">=2.0.0 <=2.9.9",
+            ">2.9.0 <3",
+        )
+        for spec in specs:
+            with self.subTest(spec=spec):
+                files = clean_files()
+                files["opencode.json"] = opencode_text(package="opencode-rules@" + spec)
+                self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_opencode_missing_rules_dir_fails(self):
+        for directories in ((".agents/other",), ()):
+            with self.subTest(directories=directories):
+                files = clean_files()
+                files["opencode.json"] = opencode_text(directories=directories)
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings,
+                    "error",
+                    "opencode.json",
+                    "`options.additionalRuleDirectories` must contain `.agents/rules`",
+                )
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_plugin_mention_required_in_root_and_contributing(self):
+        files = clean_files()
+        files["AGENTS.md"] = root_text(mention=False)
+        files["CONTRIBUTING.md"] = contributing_text(mention=False)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", "AGENTS.md", "does not mention the `opencode-rules` plugin"
+        )
+        self.assert_finding(
+            findings, "error", "CONTRIBUTING.md", "does not mention the `opencode-rules` plugin"
+        )
+        self.assertEqual(len(findings), 2, findings)
+
+    def test_plugin_range_not_repeated_in_docs(self):
+        for path in ("AGENTS.md", "CONTRIBUTING.md", "docs/AGENTS.md"):
+            with self.subTest(path=path):
+                files = clean_files()
+                files[path] += "\nThe plugin is `opencode-rules@2.x` here.\n"
+                findings = check_repo(self.repo(files))
+                self.assert_finding(findings, "error", path, "opencode-rules@2.x")
+                self.assertEqual(len(findings), 1, findings)
+
+
+if __name__ == "__main__":
+    unittest.main()

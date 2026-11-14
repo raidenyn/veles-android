@@ -167,17 +167,18 @@ class SelectionTest(unittest.TestCase):
                 self.assertTrue(all(affected([path], CMAP).values()), path)
                 self.assertEqual(unaccounted([path], CMAP), [])
 
-    def test_root_build_file_selects_every_node_but_android(self):
+    def test_root_build_file_selects_every_node_but_android_and_docs(self):
         for path in ("build.gradle.kts", "settings.gradle.kts", "gradle.properties"):
             with self.subTest(path=path):
-                self.assertEqual(owner_nodes(path, CMAP), NODES - {"android"})
+                self.assertEqual(owner_nodes(path, CMAP), NODES - {"android", "docs"})
                 a = affected([path], CMAP)
-                self.assertEqual({n for n, v in a.items() if v}, NODES - {"android"})
+                self.assertEqual({n for n, v in a.items() if v}, NODES - {"android", "docs"})
                 self.assertEqual(unaccounted([path], CMAP), [])
                 self.assertNotIn(path, CMAP["global"])
                 self.assertIn(path, CMAP["nodes"]["web-extension"]["paths"])
                 self.assertIn(path, CMAP["nodes"]["installer"]["paths"])
                 self.assertNotIn(path, CMAP["nodes"]["android"]["paths"])
+                self.assertNotIn(path, CMAP["nodes"]["docs"]["paths"])
 
     def test_wrapper_selects_every_node(self):
         for path in (
@@ -209,24 +210,49 @@ class SelectionTest(unittest.TestCase):
         self.assertTrue(affected([".license-policy.json"], CMAP)["supply-chain"])
         self.assertTrue(affected(["web-extension/src/connector.ts"], CMAP)["supply-chain"])
 
-    def test_unowned(self):
-        self.assertFalse(any(affected(["docs/ci.md"], CMAP).values()))
+    def test_unowned_selects_nothing(self):
+        for path in ("LICENSE", "site/index.html"):
+            with self.subTest(path=path):
+                self.assertEqual(owner_nodes(path, CMAP), set())
+                self.assertFalse(any(affected([path], CMAP).values()))
+                self.assertEqual(unaccounted([path], CMAP), [])
         self.assertFalse(any(affected(["native-bridge/feasibility/src/core.rs"], CMAP).values()))
-        self.assertEqual(owner_nodes("README.md", CMAP), set())
+
+    def test_docs_only_change_selects_only_docs(self):
+        for path in (
+            "docs/ci.md",
+            "docs/AGENTS.md",
+            "openspec/changes/x/spec.md",
+            "AGENTS.md",
+            ".agents/rules/repo-conventional-commits.md",
+            ".claude/settings.json",
+            "opencode.json",
+            ".gitattributes",
+            "README.md",
+            "BUILD.md",
+            "CONTRIBUTING.md",
+            "native-bridge/AGENTS.md",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(owner_nodes(path, CMAP), {"docs"})
+                a = affected([path], CMAP)
+                self.assertEqual({n for n, v in a.items() if v}, {"docs"})
+                self.assertEqual(unaccounted([path], CMAP), [])
 
     def test_owner_nodes_contract(self):
-        self.assertEqual(owner_nodes("build.gradle.kts", CMAP), NODES - {"android"})
+        self.assertEqual(owner_nodes("build.gradle.kts", CMAP), NODES - {"android", "docs"})
         self.assertIsNone(owner_nodes("gradle/wrapper/gradle-wrapper.properties", CMAP))
         self.assertIsNone(owner_nodes("newdir/x", CMAP))
         self.assertEqual(owner_nodes("native-bridge/host/src/lib.rs", CMAP), {"native-host", "protocol", "supply-chain"})
         self.assertEqual(owner_nodes("scripts/components.py", CMAP), {"tooling"})
 
-    def test_components_json_selects_only_tooling(self):
-        self.assertEqual(owner_nodes(".github/components.json", CMAP), {"tooling"})
-        a = affected([".github/components.json"], CMAP)
-        self.assertTrue(a["tooling"])
-        self.assertEqual({n for n, v in a.items() if v}, {"tooling"})
-        self.assertEqual(unaccounted([".github/components.json"], CMAP), [])
+    def test_components_json_edit_selects_tooling_and_docs(self):
+        path = ".github/components.json"
+        self.assertEqual(CMAP["global-overrides"][path], ["tooling", "docs"])
+        self.assertEqual(owner_nodes(path, CMAP), {"tooling", "docs"})
+        a = affected([path], CMAP)
+        self.assertEqual({n for n, v in a.items() if v}, {"tooling", "docs"})
+        self.assertEqual(unaccounted([path], CMAP), [])
 
     def test_root_alias_script_selects_tooling(self):
         script = "verify/check-root-aliases.sh"
@@ -263,8 +289,108 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual(owner_nodes("app/build.gradle.kts", CMAP), {"android"})
         self.assertEqual(owner_nodes("config/detekt/detekt.yml", CMAP), {"android"})
         self.assertEqual(
-            CMAP["retired-paths"], {"app/": ["android"], "config/detekt/": ["android"]}
+            CMAP["retired-paths"],
+            {
+                "app/": ["android"],
+                "config/detekt/": ["android"],
+                "CLAUDE.md": ["docs"],
+                "CONTRIBUTION.md": ["docs"],
+                ".opencode/": ["docs"],
+            },
         )
+
+    def test_retired_agent_files_accounted(self):
+        files = ["CLAUDE.md", "CONTRIBUTION.md", ".opencode/commands/apply.md"]
+        self.assertEqual(unaccounted(files, CMAP), [])
+        for path in files:
+            with self.subTest(path=path):
+                self.assertEqual(owner_nodes(path, CMAP), {"docs"})
+        a = affected(files, CMAP)
+        self.assertEqual({n for n, v in a.items() if v}, {"docs"})
+
+    def test_nested_agents_md_selects_only_docs(self):
+        expected = {
+            "android/AGENTS.md": {"docs"},
+            "web-extension/AGENTS.md": {"docs"},
+            "rust/AGENTS.md": {"docs"},
+            "protocol/AGENTS.md": {"docs"},
+            "native-bridge/installer/AGENTS.md": {"docs"},
+            "native-bridge/installer/macos/AGENTS.md": {"docs"},
+            "native-bridge/installer/windows/AGENTS.md": {"docs"},
+            "verify/AGENTS.md": {"docs"},
+            "scripts/AGENTS.md": {"docs"},
+            "native-bridge/host/AGENTS.md": {"docs", "native-host"},
+        }
+        self.assertEqual(len(expected), 10)
+        for path, target in expected.items():
+            with self.subTest(path=path):
+                self.assertEqual(sorted(CMAP["global-overrides"][path]), sorted(target))
+                self.assertEqual(owner_nodes(path, CMAP), target)
+                self.assertEqual({n for n, v in affected([path], CMAP).items() if v}, target)
+                self.assertEqual(unaccounted([path], CMAP), [])
+
+    def test_codeowners_and_check_docs_workflow_overrides(self):
+        codeowners = ".github/CODEOWNERS"
+        self.assertEqual(CMAP["global-overrides"][codeowners], ["docs"])
+        self.assertEqual(owner_nodes(codeowners, CMAP), {"docs"})
+        self.assertEqual({n for n, v in affected([codeowners], CMAP).items() if v}, {"docs"})
+        self.assertEqual(unaccounted([codeowners], CMAP), [])
+        workflow = ".github/workflows/check-docs.yml"
+        self.assertEqual(
+            sorted(CMAP["global-overrides"][workflow]),
+            ["docs", "installer", "supply-chain", "tooling"],
+        )
+        self.assertEqual(
+            owner_nodes(workflow, CMAP), {"docs", "installer", "supply-chain", "tooling"}
+        )
+        self.assertEqual(unaccounted([workflow], CMAP), [])
+
+    def test_agent_files_with_code_select_both(self):
+        files = ["android/AGENTS.md", "android/app/src/main/Foo.kt"]
+        a = affected(files, CMAP)
+        self.assertTrue(a["android"])
+        self.assertTrue(a["docs"])
+        self.assertFalse(a["web-extension"])
+        self.assertEqual(unaccounted(files, CMAP), [])
+
+    def test_override_does_not_change_release_paths(self):
+        for node in ("android", "protocol", "docs"):
+            self.assertIn(".github/", release_paths(node, CMAP), node)
+            self.assertNotIn(".github/CODEOWNERS", release_paths(node, CMAP), node)
+        self.assertIn("android/", release_paths("android", CMAP))
+        self.assertTrue(
+            any("android/AGENTS.md".startswith(p) for p in release_paths("android", CMAP) if p.endswith("/"))
+        )
+        self.assertIn("docs/", release_paths("docs", CMAP))
+
+    def test_new_nested_agent_or_claude_file_selects_docs(self):
+        self.assertEqual(owner_nodes("site/AGENTS.md", CMAP), {"docs"})
+        self.assertIn("docs", owner_nodes("rust/new-dir/AGENTS.md", CMAP))
+        self.assertIn("rust", owner_nodes("rust/new-dir/AGENTS.md", CMAP))
+        self.assertIn("docs", owner_nodes("android/CLAUDE.md", CMAP))
+        self.assertTrue(affected(["android/CLAUDE.md"], CMAP)["docs"])
+
+    def test_gate_read_docs_select_reading_node(self):
+        cases = {
+            "docs/reproducible-builds.md": "native-host",
+            "docs/otp-25-installers.md": "installer",
+        }
+        for path, reader in cases.items():
+            with self.subTest(path=path):
+                self.assertIn(path, CMAP["nodes"][reader]["ci-paths"])
+                self.assertEqual(owner_nodes(path, CMAP), {"docs", reader})
+                self.assertEqual({n for n, v in affected([path], CMAP).items() if v}, {"docs", reader})
+                self.assertEqual(unaccounted([path], CMAP), [])
+
+    def test_no_unowned_entry_is_shadowed(self):
+        owned = []
+        for node in CMAP["nodes"].values():
+            owned.extend(node["paths"] + node.get("ci-paths", []) + node.get("release-paths", []))
+        owned.extend(CMAP["retired-paths"])
+        for entry in CMAP["unowned"]:
+            for path in owned:
+                shadowed = entry == path or (path.endswith("/") and entry.startswith(path))
+                self.assertFalse(shadowed, "%r is shadowed by %r" % (entry, path))
 
     def test_protocol_spec_edit_selects_protocol_consumers_not_installer(self):
         spec = "protocol/docs/veles-v1.md"
@@ -314,6 +440,14 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual(unaccounted(["app/x.kt"], cmap), [])
         a = affected(["app/x.kt"], cmap)
         self.assertTrue(a["android"])
+
+    def test_basename_owner_is_unioned_with_path_owners(self):
+        cmap = load_map(tmp_map(**{"basename-owners": {"AGENTS.md": ["tooling"]}}))
+        self.assertEqual(owner_nodes("rust/AGENTS.md", cmap), {"rust", "tooling"})
+        self.assertEqual(owner_nodes("newdir/AGENTS.md", cmap), {"tooling"})
+        self.assertEqual(owner_nodes("docs/AGENTS.md", cmap), {"tooling"})
+        self.assertEqual(owner_nodes("rust/other.md", cmap), {"rust"})
+        self.assertEqual(unaccounted(["newdir/AGENTS.md"], cmap), [])
 
     def test_release_path_only_is_accounted_but_selects_nothing(self):
         cmap = load_map(tmp_map())
@@ -391,7 +525,10 @@ class SelectionTest(unittest.TestCase):
 
 class SelectionSpecTest(unittest.TestCase):
     def test_selection_spec_ignores_key_order_and_whitespace(self):
-        path = tmp_map(**{"global-overrides": {".github/components.json": ["tooling"]}})
+        path = tmp_map(**{
+            "global-overrides": {".github/components.json": ["tooling"]},
+            "basename-owners": {"AGENTS.md": ["tooling"], "CLAUDE.md": ["android"]},
+        })
         cmap = load_map(path)
         with open(path, encoding="utf-8") as handle:
             raw = json.load(handle)
@@ -407,6 +544,11 @@ class SelectionSpecTest(unittest.TestCase):
     def test_selection_spec_changes_when_override_removed(self):
         before = load_map(tmp_map(**{"global-overrides": {".github/components.json": ["tooling"]}}))
         after = load_map(tmp_map())
+        self.assertNotEqual(selection_spec(before, "android"), selection_spec(after, "android"))
+
+    def test_selection_spec_changes_when_basename_owners_change(self):
+        before = load_map(tmp_map())
+        after = load_map(tmp_map(**{"basename-owners": {"AGENTS.md": ["tooling"]}}))
         self.assertNotEqual(selection_spec(before, "android"), selection_spec(after, "android"))
 
     def test_selection_spec_changes_when_node_paths_expand(self):
@@ -489,6 +631,23 @@ class MapValidationTest(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             load_map(tmp_map(**{"retired-paths": {"app/": ["nope"]}}))
         self.assertIn("nope", str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            load_map(tmp_map(**{"basename-owners": {"AGENTS.md": ["nope"]}}))
+        self.assertIn("nope", str(ctx.exception))
+
+    def test_basename_owners_validated(self):
+        for section in (
+            ["AGENTS.md"],
+            {"AGENTS.md": "docs"},
+            {"AGENTS.md": []},
+            {"AGENTS.md": [1]},
+            {"": ["docs"]},
+            {"a/AGENTS.md": ["docs"]},
+            {"AGENTS*.md": ["docs"]},
+            {"AGENTS.md/": ["docs"]},
+        ):
+            with self.assertRaises(ValueError, msg=repr(section)):
+                load_map(tmp_map(**{"basename-owners": section}))
 
     def test_unknown_key_value_types_rejected(self):
         for overrides in (
@@ -683,7 +842,7 @@ class PerNodeSelectionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             git(tmp, "init", "-q")
             parent = commit_file(tmp, "app/x.kt", "class X\n", "base")
-            head = commit_file(tmp, "docs/ci.md", "docs\n", "docs")
+            head = commit_file(tmp, "LICENSE", "license\n", "docs")
             bases = write_json(tmp, "bases.json", {n: parent for n in NODES})
             out = os.path.join(tmp, "out")
             summary = os.path.join(tmp, "summary.md")
@@ -706,7 +865,7 @@ class PerNodeSelectionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as state:
             git(tmp, "init", "-q")
             base = commit_file(tmp, "app/base.kt", "class Base\n", "base")
-            docs_head = commit_file(tmp, "docs/ci.md", "docs\n", "docs")
+            docs_head = commit_file(tmp, "LICENSE", "license\n", "docs")
             bases = write_json(state, "bases.json", {n: base for n in NODES})
             notes = write_json(
                 state, "notes.json", {"android": "never passed", "web-extension": "incompatible map"}

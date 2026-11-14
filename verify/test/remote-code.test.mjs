@@ -57,10 +57,21 @@ test('rejects shell-pipe downloads in shell interpreter -c arguments', async () 
 });
 
 test('ignores AGENTS.md guidance prose but still flags a script with the same text', async () => {
+  const command = 'npx esbuild --bundle\n';
   const directory = await fixture({
-    'scripts/AGENTS.md': 'Scaffold with npx some-tool and never in CI.\n',
-    'scripts/build.sh': 'npx some-tool\n',
+    'scripts/AGENTS.md': command,
+    'scripts/build.sh': command,
   });
   assert.deepEqual(await scanRemoteCode(directory, ['scripts/AGENTS.md']), []);
   await assert.rejects(scanRemoteCode(directory, ['scripts/build.sh']), /npx is forbidden/);
+});
+
+test('flags a docs/checks script that uses npx but skips docs/checks/AGENTS.md', async () => {
+  const command = 'import shlex\nnpx esbuild --bundle\n';
+  const directory = await fixture({
+    'docs/checks/AGENTS.md': command,
+    'docs/checks/check_example.py': command,
+  });
+  assert.deepEqual(await scanRemoteCode(directory, ['docs/checks/AGENTS.md']), [], 'docs/checks guidance prose is not executable');
+  await assert.rejects(scanRemoteCode(directory, ['docs/checks/check_example.py']), /npx is forbidden/, 'the docs check scope is scanned as code');
 });

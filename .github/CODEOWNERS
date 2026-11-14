@@ -1,0 +1,8 @@
+# Agent guidance and configuration. These files can make a contributor's agent tool
+# install and run code, so they require the owner's review (branch protection, not this
+# file, decides whether code-owner review is enforced).
+/opencode.json    @raidenyn
+/.claude/         @raidenyn
+/.mcp.json        @raidenyn
+/.agents/         @raidenyn
+**/AGENTS.md      @raidenyn

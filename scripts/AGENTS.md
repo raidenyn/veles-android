@@ -28,6 +28,21 @@ pushes. `feat` bumps the minor version, `fix`/`perf` the patch, `!` or a `BREAKI
 the major; every other type bumps nothing. Guidance-only changes must be typed `docs`/`chore` so
 they do not bump a release component. See `docs/releasing.md` and `docs/ci.md`.
 
+## Versions and tags
+
+Three release components are versioned independently with SemVer computed from Conventional Commits
+by git-cliff 2.14.2, pinned with SHA-256 digests in `scripts/release-tools.toml` (`cliff.toml`). State
+is the tags `android-v<semver>`, `web-extension-v<semver>` and `installer-v<semver>`; only commits
+touching a component's paths in `.github/components.json` count, and a never-tagged component starts
+at `0.1.0`.
+
+Versions are injected at build time, not read from a checked-in file: the web extension reads
+`VELES_EXTENSION_VERSION`, the installer reads `VELES_INSTALLER_VERSION`, and the native host reads
+`VELES_HOST_VERSION`. The Android app version name/code are computed at build time by the
+`androidGitVersion` plugin — see `android/AGENTS.md` for its `prefix` and `codeFormat`. The combined
+release tag (`YYYY.MM.DD[.N]`), the runbook, recovery, rollback and one-time owner settings are in
+`docs/releasing.md`.
+
 ## Git hooks (`core.hooksPath`)
 
 `./gradlew installGitHooks` sets `git core.hooksPath=.githooks` (whose `commit-msg` runs

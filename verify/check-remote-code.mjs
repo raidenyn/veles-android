@@ -108,6 +108,8 @@ export const REMOTE_CODE_SCOPES = [
   // Component-tree CI, the PR title check, the release/commit tooling and the commit hook.
   '.github/workflows/ci.yml', '.github/workflows/pr-title.yml',
   '.github/workflows/check-native-host.yml', '.github/workflows/check-installer.yml',
+  // The docs node's stdlib Python check scripts and its check workflow.
+  'docs/checks/', '.github/workflows/check-docs.yml',
   'scripts', '.githooks',
   'build.gradle.kts', 'verify',
 ];

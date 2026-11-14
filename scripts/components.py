@@ -76,7 +76,7 @@ def parse_map(text):
                     raise ValueError("%s: release node is missing %s" % (name, field))
             if not SEMVER_RE.match(node["initial-version"]):
                 raise ValueError("%s: initial-version %r is not semver" % (name, node["initial-version"]))
-    for key in ("global-overrides", "retired-paths"):
+    for key in ("global-overrides", "retired-paths", "basename-owners"):
         section = cmap.get(key, {})
         if not isinstance(section, dict):
             raise ValueError("%s: must be an object" % key)
@@ -89,6 +89,17 @@ def parse_map(text):
     for prefix, names in cmap["retired-paths"].items():
         _check_paths("retired-paths", [prefix])
         _check_node_names("retired-paths " + prefix, names, nodes)
+    for name, names in cmap["basename-owners"].items():
+        if (
+            not isinstance(name, str)
+            or not name
+            or "/" in name
+            or "\\" in name
+            or any(c in name for c in "*?[]{}")
+            or ".." in name
+        ):
+            raise ValueError("basename-owners: key %r must be a plain file name" % (name,))
+        _check_node_names("basename-owners " + name, names, nodes)
     return cmap
 
 
@@ -121,6 +132,7 @@ def owner_nodes(file, cmap):
     for prefix, names in cmap.get("retired-paths", {}).items():
         if _matches(file, [prefix]):
             owners.update(names)
+    owners.update(cmap.get("basename-owners", {}).get(file.rsplit("/", 1)[-1], []))
     if owners:
         return owners
     for node in cmap["nodes"].values():
@@ -165,6 +177,7 @@ def selection_spec(cmap, node):
         "ci-global": sorted(cmap["ci-global"]),
         "global-overrides": _sorted_mapping(cmap.get("global-overrides", {})),
         "retired-paths": _sorted_mapping(cmap.get("retired-paths", {})),
+        "basename-owners": _sorted_mapping(cmap.get("basename-owners", {})),
         "unowned": sorted(cmap["unowned"]),
     }
 

@@ -29,9 +29,11 @@ Run from the repository root:
 ./gradlew bridgePackage
 ```
 
-Node >= 22 and npm are required for these scaffold commands; the Rust toolchain is pinned by
-`native-bridge/src-tauri/Cargo.toml` + committed `Cargo.lock` and the Tauri CLI and TypeScript
-tooling are exact-pinned in `native-bridge/package.json` with a committed lockfile.
+Node >= 22 and npm are required for these scaffold commands. The Rust **compiler toolchain** is
+pinned to 1.98.0 by `native-bridge/src-tauri/rust-toolchain.toml` (enforced by `build.gradle.kts`);
+crate **dependencies** are pinned by `native-bridge/src-tauri/Cargo.toml` plus the committed
+`Cargo.lock`, and the Tauri CLI and TypeScript tooling are exact-pinned in
+`native-bridge/package.json` with a committed lockfile.
 
 ## Rules
 
