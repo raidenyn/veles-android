@@ -25,7 +25,7 @@
 
 ## Skill/workflow compliance
 
-- `subagent-driven-development` with a fresh implementer and a task-scoped review per plan task; three fix rounds were needed (Tasks 5, 6, 7) and the final fix wave plus one scoped re-review closed the branch review.
+- `subagent-driven-development` with a fresh implementer and a task-scoped review per plan task; several tasks needed a fix round (Task 4: root platform wording; Task 5: release-version facts; Task 6: nested-file coverage; Task 7: parser and listing tightening; Task 8: two rounds on the plugin range and CODEOWNERS semantics; Task 13: evidence boundaries), and the final fix wave plus one scoped re-review closed the branch review.
 - Test-driven development was followed for every checker change (RED shown, then GREEN) and for the scanner exclusion.
 - The final whole-branch review ran on a capable model over a frozen diff package; its three Critical findings were fixed before merge.
 
