@@ -29,9 +29,9 @@ commands and rules; this file intentionally holds no node detail.
 
 Repo-wide rules in `.agents/rules/` are always on and each holds one concern:
 `.agents/rules/repo-conventional-commits.md`, `.agents/rules/repo-no-time-based-tests.md`,
-`.agents/rules/repo-pre-push-checks.md`, `.agents/rules/repo-signing-keys.md`. Node rules are scoped by
-path to their folder and listed in that node's `AGENTS.md`; if your tool cannot load a scoped rule, read
-the file the node lists.
+`.agents/rules/repo-pre-push-checks.md`, `.agents/rules/repo-review-models.md`,
+`.agents/rules/repo-signing-keys.md`. Node rules are scoped by path to their folder and listed in that
+node's `AGENTS.md`; if your tool cannot load a scoped rule, read the file the node lists.
 
 ## Tools
 
