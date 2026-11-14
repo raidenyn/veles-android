@@ -35,10 +35,10 @@ brainstorm ──→ proposal ──→ specs ──→ tasks ──→ plan ─
 
 Differences from `spec-driven`:
 
-| | spec-driven | superspec (v4) |
+| | spec-driven | superspec (v5) |
 |---|---|---|
 | Starting point | proposal (written manually) | **brainstorm** (invokes brainstorming skill) |
-| Endpoint | tasks (coarse-grained) | **finalize** (the git-side closeout: merge worktree → feature branch + push the branch + if a PR exists, post code-reviewer onboarding comment; archive follows as a CLI step) |
+| Endpoint | tasks (coarse-grained) | **finalize** (the git-side closeout: merge worktree → feature branch + push the branch + if a PR exists, post code-reviewer onboarding comment; the hand-off then starts the closeout, which archives once when the required checks are green) |
 | apply requires | tasks | **plan** |
 | apply method | Standard task-by-task | **worktree + subagent-driven-development** |
 | Additional artifacts | — | brainstorm, plan, apply (receipt), **finalize (receipt)** |
@@ -77,8 +77,8 @@ This is achieved through context injection (appending directives when invoking t
 /openspec-ff-change my-feature    # End-to-end: create directory + brainstorm + proposal + design + specs + tasks + plan
 /openspec-apply-change            # worktree + subagent-driven-development (writes apply.md)
 /openspec-verify-change           # 6 OpenSpec checks (writes verify.md; requires apply.md)
-/openspec-continue-change         # → finalize (the git-side closeout: merges worktree → feature branch, pushes branch, updates PR if one exists, writes finalize.md, posts code-reviewer comment if PR exists; v4)
-/openspec-archive-change          # sync delta specs + archive change dir
+/openspec-continue-change         # → finalize (the git-side closeout: merges worktree → feature branch, pushes branch, updates PR if one exists, writes finalize.md, posts code-reviewer comment if PR exists; then hands off to the closeout)
+# archive runs once, inside the closeout, when the required checks are green
 ```
 
 ### Step-by-Step Flow
@@ -92,8 +92,8 @@ This is achieved through context injection (appending directives when invoking t
 /openspec-continue-change         # → plan
 /openspec-apply-change            # writes apply.md
 /openspec-verify-change           # writes verify.md (requires apply.md)
-/openspec-continue-change         # → finalize (the git-side closeout: merges worktree → feature branch, pushes branch, updates PR if one exists, writes finalize.md, posts code-reviewer comment if PR exists; v4)
-/openspec-archive-change          # sync delta specs + archive change dir
+/openspec-continue-change         # → finalize (the git-side closeout: merges worktree → feature branch, pushes branch, updates PR if one exists, writes finalize.md, posts code-reviewer comment if PR exists; then hands off to the closeout)
+# archive runs once, inside the closeout, when the required checks are green
 ```
 
 ### Switching Back to spec-driven

@@ -2,7 +2,7 @@
 
 > This document explains how the `superspec` schema integrates OpenSpec's artifact governance workflow with Superpowers' execution skills into a single workflow. It serves as a reference table for new member onboarding, change reviews, and as required reading before modifying the schema.
 >
-> Corresponding schema version: `superspec` v4
+> Corresponding schema version: `superspec` v5
 
 ---
 
@@ -83,7 +83,7 @@ There is also one **fallback**:
                   └──────────┘
                       │
                       ▼
-                  /openspec-archive-change  (not in DAG; OpenSpec CLI)
+                  /openspec-archive-change  (not in DAG; the closeout runs it once)
 ```
 
 **Key points**:
@@ -91,7 +91,7 @@ There is also one **fallback**:
 - `design` is an **optional leaf**. Brainstorm still attempts to pre-populate design.md, but tasks no longer hard-depend on it (`tasks.requires: [specs]`). Per OpenSpec conventions: `design.md` is only written when non-trivial technical decisions need explanation.
 - `apply` is a **real DAG node** as of schema v2. It generates `apply.md` (a minimal receipt — iteration counter, worktree, branch, commit range, task counts) so the DAG can honestly express "verify depends on apply having run." The canonical `/openspec-apply-change` instruction body still lives in the top-level `apply:` phase block; the apply artifact's own instruction is a short redirect to avoid drift.
 - `verify` requires `apply` (was `plan` in v1). The OpenSpec CLI will refuse to surface verify as a `ready` artifact until `apply.md` exists.
-- `finalize` is a **real DAG node** as of schema v3. It generates `finalize.md` (a minimal git-closeout receipt: outcome, PR URL, final branch state) and requires `verify`. `/openspec-continue-change` surfaces finalize's instruction after verify completes. As of schema v4 (see §4 Step 4 and §6 Design Choice #6), that instruction executes the git-side closeout directly (merge worktree → feature branch, push the branch — updating an existing spec pre-review PR if one exists, or creating a remote tracking branch otherwise — and post a code-reviewer comment when a PR is present); `superpowers:finishing-a-development-branch` is retained as a manual escape hatch only. `/openspec-archive-change` is the lifecycle close that follows finalize and is not in the DAG (it remains an OpenSpec CLI command).
+- `finalize` is a **real DAG node** as of schema v3. It generates `finalize.md` (a minimal git-closeout receipt: outcome, PR URL, final branch state) and requires `verify`. `/openspec-continue-change` surfaces finalize's instruction after verify completes. As of schema v4 (see §4 Step 4 and §6 Design Choice #6), that instruction executes the git-side closeout directly (merge worktree → feature branch, push the branch — updating an existing spec pre-review PR if one exists, or creating a remote tracking branch otherwise — and post a code-reviewer comment when a PR is present); `superpowers:finishing-a-development-branch` is retained as a manual escape hatch only. As of schema v5, finalize then confirms the open PR, records it in `tracker.md` for tracked work (committed and pushed as part of the PR), sets the card In Review and hands off to the closeout. `/openspec-archive-change` is the lifecycle close that the closeout runs exactly once, when the required checks are green; it is not in the DAG (it remains an OpenSpec CLI command).
 - The convergence loop (apply → verify → loop back on code-fixable FAILs, capped at 5 iterations) is documented in `docs/workflow-details.md`. The schema enforces the file-existence dependency; the iteration decision is made by the agent or by a future loop-runner command (not in scope for v2 or v3).
 
 ---
@@ -236,6 +236,7 @@ If any check fails, go back to the corresponding artifact, fix it, and re-run ve
 10. `git push origin <feature-branch>` — if a PR was opened manually between plan and apply for spec pre-review, it auto-updates with the merge commits and finalize.md. If no PR exists, this push creates the remote tracking branch.
 11. **PR creation prompt** — if no PR exists for the feature branch and the session is interactive, prompt the user to open one. The agent suggests a conventional-commit title derived from the change's proposal.md (default `feat: <change-name>`). The user picks: create with suggested title, create with custom title, or skip. If skipped or non-interactive, no PR is created and the orientation-comment step self-skips.
 12. Post (or edit in place) a single code-reviewer onboarding comment on the PR, summarizing the change for a reviewer who did not see the spec pre-review.
+13. Confirm the open PR (`gh pr view`); for tracked work record it in `tracker.md`, commit and push that edit as part of the PR, and set the card In Review. Then hand off to the closeout rule, which monitors the PR to green, syncs and archives once, reviews the docs, pushes, and waits for approval and merge.
 
 The comment uses a marker (`<!-- superspec:finalize-comment -->`) for idempotent upsert; re-running finalize edits the existing comment rather than duplicating it. The body is **summarized in the agent's own words** from the change artifacts; verbatim paste is forbidden.
 
@@ -251,7 +252,9 @@ Same as v3 — write a short `retrospective.md` in the change directory before `
 
 ---
 
-### Step 5: Archive
+### Step 5: Archive (once, inside the closeout)
+
+The closeout runs this exactly once, when every required check of the pull request is green:
 
 ```bash
 /openspec-archive-change my-feature
@@ -268,28 +271,36 @@ Behavior:
 
 `/openspec-archive-change` does NOT merge git branches and does NOT create PRs. The git-side closeout is the `finalize` artifact's responsibility (Step 4-1 above).
 
-#### Canonical PR-review golden path (v4)
+#### Canonical PR-review golden path (v5)
 
 ```text
 1. verify completes (verify.md committed on feature branch in the worktree)
 2. finalize (the git-side closeout — schema merges worktree → feature
    branch, pushes to update the existing PR, posts code-reviewer
-   onboarding comment; finalize.md records Outcome: pr-updated, Final
-   state: pr-updated; worktree is removed during finalize)
-3. [PAUSE: human code review on the PR; reviewer approves]
-4. /openspec-archive-change on the feature branch (syncs delta specs, moves change
-   dir; new commits land on the feature branch)
-5. Push the archive commits to update the PR
-6. PR merge (gh pr merge --squash --delete-branch or GitHub UI)
+   onboarding comment; finalize.md records the outcome and Final state,
+   worktree is removed during finalize; the open PR is confirmed and,
+   for tracked work, recorded in tracker.md with the card set to In
+   Review; finalize hands off to the closeout)
+3. The closeout monitors the PR to green (its required checks on the
+   current head commit)
+4. Sync and archive once (openspec-sync-specs, then
+   /openspec-archive-change; new commits land on the feature branch)
+5. Review the documentation the sync and archive produced
+6. Push the sync, archive and doc commits to update the PR, then
+   monitor again
+7. [PAUSE: human code review on the PR; reviewer approves]
+8. Answer comments and wait for approval; the user merges
+   (gh pr merge --squash --delete-branch or GitHub UI)
+9. Update the issue and the board, Done last
 ```
 
-This is the PR-pre-review variant of the golden path — applicable when a team uses the optional spec pre-review PR pattern (PR opened manually between plan and apply). A **no-PR variant** also exists: step 2 ends with finalize.md recording `PR comment: skipped (no PR)` instead of posting a comment, and step 3 onward becomes the user's choice — they can `gh pr create` after finalize to enter the PR-review variant late, or skip the PR entirely (run `/openspec-archive-change` on the feature branch and merge locally). The schema-executed closeout is identical in both variants.
+This is the PR-pre-review variant of the golden path — applicable when a team uses the optional spec pre-review PR pattern (PR opened manually between plan and apply). A **no-PR variant** also exists: step 2 ends with finalize.md recording `PR comment: skipped (no PR)` instead of posting a comment, and step 3 onward becomes the user's choice — they can `gh pr create` after finalize to enter the PR-review variant late, or skip the PR entirely and take finalize's local-merge branch, whose closeout runs the sync, archive once and doc review and asks before any push to the default branch. The schema-executed closeout is identical in both variants.
 
 The archive-before-merge ordering keeps the PR's diff complete: every commit that went into the change (implementation, finalize.md, archive sync) is in the PR. If the PR is merged before archive runs, the archive commits would have to be authored on main after the fact — recoverable but loses the unified audit trail. Note that step 7 from v3 ("local worktree cleanup if still present") is no longer needed in the git-side closeout because the worktree is removed during finalize itself.
 
 #### Local-merge variant (acceptable for solo / local-only changes)
 
-If the user falls back to the escape hatch and picks the skill's Option 1 (Merge locally), the skill performs the merge into the integration branch inline and removes the worktree. `/openspec-archive-change` then runs on the integration branch directly. This inverts the archive/merge order vs. the canonical git-side closeout path. Acceptable for solo or local-only changes where the PR audit trail isn't relevant.
+If the user falls back to the escape hatch and picks the skill's Option 1 (Merge locally), the skill performs the merge into the integration branch inline and removes the worktree. The closeout then runs the sync, archive once and doc review on the integration branch, asks the user before any push to the default branch, and sets Done only after that push succeeds. This inverts the archive/merge order vs. the canonical git-side closeout path. Acceptable for solo or local-only changes where the PR audit trail isn't relevant.
 
 ---
 
@@ -303,7 +314,7 @@ If the user falls back to the escape hatch and picks the skill's Option 1 (Merge
 | Resume an interrupted change | `/openspec-continue-change <name>` |
 | Enter implementation | `/openspec-apply-change <name>` |
 | Manual verify | `/openspec-verify-change <name>` |
-| Archive | `/openspec-archive-change <name>` |
+| Archive (once, inside the closeout, when the required checks are green) | `/openspec-archive-change <name>` |
 | Use the native OpenSpec schema (skip brainstorm) | `/openspec-new-change <name> --schema spec-driven` |
 | View all project schemas | `openspec schemas` |
 | View current change progress | `openspec status --change <name> --json` |

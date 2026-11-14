@@ -101,7 +101,7 @@ documented hash command; never rewrite a recorded hash. One row per artifact and
 
 ## Overall Decision
 
-- [ ] ✅ PASS — ready to proceed via /openspec-continue-change to the finalize artifact, then /openspec-archive-change
+- [ ] ✅ PASS — ready to proceed via /openspec-continue-change to the finalize artifact, whose hand-off starts the closeout; the closeout runs /openspec-archive-change exactly once, when every required check is green
 - [ ] ⚠️ PASS WITH WARNINGS — can proceed but note: `<explanation>`
 - [ ] ❌ FAIL — return to the failed artifact, fix, then re-run verify
 
@@ -117,9 +117,10 @@ check can offset it.
 > - PASS / PASS_WITH_WARNINGS → `/openspec-continue-change` advances to the finalize
 >   artifact, which executes the git-side closeout directly (merges
 >   worktree → feature branch, pushes to update existing PR, posts
->   code-reviewer onboarding comment). The skill
->   `superpowers:finishing-a-development-branch` is an escape hatch for
->   non-canonical flows. Then `/openspec-archive-change` once finalize.md exists.
+>   code-reviewer onboarding comment) and hands off to the closeout
+>   rule. The skill `superpowers:finishing-a-development-branch` is an
+>   escape hatch for non-canonical flows. `/openspec-archive-change` runs
+>   exactly once, inside the closeout, when every required check is green.
 > - FAIL with items fixable by code change → return to the apply artifact
 >   and re-run `/openspec-apply-change`, then re-run `/openspec-verify-change` — this overwrites
 >   both apply.md and verify.md with the next iteration.

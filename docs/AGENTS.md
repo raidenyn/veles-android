@@ -77,13 +77,32 @@ bulk-archive, verify, update. CI does not install the OpenSpec CLI; the structur
 
 ## The `superspec` schema fork
 
-`openspec/schemas/superspec/` (schema version v4) is a **third-party** schema installed by the
+`openspec/schemas/superspec/` (schema version v5) is a **third-party** schema installed by the
 `superspec-setup` integration, not by OpenSpec. This repository forks it: its `/opsx:<name>`
 command references were rewritten to the OpenSpec 2 skill names (`/openspec-propose`,
 `/openspec-apply-change`, …) because the `/opsx:` commands no longer exist after 2.0. `openspec`
 does not manage or overwrite `openspec/schemas/`, but reinstalling the schema restores the upstream
 `/opsx:` references, so re-apply the skill-name rewrite after any reinstall and verify with
 `grep -rn '/opsx:' openspec/schemas` (expected: no hits).
+
+A reinstall also drops the fork's own edits, so re-apply each divergence as well:
+
+1. **Apply pre-flight**: the `apply:` instruction's step 0a review pre-flight — refuse to start
+   unless the plan has an approved record from every reviewer its preset lists, every recorded
+   hash is current, the upstream set is complete and a coding model is confirmed.
+2. **Sixth verify check**: the review-records audit in the `verify` instruction, its "6. Review
+   records" section in `templates/verify.md`, and the six-check counts in `README.md` and
+   `INTEGRATION.md`.
+3. **Finalize hand-off**: the `finalize` instruction's open-PR confirmation, the `tracker.md`
+   record (committed and pushed as part of the PR) and the In Review step, the per-outcome hand-off
+   to `.agents/rules/repo-superspec-closeout.md`, and the matching "Next step" bullets in
+   `templates/finalize.md`.
+4. **Archive once, in the closeout**: the replaced direct-archive directions in the `verify` and
+   `finalize` instructions, `apply:` step 4, `templates/verify.md`'s PASS option and next-step note,
+   the `README.md` golden path and `INTEGRATION.md`'s golden path and command table. Archive runs
+   once, inside the closeout, when the required checks are green.
+5. **Version bump**: `version: 5` in `schema.yaml` with its "v5 (current)" description entry, and
+   the current-version mentions in `README.md`, `INTEGRATION.md` and this file.
 
 ## OpenCode and the `opencode-rules` plugin
 
