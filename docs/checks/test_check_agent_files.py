@@ -89,6 +89,16 @@ EXPECTED_SCOPE_AGENTS = {
     "docs": "docs/AGENTS.md",
 }
 RULE_SIZE_MAX = 24000
+REPO_RULE_SIZE_MAX = 4096
+SIZE_CAP_CASES = (  # (case, rule name, scope, size, expected size findings)
+    ("repo at its cap", "repo-cap.md", "repo", REPO_RULE_SIZE_MAX, 0),
+    ("repo over its cap", "repo-cap.md", "repo", REPO_RULE_SIZE_MAX + 1, 1),
+    ("repo far over", "repo-cap.md", "repo", 30000, 1),
+    ("repo over the node cap", "repo-cap.md", "repo", RULE_SIZE_MAX + 1, 1),
+    ("node over the repo cap", "android-cap.md", "android", REPO_RULE_SIZE_MAX + 1, 0),
+    ("node at its cap", "android-cap.md", "android", RULE_SIZE_MAX, 0),
+    ("node over its cap", "android-cap.md", "android", RULE_SIZE_MAX + 1, 1),
+)
 # The brief's documented OpenSpec skill list, repeated here so a wrong parser cannot satisfy
 # its own fixture. `docs/AGENTS.md` is the authoritative source at check time.
 EXPECTED_OPENSPEC_SKILLS = (
@@ -260,9 +270,12 @@ def with_rule(files, name, text, scope):
     return files
 
 
-def sized_rule(size):
-    """A valid `repo-*` rule padded with body text to exactly ``size`` bytes."""
-    base = repo_rule_text()
+def sized_rule(size, pattern=None):
+    """A valid rule padded with body text to exactly ``size`` bytes.
+
+    Without ``pattern`` it is a `repo-*` rule; with one it is a node rule for that scope.
+    """
+    base = repo_rule_text() if pattern is None else node_rule_text(pattern)
     padding = size - len(base)
     if padding < 0:
         raise AssertionError("size %d is smaller than the %d-byte header" % (size, len(base)))
@@ -416,10 +429,14 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assertEqual(matching[0].severity, severity, matching[0])
 
     def test_constants_are_exact(self):
+        import check_agent_files as check_module
+
         self.assertEqual(NOTICE_ROOT, EXPECTED_NOTICE_ROOT)
         self.assertEqual(NOTICE_NESTED, EXPECTED_NOTICE_NESTED)
         self.assertEqual(tuple(NODE_FILES), EXPECTED_NODE_FILES)
         self.assertEqual(tuple(NESTED_EXCLUSIVE_DOCS), EXPECTED_EXCLUSIVE)
+        self.assertEqual(getattr(check_module, "RULE_SIZE_MAX", None), RULE_SIZE_MAX)
+        self.assertEqual(getattr(check_module, "REPO_RULE_SIZE_MAX", None), REPO_RULE_SIZE_MAX)
 
     def test_clean_fixture_passes(self):
         root = self.repo()
@@ -728,24 +745,16 @@ class AgentFileCheckTest(unittest.TestCase):
                 files = with_rule(clean_files(), name, node_rule_text(pattern), scope)
                 self.assertEqual(check_repo(self.repo(files)), [])
 
-    def test_rule_size_boundaries(self):
-        for size, clean in ((RULE_SIZE_MAX, True), (RULE_SIZE_MAX + 1, False)):
-            with self.subTest(size=size):
-                text = sized_rule(size)
-                self.assertEqual(len(text), size)
-                files = with_rule(clean_files(), "repo-sized.md", text, "repo")
+    def test_rule_size_caps(self):
+        for case, name, scope, size, expected in SIZE_CAP_CASES:
+            with self.subTest(case=case):
+                files = with_rule(clean_files(), name, sized_rule(size, EXPECTED_SCOPES[scope]), scope)
                 findings = check_repo(self.repo(files))
-                if clean:
+                if expected == 0:
                     self.assertEqual(findings, [])
                 else:
-                    self.assert_finding(findings, "error", ".agents/rules/repo-sized.md", "size cap")
+                    self.assert_finding(findings, "error", ".agents/rules/" + name, "size cap")
                     self.assertEqual(len(findings), 1, findings)
-
-    def test_rule_over_24000_bytes_fails(self):
-        files = with_rule(clean_files(), "repo-large.md", sized_rule(30000), "repo")
-        findings = check_repo(self.repo(files))
-        self.assert_finding(findings, "error", ".agents/rules/repo-large.md", "size cap")
-        self.assertEqual(len(findings), 1, findings)
 
     def test_unknown_frontmatter_key_fails(self):
         text = rule_text("trigger: always_on\nkeywords: otp\n")
@@ -941,12 +950,14 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assertEqual(len(findings), 1, findings)
 
     def test_oversized_rule_skips_content_parsing(self):
-        # Content that would add an invalid-frontmatter finding if it were parsed at all.
-        text = "not a frontmatter block\n" + "y" * RULE_SIZE_MAX + "\n"
-        files = with_rule(clean_files(), "repo-huge.md", text, "repo")
-        findings = check_repo(self.repo(files))
-        self.assert_finding(findings, "error", ".agents/rules/repo-huge.md", "size cap")
-        self.assertEqual(len(findings), 1, findings)
+        for name, scope, cap in (("repo-huge.md", "repo", REPO_RULE_SIZE_MAX),
+                                 ("android-huge.md", "android", RULE_SIZE_MAX)):
+            with self.subTest(name=name):
+                text = "not a frontmatter block\n" + "y" * cap + "\n"
+                files = with_rule(clean_files(), name, text, scope)
+                findings = check_repo(self.repo(files))
+                self.assert_finding(findings, "error", ".agents/rules/" + name, "size cap")
+                self.assertEqual(len(findings), 1, findings)
 
     def test_check_functions_accept_the_real_tree_shape(self):
         root = self.repo()

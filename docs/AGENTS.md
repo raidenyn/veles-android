@@ -32,7 +32,8 @@ named `<scope>-<topic>.md` with a known scope (`repo`, `android`, `web-extension
 - Node rules use `trigger: glob` plus YAML lists `globs` and `paths` with the same pattern
   (`android/**`, `native-bridge/installer/macos/**`, …), no brace expansion. Parent scopes are
   cumulative (`native-bridge/**` also applies inside `host/` and `installer/`).
-- Frontmatter keys are limited to `trigger`, `globs` and `paths`, and a rule is at most 24,000 bytes.
+- Frontmatter keys are limited to `trigger`, `globs` and `paths`; a node rule is at most 24,000
+  bytes and a `repo-*` rule at most 4,096 bytes (the always-on context budget).
 - List the file in the `## Rules` section of the `AGENTS.md` of the scope's folder (the root
   `AGENTS.md` for `repo-*`); the check fails when a rule is unlisted or a listed file is missing.
 
