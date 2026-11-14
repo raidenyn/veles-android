@@ -103,15 +103,19 @@ The repository SHALL keep all rules as one concern per file in a single flat dir
 - **WHEN** the `repo-` pre-push rule is read
 - **THEN** it names no Gradle, Cargo or npm command, tells the agent to find the touched nodes with `scripts/components.py changed` (including nodes selected by shared inputs) and to run the checks listed in each node's `AGENTS.md`
 
-### Requirement: OpenCode scoped rules use an exactly pinned, allow-listed plugin
-`opencode.json` SHALL contain only the keys `$schema` and `plugins`, and `plugins` SHALL contain exactly one entry: the package `opencode-rules` at one exact version, never a range or `latest`, with `additionalRuleDirectories` containing `.agents/rules`. The root `AGENTS.md`, `CONTRIBUTING.md` and `docs/AGENTS.md` MUST state that OpenCode users need the `opencode-rules` plugin at the version pinned in `opencode.json` for scoped rules to be delivered, without repeating the version number, and the qualified plugin and OpenCode versions MUST be recorded where the system-level qualification keeps them; the plugin's installation, package-integrity and transitive-dependency policy and per-version regression tests are outside this change. A `.github/CODEOWNERS` entry MUST name an owner for `opencode.json`, `.claude/`, `.mcp.json` when present, `.agents/` and `**/AGENTS.md`, and contributor guidance MUST tell reviewers not to launch agents in an untrusted PR checkout, or to disable project configuration, before reading those files. If the plugin cannot be used, the root `AGENTS.md` and the node files MUST still make the rule files discoverable.
+### Requirement: OpenCode scoped rules use a range-bounded, allow-listed plugin
+`opencode.json` SHALL contain only the keys `$schema` and `plugins`, and `plugins` SHALL contain exactly one entry: the package `opencode-rules` constrained to the supported range `>=2.0.0 <3` (a caret or inequality range that admits no version below 2.0.0 or at 3.0.0 and above), never `latest`, `*`, an exact pin, or any range crossing the major bound, with `additionalRuleDirectories` containing `.agents/rules`. The root `AGENTS.md`, `CONTRIBUTING.md` and `docs/AGENTS.md` MUST state that OpenCode users need the `opencode-rules` plugin at the range pinned in `opencode.json` for scoped rules to be delivered, without repeating the range, and the qualified plugin range and OpenCode version MUST be recorded where the system-level qualification keeps them; the plugin's installation, package-integrity and transitive-dependency policy and per-version regression tests are outside this change. A `.github/CODEOWNERS` entry MUST name an owner for `opencode.json`, `.claude/`, `.mcp.json` when present, `.agents/` and `**/AGENTS.md`, and contributor guidance MUST tell reviewers not to launch agents in an untrusted PR checkout, or to disable project configuration, before reading those files. If the plugin cannot be used, the root `AGENTS.md` and the node files MUST still make the rule files discoverable.
 
 #### Scenario: Plugin requirement documented
 - **WHEN** the root `AGENTS.md` or `CONTRIBUTING.md` does not mention `opencode-rules` as an OpenCode requirement, or `docs/AGENTS.md` lacks the install, update and untrusted-checkout guidance
-- **THEN** the agent-file check or review fails, and no document repeats the pinned version number
+- **THEN** the agent-file check or review fails, and no document repeats the pinned range
 
-#### Scenario: Unpinned plugin
-- **WHEN** `opencode.json` lists `opencode-rules@latest` or a version range
+#### Scenario: Supported range accepted
+- **WHEN** `opencode.json` lists `opencode-rules@>=2.0.0 <3` or `opencode-rules@^2.0.0` and nothing else
+- **THEN** the agent-file check passes
+
+#### Scenario: Unpinned or out-of-range plugin
+- **WHEN** `opencode.json` lists `opencode-rules@latest`, `opencode-rules@*`, an exact pin, or a range that admits a version below 2.0.0 or at 3.0.0 and above
 - **THEN** the agent-file check fails
 
 #### Scenario: Additional plugin or key

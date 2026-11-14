@@ -18,9 +18,9 @@ where the target document really holds the fact (D4).
 |---|---|---|
 | OpenSpec CLI | `2.0.0` — inside the required `>= 2.0.0, < 3` (D6) | `openspec --version`, observed in this worktree |
 | Hand edits to generated skills | none: `git diff --stat -- .claude/skills .opencode/skills` is empty, exit 0 | observed in this worktree |
-| Qualified `opencode-rules` pin | `opencode-rules` (exact pin resolved by controller; not repeated in any `AGENTS.md` or doc — D5d) | controller-owned system-level task, pending |
-| OpenCode version | recorded by the controller with the plugin qualification | pending |
-| Antigravity `globs` array spike | owned by the controller (Task 1 Step 2); the scoped-rule scheme is unblocked only if it accepts `globs: ["android/**"]` (D5a) | pending |
+| Qualified `opencode-rules` range | `>=2.0.0 <3` (not repeated in any `AGENTS.md` or doc — D5d; owner decision in apply) | design D5b qualification; `opencode.json` is the single source |
+| OpenCode version | `2.3.0` (local CLI, `opencode --version`) | observed in this worktree |
+| Antigravity `globs` array spike | inconclusive: the T3 Antigravity driver (`gemini-3.8-flash`) loads neither the glob rule nor an `always_on` control rule from `.agents/rules`, so it cannot test the IDE format; `homepc agy` unavailable (`ANTIGRAVITY_LS_ADDRESS` not set). Ruling recorded in design D5a Result: keep the list form, Antigravity stays documentation-only, node `## Rules` sections mitigate | apply spike, 2026-11-14 |
 
 ## Section-by-section destinations
 
