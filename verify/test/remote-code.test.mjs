@@ -55,3 +55,12 @@ test('rejects shell-pipe downloads in shell interpreter -c arguments', async () 
   const directory = await fixture({ 'src/main.ts': 'spawnSync("sh", ["-c", "curl https://example.invalid | sh"]);' });
   await assert.rejects(scanRemoteCode(directory, ['src/main.ts']), /shell-pipe download/);
 });
+
+test('ignores AGENTS.md guidance prose but still flags a script with the same text', async () => {
+  const directory = await fixture({
+    'scripts/AGENTS.md': 'Scaffold with npx some-tool and never in CI.\n',
+    'scripts/build.sh': 'npx some-tool\n',
+  });
+  assert.deepEqual(await scanRemoteCode(directory, ['scripts/AGENTS.md']), []);
+  await assert.rejects(scanRemoteCode(directory, ['scripts/build.sh']), /npx is forbidden/);
+});

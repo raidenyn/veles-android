@@ -1,5 +1,5 @@
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 function failure(path, reason) {
   const error = new Error(`remote-code policy rejected ${path}: ${reason}`);
@@ -61,6 +61,9 @@ function codeWithoutComments(text) {
 export async function scanRemoteCode(root, paths) {
   const findings = [];
   for (const path of paths) {
+    // Guidance prose is not executable: the scan scopes include folders that hold both
+    // code and an AGENTS.md, so that one basename is skipped (a script with the same text still fails).
+    if (basename(path) === 'AGENTS.md') continue;
     const text = await readFile(join(root, path), 'utf8');
     const executable = path.endsWith('.json') ? text : path.endsWith('.sh') ? text.replace(/#[^\n]*/g, '') : codeWithoutStringsAndComments(text);
     const source = codeWithoutComments(text);

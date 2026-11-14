@@ -211,7 +211,7 @@ report 6 "the root aliases (including spotlessApply and clean) resolve with --dr
 # 7. The documented filtered unit-test command resolves ----------------------------------
 # `--tests` is a Test-task option and the root `testDebugUnitTest` is a plain forwarding
 # alias that rejects it, so the documented single-class command runs from `android/`
-# (CLAUDE.md, BUILD.md). `--dry-run` proves the command line is accepted and the task graph
+# (android/AGENTS.md, BUILD.md). `--dry-run` proves the command line is accepted and the task graph
 # resolves without running the suite.
 begin_check
 log="$workdir/android-filtered-tests.log"
