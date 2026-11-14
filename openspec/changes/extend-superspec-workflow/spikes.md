@@ -142,13 +142,44 @@ query($o: String!, $n: Int!) {
 }' -f o=raidenyn -F n=3
 ```
 
-Field types were listed with `fields(first: 30) { nodes { ... on ProjectV2FieldCommon { id name
-dataType } ... on ProjectV2SingleSelectField { options { id name } } } }`; the ordering capability
-was read by introspection:
+Field types (the same call also returns the option lists used above):
 
 ```bash
-gh api graphql -f query='{ __type(name: "ProjectV2ItemOrderField") { name kind enumValues { name } } }'
-gh api graphql -f query='{ __type(name: "ProjectV2") { fields { name args { name } } } }'
+gh api graphql -f query='
+query($o: String!, $n: Int!) {
+  user(login: $o) {
+    projectV2(number: $n) {
+      fields(first: 30) {
+        nodes {
+          ... on ProjectV2FieldCommon { id name dataType }
+          ... on ProjectV2SingleSelectField { options { id name } }
+        }
+      }
+    }
+  }
+}' -f o=raidenyn -F n=3
+```
+
+The ordering capability, by introspection:
+
+```bash
+gh api graphql -f query='
+{
+  __type(name: "ProjectV2") {
+    fields { name args { name type { name kind ofType { name } } } }
+  }
+}'
+```
+
+```bash
+gh api graphql -f query='
+{
+  __type(name: "ProjectV2ItemOrder") {
+    name kind inputFields { name type { name kind ofType { name } } }
+  }
+}'
+gh api graphql -f query='
+{ __type(name: "ProjectV2ItemOrderField") { name kind enumValues { name } } }'
 ```
 
 The organization fallback required by the brief:
@@ -201,9 +232,34 @@ Y3Vyc29yOnYyOpKrMDAwMDAwMDAuMDXODf4Axg==`, and `90 Done 11.0` … `92 Done 13.0`
 unknown or misspelled filter term is therefore never reported as an error: it silently matches
 nothing or everything.
 
-Introspection: `ProjectV2.items` takes `first/last/before/after`, `orderBy: ProjectV2ItemOrder`
-and `query: String`; `ProjectV2ItemOrderField` has exactly one enum value, `POSITION`;
-`ProjectV2ItemOrder` is `{field, direction}`.
+Introspection output for the `items` and `views` arguments (the `field` lookup is omitted):
+
+```text
+items:
+   {"name": "after", "type": {"name": "String", "kind": "SCALAR", "ofType": null}}
+   {"name": "before", "type": {"name": "String", "kind": "SCALAR", "ofType": null}}
+   {"name": "first", "type": {"name": "Int", "kind": "SCALAR", "ofType": null}}
+   {"name": "last", "type": {"name": "Int", "kind": "SCALAR", "ofType": null}}
+   {"name": "orderBy", "type": {"name": "ProjectV2ItemOrder", "kind": "INPUT_OBJECT", "ofType": null}}
+   {"name": "archivedStates", "type": {"name": null, "kind": "LIST", "ofType": {"name": null}}}
+   {"name": "query", "type": {"name": "String", "kind": "SCALAR", "ofType": null}}
+views:
+   {"name": "after", "type": {"name": "String", "kind": "SCALAR", "ofType": null}}
+   {"name": "before", "type": {"name": "String", "kind": "SCALAR", "ofType": null}}
+   {"name": "first", "type": {"name": "Int", "kind": "SCALAR", "ofType": null}}
+   {"name": "last", "type": {"name": "Int", "kind": "SCALAR", "ofType": null}}
+   {"name": "orderBy", "type": {"name": "ProjectV2ViewOrder", "kind": "INPUT_OBJECT", "ofType": null}}
+```
+
+`ProjectV2ItemOrder` is an input object of two non-null fields (formatted from the response):
+
+```text
+{"name": "ProjectV2ItemOrder", "kind": "INPUT_OBJECT", "inputFields": [
+  {"name": "field", "type": {"name": null, "kind": "NON_NULL", "ofType": {"name": "ProjectV2ItemOrderField"}}},
+  {"name": "direction", "type": {"name": null, "kind": "NON_NULL", "ofType": {"name": "OrderDirection"}}}]}
+```
+
+`ProjectV2ItemOrderField` has exactly one enum value, `POSITION`.
 
 (d, organization fallback) `user(login: "raidenyn")` works for the board (it is a user-owned
 project). `organization(login: "raidenyn")` fails (exit 1), so the fallback is not the working
@@ -226,12 +282,29 @@ gh: Could not resolve to an Organization with the login of 'raidenyn'.
    {"id": "dbdc76fd", "name": "Blocked"}, {"id": "4b06252b", "name": "Done"}]}}
 ```
 
-Project field data types (abbreviated): `Title TITLE`, `Status SINGLE_SELECT`, `Labels LABELS`,
-`Linked pull requests LINKED_PULL_REQUESTS`, `Milestone MILESTONE`, `Repository REPOSITORY`,
-`Reviewers REVIEWERS`, `Parent issue PARENT_ISSUE`, `Sub-issues progress SUB_ISSUES_PROGRESS`,
-`Created CREATED`, `Updated UPDATED`, `Closed CLOSED`, `Implementation order NUMBER`,
-`Phase SINGLE_SELECT`, `Area SINGLE_SELECT`, `Release scope SINGLE_SELECT`,
-`Gate SINGLE_SELECT`.
+Project field data types, as printed by the `fields(first: 30)` call (`name dataType
+option-count`):
+
+```text
+Title TITLE 0
+Assignees ASSIGNEES 0
+Status SINGLE_SELECT 6
+Labels LABELS 0
+Linked pull requests LINKED_PULL_REQUESTS 0
+Milestone MILESTONE 0
+Repository REPOSITORY 0
+Reviewers REVIEWERS 0
+Parent issue PARENT_ISSUE 0
+Sub-issues progress SUB_ISSUES_PROGRESS 0
+Created CREATED 0
+Updated UPDATED 0
+Closed CLOSED 0
+Implementation order NUMBER 0
+Phase SINGLE_SELECT 7
+Area SINGLE_SELECT 5
+Release scope SINGLE_SELECT 2
+Gate SINGLE_SELECT 4
+```
 
 (f) What is recoverable and what is not:
 
@@ -401,26 +474,76 @@ and `--single-select-option-id`, and introspection confirms
 ProjectV2FieldValue!}`. `gh issue close --help` confirms `-c, --comment` and
 `-r, --reason {completed|not planned|duplicate}`.
 
-Missing `project` scope — not reproduced here because the token holds `project`; the exact text is
-in the installed `gh` 2.104.0. For `gh project …` commands
-(`pkg/cmd/project/shared/queries/queries.go`, on a GraphQL `INSUFFICIENT_SCOPES` error) gh formats
-the scopes that GitHub names in the error into this template, so a write that needs `project`
-prints:
+Missing `project` scope — **not reproduced in execution**: the token holds `project`, and removing
+it would edit the user's `gh` auth, which a read-only spike must not do. What follows is source
+inspection of the installed version, labelled as such; the procedure doc should present it as gh's
+text, not as an observed transcript.
+
+Source inspection of the installed `gh` 2.104.0 (`gh version 2.104.0 (2026-11-12)`):
+
+```bash
+curl -sS https://raw.githubusercontent.com/cli/cli/v2.104.0/pkg/cmd/project/shared/queries/queries.go \
+  | grep -n -B12 -A5 "missing required scopes"
+```
+
+```text
+1704-	if gerr, ok := errors.AsType[api.GraphQLError](err); ok {
+1705-		missing := set.NewStringSet()
+1706-		for _, e := range gerr.Errors {
+1707-			if e.Type != "INSUFFICIENT_SCOPES" {
+1708-				continue
+1709-			}
+1710-			missing.AddValues(requiredScopesFromServerMessage(e.Message))
+1711-		}
+1712-		if missing.Len() > 0 {
+1713-			s := missing.ToSlice()
+1714-			// TODO: this duplicates parts of generateScopesSuggestion
+1715-			return fmt.Errorf(
+1716:				"error: your authentication token is missing required scopes %v\n"+
+1717-					"To request it, run:  gh auth refresh -s %s",
+1718-				s,
+1719-				strings.Join(s, ","))
+1720-		}
+1721-	}
+```
+
+That branch runs on a GraphQL `INSUFFICIENT_SCOPES` error and formats the scopes GitHub names into
+`%v` (a slice, which renders as `[project]` for one element) and `%s`. Rendering the template for a
+project write — again **not executed**:
 
 ```text
 error: your authentication token is missing required scopes [project]
 To request it, run:  gh auth refresh -s project
 ```
 
-For the `gh api` path (`api/client.go`, on an HTTP scope error) the template is:
+```bash
+curl -sS https://raw.githubusercontent.com/cli/cli/v2.104.0/api/client.go \
+  | grep -n -B6 -A4 "This API operation needs"
+```
+
+```text
+398-	for s := range strings.SplitSeq(endpointNeedsScopes, ",") {
+399-		s = strings.TrimSpace(s)
+400-		if _, gotScope := gotScopes[s]; s == "" || gotScope {
+401-			continue
+402-		}
+403-		return fmt.Sprintf(
+404:			"This API operation needs the %[1]q scope. To request it, run:  gh auth refresh -h %[2]s -s %[1]s",
+405-			s,
+406-			ghauth.NormalizeHostname(hostname),
+407-		)
+408-	}
+```
+
+Rendered with `%[1]q` → `"project"` and the hostname `github.com` (**not executed**):
 
 ```text
 This API operation needs the "project" scope. To request it, run:  gh auth refresh -h github.com -s project
 ```
 
-GraphQL errors come back in a 200 body and `gh api graphql` prints them as `gh: <server message>`
-(the form observed above with the organization error), so there the server's own scope message is
-what the user sees.
+The `gh api graphql` path differs: GraphQL errors arrive in a 200 body and are printed as
+`gh: <server message>` (the form observed above with the organization `NOT_FOUND`), so there the
+user sees GitHub's own scope message rather than either template.
 
 The fix command in both cases is `gh auth refresh -s project`.
 
@@ -481,6 +604,32 @@ Checkbox normalization on real planning content: the change's own `plan.md` and 
 68 and 31 unticked `- [ ]` items, and the sample above covers the `- [x]`, `* [X]` and nested
 `  - [ ]` forms the design's grammar names.
 
+Reading the recorded approvals — the last `Approved content` line of each reviewer's record:
+
+```bash
+cd openspec/changes/extend-superspec-workflow
+for f in reviews/{brainstorm,proposal,design}-{sol,opus}.md; do
+  echo "== $f"; grep -n "Approved content" "$f" | tail -n 1
+done
+```
+
+and comparing each computed value with the full recorded hash mechanically (same normative
+one-liner, same records):
+
+```bash
+for a in brainstorm proposal design; do
+  computed=$(python3 -I -c "import hashlib,re,sys;t=open(sys.argv[1],'rb').read().decode('utf-8').replace('\r\n','\n').replace('\r','\n');t=re.sub(r'(?m)^([ \t]*[-*] )\[[xX ]\]',r'\1[ ]',t);print(hashlib.sha256(t.encode('utf-8')).hexdigest())" "$a.md")
+  for r in reviews/$a-sol.md reviews/$a-opus.md; do
+    recorded=$(grep "Approved content: $a.md" "$r" | tail -n 1 | sed -E 's/.*sha256 ([0-9a-f]{64}).*/\1/')
+    if [ "$computed" = "$recorded" ]; then
+      echo "MATCH    $a.md $r $computed"
+    else
+      echo "MISMATCH $a.md $r computed=$computed recorded=$recorded"
+    fi
+  done
+done
+```
+
 ### Result
 
 The four samples, and that only one change of content moves the hash:
@@ -509,13 +658,36 @@ proposal.md   8ec310f828da45f2eea046d672379083b8335a56b0ecab5a00df303c1e824946
 design.md     dbe2950ea84021b3d17c2d5e8662fcc3d465bf64d8aeb8e0fc1da62c4ac23431
 ```
 
-Each matches the last `Approved content` line recorded for that artifact:
+The last `Approved content` line of each record, full text as read:
 
-| Artifact | Recorded value | Recorded in |
-|---|---|---|
-| `brainstorm.md` | `a8d70a50…` | `reviews/brainstorm-sol.md` last line, `reviews/brainstorm-opus.md` last line |
-| `proposal.md` | `8ec310f8…` | `reviews/proposal-sol.md` last line, `reviews/proposal-opus.md` last line |
-| `design.md` | `dbe2950e…` | `reviews/design-sol.md` last line, `reviews/design-opus.md` last line (the user-accepted final state) |
+```text
+== reviews/brainstorm-sol.md
+95:Approved content: brainstorm.md sha256 a8d70a504a25cc0aa5e142f69451407d5ff9583f766cef37c17fdb0e549b4661 (raw bytes).
+== reviews/brainstorm-opus.md
+103:Approved content: brainstorm.md sha256 a8d70a504a25cc0aa5e142f69451407d5ff9583f766cef37c17fdb0e549b4661 (format normalization of the earlier "Final state" line; no new review)
+== reviews/proposal-sol.md
+41:Approved content: proposal.md sha256 8ec310f828da45f2eea046d672379083b8335a56b0ecab5a00df303c1e824946
+== reviews/proposal-opus.md
+31:Approved content: proposal.md sha256 8ec310f828da45f2eea046d672379083b8335a56b0ecab5a00df303c1e824946
+== reviews/design-sol.md
+62:The user accepted the final state (option 1). Approved content: design.md sha256 dbe2950ea84021b3d17c2d5e8662fcc3d465bf64d8aeb8e0fc1da62c4ac23431. Late edits not seen by Sol: the four low clarifications from Opus pass 3.
+== reviews/design-opus.md
+58:The user accepted the final state (option 1). Approved content: design.md sha256 dbe2950ea84021b3d17c2d5e8662fcc3d465bf64d8aeb8e0fc1da62c4ac23431. Late edits not seen by Sol: the four low clarifications from Opus pass 3.
+```
+
+The mechanical comparison, comparing the full 64-character values:
+
+```text
+MATCH    brainstorm.md reviews/brainstorm-sol.md a8d70a504a25cc0aa5e142f69451407d5ff9583f766cef37c17fdb0e549b4661
+MATCH    brainstorm.md reviews/brainstorm-opus.md a8d70a504a25cc0aa5e142f69451407d5ff9583f766cef37c17fdb0e549b4661
+MATCH    proposal.md reviews/proposal-sol.md 8ec310f828da45f2eea046d672379083b8335a56b0ecab5a00df303c1e824946
+MATCH    proposal.md reviews/proposal-opus.md 8ec310f828da45f2eea046d672379083b8335a56b0ecab5a00df303c1e824946
+MATCH    design.md reviews/design-sol.md dbe2950ea84021b3d17c2d5e8662fcc3d465bf64d8aeb8e0fc1da62c4ac23431
+MATCH    design.md reviews/design-opus.md dbe2950ea84021b3d17c2d5e8662fcc3d465bf64d8aeb8e0fc1da62c4ac23431
+```
+
+All six are full-value matches: each computed hash equals the complete recorded hash, not a
+prefix of it. (The two design records name the user-accepted final state.)
 
 Portability: `python3 -I` (3.14.4 here) reports `isolated 1 no_user_site 1 ignore_environment 1`,
 and the one-liner imports only `hashlib`, `re` and `sys` — no `sha256sum`, no `sed`, no shell
