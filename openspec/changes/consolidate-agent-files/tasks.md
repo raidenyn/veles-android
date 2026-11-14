@@ -88,8 +88,8 @@
 
 ## 10. Pre-PR checks and pull request
 
-- [ ] 10.1 Run the mandatory local lint gate from the pre-change `CLAUDE.md` for the exact submitted changes (`./gradlew spotlessCheck detekt lintDebug` and the raw `android.util.Log` guard from `check-android.yml`); fix failures or report the blocker.
-- [ ] 10.2 Run the checks of every touched node: `python3 -I scripts/components.py check`, `./gradlew scriptsTest`, the agent-file check and its tests, the native-host build-contract tests, `node --test verify/test/workflow-contracts.test.mjs`; fix failures.
-- [ ] 10.3 Validate the PR title and body (the future squash commit, the only message `pr-title` and `commit-guard` lint) and each local commit message with `scripts/commitlint.py`, type `docs`/`chore` so no release bump, and confirm none touching an owned nested `AGENTS.md` is typed `feat` or `fix`.
+- [x] 10.1 Run the mandatory local lint gate from the pre-change `CLAUDE.md` for the exact submitted changes (`./gradlew spotlessCheck detekt lintDebug` and the raw `android.util.Log` guard from `check-android.yml`); fix failures or report the blocker.
+- [x] 10.2 Run the checks of every touched node: `python3 -I scripts/components.py check`, `./gradlew scriptsTest`, the agent-file check and its tests, the native-host build-contract tests, `node --test verify/test/workflow-contracts.test.mjs`; fix failures.
+- [x] 10.3 Validate the PR title and body (the future squash commit, the only message `pr-title` and `commit-guard` lint) and each local commit message with `scripts/commitlint.py`, type `docs`/`chore` so no release bump, and confirm none touching an owned nested `AGENTS.md` is typed `feat` or `fix`.
 - [ ] 10.4 Create the pull request, link it, and watch CI until `ci-ok` is green; address findings.
 - [ ] 10.5 Write `finalize.md`, and archive the change in a follow-up pull request as the previous split-android change did (`docs(openspec): archive …`), syncing the deltas so `agent-guidance-layout` and `openspec-skills-delivery` are created and `ci-pipeline`, `component-versioning` and `pr-last-green-selection` are updated.
