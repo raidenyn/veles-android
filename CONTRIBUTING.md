@@ -59,6 +59,37 @@ Install the local `commit-msg` hook to validate commit messages before committin
 
 ---
 
+## AI agent tooling
+
+Agent guidance is tool-neutral: the root `AGENTS.md` and one `AGENTS.md` per node describe that
+node's architecture, commands and rules, and `.agents/rules/` holds the scoped rule files. The
+agent-file check (`docs/checks/check_agent_files.py`) enforces the layout; `docs/AGENTS.md` explains
+how to add a rule or a node.
+
+- **Start at the repository root.** Scoped rules are delivered only when the agent is started at the
+  root; started inside a node folder you get that folder's `AGENTS.md` (Claude Code also loads the
+  parent chain; OpenCode does not), but you must read that folder's listed rule files by hand.
+- **Claude Code** needs ≥ 2.1.277 (≥ 2.1.281 for Bedrock and telemetry-off sessions). A `CLAUDE.md`
+  or `CLAUDE.local.md` in any parent folder hides `AGENTS.md`, so do not create one — and do not run
+  `/init`, which can.
+- **OpenCode** needs the `opencode-rules` plugin at the range pinned in `opencode.json`; without it
+  scoped rules are not delivered automatically. Install and troubleshooting steps are in
+  `docs/AGENTS.md`. Never repeat the version range in another file.
+- **Antigravity** reads `AGENTS.md`; it does not load nested node files on its own, so follow the
+  node map in the root file and open each node's `AGENTS.md` yourself. Scoped `.agents/rules`
+  delivery in the IDE is unverified, so read the node's listed rule files as well.
+- **Checkout on Windows** requires `core.symlinks=true` *and* Developer Mode, or `.claude/rules` and
+  the skill links are checked out as plain text and Claude Code sees no rules or skills (the check
+  warns explicitly). On Linux and macOS the committed symlinks resolve as-is.
+- **OpenSpec** CLI `>= 2.0.0, < 3` (2.0.0 last verified; 1.x is unsupported), run on Linux or macOS
+  only. Use the update procedure in `docs/AGENTS.md`; generated `openspec-*` skills must never be
+  hand-edited.
+- **Reviewing an untrusted checkout:** read `opencode.json` and `.claude/settings.json` before
+  launching an agent, or start outside the checkout / disable the project's plugin configuration,
+  because repository configuration can install and run code.
+
+---
+
 ## Build & Release Documentation
 
 - Refer to [BUILD.md](BUILD.md) for local compile and test instructions.

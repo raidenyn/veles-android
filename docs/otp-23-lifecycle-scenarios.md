@@ -31,7 +31,8 @@ phones is `BLOCKED / insufficient_phones`, never PASS.
 
 `stdin-eof*` launch the host directly, so on macOS Bluetooth TCC is attributed to the launching process, not Chrome.
 Each such result carries `provenance.chrome_provenance: false` and the context note; it never counts as Chrome
-provenance evidence. No TCC reset, no signing substitution (see CLAUDE.md "Stable Signing Identities").
+provenance evidence. No TCC reset, no signing substitution (see `native-bridge/installer/macos/AGENTS.md`
+"Signing identity and TCC (macOS)"; Android signing is in `android/AGENTS.md`).
 
 Result shape (every scenario): `id`, `title`, `expected`, `actual`, `status` (`PASS|FAIL|BLOCKED|PARTIAL`),
 `error_class` (`none, insufficient_phones, ambiguous_target, target_not_found, permission_denied, unsupported,

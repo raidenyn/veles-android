@@ -885,6 +885,19 @@ class IntegrationTest(unittest.TestCase):
         self.assertTrue(outputs["android"])
         self.assertFalse(outputs["web-extension"])
 
+    def test_docs_only_change_selects_only_docs(self):
+        root = new_repo(self)
+        base = git(root, "rev-parse", "HEAD")
+        git(root, "checkout", "-q", "-b", "pr")
+        head = commit_file(root, "docs/ci.md", "docs\n", "docs only")
+        api_root = record(self, [head], runs={head: []})
+        out, notes = output_paths(self)
+        with main_env(FakeApi(api_root), cwd=root, show_map=None, is_ancestor=None):
+            code = last_green.main(main_args(head=head, out=out, notes=notes))
+        self.assertEqual(code, 0)
+        outputs = self.select(root, base, head, out, notes)
+        self.assertEqual({node for node, selected in outputs.items() if selected}, {"docs"})
+
 
 if __name__ == "__main__":
     unittest.main()

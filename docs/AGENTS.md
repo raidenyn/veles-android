@@ -1,0 +1,122 @@
+# docs/AGENTS.md
+
+Documentation, decision records and the agent-file check. `docs/` and `openspec/` belong to the
+non-release `docs` CI node (`check-docs.yml`); the node's checks are `docs / agent-files` and
+`docs / unit-tests`. `docs/ci.md` holds the CI tree and per-check commands.
+
+## The agent-file check
+
+`docs/checks/check_agent_files.py` is a standard-library Python check (Python 3.8+) of the agent
+guidance layout: removed legacy files (`CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md`,
+`CONTRIBUTION.md`, `.opencode/`, `.claude/commands/`), the `AGENTS.md` line caps and start-at-root
+notices, node-map parity, rule frontmatter and scope patterns, the `.claude/` symlinks and skill
+set, `opencode.json`, `.github/CODEOWNERS` and the plugin mentions. Run it and its tests from the
+repository root:
+
+```bash
+python3 docs/checks/check_agent_files.py --root .
+python3 -m unittest discover -s docs/checks -p 'test_*.py' -v
+```
+
+It prints one finding per violation (`severity path: message`), exits non-zero on errors and zero
+with warnings, and takes `--platform` so the Windows symlink warning path is testable. It is
+structural: it never runs `openspec update` or compares generated skill text.
+
+## Adding a rule or a node
+
+**A rule** is one concern in one file in the flat `.agents/rules/` directory (no subdirectories),
+named `<scope>-<topic>.md` with a known scope (`repo`, `android`, `web-extension`, `rust`,
+`protocol`, `native-bridge`, `host`, `installer`, `macos`, `windows`, `verify`, `scripts`, `docs`).
+
+- `repo-*` rules are always on: frontmatter `trigger: always_on` and no `globs`/`paths`.
+- Node rules use `trigger: glob` plus YAML lists `globs` and `paths` with the same pattern
+  (`android/**`, `native-bridge/installer/macos/**`, …), no brace expansion. Parent scopes are
+  cumulative (`native-bridge/**` also applies inside `host/` and `installer/`).
+- Frontmatter keys are limited to `trigger`, `globs` and `paths`, and a rule is at most 24,000 bytes.
+- List the file in the `## Rules` section of the `AGENTS.md` of the scope's folder (the root
+  `AGENTS.md` for `repo-*`); the check fails when a rule is unlisted or a listed file is missing.
+
+**A node** gets its own `AGENTS.md` with the nested start-at-root notice and a literal `## Rules`
+section, an entry in the root node map, a `global-overrides` entry in `.github/components.json`
+mapping the exact path to `["docs"]` (host adds `native-host`), a node definition with its paths,
+`ci-paths`, jobs and release flag, and its `check-<node>.yml` call in `ci.yml` and `ci-ok`. Add the
+new file to `NODE_FILES` in `docs/checks/check_agent_files.py`.
+
+## OpenSpec: version and update procedure
+
+The CLI is `>= 2.0.0, < 3` (2.0.0 last verified; 1.x is unsupported). Run updates on Linux or macOS
+only — `openspec update` under Windows has not been shown to work on 2.x. The procedure is: assert
+`openspec --version` is in range, run `openspec update --dry-run`, run `openspec update`, commit the
+regenerated skills, then run `openspec update` again to prove idempotence (an empty diff). A newer
+2.x that rewrites skill text is a normal "regenerate skills" diff, not a failure.
+
+Generated skills live in `.agents/skills/openspec-*`, with one `.claude/skills/<name>` symlink per
+skill. Never hand-edit them: `openspec update` overwrites them, and lasting changes belong in a
+non-`openspec-` skill or in `openspec/config.yaml`. `.agents/skills/.openspec-target` is a tool-ID
+list, not version metadata, and is excluded when the two skill directories are compared.
+
+The workflow list used on this machine (`~/.config/openspec/config.json`, profile `custom`), which
+determines the generated skill set, is: propose, explore, new, continue, apply, ff, sync, archive,
+bulk-archive, verify, update. CI does not install the OpenSpec CLI; the structural check catches a
+1.x regression through the forbidden legacy directories.
+
+## OpenSpec skills
+
+- `openspec-apply-change`
+- `openspec-archive-change`
+- `openspec-bulk-archive-change`
+- `openspec-continue-change`
+- `openspec-explore`
+- `openspec-ff-change`
+- `openspec-new-change`
+- `openspec-propose`
+- `openspec-sync-specs`
+- `openspec-update-change`
+- `openspec-verify-change`
+
+## The `superspec` schema fork
+
+`openspec/schemas/superspec/` (schema version v4) is a **third-party** schema installed by the
+`superspec-setup` integration, not by OpenSpec. This repository forks it: its `/opsx:<name>`
+command references were rewritten to the OpenSpec 2 skill names (`/openspec-propose`,
+`/openspec-apply-change`, …) because the `/opsx:` commands no longer exist after 2.0. `openspec`
+does not manage or overwrite `openspec/schemas/`, but reinstalling the schema restores the upstream
+`/opsx:` references, so re-apply the skill-name rewrite after any reinstall and verify with
+`grep -rn '/opsx:' openspec/schemas` (expected: no hits).
+
+## OpenCode and the `opencode-rules` plugin
+
+OpenCode has no native path-scoped rules, so scoped rules reach it only through the third-party
+`opencode-rules` plugin declared in `opencode.json`. The plugin loads `additionalRuleDirectories`
+(today `.agents/rules`) and delivers a rule only when the files the agent reads match its `globs`;
+`repo-*` rules are always on. The root `AGENTS.md` and every node's `## Rules` list keep the files
+discoverable if the plugin is not active.
+
+- **Install**: the plugin is configured once, in `opencode.json`, at the range pinned there; OpenCode
+  installs a missing configured plugin in the background. There is no separate install command and
+  the version must not be repeated in any other document — `opencode.json` is the single source.
+- **Check and update**: `opencode plugin list` shows what is installed; `opencode plugin update`
+  updates an installed package within the pinned range. Widen the range only by editing
+  `opencode.json` in a reviewed change; the agent-file check rejects an unpinned or unbounded entry.
+- **Observed caveat**: if `opencode-rules` is also enabled in a user-level OpenCode config, two
+  plugin instances load and project rules are not delivered. Configure it once — remove or disable
+  the duplicate global entry.
+- **Observed repeated-read caveat** (`opencode-rules` 2.0.0): reading the same file a second time in
+  one session can drop the scoped rule that the first read delivered, so a rule that applied earlier
+  can stop applying. If a scoped rule appears to vanish, read the rule files listed in the node's
+  `## Rules` section by hand; the always-on `repo-*` rules are unaffected.
+- **Untrusted checkouts**: `opencode.json` and any repo-controlled agent configuration can make your
+  tool install and run code, so read `opencode.json` and `.claude/settings.json` before launching an
+  agent in an untrusted PR checkout. To review such a checkout safely, start OpenCode from outside
+  it, or remove/disable the plugin entry in your local uncommitted copy (and disable the project's
+  Claude Code configuration). `opencode debug config` lists the configuration sources being loaded.
+- **Plugin unavailable**: with an offline cache miss, an install failure or the plugin disabled,
+  OpenCode still starts; scoped rules are simply not delivered, and the root `AGENTS.md` pointer plus
+  each node's listed rule files keep them discoverable. This degraded state is supported, not a
+  repository error.
+
+## Rules
+
+None.
+
+> **Run your agent from the repository root.** Scoped rules in `.agents/rules/` load only from there; if you started in this folder, read this folder's rule files listed below by hand.

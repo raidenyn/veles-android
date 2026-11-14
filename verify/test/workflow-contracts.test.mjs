@@ -664,7 +664,7 @@ test('host check workflow runs the installer format, lint and tests on all three
 
 const COMPONENT_MAP = JSON.parse(await readFile(new URL('.github/components.json', root), 'utf8'));
 const CI_NODES = Object.keys(COMPONENT_MAP.nodes);
-const CHECK_WORKFLOWS = ['android', 'web-extension', 'rust', 'protocol', 'native-host', 'installer', 'bridge-scaffold', 'tooling'];
+const CHECK_WORKFLOWS = ['android', 'web-extension', 'rust', 'protocol', 'native-host', 'installer', 'bridge-scaffold', 'tooling', 'docs'];
 
 // Every command ci.yml and build-native-host.yml ran before the component split. Each must run in exactly
 // one check-*.yml (per owner: the host build-contract suite in native-host, the installer suites through
@@ -793,6 +793,12 @@ test('ci.yml calls one change-gated check workflow per component node and gates 
     assert.match(check, /^permissions:\n  contents: read\n/m, `check-${node}.yml must be read-only`);
     assert.doesNotMatch(check, /secrets\./, `check-${node}.yml must not use secrets`);
   }
+  // The docs node is a first-class caller: it is selected by its own map output and gated by ci-ok.
+  const docsJobs = workflowJobBlocks(executableYaml(source));
+  assert.match(source, /^      docs: \$\{\{ steps\.select\.outputs\.docs \}\}$/m, 'changes must expose the docs output');
+  assert.match(docsJobs.docs ?? '', /^    uses: \.\/\.github\/workflows\/check-docs\.yml\s*$/m, 'ci.yml must call check-docs.yml for the docs node');
+  assert.match(docsJobs.docs ?? '', /^    if: \$\{\{ !cancelled\(\) && needs\.changes\.outputs\.docs == 'true' \}\}$/m, 'docs must run only when selected');
+  assert.ok(jobNeeds(docsJobs['ci-ok'] ?? '').includes('docs'), 'ci-ok must need docs');
   const mutations = {
     'missing node': (text) => text.replace(/\n  tooling:\n[\s\S]*?(?=\n  [a-z-]+:\n)/, '\n'),
     'unconditional node': (text) => text.replace("needs.changes.outputs.android == 'true'", "true"),
@@ -1164,6 +1170,8 @@ test("declared jobs equal the jobs of each ci.yml caller's reusable workflow", a
     assertDeclaredJobs(node, entry.jobs, await derivedJobNames(node));
   }
   assert.deepEqual(await derivedJobNames('supply-chain'), ['build'], 'supply-chain derives the called job id when the job has no name');
+  assert.deepEqual(await derivedJobNames('docs'), ['agent-files', 'unit-tests'], 'docs must report the agent-file check and its unit tests');
+  assert.deepEqual(COMPONENT_MAP.nodes.docs.jobs, ['agent-files', 'unit-tests'], 'the docs node must declare the two checks its workflow runs');
 
   // Negative: a matrix job has no single display name, and a missing or renamed declared job fails.
   const rust = await workflow('check-rust.yml');
@@ -1344,9 +1352,10 @@ test('the remote-code scan scopes exist and cover the CI, tooling and hook sourc
   const { REMOTE_CODE_SCOPES, missingScopes } = await import(new URL('verify/check-remote-code.mjs', root));
   assert.deepEqual(await missingScopes(repository, REMOTE_CODE_SCOPES), [], 'every remote-code scope must exist');
   assert.deepEqual(await missingScopes(repository, ['web-extension/manifest.json']), ['web-extension/manifest.json'], 'a missing scope must be reported');
-  for (const scope of ['.github/workflows/check-native-host.yml', '.github/workflows/check-installer.yml', '.github/workflows/ci.yml', '.github/workflows/pr-title.yml', 'scripts', '.githooks', 'web-extension/vite.config.ts']) {
+  for (const scope of ['.github/workflows/check-native-host.yml', '.github/workflows/check-installer.yml', '.github/workflows/check-docs.yml', '.github/workflows/ci.yml', '.github/workflows/pr-title.yml', 'scripts', '.githooks', 'web-extension/vite.config.ts']) {
     assert.ok(REMOTE_CODE_SCOPES.includes(scope), `the remote-code scan must cover ${scope}`);
   }
+  assert.ok(REMOTE_CODE_SCOPES.includes('docs/checks/'), 'the remote-code scan must cover the docs node check scripts');
   for (const scope of ['.github/workflows/build-native-host.yml', 'web-extension/manifest.json']) {
     assert.ok(!REMOTE_CODE_SCOPES.includes(scope), `the remote-code scan must not list ${scope}`);
   }
@@ -3373,6 +3382,80 @@ test('tooling runs the alias check, its self-test and the MAC guard tests', asyn
     assert.notEqual(mutated, source, `removing "${expected}" must change check-tooling.yml`);
     assert.throws(() => assertToolingAliasSteps(mutated), `the contract must reject a missing "${expected}" step`);
   }
+});
+
+// The docs node is plain Python against the system interpreter: it installs nothing (no npm, pip,
+// Node, Java or Gradle setup) and downloads nothing. Every `run:` step must start with one of these
+// prefixes, so a registry install or a download cannot hide behind a docs check.
+const DOCS_RUN_ALLOWLIST = ['python3 docs/checks/', 'python3 -m unittest'];
+
+function assertDocsCheckWorkflow(source, name = 'check-docs.yml') {
+  assert.match(source, /^on:\n  workflow_call:\n/m, `${name} must be reusable`);
+  assert.match(source, /commit-sha:[\s\S]*?required:\s*true/, `${name} must require the source commit`);
+  assert.doesNotMatch(source, /artifact-name:/, `${name} must not take an artifact name`);
+  assert.match(source, /^permissions:\n  contents: read\n/m, `${name} must be read-only at workflow scope`);
+  assert.doesNotMatch(source, /^ {4}permissions:/m, `${name} must not override permissions at job scope`);
+  assert.match(source, /actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7/, `${name} must use the pinned checkout`);
+  assert.doesNotMatch(source, /secrets\./, `${name} must not use secrets`);
+
+  const executable = executableYaml(source);
+  const jobs = workflowJobBlocks(executable);
+  assert.deepEqual(Object.keys(jobs).sort(), ['agent-files', 'unit-tests'], `${name} must define the agent-file and unit-test jobs`);
+  for (const [job, block] of Object.entries(jobs)) {
+    assert.match(block, new RegExp(`^    name: ${escapeRegexp(job)}\\s*$`, 'm'), `${name} must report job ${job} as ${job}`);
+    assert.match(block, /^    runs-on: ubuntu-latest\s*$/m, `${name} job ${job} must run on Linux`);
+    assert.match(block, /ref: \$\{\{ inputs\.commit-sha \}\}/, `${name} job ${job} must check out the requested commit`);
+    assert.doesNotMatch(block, /strategy:|uses: actions\/setup-/, `${name} job ${job} must be a single plain job`);
+  }
+  // Allow-list: no dependency install and no download may appear as a docs command.
+  const runs = runCommands(executable).map((command) => command.trim());
+  for (const run of runs) {
+    assert.ok(DOCS_RUN_ALLOWLIST.some((prefix) => run.startsWith(prefix)), `${name} run command "${run}" must start with python3 docs/checks/ or python3 -m unittest`);
+  }
+  assert.equal(runs.length, 2, `${name} must run exactly the agent-file check and its tests`);
+  assert.match(jobs['agent-files'], /^      - run: python3 docs\/checks\/check_agent_files\.py --root \.$/m, `${name} must run the agent-file check from the repository root`);
+  assert.match(jobs['unit-tests'], /^      - run: python3 -m unittest discover -s docs\/checks -p 'test_\*\.py' -v$/m, `${name} must run the agent-file check suite`);
+
+  for (const forbidden of [/\bnpm\b/, /\bnpx\b/, /\bpip\b/, /\bcurl\b/, /\bwget\b/, /setup-node/, /setup-java/, /setup-gradle/]) {
+    assert.doesNotMatch(executable, forbidden, `${name} must stay plain Python (found ${forbidden})`);
+  }
+}
+
+test('docs workflow runs only the agent-file check and its tests from the allow-list', async () => {
+  const source = await workflow('check-docs.yml');
+  assertDocsCheckWorkflow(source);
+
+  const mutations = {
+    'npm ci': 'npm ci',
+    'npm install': 'npm install',
+    npx: 'npx esbuild',
+    'pip install': 'pip install requests',
+    'python3 -m pip install': 'python3 -m pip install requests',
+    curl: 'curl https://example.invalid/install.sh',
+    wget: 'wget https://example.invalid/install.sh',
+  };
+  for (const [label, command] of Object.entries(mutations)) {
+    const mutated = `${source}\n      - run: ${command}\n`;
+    assert.notEqual(mutated, source, `mutation "${label}" must change check-docs.yml`);
+    assert.throws(() => assertDocsCheckWorkflow(mutated), /must start with python3/, `the contract must reject "${label}"`);
+  }
+
+  // A forbidden install cannot hide behind an allow-listed prefix, in a chained command or a
+  // YAML block scalar: either the command no longer matches the allow-list or the count changes.
+  const chained = `${source}\n      - run: python3 docs/checks/check_agent_files.py --root . ; npm ci\n`;
+  assert.notEqual(chained, source, 'the chained-install mutation must change check-docs.yml');
+  assert.throws(() => assertDocsCheckWorkflow(chained), /exactly the agent-file check/, 'the contract must reject a chained install');
+
+  const blockScalar = `${source}\n      - run: |\n          python3 docs/checks/check_agent_files.py --root .\n          npm ci\n`;
+  assert.notEqual(blockScalar, source, 'the block-scalar mutation must change check-docs.yml');
+  assert.throws(() => assertDocsCheckWorkflow(blockScalar), /must start with python3/, 'the contract must reject a block-scalar install');
+
+  const renamed = source.replace('python3 docs/checks/check_agent_files.py --root .', 'python3 scripts/check_agent_files.py --root .');
+  assert.notEqual(renamed, source, 'the moved-check mutation must change check-docs.yml');
+  assert.throws(() => assertDocsCheckWorkflow(renamed), /must start with python3/);
+  const dropped = source.replace(/^ *- run: python3 -m unittest discover -s docs\/checks -p 'test_\*\.py' -v\n/m, '');
+  assert.notEqual(dropped, source, 'the dropped-tests mutation must change check-docs.yml');
+  assert.throws(() => assertDocsCheckWorkflow(dropped), /exactly the agent-file check/);
 });
 
 function assertBuildAndroidArtifacts(source) {

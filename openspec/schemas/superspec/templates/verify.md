@@ -78,7 +78,7 @@ Scenarios in `specs/*.md`:
 
 ## Overall Decision
 
-- [ ] ✅ PASS — ready to proceed via /opsx:continue to the finalize artifact, then /opsx:archive
+- [ ] ✅ PASS — ready to proceed via /openspec-continue-change to the finalize artifact, then /openspec-archive-change
 - [ ] ⚠️ PASS WITH WARNINGS — can proceed but note: `<explanation>`
 - [ ] ❌ FAIL — return to the failed artifact, fix, then re-run verify
 
@@ -87,14 +87,14 @@ Scenarios in `specs/*.md`:
 <describe the next action>
 
 > **Convergence loop reminder**:
-> - PASS / PASS_WITH_WARNINGS → `/opsx:continue` advances to the finalize
+> - PASS / PASS_WITH_WARNINGS → `/openspec-continue-change` advances to the finalize
 >   artifact, which executes the git-side closeout directly (merges
 >   worktree → feature branch, pushes to update existing PR, posts
 >   code-reviewer onboarding comment). The skill
 >   `superpowers:finishing-a-development-branch` is an escape hatch for
->   non-canonical flows. Then `/opsx:archive` once finalize.md exists.
+>   non-canonical flows. Then `/openspec-archive-change` once finalize.md exists.
 > - FAIL with items fixable by code change → return to the apply artifact
->   and re-run `/opsx:apply`, then re-run `/opsx:verify` — this overwrites
+>   and re-run `/openspec-apply-change`, then re-run `/openspec-verify-change` — this overwrites
 >   both apply.md and verify.md with the next iteration.
 > - FAIL with artifact-level items → fix the offending artifact, then
 >   re-enter apply.

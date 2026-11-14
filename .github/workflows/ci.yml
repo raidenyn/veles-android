@@ -43,6 +43,7 @@ jobs:
       bridge-scaffold: ${{ steps.select.outputs.bridge-scaffold }}
       supply-chain: ${{ steps.select.outputs.supply-chain }}
       tooling: ${{ steps.select.outputs.tooling }}
+      docs: ${{ steps.select.outputs.docs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -168,6 +169,14 @@ jobs:
     with:
       commit-sha: ${{ github.sha }}
 
+  docs:
+    name: docs
+    needs: [changes]
+    if: ${{ !cancelled() && needs.changes.outputs.docs == 'true' }}
+    uses: ./.github/workflows/check-docs.yml
+    with:
+      commit-sha: ${{ github.sha }}
+
   # Post-merge backstop for the PR title check: every commit pushed to master must be a Conventional
   # Commit. A new-branch push (all-zero before) or an unknown before validates only the pushed head.
   commit-guard:
@@ -201,7 +210,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, android, web-extension, installer, rust, protocol, native-host, bridge-scaffold, supply-chain, tooling, commit-guard]
+    needs: [changes, android, web-extension, installer, rust, protocol, native-host, bridge-scaffold, supply-chain, tooling, docs, commit-guard]
     runs-on: ubuntu-latest
     steps:
       - name: Require every selected node to pass

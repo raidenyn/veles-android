@@ -21,7 +21,7 @@
 # script STOPS (BLOCKED) rather than choosing anything else. There is no option to choose another
 # identifier, team or certificate.
 #
-# Hard rules (CLAUDE.md "Stable Signing Identities"):
+# Hard rules (native-bridge/installer/macos/AGENTS.md "Signing identity and TCC"):
 #   * the certificate is selected read-only from `security find-identity` by its EXACT recorded
 #     name, and only if exactly one matches; none or several => BLOCKED, never a fallback;
 #   * ad-hoc signing is impossible (the identity is always that named certificate);

@@ -1,0 +1,36 @@
+name: check-docs
+
+# Docs node of the CI component tree (ci.yml -> `docs / agent-files`, `docs / unit-tests`): the
+# structural agent-file check and its stdlib-only Python suite. The node runs plain Python on the
+# runner's system interpreter: it installs nothing (no npm, pip, Node, Java or Gradle) and downloads
+# nothing, so the workflow contract allow-lists every command here. Any workflow edit is a global
+# path, so the nodes that read this file run too.
+
+on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  agent-files:
+    name: agent-files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - run: python3 docs/checks/check_agent_files.py --root .
+
+  unit-tests:
+    name: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - run: python3 -m unittest discover -s docs/checks -p 'test_*.py' -v

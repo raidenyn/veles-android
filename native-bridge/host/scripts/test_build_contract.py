@@ -356,7 +356,7 @@ def check_vendored_patch():
 
 def check_docs(claude_md, repro_md, readme):
     errors = []
-    for name, text in (("CLAUDE.md", claude_md), ("docs/reproducible-builds.md", repro_md)):
+    for name, text in (("native-bridge/host/AGENTS.md", claude_md), ("docs/reproducible-builds.md", repro_md)):
         for task in TASKS:
             if task not in text:
                 errors.append("%s does not document %s" % (name, task))
@@ -629,7 +629,7 @@ class VendorManifest(unittest.TestCase):
 class Documentation(unittest.TestCase):
     def test_docs_distinguish_production_host_from_scaffold(self):
         self.assertEqual(
-            check_docs(read("CLAUDE.md"), read("docs/reproducible-builds.md"),
+            check_docs(read("native-bridge/host/AGENTS.md"), read("docs/reproducible-builds.md"),
                        (HOST / "README.md").read_text(encoding="utf-8")),
             [],
         )
