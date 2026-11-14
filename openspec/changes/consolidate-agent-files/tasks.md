@@ -68,7 +68,7 @@
 - [x] 7.2 Select `supply-chain` for checker changes (`ci-paths` on `docs/checks/` as needed) and update the node's `paths`/`ci-paths` accordingly.
 - [x] 7.3 Extend `verify/test/workflow-contracts.test.mjs` with the declared `docs` checks, a test that `check-docs.yml` is wired into `ci.yml` and `ci-ok`, add `docs` to `CHECK_WORKFLOWS` so the shared reusable, `contents: read` and no-secrets assertions run on `check-docs.yml`, and a negative test that fails when the workflow installs any package from a registry at run time.
 - [x] 7.4 Run `node --test verify/test/workflow-contracts.test.mjs`, `python3 -I scripts/components.py check`, `./gradlew scriptsTest`, the component tests, both the host and the installer build-contract suites and, where prerequisites exist, `verify/verify-supply-chain.sh`.
-- [ ] 7.5 Commit groups 5, 6 and 7 together as one atomic commit (docs-node ownership, retirements and overrides, selection-fixture updates, `CODEOWNERS`, the reusable workflow and its caller, the check and its tests, the scanner change and the workflow-contract updates) only after 7.4 passes; confirm `python3 -I scripts/components.py check` on the committed tree and replace the temporary `unowned` entries in that same commit.
+- [x] 7.5 Commit groups 5, 6 and 7 together as one atomic commit (docs-node ownership, retirements and overrides, selection-fixture updates, `CODEOWNERS`, the reusable workflow and its caller, the check and its tests, the scanner change and the workflow-contract updates) only after 7.4 passes; confirm `python3 -I scripts/components.py check` on the committed tree and replace the temporary `unowned` entries in that same commit.
 
 ## 8. Live reference migration
 
