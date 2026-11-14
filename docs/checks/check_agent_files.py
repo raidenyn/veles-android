@@ -63,6 +63,14 @@ CODEOWNERS = ".github/CODEOWNERS"
 CODEOWNER_PATTERNS = ("/opencode.json", "/.claude/", "/.agents/", "**/AGENTS.md")
 CODEOWNER_MCP_PATTERN = "/.mcp.json"
 MCP_JSON = ".mcp.json"
+# One representative path per required pattern, used to apply GitHub's last-match rule.
+CODEOWNER_SAMPLE_PATHS = (
+    ("/opencode.json", "opencode.json"),
+    ("/.claude/", ".claude/settings.json"),
+    ("/.agents/", ".agents/rules/repo-conventional-commits.md"),
+    ("**/AGENTS.md", "android/AGENTS.md"),
+    ("**/AGENTS.md", "native-bridge/host/AGENTS.md"),
+)
 
 PLUGIN_MENTION_FILES = (ROOT_AGENTS, "CONTRIBUTING.md")
 PLUGIN_RANGE_DOCS = (ROOT_AGENTS, "CONTRIBUTING.md", DOCUMENTED_SKILLS)
@@ -642,14 +650,6 @@ def parse_documented_skills(text):
     return tuple(names)
 
 
-def _is_link(root, path, entries):
-    """True when the index says mode 120000, or the filesystem says so for an untracked path."""
-    entry = entries.get(path)
-    if entry is not None:
-        return entry[0] == "120000"
-    return os.path.islink(os.path.join(root, path))
-
-
 def _link_standin(path, platform):
     """A regular-file stand-in for a committed symlink: an error, or a Windows warning."""
     severity = "warning" if platform == "win32" else "error"
@@ -668,6 +668,10 @@ def _check_required_link(root, path, expected, entries, platform):
     if entry is None:
         if os.path.islink(full):
             actual = os.readlink(full)
+        elif os.path.isdir(full):
+            return [
+                Finding("error", path, "is a real directory, not a symlink to `%s`" % expected)
+            ]
         elif os.path.lexists(full):
             return [_link_standin(path, platform)]
         else:
@@ -711,14 +715,20 @@ def _skill_names(files):
 
 
 def _claude_skill_entries(files):
-    """Direct children of `.claude/skills/` (one per expected link)."""
+    """Immediate skill names under `.claude/skills/`, from every descendant path.
+
+    A real directory has no index entry of its own, so names must come from the first path
+    segment of its contents; otherwise a tool-specific skill copy can hide behind the orphan
+    check. Unlike `.agents/skills/`, there is no canonical marker file here: a
+    `.claude/skills/.openspec-target` entry is a skill-shaped copy and must be checked.
+    """
     names = set()
     prefix = CLAUDE_SKILLS + "/"
     for path in files:
         if not path.startswith(prefix):
             continue
-        name = path[len(prefix):]
-        if name and "/" not in name:
+        name = path[len(prefix):].split("/", 1)[0]
+        if name:
             names.add(name)
     return sorted(names)
 
@@ -746,14 +756,13 @@ def check_links(root, files, platform=sys.platform):
         )
     known = set(skills)
     for name in _claude_skill_entries(files):
-        path = CLAUDE_SKILLS + "/" + name
-        if name in known or not _is_link(root, path, entries):
+        if name in known:
             continue
         findings.append(
             Finding(
                 "error",
-                path,
-                "is an orphan symlink; `.agents/skills/%s` does not exist" % name,
+                CLAUDE_SKILLS + "/" + name,
+                "is an orphan entry; `.agents/skills/%s` does not exist" % name,
             )
         )
 
@@ -1037,34 +1046,94 @@ def _has_owner(owners):
     return any("@" in owner for owner in owners)
 
 
+def _codeowner_glob(pattern):
+    """A regex for one CODEOWNERS pattern under GitHub's last-match semantics.
+
+    A leading `/` anchors at the repository root, a trailing `/` covers a directory and its
+    contents, `**` spans any depth, `*` stays within one path segment, and an unanchored
+    pattern may match at any depth. A non-wildcard pattern also covers descendants of the
+    directory it names, with or without a trailing slash.
+    """
+    anchored = pattern.startswith("/")
+    body = pattern[1:] if anchored else pattern
+    directory = body.endswith("/")
+    body = body.rstrip("/")
+    wildcard = "*" in body or "?" in body
+    translated = []
+    index = 0
+    while index < len(body):
+        if body.startswith("**/", index):
+            translated.append("(?:.*/)?")
+            index += 3
+        elif body.startswith("**", index):
+            translated.append(".*")
+            index += 2
+        elif body[index] == "*":
+            translated.append("[^/]*")
+            index += 1
+        elif body[index] == "?":
+            translated.append("[^/]")
+            index += 1
+        else:
+            translated.append(re.escape(body[index]))
+            index += 1
+    expression = "".join(translated)
+    if not anchored:
+        expression = "(?:.*/)?" + expression
+    if directory or not wildcard:
+        expression += "(?:/.*)?"
+    return re.compile("^" + expression + "$")
+
+
 def check_codeowners(root):
     """Check that `.github/CODEOWNERS` effectively covers the agent guidance and configuration.
 
-    A pattern with no owner token matches files but assigns no reviewer, so it is not
-    coverage: the finding names the pattern either way.
+    GitHub applies the last matching rule, so ownership is resolved per representative path
+    in file order: a later ownerless line removes an earlier owner. A bare pattern with no
+    owner token matches files but assigns no reviewer, so it is not coverage.
     """
     text = _read_text(root, CODEOWNERS)
     if text is None:
         return [Finding("error", CODEOWNERS, "is missing")]
     rules = _codeowners_rules(text)
     present = set(pattern.rstrip("/") for pattern, _ in rules)
-    owned = set(pattern.rstrip("/") for pattern, owners in rules if _has_owner(owners))
     required = list(CODEOWNER_PATTERNS)
+    samples = list(CODEOWNER_SAMPLE_PATHS)
     if os.path.exists(os.path.join(root, MCP_JSON)):
         required.append(CODEOWNER_MCP_PATTERN)
+        samples.append((CODEOWNER_MCP_PATTERN, MCP_JSON))
     findings = []
     for pattern in required:
-        key = pattern.rstrip("/")
-        if key not in present:
+        if pattern.rstrip("/") not in present:
             findings.append(
                 Finding("error", CODEOWNERS, "is missing the `%s` pattern" % pattern)
             )
-        elif key not in owned:
+    matchers = [(_codeowner_glob(pattern), pattern, owners) for pattern, owners in rules]
+    for pattern, path in samples:
+        if pattern.rstrip("/") not in present:
+            continue
+        owners = ()
+        last_match = None
+        for regex, rule_pattern, rule_owners in matchers:
+            if regex.match(path):
+                owners = rule_owners
+                last_match = rule_pattern
+        if last_match is None:
             findings.append(
                 Finding(
                     "error",
                     CODEOWNERS,
-                    "has no owner on the `%s` pattern; add an owner such as `@raidenyn`" % pattern,
+                    "has no owner on the `%s` pattern for `%s`; no rule matches that path"
+                    % (pattern, path),
+                )
+            )
+        elif not _has_owner(owners):
+            findings.append(
+                Finding(
+                    "error",
+                    CODEOWNERS,
+                    "has no owner on the `%s` pattern for `%s`; the last matching rule `%s` "
+                    "has no owner" % (pattern, path, last_match),
                 )
             )
     return findings

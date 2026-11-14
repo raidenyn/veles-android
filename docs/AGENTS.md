@@ -101,6 +101,10 @@ discoverable if the plugin is not active.
 - **Observed caveat**: if `opencode-rules` is also enabled in a user-level OpenCode config, two
   plugin instances load and project rules are not delivered. Configure it once — remove or disable
   the duplicate global entry.
+- **Observed repeated-read caveat** (`opencode-rules` 2.0.0): reading the same file a second time in
+  one session can drop the scoped rule that the first read delivered, so a rule that applied earlier
+  can stop applying. If a scoped rule appears to vanish, read the rule files listed in the node's
+  `## Rules` section by hand; the always-on `repo-*` rules are unaffected.
 - **Untrusted checkouts**: `opencode.json` and any repo-controlled agent configuration can make your
   tool install and run code, so read `opencode.json` and `.claude/settings.json` before launching an
   agent in an untrusted PR checkout. To review such a checkout safely, start OpenCode from outside

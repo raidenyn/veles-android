@@ -309,7 +309,9 @@ exit=0
 ```
 
 `git status --short` was captured before and after that run and was byte-identical (`diff` clean), so
-the real command wrote nothing. Source: `.superpowers/sdd/plan/task-2-report.md`.
+the command reported the tree up to date and left `git status --short` unchanged. The tree was already
+dirty, so this does not by itself show that no tracked file changed; the up-to-date report plus the
+unchanged status snapshot is the evidence. Source: `.superpowers/sdd/plan/task-2-report.md`.
 
 **(b) Dry-run confirmation** (this task), on the committed tree:
 
@@ -320,8 +322,9 @@ $ openspec update --dry-run
 No changes: skills are up to date.        # exit 0
 ```
 
-`git status --short` was empty before and after. This reconfirms (a) without writing; the evidence
-that the real command rewrites nothing is (a)'s before/after status diff, not this dry run.
+`git status --short` was empty before and after. This reconfirms (a) without writing; it does not add
+independent evidence that the real command rewrites nothing, because (a) ran against the already-dirty
+tree and relies on the unchanged status snapshot.
 
 ## Traceability table (task 9.6)
 

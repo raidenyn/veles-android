@@ -140,10 +140,10 @@ Current overrides: `.github/components.json` selects `tooling` and `docs`;
 `.github/workflows/check-android.yml` and `.github/workflows/build-android.yml` select `android`,
 `tooling` and `installer`; `.github/workflows/check-docs.yml` selects `docs`, `tooling`, `installer` and
 `supply-chain`, because the installer contract suite reads every workflow and the remote-code scanner
-scans it; `.github/CODEOWNERS` selects `docs`; every nested node `AGENTS.md` selects `docs` and
-`native-bridge/host/AGENTS.md` also selects `native-host`, whose build-contract suite reads it, so
-editing agent guidance never runs a code node. `docs/AGENTS.md` and `native-bridge/AGENTS.md` need no
-override because `docs` owns them through its `paths`.
+scans it; `.github/CODEOWNERS` selects `docs`; every nested node `AGENTS.md` selects `docs`, so a
+guidance edit normally selects only `docs`. The exception is `native-bridge/host/AGENTS.md`, which
+also selects `native-host` because the host build-contract suite reads that file. `docs/AGENTS.md` and
+`native-bridge/AGENTS.md` need no override because `docs` owns them through its `paths`.
 
 `basename-owners` maps `AGENTS.md`, `CLAUDE.md` and `CLAUDE.local.md` to `docs`, so a new nested guidance
 file or a `/init` output selects the docs check on its pull request even when no override exists yet.

@@ -638,16 +638,17 @@ class MapValidationTest(unittest.TestCase):
     def test_basename_owners_validated(self):
         for section in (
             ["AGENTS.md"],
-            {"AGENTS.md": "docs"},
+            {"AGENTS.md": "tooling"},
             {"AGENTS.md": []},
             {"AGENTS.md": [1]},
-            {"": ["docs"]},
-            {"a/AGENTS.md": ["docs"]},
-            {"AGENTS*.md": ["docs"]},
-            {"AGENTS.md/": ["docs"]},
+            {"": ["tooling"]},
+            {"a/AGENTS.md": ["tooling"]},
+            {"AGENTS*.md": ["tooling"]},
+            {"AGENTS.md/": ["tooling"]},
         ):
-            with self.assertRaises(ValueError, msg=repr(section)):
+            with self.assertRaises(ValueError, msg=repr(section)) as ctx:
                 load_map(tmp_map(**{"basename-owners": section}))
+            self.assertIn("basename-owners", str(ctx.exception), repr(section))
 
     def test_unknown_key_value_types_rejected(self):
         for overrides in (

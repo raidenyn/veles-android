@@ -3440,6 +3440,16 @@ test('docs workflow runs only the agent-file check and its tests from the allow-
     assert.throws(() => assertDocsCheckWorkflow(mutated), /must start with python3/, `the contract must reject "${label}"`);
   }
 
+  // A forbidden install cannot hide behind an allow-listed prefix, in a chained command or a
+  // YAML block scalar: either the command no longer matches the allow-list or the count changes.
+  const chained = `${source}\n      - run: python3 docs/checks/check_agent_files.py --root . ; npm ci\n`;
+  assert.notEqual(chained, source, 'the chained-install mutation must change check-docs.yml');
+  assert.throws(() => assertDocsCheckWorkflow(chained), /exactly the agent-file check/, 'the contract must reject a chained install');
+
+  const blockScalar = `${source}\n      - run: |\n          python3 docs/checks/check_agent_files.py --root .\n          npm ci\n`;
+  assert.notEqual(blockScalar, source, 'the block-scalar mutation must change check-docs.yml');
+  assert.throws(() => assertDocsCheckWorkflow(blockScalar), /must start with python3/, 'the contract must reject a block-scalar install');
+
   const renamed = source.replace('python3 docs/checks/check_agent_files.py --root .', 'python3 scripts/check_agent_files.py --root .');
   assert.notEqual(renamed, source, 'the moved-check mutation must change check-docs.yml');
   assert.throws(() => assertDocsCheckWorkflow(renamed), /must start with python3/);

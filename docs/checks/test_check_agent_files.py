@@ -580,7 +580,9 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assertEqual(code, 1)
         printed = output.getvalue()
         self.assertTrue(printed.startswith("error %s: " % broken), printed)
-        self.assertIn("not a git repository", printed)
+        # Assert our own diagnostic, not Git's version-specific wording.
+        self.assertIn("git ls-files", printed)
+        self.assertIn("failed in %s" % broken, printed)
 
     def test_list_files_ignores_ignored_and_keeps_untracked(self):
         files = clean_files()
@@ -1012,6 +1014,32 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assert_finding(findings, "error", ".claude/skills/openspec-ghost", "orphan")
         self.assertEqual(len(findings), 1, findings)
 
+    def test_tracked_ghost_skill_directory_fails(self):
+        # A committed real directory has no index entry of its own; only its descendants expose
+        # the name, so the reverse parity check must derive names from paths under the directory.
+        files = clean_files()
+        files[".claude/skills/openspec-ghost/SKILL.md"] = "# ghost\n"
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".claude/skills/openspec-ghost", "orphan")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_untracked_ghost_skill_directory_fails(self):
+        root = self.repo()
+        write_text(root, ".claude/skills/openspec-ghost/SKILL.md", "# ghost\n")
+        findings = check_repo(root)
+        self.assert_finding(findings, "error", ".claude/skills/openspec-ghost", "orphan")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_regular_file_replacing_skill_link_fails(self):
+        files, symlinks = clean_files(), default_symlinks()
+        del symlinks[".claude/skills/openspec-apply-change"]
+        files[".claude/skills/openspec-apply-change"] = "# not a link\n"
+        findings = check_repo(self.repo(files, symlinks))
+        self.assert_finding(
+            findings, "error", ".claude/skills/openspec-apply-change", "regular file"
+        )
+        self.assertEqual(len(findings), 1, findings)
+
     def test_wrong_skill_link_target_fails(self):
         symlinks = default_symlinks()
         symlinks[".claude/skills/openspec-apply-change"] = (
@@ -1082,6 +1110,20 @@ class AgentFileCheckTest(unittest.TestCase):
         del files[".agents/skills/.openspec-target"]
         self.assertEqual(check_repo(self.repo(files)), [])
 
+    def test_dot_claude_skill_marker_directory_fails(self):
+        # Only the canonical `.agents/skills/.openspec-target` marker is exempt; the same name
+        # under `.claude/skills/` is a tool-specific skill directory and must be rejected.
+        files = clean_files()
+        files[".claude/skills/.openspec-target/SKILL.md"] = "# marker\n"
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".claude/skills/.openspec-target", "orphan")
+        self.assertEqual(
+            [finding for finding in findings if finding.path == ".agents/skills/.openspec-target"],
+            [],
+            findings,
+        )
+        self.assertEqual(len(findings), 1, findings)
+
     def test_override_target_sets_exact(self):
         cases = (
             ("native-bridge/host/AGENTS.md", ["docs"], "native-bridge/host/AGENTS.md", "native-host"),
@@ -1141,6 +1183,57 @@ class AgentFileCheckTest(unittest.TestCase):
             findings, "error", ".github/CODEOWNERS", "has no owner on the `/.agents/` pattern"
         )
         self.assertEqual(len(findings), 1, findings)
+
+    def test_codeowners_later_ownerless_rule_removes_ownership(self):
+        # GitHub uses the last matching rule, so a later bare line overrides an earlier owner.
+        files = clean_files()
+        files[".github/CODEOWNERS"] = codeowners_text() + "/opencode.json\n"
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".github/CODEOWNERS", "`/opencode.json` pattern")
+        self.assert_finding(findings, "error", ".github/CODEOWNERS", "last matching rule")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_codeowners_ownerless_wildcard_removes_all_ownership(self):
+        files = clean_files()
+        files[".github/CODEOWNERS"] = codeowners_text() + "*\n"
+        findings = check_repo(self.repo(files))
+        self.assertEqual(len(findings), 5, findings)
+        self.assertTrue(all(finding.path == ".github/CODEOWNERS" for finding in findings), findings)
+        self.assertTrue(
+            any("last matching rule `*`" in finding.message for finding in findings), findings
+        )
+
+    def test_codeowners_restating_line_with_owner_passes(self):
+        files = clean_files()
+        files[".github/CODEOWNERS"] = codeowners_text() + "/opencode.json @raidenyn\n"
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_codeowners_ownerless_directory_rule_without_slash_fails(self):
+        # GitHub treats a directory pattern without a trailing slash as covering its contents.
+        cases = (
+            ("/.claude", ".claude/settings.json"),
+            ("/.agents", ".agents/rules/repo-conventional-commits.md"),
+            ("/android", "android/AGENTS.md"),
+        )
+        for pattern, sample in cases:
+            with self.subTest(pattern=pattern, sample=sample):
+                files = clean_files()
+                files[".github/CODEOWNERS"] = codeowners_text() + pattern + "\n"
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings,
+                    "error",
+                    ".github/CODEOWNERS",
+                    "last matching rule `%s`" % pattern,
+                )
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_codeowners_owned_directory_rule_without_slash_passes(self):
+        for pattern in ("/.claude", "/.agents", "/android"):
+            with self.subTest(pattern=pattern):
+                files = clean_files()
+                files[".github/CODEOWNERS"] = codeowners_text() + pattern + " @raidenyn\n"
+                self.assertEqual(check_repo(self.repo(files)), [])
 
     def test_opencode_extra_key_fails(self):
         files = clean_files()

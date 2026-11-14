@@ -67,8 +67,8 @@ agent-file check (`docs/checks/check_agent_files.py`) enforces the layout; `docs
 how to add a rule or a node.
 
 - **Start at the repository root.** Scoped rules are delivered only when the agent is started at the
-  root; started inside a node folder it still loads the `AGENTS.md` chain, but you must read that
-  folder's listed rule files by hand.
+  root; started inside a node folder you get that folder's `AGENTS.md` (Claude Code also loads the
+  parent chain; OpenCode does not), but you must read that folder's listed rule files by hand.
 - **Claude Code** needs ≥ 2.1.277 (≥ 2.1.281 for Bedrock and telemetry-off sessions). A `CLAUDE.md`
   or `CLAUDE.local.md` in any parent folder hides `AGENTS.md`, so do not create one — and do not run
   `/init`, which can.
