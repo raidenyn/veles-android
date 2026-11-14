@@ -84,7 +84,7 @@
 - [x] 9.4 Windows PC: committed symlinks with `core.symlinks` true and false, the check's warning, `openspec update` on 2.x, and native scoping of rules in the tools that run there.
 - [x] 9.5 Run the scoping verification matrix in every tool with disposable fixture rules in an outside worktree: a rule scoped to `rust/**` is absent after an `android/` read (negative case); a parent-scope fixture rule scoped to `native-bridge/**` loads after reads in `native-bridge/host/` and `native-bridge/installer/` (cumulative scope); extra `paths`/`trigger` keys cause no error in OpenCode and Claude Code; a second read does not re-deliver; record each result per tool and version.
 - [x] 9.6 Assemble the verification notes: tool versions, observed versus documentation-only evidence, the idempotence result from 2.4, the finished traceability table, and the node-folder limitation per tool.
-- [ ] 9.7 Write `verify.md` for this change from the verification notes (versions, observed versus documentation-only evidence, results per tool, traceability table location) and store the final `traceability.md` with the change so archiving keeps it.
+- [x] 9.7 Write `verify.md` for this change from the verification notes (versions, observed versus documentation-only evidence, results per tool, traceability table location) and store the final `traceability.md` with the change so archiving keeps it.
 
 ## 10. Pre-PR checks and pull request
 
