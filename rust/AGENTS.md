@@ -1,10 +1,11 @@
 # rust/AGENTS.md
 
 The shared Rust crypto core (OTP-01 sub-project 1b), used by the Android JNI and browser WASM targets.
-`rust/` is an independent Gradle build included by both the repository root and `android/`; every
-product stays under the repository-root `build/` (`build/rust/target`, `build/rust/jniLibs`,
-`build/rust/host-jni`, `build/rust-tools`, …). The toolchain is pinned by `rust/rust-toolchain.toml`
-and the Android NDK version is defined once in `rust/ndk-version`.
+`rust/` is an independent Gradle build included by both the repository root and `android/`. Every build
+output stays under the repository-root `build/` (`build/rust/target`, `build/rust/jniLibs`,
+`build/rust/host-jni`, `build/rust-tools`, …) with one exception: `rustWasm` writes the generated WASM
+package to `web-extension/rust-wasm/pkg/`, which the extension imports. The toolchain is pinned by
+`rust/rust-toolchain.toml` and the Android NDK version is defined once in `rust/ndk-version`.
 
 ## Build & Test
 

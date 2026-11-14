@@ -39,6 +39,7 @@ the file the node lists.
   scoped rule is delivered. Setup and troubleshooting: `docs/AGENTS.md`.
 - **Claude Code** ≥ 2.1.277 (≥ 2.1.281 for Bedrock and telemetry-off sessions); a `CLAUDE.md` or
   `CLAUDE.local.md` in any parent folder hides `AGENTS.md`.
-- **Windows**: set `core.symlinks=true` and enable Developer Mode so the `.claude/` symlinks work.
-- **OpenSpec** CLI `>= 2.0.0, < 3` (2.0.0 last verified; 1.x is unsupported), run on Linux or macOS.
+- **Checkout**: `core.symlinks=true` is required so the `.claude/` links resolve; platform setup notes
+  are in `CONTRIBUTING.md`.
+- **OpenSpec** CLI `>= 2.0.0, < 3` (2.0.0 last verified; 1.x is unsupported).
 - Do not run `/init` in any agent tool: it rewrites guidance and can create a nested `CLAUDE.md`.
