@@ -294,6 +294,14 @@ class InstallationIdentityCache {
     private value: Uint8Array | null = null;
     private epoch = 0;
     private refreshing: Promise<void> | null = null;
+    /**
+     * The reset-wide admission barrier (finding 1). It is closed from the moment a reset begins,
+     * before the reset's first await, so a session opened while the reset tears the store down and
+     * rewrites it is never admitted with the identity that reset deletes and never slips past the
+     * reset's `closeAll()` snapshot.
+     */
+    private admission: Promise<void> | null = null;
+    private releaseAdmission: (() => void) | null = null;
 
     constructor(private readonly read: () => Promise<Uint8Array>) {}
 
@@ -308,9 +316,40 @@ class InstallationIdentityCache {
         await this.refresh();
     }
 
-    /** Waits for a refresh in flight before a new session open reads the cache. */
+    /**
+     * Waits for a reset in flight and for any refresh, before a new session open reads the cache.
+     * Admission is released by `endReset()`, only after the reset refreshed the identity.
+     */
     async settled(): Promise<void> {
+        const admission = this.admission;
+        if (admission !== null) await admission;
         if (this.refreshing !== null) await this.refreshing;
+    }
+
+    /**
+     * Closes admission and drops the cached identity. It runs synchronously before the reset's
+     * first await: the deleted identity is never served to a session admitted during the reset,
+     * and its epoch advance discards any load that started before the reset.
+     */
+    beginReset(): void {
+        this.epoch += 1;
+        this.value = null;
+        if (this.admission !== null) return;
+        this.admission = new Promise<void>((resolve) => {
+            this.releaseAdmission = resolve;
+        });
+    }
+
+    /**
+     * Releases admission once the reset settled. On a successful reset the cache holds the
+     * refreshed identity; on a failed one it stays empty, so an admitted open reloads from the
+     * repository and is otherwise refused — the old identity is never served again.
+     */
+    endReset(): void {
+        const release = this.releaseAdmission;
+        this.admission = null;
+        this.releaseAdmission = null;
+        release?.();
     }
 
     /**
@@ -712,13 +751,24 @@ export class ConnectorApp {
      * its transport, terminate every enrollment link and session, discard the stored trust through
      * the repository's own reset, and refresh the identity cache from the repository before this
      * resolves. A failed refresh propagates, so the deleted installation id is never served again.
+     *
+     * Admission is closed and the cached identity dropped before the first await: a connect that
+     * completes during the teardown or the repository reset waits for this method, then opens with
+     * the refreshed identity (or is refused), so it can neither sign with the deleted identity nor
+     * miss `closeAll()`'s snapshot.
      */
     async resetTrust(): Promise<void> {
         this.abortPairingStartup();
         const coordinator = this.coordinator;
-        if (coordinator === null) return;
-        await coordinator.reset();
-        if (this.identities !== null) await this.identities.refresh();
+        const identities = this.identities;
+        if (coordinator === null || identities === null) return;
+        identities.beginReset();
+        try {
+            await coordinator.reset();
+            await identities.refresh();
+        } finally {
+            identities.endReset();
+        }
     }
 
     /**

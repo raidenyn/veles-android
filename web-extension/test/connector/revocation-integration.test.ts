@@ -100,6 +100,12 @@ class MemoryLocal implements LocalStore {
     clearCalls = 0;
     readFault: Error | null = null;
     writeFaultAt: number | null = null;
+    /** Holds the next durable write, so a test can observe a reset mid-transaction. */
+    writeGate: Promise<void> | null = null;
+    private enterWrite: (() => void) | null = null;
+    readonly writeEntered = new Promise<void>((resolve) => {
+        this.enterWrite = resolve;
+    });
 
     async restrict(): Promise<void> {
         return undefined;
@@ -111,6 +117,10 @@ class MemoryLocal implements LocalStore {
     }
 
     async write(next: TrustSnapshot): Promise<void> {
+        if (this.writeGate !== null) {
+            this.enterWrite?.();
+            await this.writeGate;
+        }
         this.writeCount += 1;
         if (this.writeFaultAt === this.writeCount) throw new Error('durable write failed');
         this.writes.push(structuredClone(next));
@@ -751,14 +761,20 @@ describe('revocation integration: revoke races an enrollment', () => {
         const peerId = await addPeer(stack, phone, { state: 'pending', et: ET });
         const gate = deferred();
         const entered = deferred();
+        let confirms = 0;
         stack.handler = composeHandlers(
             new ActivationEngine({
                 trust: {
                     peers: () => stack.repository.peers(),
                     revoke: (id) => stack.repository.revoke(id),
                     confirm: async (id, stage, proof) => {
-                        entered.resolve();
-                        await gate.promise;
+                        confirms += 1;
+                        // The first completed activation is synchronous; the duplicate is held
+                        // inside its store write so the revocation runs concurrently with it.
+                        if (confirms > 1) {
+                            entered.resolve();
+                            await gate.promise;
+                        }
                         return stack.repository.confirm(id, stage, proof);
                     },
                 },
@@ -792,7 +808,8 @@ describe('revocation integration: revoke races an enrollment', () => {
         expect(postedTypes(port, HANDLE_CONNECTION)).toContain(RecordType.ACTIVATION_COMMIT);
         await ackSend(port, commit);
 
-        const complete = emitRecord(
+        // The first activation complete finishes: the record moves and the session stays open.
+        await emitRecord(
             port,
             HANDLE_CONNECTION,
             await side.applicationFrame(
@@ -801,20 +818,50 @@ describe('revocation integration: revoke races an enrollment', () => {
                 await phoneMac(STAGE_COMPLETE),
             ),
         );
+        const ack = await nextSend(port);
+        await ackSend(port, ack);
+        const activated = (await stack.repository.peers()).find(
+            (peer) => peer.installationId === peerId,
+        );
+        expect(activated?.state).toBe('active_activation_pending');
+        expect(stack.manager.authenticatedSessions()).toHaveLength(1);
+
+        // A duplicate activation_complete of the same authenticated record races the revocation.
+        const duplicate = emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.applicationFrame(
+                RecordType.ACTIVATION_COMPLETE,
+                3n,
+                await phoneMac(STAGE_COMPLETE),
+            ),
+        );
         await entered.promise;
         const revocation = stack.coordinator.revoke(peerId);
         await microFlush();
         gate.resolve();
-        await complete;
+        await duplicate;
         await revocation;
         await flush();
 
         expect(await stack.repository.peers()).toEqual([]);
         expect(stack.manager.authenticatedSessions()).toEqual([]);
-        // The revoke won the race: the in-flight confirm was a peer rejection, not a store failure,
-        // and the engine's own failure path ended the generation.
+        // The revoke won the race: the in-flight duplicate confirm was a peer rejection, not a
+        // store failure, and the engine's own failure path ended the generation.
         expect(stack.statuses).toEqual([]);
         expect(terminations(stack, HANDLE_CONNECTION)).toHaveLength(1);
+
+        // The fence was released after the sweep: a deliberate pairing of the same id can write.
+        await stack.repository.addPending({
+            installationId: peerId,
+            publicKey: hex(phone.publicKey),
+            label: 'Pixel test phone',
+            deviceType: 0,
+            enrollmentTranscript: hex(ET),
+        });
+        expect((await stack.repository.peers()).map((peer) => peer.installationId)).toEqual([
+            peerId,
+        ]);
     });
 });
 
@@ -1260,6 +1307,144 @@ describe('revocation integration: connector wiring', () => {
         ).toHaveLength(1);
         expect(await repository.peers()).toEqual([]);
         expect(fixture.local.snapshot?.peers).toEqual([]);
+    });
+
+    it('aborts a startup whose initial send is pending when fail-closed runs', async () => {
+        const fixture = createAppFixture();
+        await startApp(fixture);
+        const repository = requireRepository(fixture);
+        const existing = await addAppPeer(fixture, await TestPhone.create(), { state: 'pending' });
+        const port = fixture.controller.currentPort();
+
+        const pairing = fixture.app.startPairing(PAIR_DEVICE, CODE);
+        const connect = await port.nextPosted();
+        await port.emit(
+            connectedEvent({
+                request_id: connect.request_id as string,
+                connection_handle: PAIR_HANDLE,
+            }),
+        );
+        // The initial `pairing_request` is out and unanswered: the startup is still in `start`.
+        const request = await nextSend(port);
+
+        // A store failure observed elsewhere escalates to the fail-closed action.
+        fixture.local.readFault = new TrustError();
+        await expect(repository.peers()).rejects.toThrow('re-pair');
+        await microFlush();
+        expect(fixture.app.trustStatus).toBe('re-pair-required');
+
+        // The send resolves after the abort: no link is installed and no record is written late.
+        await ackSend(port, request);
+        await ackDisconnect(port, PAIR_HANDLE);
+        await expect(pairing).resolves.toBe(false);
+        await flush();
+
+        expect(postsOf(port, 'send')).toHaveLength(1);
+        expect(
+            postsOf(port, 'disconnect').filter(
+                (message) => message.connection_handle === PAIR_HANDLE,
+            ),
+        ).toHaveLength(1);
+        expect(fixture.app.pairingState).toEqual({ phase: 'idle', finished: true });
+        // Fail-closed deleted nothing: the durable pending record survives and no record was added.
+        fixture.local.readFault = null;
+        expect((await repository.peers()).map((peer) => peer.installationId)).toEqual([existing]);
+    });
+
+    it('aborts a startup whose pairing connect is pending when reset runs', async () => {
+        const fixture = createAppFixture();
+        await startApp(fixture);
+        const repository = requireRepository(fixture);
+        const port = fixture.controller.currentPort();
+
+        const pairing = fixture.app.startPairing(PAIR_DEVICE, CODE);
+        await microFlush();
+        const connect = await port.nextPosted();
+        expect(connect.type).toBe('connect');
+
+        await fixture.app.resetTrust();
+
+        // The connect resolves after the reset: the startup aborts without installing a link.
+        await port.emit(
+            connectedEvent({
+                request_id: connect.request_id as string,
+                connection_handle: PAIR_HANDLE,
+            }),
+        );
+        await ackDisconnect(port, PAIR_HANDLE);
+        await expect(pairing).resolves.toBe(false);
+        await flush();
+
+        expect(postsOf(port, 'send')).toHaveLength(0);
+        expect(
+            postsOf(port, 'disconnect').filter(
+                (message) => message.connection_handle === PAIR_HANDLE,
+            ),
+        ).toHaveLength(1);
+        expect(fixture.app.pairingState).toEqual({ phase: 'idle', finished: true });
+        expect(await repository.peers()).toEqual([]);
+        expect(fixture.local.snapshot?.peers).toEqual([]);
+    });
+
+    it('denies admission with the deleted identity when a connect completes during reset', async () => {
+        const fixture = createAppFixture();
+        await startApp(fixture);
+        const repository = requireRepository(fixture);
+        const phone = await TestPhone.create();
+        const peerId = await addAppPeer(fixture, phone);
+        // The identity the reset is about to delete; the connect path loads it into the cache.
+        const oldIdentity = requireValue(fixture.keys.value).installationId;
+        const port = fixture.controller.currentPort();
+
+        const action = fixture.app.handleAction({
+            type: 'connect',
+            deviceHandle: HANDLE_DEVICE,
+            peerId,
+        });
+        const connect = await port.nextPosted();
+        expect(connect.type).toBe('connect');
+
+        // Hold the reset inside its repository transaction, so the connect completion lands in
+        // the exact window the old identity is still valid in the store but must not be admitted.
+        const gate = deferred();
+        fixture.local.writeGate = gate.promise;
+        const resetting = fixture.app.resetTrust();
+        await fixture.local.writeEntered;
+        await port.emit(
+            connectedEvent({
+                request_id: connect.request_id as string,
+                connection_handle: HANDLE_CONNECTION,
+            }),
+        );
+        await microFlush();
+
+        // Admission is closed: no engine exists yet and no session was admitted with the
+        // identity the reset deletes.
+        expect(fixture.usedIdentities).toEqual([]);
+        expect(fixture.app.sessions?.authenticatedSessions()).toEqual([]);
+
+        gate.resolve();
+        await resetting;
+        const refreshed = await repository.identity();
+        expect(refreshed.installationId).not.toBe(oldIdentity);
+
+        // Admission is released only now, and the session opens with the refreshed identity.
+        const hello = await nextSend(port);
+        await ackSend(port, hello);
+        const side = new PhoneSide(phone);
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.acceptClientHello(decodeFrame(hello.bytes).payload),
+        );
+        await flush();
+        await action;
+
+        expect(fixture.usedIdentities).toHaveLength(1);
+        expect(hex(requireValue(fixture.usedIdentities[0]))).toBe(refreshed.installationId);
+        expect(hex(requireValue(fixture.usedIdentities[0]))).not.toBe(oldIdentity);
+        // The reset deleted the peer record, so that session cannot authenticate either.
+        expect(fixture.app.sessions?.authenticatedSessions()).toEqual([]);
     });
 
     it('resets, re-pairs and reconnects with a refreshed identity cache', async () => {
