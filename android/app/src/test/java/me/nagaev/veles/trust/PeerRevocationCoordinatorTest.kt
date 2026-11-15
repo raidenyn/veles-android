@@ -314,6 +314,62 @@ class PeerRevocationCoordinatorTest {
     }
 
     @Test
+    fun resetClosesAdmissionBeforeItsBodyAndReleasesItAfterCompletion() = runTest {
+        val client = TestClient()
+        val host = host { engine(client, null) }
+        val coordinator = coordinator(host, backgroundScope)
+        val gate = CompletableDeferred<Unit>()
+        trust.resetGate = gate
+
+        val reset = async { coordinator.reset() }
+        runCurrent()
+        assertEquals("the reset body has started", 1, trust.resetCalls)
+
+        // A connection completed while the reset owns the store is not admitted: it builds no
+        // engine and reads no identity, and its transport is refused (finding B).
+        val during = ConnectionGeneration("bb", 2)
+        connect(host, during)
+        assertTrue("nothing is admitted during the reset", transport.closed.contains(during))
+        host.onRecord(during, client.helloFrame.copyOf(), admission())
+        runCurrent()
+        assertTrue("a refused generation sends nothing", transport.sent.none { it.gen == during })
+
+        gate.complete(Unit)
+        reset.await()
+        runCurrent()
+
+        // Admission is released only after the reset completed: the next connection is served.
+        val after = ConnectionGeneration("cc", 3)
+        connect(host, after)
+        host.onRecord(after, client.helloFrame.copyOf(), admission())
+        runCurrent()
+        assertEquals("an admitted generation answers the hello", 2, transport.sent.count { it.gen == after })
+    }
+
+    @Test
+    fun aFailedResetKeepsAdmissionClosed() = runTest {
+        val client = TestClient()
+        val host = host { engine(client, null) }
+        val coordinator = coordinator(host, backgroundScope)
+        trust.resetFailure = TrustStoreException()
+
+        try {
+            coordinator.reset()
+            fail("a failed reset propagates")
+        } catch (_: TrustException) {
+            // The store may still hold the identity the reset could not discard.
+        }
+
+        val after = ConnectionGeneration("cc", 3)
+        connect(host, after)
+        host.onRecord(after, client.helloFrame.copyOf(), admission())
+        runCurrent()
+
+        assertTrue("the refused generation is closed", transport.closed.contains(after))
+        assertTrue("no engine signed with the unconfirmed identity", transport.sent.none { it.gen == after })
+    }
+
+    @Test
     fun failClosedIsAsyncNonDestructiveAndReportsRePairRequired() = runTest {
         val client = TestClient()
         val gen = ConnectionGeneration("aa", 1)
@@ -782,6 +838,9 @@ class PeerRevocationCoordinatorTest {
         var deleteGate: CompletableDeferred<Unit>? = null
         var sweepGate: CompletableDeferred<Unit>? = null
 
+        /** Holds a reset inside its body, after the session termination and before it returns. */
+        var resetGate: CompletableDeferred<Unit>? = null
+
         /** The repository-side store-failure callback the composition root wires to fail-closed. */
         var reportStoreFailure: (() -> Unit)? = null
         var releaseProbe: (() -> Int)? = null
@@ -838,6 +897,7 @@ class PeerRevocationCoordinatorTest {
         override suspend fun resetIdentity() {
             events += RESET
             resetCalls += 1
+            resetGate?.await()
             resetFailure?.let { throw reported(it) }
         }
     }

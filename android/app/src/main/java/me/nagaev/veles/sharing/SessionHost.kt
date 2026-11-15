@@ -93,6 +93,40 @@ interface SessionTransport {
 }
 
 /**
+ * The session side of a trust-changing operation (design D1/D2/D3/D6). Selection is by the
+ * authenticated installation id only; a label, native handle or platform hint is never an input.
+ * [SessionHost] is the production implementation; a conformance runner can bind its own live
+ * engine through this surface without a transport.
+ */
+interface PeerSessions {
+    /** True when an authenticated session of [peerId] (the trust installation id, hex) is live. */
+    fun hasOpenSession(peerId: String): Boolean
+
+    /** Terminates every generation bound to [peerIdHex] and awaits each one's end. */
+    suspend fun closePeer(peerIdHex: String)
+
+    /** Terminates every generation, non-destructively; durable enrollment records are kept. */
+    suspend fun closeAll()
+
+    /** Asks the peer's full session to remove this endpoint's record (OTP2-REC-013). */
+    suspend fun requestRemoval(peerIdHex: String): RemovalResult
+
+    /**
+     * Closes admission for a reset *before* it takes its snapshot (design D6): a connection that
+     * arrives later is refused instead of being admitted outside the snapshot, where the reset
+     * could delete trust and refresh the identity without terminating it.
+     */
+    fun beginReset()
+
+    /**
+     * Releases the reset barrier only for a completed reset. `completed = false` keeps every
+     * later connection refused, because the store may still hold the identity the reset could not
+     * discard.
+     */
+    fun endReset(completed: Boolean)
+}
+
+/**
  * OTP-06 plaintext echo switch. The echo may only be selected while this is true, and it is
  * mutually exclusive with [SessionHost]: the sharing service installs exactly one listener.
  */
@@ -129,7 +163,7 @@ class SessionHost(
     private val pairingFactory: (ConnectionGeneration) -> PairingConnection = { RejectingPairingConnection() },
     /** Session-bound proof cleanup when a generation is torn down (OTP-10 plan 9d). */
     private val onSessionClosed: (String) -> Unit = {},
-) : ConnectionListener {
+) : ConnectionListener, PeerSessions {
     private class OwnedRecord(val bytes: ByteArray, val admission: RecordAdmission)
 
     /**
@@ -215,15 +249,41 @@ class SessionHost(
     private val sessions = LinkedHashMap<ConnectionGeneration, Live>()
     private val all = LinkedHashSet<Live>()
 
+    /**
+     * The reset-wide admission barrier (design D6). Guarded by [registry] and closed by
+     * [beginReset] before a reset snapshots its generations, so no connection can be admitted —
+     * and no identity read or handshake can start — while the store is being discarded. It is
+     * released only by a completed reset's [endReset].
+     */
+    private var admitting = true
+
     override fun onConnected(gen: ConnectionGeneration) {
         val live = Live(gen)
-        live.engine = engineFactory(gen)
-        synchronized(registry) {
-            sessions[gen] = live
-            all += live
+        if (!admit(live)) {
+            // A reset owns the store: the connection is never registered, builds no engine (so it
+            // reads no identity) and its transport is refused.
+            scope.launch { transport.close(gen) }
+            return
         }
+        live.engine = engineFactory(gen)
         live.tick = scope.launch { runTicks(live) }
         scope.launch { for (step in live.queue) handleStep(live, step) }
+    }
+
+    /** Registers [live] only while admission is open; the check and the registration are atomic. */
+    private fun admit(live: Live): Boolean = synchronized(registry) {
+        if (!admitting) return false
+        sessions[live.gen] = live
+        all += live
+        true
+    }
+
+    override fun beginReset() {
+        synchronized(registry) { admitting = false }
+    }
+
+    override fun endReset(completed: Boolean) {
+        synchronized(registry) { admitting = completed }
     }
 
     override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray, admission: RecordAdmission) {
@@ -286,7 +346,7 @@ class SessionHost(
     }
 
     /** True when an open session of [peerId] (the trust installation id, hex) is live. */
-    fun hasOpenSession(peerId: String): Boolean {
+    override fun hasOpenSession(peerId: String): Boolean {
         val raw = runCatching { TrustEncoding.bytes(peerId) }.getOrNull() ?: return false
         return synchronized(registry) {
             sessions.values.any { !it.ended && it.sessionClass != null && it.peerId?.contentEquals(raw) == true }
@@ -340,7 +400,7 @@ class SessionHost(
      * without sending anything.
      */
     @Suppress("ReturnCount") // Not connected, already awaiting, refused admission and the settle are distinct outcomes.
-    suspend fun requestRemoval(peerIdHex: String): RemovalResult {
+    override suspend fun requestRemoval(peerIdHex: String): RemovalResult {
         val wait = RemovalWait(CompletableDeferred())
         synchronized(registry) {
             val live = sessions.values.firstOrNull {
@@ -491,7 +551,7 @@ class SessionHost(
      * effects — and the reply is delivered first. A handler must never call this on its own
      * generation: the call would wait for the step it is running inside.
      */
-    suspend fun closePeer(peerIdHex: String) {
+    override suspend fun closePeer(peerIdHex: String) {
         val lives = synchronized(registry) { all.filter { it.isBoundTo(peerIdHex) } }
         endAll(lives)
     }
@@ -502,7 +562,7 @@ class SessionHost(
      * Distinct from [cancelPairings], the destructive path that deletes the incomplete records
      * of live enrollments; fail-closed recovery and identity reset use this one.
      */
-    suspend fun closeAll() {
+    override suspend fun closeAll() {
         val lives = synchronized(registry) { all.toList() }
         endAll(lives)
     }

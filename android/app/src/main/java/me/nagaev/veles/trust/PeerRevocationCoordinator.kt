@@ -7,12 +7,12 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.nagaev.veles.session.RemovalOperations
+import me.nagaev.veles.sharing.PeerSessions
 import me.nagaev.veles.sharing.RemovalResult
-import me.nagaev.veles.sharing.SessionHost
 
 /**
  * One endpoint's revocation coordinator (design D1/D2/D3/D5/D6/D8). It owns the order of every
- * trust-changing operation and composes the repository with the session host; it never talks to
+ * trust-changing operation and composes the repository with the session layer; it never talks to
  * a transport directly and never selects a peer by a label, native handle or hint.
  *
  * The order is fixed per operation:
@@ -25,13 +25,13 @@ import me.nagaev.veles.sharing.SessionHost
  * - [failClosed] (store failure): terminate everything, non-destructively, and report the one
  *   "re-pair required" status. It runs asynchronously on [scope], so a store failure observed
  *   inside a handler step can never deadlock on that generation's mutex.
- * - [reset]: terminate everything first, then discard the stored trust and the key; only an
- *   explicit user action reaches this path.
+ * - [reset]: close admission, terminate everything, then discard the stored trust and the key,
+ *   and only then release admission. Only an explicit user action reaches this path.
  */
 @Suppress("TooManyFunctions") // One method per trust-changing operation plus the private stages.
 class PeerRevocationCoordinator(
     private val trust: InstallationTrustRepository,
-    private val host: SessionHost,
+    private val sessions: PeerSessions,
     private val scope: CoroutineScope,
     private val onStatus: (TrustStatus) -> Unit = {},
     private val historyCleanup: (String) -> Unit = {},
@@ -49,7 +49,7 @@ class PeerRevocationCoordinator(
             state = peer.state,
             createdAtMillis = peer.createdAtMillis,
             lastSeenMillis = peer.lastSeenMillis,
-            connected = host.hasOpenSession(peer.installationId),
+            connected = sessions.hasOpenSession(peer.installationId),
         )
     }
 
@@ -87,7 +87,7 @@ class PeerRevocationCoordinator(
      * only by the validated response's handler, so the user keeps local [revoke] as a separate
      * choice when the response is lost.
      */
-    suspend fun removeMutually(peerId: String): RemovalResult = host.requestRemoval(peerId)
+    suspend fun removeMutually(peerId: String): RemovalResult = sessions.requestRemoval(peerId)
 
     /**
      * The fail-closed action of design D6: terminate every session and every enrollment
@@ -101,7 +101,7 @@ class PeerRevocationCoordinator(
         onStatus(TrustStatus.RE_PAIR_REQUIRED)
         scope.launch {
             try {
-                host.closeAll()
+                sessions.closeAll()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -111,9 +111,16 @@ class PeerRevocationCoordinator(
     }
 
     /**
-     * The explicit identity reset (design D6): every session ends before anything is deleted,
-     * then the repository deletes the stored trust without decoding it and the key alias. It is
-     * idempotent and is never reached from a failure path.
+     * The explicit identity reset (design D6): admission is closed before anything is read, every
+     * session ends before anything is deleted, then the repository deletes the stored trust
+     * without decoding it and the key alias. It is idempotent and is never reached from a
+     * failure path.
+     *
+     * The barrier is released only after the deletions and the identity-cache refresh completed:
+     * while it is held, a connection completing mid-reset is refused instead of being admitted
+     * outside [sessions]' snapshot, where the reset could delete trust and refresh the identity
+     * without terminating it. A failed reset keeps admission closed, because the store may still
+     * hold the identity it could not discard.
      *
      * A completed reset is also the one recovery from the latched [TrustStatus.RE_PAIR_REQUIRED]:
      * once the deletions have run and the repository has refreshed the identity cache (its
@@ -121,15 +128,22 @@ class PeerRevocationCoordinator(
      * reset throws before this line and keeps the failure status.
      */
     suspend fun reset() {
+        sessions.beginReset()
+        var completed = false
         try {
-            host.closeAll()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            // The generations were logically torn down; the deletion must still run.
+            try {
+                sessions.closeAll()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // The generations were logically torn down; the deletion must still run.
+            }
+            trust.resetIdentity()
+            completed = true
+            onStatus(TrustStatus.OK)
+        } finally {
+            sessions.endReset(completed)
         }
-        trust.resetIdentity()
-        onStatus(TrustStatus.OK)
     }
 
     /**
@@ -188,7 +202,7 @@ class PeerRevocationCoordinator(
     /** Terminate every matching generation; a failing transport close is best-effort. */
     private suspend fun terminate(peerId: String) {
         try {
-            host.closePeer(peerId)
+            sessions.closePeer(peerId)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {

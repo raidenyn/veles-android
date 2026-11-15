@@ -36,6 +36,7 @@ import me.nagaev.veles.session.RecordType
 import me.nagaev.veles.session.RemovalHandler
 import me.nagaev.veles.session.Role
 import me.nagaev.veles.session.SessionClass
+import me.nagaev.veles.session.SessionContext
 import me.nagaev.veles.session.SignatureFrame
 import me.nagaev.veles.session.TestClient
 import me.nagaev.veles.session.TestIdentity
@@ -340,6 +341,74 @@ class PeerRevocationIntegrationTest {
         assertTrue("no session remains authorized", host.authenticatedSessions().isEmpty())
         assertEquals("fail-closed deletes nothing", storedBefore, storage.snapshot)
         assertTrue("fail-closed never resets", events.none { it == STORAGE_RESET || it == KEY_DELETED })
+    }
+
+    @Test
+    fun aGenerationArrivingWhileResetWaitsForASuspendedStepIsRefused() = runTest {
+        start()
+        val first = PairingClient(ByteArray(16) { (0x10 + it).toByte() })
+        val second = PairingClient(ByteArray(16) { (0x20 + it).toByte() })
+        seedActive(first)
+        seedActive(second)
+        val original = repository.identity()
+        val firstGen = ConnectionGeneration("aa", 1)
+
+        // The live generation's handler holds its step, so the reset's closeAll() waits behind
+        // this generation's mutex while the barrier is already closed.
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        handler = checkNotNull(
+            composeApplicationHandlers(
+                SuspendingHandler(entered, gate),
+                RemovalHandler(coordinator),
+                ActivationEngine(trust, proofs),
+            ),
+        )
+        val firstClient = first.reconnectClient()
+        reconnect(firstGen, firstClient)
+        assertEquals("the first peer is live", 1, host.authenticatedSessions().size)
+        send(firstGen, firstClient.record(RecordType.PULL_REQUEST.wire, 1uL))
+        entered.await()
+
+        val reset = async { coordinator.reset() }
+        runCurrent()
+        assertTrue("the reset waits behind the suspended step", transport.closed.isEmpty())
+        assertTrue("the reset body has not run yet", events.none { it == STORAGE_RESET })
+
+        // A reconnect that completes during the reset must not authenticate against the identity
+        // and trust store the reset is about to delete: it is refused, never admitted.
+        val lateGen = ConnectionGeneration("bb", 2)
+        val lateClient = second.reconnectClient()
+        connect(lateGen)
+        send(lateGen, lateClient.helloFrame.copyOf())
+        assertTrue(
+            "a generation admitted during the reset sends nothing",
+            transport.calls.filterIsInstance<Sent>().none { it.isOn(lateGen) },
+        )
+        assertTrue("the refused reconnect is closed", transport.closed.contains(lateGen))
+
+        // An enrollment that starts during the reset is refused the same way: no pairing offer
+        // and no pending record can be created while the store is being discarded.
+        pairing.window.open()
+        val enrollmentGen = ConnectionGeneration("cc", 3)
+        connect(enrollmentGen)
+        send(enrollmentGen, second.requestFrame())
+        assertTrue(
+            "a refused enrollment sends nothing",
+            transport.calls.filterIsInstance<Sent>().none { it.isOn(enrollmentGen) },
+        )
+        assertTrue("the refused enrollment is closed", transport.closed.contains(enrollmentGen))
+
+        gate.complete(Unit)
+        runCurrent()
+        reset.await()
+        runCurrent()
+
+        assertTrue("the reset terminated the live generation", transport.closed.contains(firstGen))
+        assertTrue("no session remains authorized", host.authenticatedSessions().isEmpty())
+        assertTrue("the trust is discarded", repository.peers().isEmpty())
+        assertNotEquals("a fresh identity is published", original.installationId, TrustEncoding.hex(identities.current()))
+        assertTrue("the refused enrollment wrote no record", repository.peers().isEmpty())
     }
 
     @Test
@@ -733,6 +802,21 @@ class PeerRevocationIntegrationTest {
     private class Sent(val gen: ConnectionGeneration, val bytes: ByteArray, val token: Long?)
 
     private class Closed(val gen: ConnectionGeneration)
+
+    /** A handler that holds the generation's step until the test releases it. */
+    private class SuspendingHandler(
+        private val entered: CompletableDeferred<Unit>,
+        private val gate: CompletableDeferred<Unit>,
+    ) : ApplicationHandler {
+        override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
+
+        override suspend fun handle(type: Int, body: ByteArray, reply: suspend (Int, ByteArray) -> Unit) {
+            entered.complete(Unit)
+            gate.await()
+        }
+
+        override fun forSession(context: SessionContext): ApplicationHandler = this
+    }
 
     private class RecordingTransport(private val events: MutableList<String>) : SessionTransport {
         val calls = mutableListOf<Any>()
