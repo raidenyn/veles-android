@@ -13,7 +13,7 @@
 // rendered, logged, pushed into a diagnostic ring or placed in a view model, and the
 // input is cleared as soon as pairing starts.
 
-import type { TrustStatus } from '../connector/revocation';
+import type { PeerSessionKind, TrustStatus } from '../connector/revocation';
 import type { RemovalResult } from '../connector/sessions';
 
 export const PAIRING_PANEL_TEST_ID = 'veles-pairing-debug';
@@ -23,6 +23,20 @@ const STATUS_POLL_MS = 500;
 /** The one destructive-action warning; also the confirmation prompt's text. */
 const RESET_WARNING =
     'Reset is destructive: it deletes every trusted peer and this extension identity.';
+
+/** The local-only outcome when no full session of the peer is live. */
+const KEPT_NOT_CONNECTED =
+    'No open full session: only local removal is possible. Nothing was deleted.';
+
+/** Appended only when the blocking generation is a live recovery session. */
+const RECOVERY_REMOVAL_HINT = 'disconnect and reconnect for a full session';
+
+/** One row's live-session text: a recovery generation is not a removal destination. */
+const SESSION_TEXT: Record<PeerSessionKind, string> = {
+    full: 'full session open',
+    recovery: 'recovery session open: disconnect and reconnect for mutual removal',
+    none: 'no live session',
+};
 
 export interface PairingPanelDevice {
     handle: string;
@@ -40,7 +54,7 @@ export interface PairingPanelPeer {
     installationId: string;
     label: string;
     state: string;
-    connected: boolean;
+    session: PeerSessionKind;
     fingerprint?: string;
 }
 
@@ -167,7 +181,7 @@ function renderPeers(
     const rows = peers.map((peer) => {
         const item = document.createElement('li');
         const label = document.createElement('span');
-        const session = peer.connected ? 'live session open' : 'no live session';
+        const session = SESSION_TEXT[peer.session];
         const fingerprint =
             peer.fingerprint === undefined ? '' : ` · Peer fingerprint: ${peer.fingerprint}`;
         label.textContent = `${peer.label} · ${peer.state}${fingerprint} · ${session}`;
@@ -230,15 +244,40 @@ export function mountPairingPanel(host: HTMLElement, deps: PairingPanelDeps): vo
         );
     };
 
+    /**
+     * True only when the peer's live generation is recovery-only, so the local-only outcome can
+     * name what unblocks a full session. A read failure never changes the notice.
+     */
+    const recoverySessionLive = async (peerId: string): Promise<boolean> => {
+        try {
+            const peers = await deps.trust.peers();
+            return peers.some(
+                (peer) => peer.installationId === peerId && peer.session === 'recovery',
+            );
+        } catch {
+            return false;
+        }
+    };
+
     const removePeer = (peerId: string): void => {
         void deps.trust.removeMutually(peerId).then(
-            (result) => {
-                if (result === 'removed') settle('Peer removed on both devices');
-                else if (result === 'kept-not-connected')
+            async (result) => {
+                if (result === 'removed') {
+                    settle('Peer removed on both devices');
+                    return;
+                }
+                if (result === 'kept-not-connected') {
+                    // The usual reason is a live recovery generation, whose fixed class cannot
+                    // carry a removal record: only a reconnect reaches a full session.
+                    const recovery = await recoverySessionLive(peerId);
                     settle(
-                        'No open full session: only local removal is possible. Nothing was deleted.',
+                        recovery
+                            ? `${KEPT_NOT_CONNECTED} — ${RECOVERY_REMOVAL_HINT}.`
+                            : KEPT_NOT_CONNECTED,
                     );
-                else settle('No response: the other device may keep its record');
+                    return;
+                }
+                settle('No response: the other device may keep its record');
             },
             () => settle('Mutual remove failed'),
         );

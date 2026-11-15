@@ -21,9 +21,19 @@
 //   user action reaches this path.
 
 import type { RemovalOperations } from '../session/removal';
+import { SessionClass } from '../session/wire';
 import type { ChromeTrustRepository } from '../trust/repository';
 
 import type { RemovalResult, SessionManager } from './sessions';
+
+/**
+ * The class of the peer's live authenticated generation, for display only. Mutual removal needs a
+ * `full` session (OTP2-REC-013); a `recovery` generation — `ACTIVATION_RECOVERY` or
+ * `FULL_PENDING_PEER`, whose class is fixed at its gate and never re-derived — is a healthy link
+ * that must be disconnected and reconnected before removal is possible. `none` means there is no
+ * authenticated generation of that peer.
+ */
+export type PeerSessionKind = 'none' | 'recovery' | 'full';
 
 /**
  * One read-only peer listing entry (design D5). It is computed fresh from the repository plus the
@@ -38,7 +48,7 @@ export interface PeerSummary {
     state: string;
     createdAtMillis: number;
     lastSeenMillis: number | null;
-    connected: boolean;
+    session: PeerSessionKind;
 }
 
 /**
@@ -48,7 +58,7 @@ export interface PeerSummary {
 export type TrustStatus = 'ok' | 're-pair-required';
 
 export interface RevocationCoordinator {
-    /** The peers as the repository holds them right now, with a live-session `connected` flag. */
+    /** The peers as the repository holds them right now, with their live-session kind. */
     peers(): Promise<PeerSummary[]>;
     /** Local revocation: delete first, always terminate (design D2/D8). */
     revoke(peerId: string): Promise<void>;
@@ -89,9 +99,14 @@ class ChromeRevocationCoordinator implements RevocationCoordinator, RemovalOpera
     ) {}
 
     async peers(): Promise<PeerSummary[]> {
-        const connected = new Set(
-            this.sessions.authenticatedSessions().map((session) => session.peerId),
-        );
+        // One live kind per peer: a FULL generation wins, every other authenticated class
+        // (`ACTIVATION_RECOVERY`, `FULL_PENDING_PEER`) is reported as recovery-only.
+        const live = new Map<string, PeerSessionKind>();
+        for (const session of this.sessions.authenticatedSessions()) {
+            const kind: PeerSessionKind =
+                session.sessionClass === SessionClass.FULL ? 'full' : 'recovery';
+            if (kind === 'full' || !live.has(session.peerId)) live.set(session.peerId, kind);
+        }
         return (await this.repo.peers()).map((peer) => ({
             installationId: peer.installationId,
             label: peer.label,
@@ -100,7 +115,7 @@ class ChromeRevocationCoordinator implements RevocationCoordinator, RemovalOpera
             state: peer.state,
             createdAtMillis: peer.createdAtMillis,
             lastSeenMillis: peer.lastSeenMillis,
-            connected: connected.has(peer.installationId),
+            session: live.get(peer.installationId) ?? 'none',
         }));
     }
 

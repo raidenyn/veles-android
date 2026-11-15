@@ -53,7 +53,8 @@ commit. The observed-values section records what those screens showed.
 
 6. Pair the two endpoints (the phone screen's `Start pairing window` and the panel's `Start
    pairing`, or the existing pairing flow), then open one device-row connection so the peer row
-   shows a live full session. Mutual removal needs that full session.
+   shows a live full session (`full session open` on Chrome). Mutual removal needs that full
+   session; a `recovery session open` row must be disconnected and reconnected first (section 2).
 
 ## Controls
 
@@ -74,7 +75,8 @@ Chrome pairing debug panel, mounted on the connector page:
 - Status line: `State: … · Trust: …`, extended with `· Fingerprint: …`, `· finished` and the last
   notice.
 - `Known peers` list — one row per trust record: label, state, peer fingerprint when the record
-  has one, and `live session open` or `no live session`.
+  has one, and the live-session kind: `full session open`, `recovery session open: disconnect and
+  reconnect for mutual removal`, or `no live session`.
 - Per row: `Revoke peer`, `Mutual remove` and `Clear incomplete record`.
 - `Reset identity` below the destructive warning; clicking it opens the browser confirmation with
   the same warning text.
@@ -125,13 +127,19 @@ Android clear path (`REVOKE_PEER`), the non-UI form of the same local revoke:
 ## 2. Mutual removal (both endpoints delete)
 
 1. Confirm a live full session: the phone row shows `Peer connected`, the Chrome row shows
-   `live session open`.
+   `full session open`. A Chrome row reading `recovery session open: disconnect and reconnect for
+   mutual removal` is an activation-recovery (or full-pending-peer) generation: its class is fixed
+   at its gate, so it can never carry a removal record even though the link is healthy. Disconnect
+   that connection and connect again first; only the new generation can be `full`. (This is the
+   normal state after an interrupted activation that the activation exchange then finished: the
+   session that finished it stays recovery-only until it is torn down.)
 2. On one endpoint, press `Mutual remove` on the peer row. This sends the removal request; the
    other endpoint deletes its record, replies and closes the session.
 3. Read the outcome line on the requesting endpoint:
    - `Peer removed on both devices` — the response arrived and the local record was deleted.
    - `No open full session: only local removal is possible. Nothing was deleted.` — no full
-     session; use `Revoke peer` for a local removal instead.
+     session; use `Revoke peer` for a local removal instead. When the blocking generation is a
+     live recovery session, the notice ends with `— disconnect and reconnect for a full session`.
    - `No response: the other device may keep its record` — the request went out and the response
      did not arrive; the local record is kept.
    - `Mutual remove failed` — the operation failed.
@@ -200,8 +208,11 @@ Chrome, macOS host built from `5f41436`. Screenshots of the Android debug screen
    cannot carry a removal record (OTP2-REC-013 requires a FULL session; OTP2-STA-010b keeps a recovery
    generation recovery-only until it is torn down). Both endpoints then answer `No open full session`
    while the rows say `Peer connected` / `live session open`. `Disconnect` then `Connect` fixes it: the
-   next generation sees the phone `ACTIVE`, the mirror upgrades, and removal succeeds. The defect is
-   that the surfaces do not distinguish a recovery session from a full one.
+   next generation sees the phone `ACTIVE`, the mirror upgrades, and removal succeeds. The defect was
+   that the surfaces do not distinguish a recovery session from a full one; the Chrome panel now
+   reports the class (`full session open`, `recovery session open: disconnect and reconnect for
+   mutual removal`, `no live session`) and adds the reconnect hint to the local-only notice. The
+   Android row still shows only `Peer connected`/`Peer disconnected`.
    Root cause of the state: enrollment's `activation_ack` is fire-and-forget and the phone disconnects
    on it, leaving the phone at `committed_waiting_ack` while the client already reports `active`
    (`web-extension/src/pairing/client-machine.ts:749-815`,

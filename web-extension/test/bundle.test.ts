@@ -146,8 +146,10 @@ describe('guard bundle excludes the debug probe', () => {
         // of the production build, and these strings prove a regression is caught.
         'Known peers',
         'Peer fingerprint:',
-        'live session open',
+        'full session open',
+        'recovery session open: disconnect and reconnect for mutual removal',
         'no live session',
+        'disconnect and reconnect for a full session',
         'Revoke peer',
         'Mutual remove',
         'Peer revoked',

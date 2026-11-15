@@ -20,7 +20,7 @@ import type { ApplicationHandler, ClientEngineDeps } from '../../src/session/eng
 import { decodeFrame } from '../../src/session/frames';
 import { concat, hmacSha256 } from '../../src/session/schedule';
 import { createRemovalHandler, type RemovalOperations } from '../../src/session/removal';
-import { RecordType } from '../../src/session/wire';
+import { RecordType, SessionClass } from '../../src/session/wire';
 import type { IdentityStore, StoredIdentity } from '../../src/trust/identity';
 import {
     TrustError,
@@ -34,7 +34,7 @@ import { ChromeTrustRepository, type AuthenticationVerifier } from '../../src/tr
 import type { ExclusiveLock, LocalStore } from '../../src/trust/storage';
 
 import { PACKAGE_BYTES, PhonePeer, hexOf } from '../pairing/enrollment-harness';
-import { TestPhone } from '../session/client-harness';
+import { PEER_STATE_BELOW_ACTIVE, TestPhone } from '../session/client-harness';
 import {
     HANDLE_CONNECTION,
     HANDLE_CONNECTION_2,
@@ -396,6 +396,7 @@ async function openSession(
     handle: string = HANDLE_CONNECTION,
     deviceHandle: string = HANDLE_DEVICE,
     et?: Uint8Array,
+    peerState?: number,
 ): Promise<PhoneSide> {
     await connectForSession(stack.controller, handle, deviceHandle);
     const opened = stack.manager.open(handle, peer.peerId);
@@ -403,6 +404,7 @@ async function openSession(
         phone: peer.phone,
         connectionHandle: handle,
         ...(et === undefined ? {} : { et }),
+        ...(peerState === undefined ? {} : { peerState }),
     });
     await expect(opened).resolves.toEqual({ result: 'authenticated', peerId: peer.peerId });
     return side;
@@ -1079,7 +1081,7 @@ describe('revocation integration: peer listing', () => {
 
         expect(summaries).toHaveLength(2);
         const listed = summaries.find((summary) => summary.installationId === activePeer);
-        expect(listed?.connected).toBe(true);
+        expect(listed?.session).toBe('full');
         expect(listed?.label).toBe('Pixel');
         expect(listed?.deviceType).toBe(0);
         expect(listed?.state).toBe('active');
@@ -1087,7 +1089,7 @@ describe('revocation integration: peer listing', () => {
         expect(listed?.lastSeenMillis).toBe(1_000);
         expect(listed?.fingerprint).toMatch(/^[0-9a-f]{64}$/);
         const other = summaries.find((summary) => summary.installationId === pendingPeer);
-        expect(other?.connected).toBe(false);
+        expect(other?.session).toBe('none');
         expect(other?.state).toBe('pending');
 
         const stored = (await stack.repository.peers()).find(
@@ -1100,6 +1102,166 @@ describe('revocation integration: peer listing', () => {
         expect(serialized).not.toContain('enrollmentTranscript');
         expect(serialized).not.toContain('pendingContext');
         expect(serialized).not.toContain('handle');
+    });
+});
+
+/**
+ * The device shape of the OTP-11 run: a generation's class is fixed at its authentication gate, so
+ * a recovery-only generation can never carry a removal record — even after its activation exchange
+ * made the phone `ACTIVE`. The peer summary must report that class instead of a bare "connected",
+ * and only a new generation can reach mutual removal (OTP2-REC-013 needs `FULL`).
+ */
+describe('revocation integration: recovery-only sessions', () => {
+    /** Answers the unprompted `activation_ack` a below-active recovery generation owes. */
+    async function acknowledgeActivation(stack: Stack, handle: string): Promise<void> {
+        const port = stack.controller.currentPort();
+        const ack = await nextSend(port);
+        expect(postedTypes(port, handle).at(-1)).toBe(RecordType.ACTIVATION_ACK);
+        await ackSend(port, ack);
+    }
+
+    function summaryKind(
+        summaries: readonly { installationId: string; session: string }[],
+        peerId: string,
+    ): string | undefined {
+        return summaries.find((summary) => summary.installationId === peerId)?.session;
+    }
+
+    /** The production handler composition: activation (the unprompted ack) plus removal. */
+    async function recoveryStack(): Promise<Stack> {
+        const stack = await createStack();
+        stack.handler = composeHandlers(
+            new ActivationEngine({ trust: stack.repository, proofs: stack.proofs }),
+            createRemovalHandler(stack.coordinator),
+        );
+        return stack;
+    }
+
+    it('keeps the record and reports recovery for an activation-recovery generation', async () => {
+        const stack = await recoveryStack();
+        const phone = await TestPhone.create();
+        // The interrupted activation left the client mirror below active.
+        const peerId = await addPeer(stack, phone, { state: 'active_activation_pending' });
+        await openSession(
+            stack,
+            { phone, peerId },
+            HANDLE_CONNECTION,
+            HANDLE_DEVICE,
+            undefined,
+            PEER_STATE_BELOW_ACTIVE,
+        );
+        await acknowledgeActivation(stack, HANDLE_CONNECTION);
+        expect(stack.manager.authenticatedSessions()[0]?.sessionClass).toBe(
+            SessionClass.ACTIVATION_RECOVERY,
+        );
+        expect(summaryKind(await stack.coordinator.peers(), peerId)).toBe('recovery');
+
+        const before = structuredClone(stack.local.snapshot);
+        await expect(stack.coordinator.removeMutually(peerId)).resolves.toBe('kept-not-connected');
+
+        // Nothing was sent and nothing was deleted: the generation is still live and keeps its
+        // durable record, and the recovery kind is why the surface must offer a reconnect.
+        expect(postedTypes(stack.controller.currentPort(), HANDLE_CONNECTION)).not.toContain(
+            RecordType.REMOVAL_REQUEST,
+        );
+        expect(stack.local.snapshot).toEqual(before);
+        expect(stack.manager.authenticatedSessions()).toHaveLength(1);
+        expect(terminations(stack, HANDLE_CONNECTION)).toEqual([]);
+    });
+
+    it('reports a full-pending-peer generation as recovery and refuses removal', async () => {
+        const stack = await recoveryStack();
+        const phone = await TestPhone.create();
+        const peerId = await addPeer(stack, phone, { state: 'active' });
+        // The phone's record is active but it does not report itself active: FULL_PENDING_PEER.
+        await openSession(
+            stack,
+            { phone, peerId },
+            HANDLE_CONNECTION,
+            HANDLE_DEVICE,
+            undefined,
+            PEER_STATE_BELOW_ACTIVE,
+        );
+        await acknowledgeActivation(stack, HANDLE_CONNECTION);
+        expect(stack.manager.authenticatedSessions()[0]?.sessionClass).toBe(
+            SessionClass.FULL_PENDING_PEER,
+        );
+        expect(summaryKind(await stack.coordinator.peers(), peerId)).toBe('recovery');
+
+        const before = structuredClone(stack.local.snapshot);
+        await expect(stack.coordinator.removeMutually(peerId)).resolves.toBe('kept-not-connected');
+
+        expect(postedTypes(stack.controller.currentPort(), HANDLE_CONNECTION)).not.toContain(
+            RecordType.REMOVAL_REQUEST,
+        );
+        expect(stack.local.snapshot).toEqual(before);
+        expect(stack.manager.authenticatedSessions()).toHaveLength(1);
+    });
+
+    it('reads full and removes mutually after the recovery generation is replaced', async () => {
+        const stack = await recoveryStack();
+        const phone = await TestPhone.create();
+        // The device run's durable state: the phone's activation moved its record to active, the
+        // client's mirror stayed at `active_activation_pending` because its ack never arrived.
+        const peerId = await addPeer(stack, phone, { state: 'active_activation_pending' });
+        const port = stack.controller.currentPort();
+
+        // Generation 1: a recovery-only generation; its class never changes after its gate, so
+        // mutual removal cannot be asked on it even though the phone record is now active.
+        await openSession(
+            stack,
+            { phone, peerId },
+            HANDLE_CONNECTION,
+            HANDLE_DEVICE,
+            undefined,
+            PEER_STATE_BELOW_ACTIVE,
+        );
+        await acknowledgeActivation(stack, HANDLE_CONNECTION);
+        expect(stack.manager.authenticatedSessions()[0]?.sessionClass).toBe(
+            SessionClass.ACTIVATION_RECOVERY,
+        );
+        expect(summaryKind(await stack.coordinator.peers(), peerId)).toBe('recovery');
+
+        // The operator disconnects it: the recovery generation ends and the device is free.
+        stack.manager.close(HANDLE_CONNECTION);
+        await ackDisconnect(port, HANDLE_CONNECTION);
+        await flush();
+        expect(stack.manager.authenticatedSessions()).toEqual([]);
+        expect(summaryKind(await stack.coordinator.peers(), peerId)).toBe('none');
+
+        // Generation 2: the phone reports itself active (`0x01`), which promotes the mirror to
+        // `active` and fixes the class at FULL.
+        const second = await openSession(
+            stack,
+            { phone, peerId },
+            HANDSHAKE_HANDLE,
+            HANDSHAKE_DEVICE,
+        );
+        expect(stack.manager.authenticatedSessions()[0]?.sessionClass).toBe(SessionClass.FULL);
+        const record = (await stack.repository.peers()).find(
+            (peer) => peer.installationId === peerId,
+        );
+        expect(record?.state).toBe('active');
+        expect(summaryKind(await stack.coordinator.peers(), peerId)).toBe('full');
+
+        // Mutual removal now has the FULL session it requires, and it succeeds.
+        const removal = stack.coordinator.removeMutually(peerId);
+        const request = await nextSend(port);
+        const requestRecord = await second.openClientRecord(request.bytes, 1n);
+        expect(requestRecord.type).toBe(RecordType.REMOVAL_REQUEST);
+        await ackSend(port, request);
+        await emitRecord(
+            port,
+            HANDSHAKE_HANDLE,
+            await second.applicationFrame(RecordType.REMOVAL_RESPONSE, 1n),
+        );
+
+        await expect(removal).resolves.toBe('removed');
+        expect(await stack.repository.peers()).toEqual([]);
+        expect(terminations(stack, HANDSHAKE_HANDLE)).toEqual(['removal']);
+        expect(stack.manager.authenticatedSessions()).toEqual([]);
+        // The record is gone, so the peer leaves the listing entirely.
+        expect(await stack.coordinator.peers()).toEqual([]);
     });
 });
 

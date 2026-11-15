@@ -55,11 +55,15 @@ function peerRecord(installationId: string, overrides: Partial<TrustedPeer> = {}
     };
 }
 
-function openSession(peerId: string, handle: string): AuthenticatedSession {
+function openSession(
+    peerId: string,
+    handle: string,
+    sessionClass: SessionClass = SessionClass.FULL,
+): AuthenticatedSession {
     return {
         handle,
         peerId,
-        sessionClass: SessionClass.FULL,
+        sessionClass,
         sessionIdPrefix: new Uint8Array(8),
     };
 }
@@ -496,7 +500,7 @@ describe('revocation coordinator: mutual removal', () => {
 });
 
 describe('revocation coordinator: peer summary', () => {
-    it('lists every record fresh with a connected flag and no secrets or hints', async () => {
+    it('lists every record fresh with a session kind and no secrets or hints', async () => {
         const harness = createHarness();
         const active = peerRecord('11'.repeat(16), {
             label: 'Pixel',
@@ -526,12 +530,12 @@ describe('revocation coordinator: peer summary', () => {
             state: 'active',
             createdAtMillis: active.createdAtMillis,
             lastSeenMillis: active.lastSeenMillis,
-            connected: true,
+            session: 'full',
         });
         const other = summaries.find(
             (summary) => summary.installationId === pending.installationId,
         );
-        expect(other?.connected).toBe(false);
+        expect(other?.session).toBe('none');
         expect(other?.state).toBe('pending');
         expect(other?.lastSeenMillis).toBeNull();
 
@@ -548,6 +552,47 @@ describe('revocation coordinator: peer summary', () => {
         expect(serialized).not.toContain('pendingContext');
         expect(serialized).not.toContain('handle');
         expect(serialized).not.toContain('publicKey');
+    });
+
+    it('maps each live session class to a kind, and full-pending-peer is never full', async () => {
+        const harness = createHarness();
+        const full = peerRecord('11'.repeat(16));
+        const recovery = peerRecord('22'.repeat(16), { state: 'active_activation_pending' });
+        const pendingPeer = peerRecord('33'.repeat(16));
+        const idle = peerRecord('44'.repeat(16), { state: 'pending', pendingContext: 'ctx' });
+        harness.repo.records.push(full, recovery, pendingPeer, idle);
+        harness.sessions.openSessions.push(
+            openSession(full.installationId, 'c1', SessionClass.FULL),
+            openSession(recovery.installationId, 'c2', SessionClass.ACTIVATION_RECOVERY),
+            // A full-pending-peer generation opens the session but cannot carry a removal record.
+            openSession(pendingPeer.installationId, 'c3', SessionClass.FULL_PENDING_PEER),
+        );
+
+        const kinds = new Map(
+            (await harness.coordinator.peers()).map((summary) => [
+                summary.installationId,
+                summary.session,
+            ]),
+        );
+
+        expect(kinds.get(full.installationId)).toBe('full');
+        expect(kinds.get(recovery.installationId)).toBe('recovery');
+        expect(kinds.get(pendingPeer.installationId)).toBe('recovery');
+        expect(kinds.get(idle.installationId)).toBe('none');
+    });
+
+    it('reports full when the peer also has another live class', async () => {
+        const harness = createHarness();
+        const peerId = '11'.repeat(16);
+        harness.repo.records.push(peerRecord(peerId));
+        harness.sessions.openSessions.push(
+            openSession(peerId, 'c1', SessionClass.ACTIVATION_RECOVERY),
+            openSession(peerId, 'c2', SessionClass.FULL),
+        );
+
+        const summaries = await harness.coordinator.peers();
+
+        expect(summaries[0]?.session).toBe('full');
     });
 
     it('fails closed through the coordinator when a store read fails', async () => {

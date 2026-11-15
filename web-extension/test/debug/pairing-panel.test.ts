@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { ConnectorApp, type ConnectorView } from '../../src/connector';
-import type { RemovalResult } from '../../src/connector/sessions';
-import type { TrustStatus } from '../../src/connector/revocation';
+import { createRevocationCoordinator, type TrustStatus } from '../../src/connector/revocation';
+import { SessionManager, type RemovalResult } from '../../src/connector/sessions';
 import {
     mountPairingPanel,
     PAIRING_PANEL_TEST_ID,
@@ -12,6 +12,8 @@ import {
     type PairingPanelStatus,
 } from '../../src/debug/pairing-panel';
 import { initPairingCore } from '../../src/pairing/core';
+import { SessionClass } from '../../src/session/wire';
+import { bytes } from '../../src/trust/model';
 import type { ConnectorViewModel } from '../../src/connector/view-model';
 import {
     HANDLE_CONNECTION,
@@ -22,10 +24,15 @@ import {
     sentEvent,
 } from '../connector/fixtures';
 import {
+    answerHandshake,
+    connectForSession,
     createTestController,
     createTestTrust,
+    flush as harnessFlush,
+    negotiateHost,
     sessionEngineDeps,
 } from '../connector/session-harness';
+import { PEER_STATE_BELOW_ACTIVE, TestPhone } from '../session/client-harness';
 
 const PACKAGE_BYTES = new URL('../../rust-wasm/pkg/veles_crypto_bg.wasm', import.meta.url);
 
@@ -175,7 +182,7 @@ const PEER: PairingPanelPeer = {
     installationId: 'ffeeddccbbaa99887766554433221100',
     label: 'Laptop',
     state: 'pending',
-    connected: false,
+    session: 'none',
     fingerprint: '1122 3344 5566 7788',
 };
 
@@ -187,7 +194,7 @@ describe('Chrome pairing debug panel', () => {
                     installationId: 'ffeeddccbbaa99887766554433221100',
                     label: 'Pixel',
                     state: 'pending',
-                    connected: false,
+                    session: 'none',
                 },
             ],
         });
@@ -264,8 +271,10 @@ describe('Chrome pairing debug panel', () => {
 const NEW_PANEL_STRINGS = [
     'Known peers',
     'Peer fingerprint:',
-    'live session open',
+    'full session open',
+    'recovery session open: disconnect and reconnect for mutual removal',
     'no live session',
+    'disconnect and reconnect for a full session',
     'Revoke peer',
     'Mutual remove',
     'Peer revoked',
@@ -323,8 +332,69 @@ describe('Chrome debug peer management', () => {
 
         expect(fixture.removeMutually).toHaveBeenCalledWith(PEER.installationId);
         expect(sectionText(fixture.section)).toContain('only local removal is possible');
+        // No live session: no recovery generation is blocking removal, so no reconnect hint.
+        expect(sectionText(fixture.section)).not.toContain(
+            'disconnect and reconnect for a full session',
+        );
         expect(fixture.revoke).not.toHaveBeenCalled();
         expect(sectionText(fixture.section)).toContain('Laptop');
+    });
+
+    it('renders a distinct row for every live session kind', async () => {
+        // `recovery` is what a live ACTIVATION_RECOVERY *and* a FULL_PENDING_PEER generation
+        // reports: both are recovery-only for mutual removal (OTP2-REC-013 needs FULL).
+        const rows: [PairingPanelPeer['session'], string][] = [
+            ['full', 'full session open'],
+            ['recovery', 'recovery session open: disconnect and reconnect for mutual removal'],
+            ['none', 'no live session'],
+        ];
+        for (const [session, expected] of rows) {
+            const fixture = mountPanel({ peers: [{ ...PEER, session }] });
+            await flush();
+
+            const text = sectionText(fixture.section);
+            expect(text).toContain(expected);
+            for (const [, other] of rows) {
+                if (other !== expected) expect(text).not.toContain(other);
+            }
+        }
+    });
+
+    it('adds the reconnect hint to the local-only notice while a recovery session is live', async () => {
+        const fixture = mountPanel({
+            peers: [{ ...PEER, session: 'recovery' }],
+            removal: 'kept-not-connected',
+        });
+        await flush();
+        expect(sectionText(fixture.section)).toContain('recovery session open');
+
+        fixture.section.button('Mutual remove')?.click();
+        await flush();
+
+        const text = sectionText(fixture.section);
+        expect(fixture.removeMutually).toHaveBeenCalledWith(PEER.installationId);
+        expect(text).toContain('only local removal is possible');
+        expect(text).toContain('disconnect and reconnect for a full session');
+        // Nothing was deleted: the local-only outcome never reaches the destructive revoke.
+        expect(fixture.revoke).not.toHaveBeenCalled();
+        expect(text).toContain('Laptop');
+    });
+
+    it('keeps the plain local-only notice when the live session is not a recovery one', async () => {
+        for (const session of ['none', 'full'] as const) {
+            const fixture = mountPanel({
+                peers: [{ ...PEER, session }],
+                removal: 'kept-not-connected',
+            });
+            await flush();
+
+            fixture.section.button('Mutual remove')?.click();
+            await flush();
+
+            const text = sectionText(fixture.section);
+            expect(text).toContain('only local removal is possible');
+            expect(text).not.toContain('disconnect and reconnect for a full session');
+        }
     });
 
     it('reports a completed and a lost-response mutual removal separately', async () => {
@@ -365,9 +435,9 @@ describe('Chrome debug peer management', () => {
     });
 
     it('clear goes through the coordinator and terminates an open session instead of refusing', async () => {
-        const fixture = mountPanel({ peers: [{ ...PEER, connected: true }] });
+        const fixture = mountPanel({ peers: [{ ...PEER, session: 'full' }] });
         await flush();
-        expect(sectionText(fixture.section)).toContain('live session open');
+        expect(sectionText(fixture.section)).toContain('full session open');
 
         fixture.revoke.mockImplementationOnce(async () => {
             fixture.peers.mockResolvedValue([]);
@@ -401,6 +471,91 @@ describe('Chrome debug peer management', () => {
 
         const missing = NEW_PANEL_STRINGS.filter((needle) => !guard.includes(`'${needle}'`));
         expect(missing).toEqual([]);
+    });
+});
+
+/**
+ * The device-confirmed state behind OTP-11 finding 2, rendered by the real panel over the real
+ * coordinator, the real `SessionManager` and the real repository: the live generation is an
+ * `ACTIVATION_RECOVERY` one, so mutual removal answers `kept-not-connected` and the row must say
+ * so. Nothing is sent and nothing is deleted.
+ */
+describe('Chrome debug peer management: a live recovery generation', () => {
+    it('blocks mutual removal and the notice says to disconnect and reconnect', async () => {
+        const context = createTestController();
+        const trust = await createTestTrust(context.clock);
+        const phone = await TestPhone.create();
+        // The interrupted activation left the client mirror below active.
+        const peerId = await trust.addPeer(phone, { state: 'active_activation_pending' });
+        const holder: { current?: SessionManager } = {};
+        trust.bindVerifier(async (peer, stage, proof) =>
+            holder.current === undefined ? false : holder.current.verifier(peer, stage, proof),
+        );
+        const deps = sessionEngineDeps(
+            trust,
+            context.clock,
+            bytes(trust.identity.installationId, 16),
+        );
+        const manager = new SessionManager(
+            context.controller,
+            trust.repository,
+            (handle, peer) => deps(handle, peer),
+            () => context.controller.portGeneration,
+            { setTimeout: context.clock.setTimeout, clearTimeout: context.clock.clearTimeout },
+        );
+        holder.current = manager;
+        await negotiateHost(context);
+        await connectForSession(context, HANDLE_CONNECTION, HANDLE_DEVICE);
+        const opened = manager.open(HANDLE_CONNECTION, peerId);
+        await answerHandshake(context, {
+            phone,
+            connectionHandle: HANDLE_CONNECTION,
+            // The phone did not report itself active, so this generation is recovery-only.
+            peerState: PEER_STATE_BELOW_ACTIVE,
+        });
+        await expect(opened).resolves.toEqual({ result: 'authenticated', peerId });
+        expect(manager.authenticatedSessions()[0]?.sessionClass).toBe(
+            SessionClass.ACTIVATION_RECOVERY,
+        );
+
+        const coordinator = createRevocationCoordinator({
+            repo: trust.repository,
+            sessions: manager,
+        });
+        const document = new FakeDocument();
+        const revoke = vi.fn(async () => undefined);
+        mountPairingPanel(document.body as unknown as HTMLElement, {
+            document: document as unknown as Document,
+            devices: () => [],
+            status: () => ({ phase: 'idle', finished: false }),
+            trust: {
+                peers: () => coordinator.peers(),
+                revoke,
+                removeMutually: (id: string) => coordinator.removeMutually(id),
+                reset: () => coordinator.reset(),
+                status: () => 'ok',
+            },
+            start: async () => false,
+            cancel: async () => true,
+            onChange: () => () => undefined,
+            setInterval: () => 0,
+        });
+        await harnessFlush();
+        const section = document.body.byTestId(PAIRING_PANEL_TEST_ID);
+        if (section === undefined) throw new Error('panel is not mounted');
+        expect(sectionText(section)).toContain('recovery session open');
+
+        section.button('Mutual remove')?.click();
+        await harnessFlush();
+
+        const text = sectionText(section);
+        expect(text).toContain('only local removal is possible');
+        expect(text).toContain('disconnect and reconnect for a full session');
+        // Nothing was deleted and the generation is still live.
+        expect(revoke).not.toHaveBeenCalled();
+        expect(await trust.repository.peers()).toHaveLength(1);
+        expect(manager.authenticatedSessions()).toHaveLength(1);
+        expect((await coordinator.peers())[0]?.session).toBe('recovery');
     });
 });
 
