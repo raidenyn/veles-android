@@ -1,5 +1,8 @@
 package me.nagaev.veles.session
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -18,7 +21,12 @@ import me.nagaev.veles.trust.TrustState
 import me.nagaev.veles.trust.TrustStorage
 import me.nagaev.veles.trust.TrustedPeer
 import me.nagaev.veles.trust.peerFingerprint
+import me.nagaev.veles.trust.PeerRevocationCoordinator
+import me.nagaev.veles.sharing.PeerSessions
+import me.nagaev.veles.sharing.RemovalResult
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -302,8 +310,34 @@ class ScenarioConformanceTest {
         }
     }
 
-    private fun runScenario(fixture: ScenarioFixture): ScenarioRun = runBlocking {
-        PhoneScenario(fixture).executeScenario()
+    private fun runScenario(
+        fixture: ScenarioFixture,
+        sessions: (PhoneSession) -> PeerSessions = ::ScenarioSessions,
+    ): ScenarioRun = runBlocking {
+        PhoneScenario(fixture, sessions).executeScenario()
+    }
+
+    /**
+     * OTP2-REV-001/design D1/D2: the local-revoke trace must observe the *production* coordinator's
+     * own termination, not a runner-assigned disconnect. A no-op `closePeer` therefore has to fail
+     * the fixture's disconnect claim and its final state; otherwise the runner would manufacture
+     * the effect the fixture is supposed to prove.
+     */
+    @Test
+    fun theRevokeScenarioFailsWhenProductionTerminationIsANoOp() {
+        val fixture = ScenarioFixtures.byId(REVOKE_SCENARIO_ID)
+        val run = runScenario(fixture) { NoOpSessions }
+        val expected = parseAssignments(fixture.expected.getValue("final_state").toString().trim('"'))
+
+        assertFalse(
+            "a no-op closePeer cannot satisfy the fixture's disconnect claim",
+            Effects.observe("revocation_disconnect", run),
+        )
+        assertNotEquals(
+            "a no-op closePeer leaves the session open in the fixture's final state",
+            expected,
+            run.finalState(),
+        )
     }
 
     private fun parseAssignments(value: String): Map<String, String> = value
@@ -332,6 +366,9 @@ class ScenarioConformanceTest {
 
         /** The OTP-10 inventory defers a scenario to the plan task that will execute it. */
         val OTP10_DEFERRAL = Regex("deferred:Task [0-9]+")
+
+        /** OTP2-REV-001: the executed trace that must observe the coordinator's own disconnect. */
+        const val REVOKE_SCENARIO_ID = "st-rec-revoke-disconnects-connected-peer"
     }
 }
 
@@ -757,6 +794,49 @@ private class PhoneSession(val name: String) {
         }
 }
 
+/**
+ * The production coordinator's session seam for one scenario peer (design D2/D3). The runner has
+ * one live generation and no transport, so termination is the same *logical* termination the host
+ * performs: `teardown()` erases the keys and stops record processing. The fixture reads the closed
+ * engine this produced, never a runner-assigned flag.
+ */
+private class ScenarioSessions(private val peer: PhoneSession) : PeerSessions {
+    override fun hasOpenSession(peerId: String): Boolean =
+        peer.engine?.isOpen == true && TrustEncoding.hex(peer.peer.installationId) == peerId
+
+    override suspend fun closePeer(peerIdHex: String) {
+        check(peerIdHex == TrustEncoding.hex(peer.peer.installationId)) {
+            "a revoke must select the live peer's authenticated installation id"
+        }
+        peer.engine?.teardown()
+    }
+
+    override suspend fun closeAll() {
+        peer.engine?.teardown()
+    }
+
+    override suspend fun requestRemoval(peerIdHex: String): RemovalResult = RemovalResult.KEPT_NOT_CONNECTED
+
+    override fun beginReset() = Unit
+
+    override fun endReset(completed: Boolean) = Unit
+}
+
+/** The mutation check's session seam: it never terminates anything. */
+private object NoOpSessions : PeerSessions {
+    override fun hasOpenSession(peerId: String): Boolean = false
+
+    override suspend fun closePeer(peerIdHex: String) = Unit
+
+    override suspend fun closeAll() = Unit
+
+    override suspend fun requestRemoval(peerIdHex: String): RemovalResult = RemovalResult.KEPT_NOT_CONNECTED
+
+    override fun beginReset() = Unit
+
+    override fun endReset(completed: Boolean) = Unit
+}
+
 private class ScenarioRun(
     val steps: MutableList<StepOutcome> = mutableListOf(),
     val sessions: MutableMap<String, PhoneSession> = mutableMapOf(),
@@ -790,10 +870,14 @@ private class ScenarioRun(
     val storeStates: MutableMap<String, String> = mutableMapOf()
 }
 
-private class PhoneScenario(private val fixture: ScenarioFixture) {
+private class PhoneScenario(
+    private val fixture: ScenarioFixture,
+    private val sessions: (PhoneSession) -> PeerSessions,
+) {
     private val clock = FakeClock(0)
     private val phoneIdentity = TestIdentity.generate()
     private val run = ScenarioRun()
+    private val coordinatorScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
     private var oversizeBuilt = false
 
     suspend fun executeScenario(): ScenarioRun {
@@ -1255,13 +1339,20 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
     }
 
     private suspend fun revoke(peer: PhoneSession): List<SessionEffect> {
-        peer.repository?.revoke(TrustEncoding.hex(peer.peer.installationId))
-        peer.revokedTrust = true
-        peer.repository = null
-        peer.activation = null
-        run.storeStates[peer.name] = "deleted"
-        peer.engine?.teardown()
-        peer.closed = true
+        val repository = checkNotNull(peer.repository) {
+            "${fixture.id}: a revoke requires an existing trust record"
+        }
+        val peerId = TrustEncoding.hex(peer.peer.installationId)
+        val before = refreshStore(peer)
+        // OTP2-REV-001/design D1/D2: the local revoke runs through the production coordinator,
+        // which owns the fence → delete → terminate → sweep → release order. The adapters bind
+        // only this scenario's real repository and its live engine, so a coordinator that failed
+        // to delete or to disconnect leaves the fixture's final state and its disconnect claim
+        // wrong instead of being masked by the runner.
+        PeerRevocationCoordinator(repository, sessions(peer), coordinatorScope).revoke(peerId)
+        // Both observations are derived from the resulting state: the fixture's own durable slot
+        // and the engine the adapter actually terminated.
+        peer.revokedTrust = before != "deleted" && refreshStore(peer) == "deleted"
         return emptyList()
     }
 
@@ -1671,9 +1762,10 @@ private object Effects {
         "removal_response_sent", "removal_response_processed" ->
             run.steps.any { it.sentTypes.contains(RecordType.REMOVAL_RESPONSE.wire) }
         // OTP2-REV-001: the local revoke terminates the live authenticated session and erases
-        // its keys without a protocol termination.
+        // its keys without a protocol termination. Both facts are read from the engine the
+        // production coordinator's own termination produced.
         "revocation_disconnect" -> run.sessions.values.any {
-            it.revokedTrust && it.closed && it.engine?.keysErasedForTest == true
+            it.revokedTrust && it.engine?.isOpen == false && it.engine?.keysErasedForTest == true
         }
         else -> null
     }
