@@ -118,20 +118,25 @@ interface PeerSessions {
      *
      * Every call owns one hold on the barrier and must be given back by exactly one [endReset], so
      * overlapping resets share it: an earlier reset's completion says nothing about the store a
-     * still-active reset has yet to discard and refresh, so it never reopens admission. The
-     * returned sequence orders the bodies: [endReset] publishes an outcome only for a body that is
-     * newer than every outcome already published, never by the order the holds are released.
+     * still-active reset has yet to discard and refresh, so it never reopens admission.
+     *
+     * The host closes admission and takes the hold synchronously, before this call can suspend;
+     * suspending here only delays the request's serialized body, which the coordinator publishes
+     * its outcome from. Ordering is therefore not carried by the reservation: the last body to
+     * run publishes last.
      */
-    fun beginReset(): Long
+    suspend fun beginReset()
 
     /**
-     * Releases this reset's hold. [completed] publishes this reset's outcome only when its body
-     * actually ran, and only when no newer body published one: `true` reopens admission once the
-     * last hold is gone, `false` keeps every later connection refused because the store may still
-     * hold the identity the reset could not discard, and `null` (a request cancelled before its
-     * body ran) publishes nothing, so the newest completed reset still decides.
+     * Releases this reset's hold and publishes its outcome. [completed] is `true` only when the
+     * body ran and its deletions and identity refresh returned, `false` when it ran and did not,
+     * and `null` when the request was cancelled before its body started — then nothing is
+     * published and the most recently completed body still decides.
+     *
+     * The coordinator calls this while the serialized reset section is still held, so the outcome
+     * of the last body to run is the one admission reflects.
      */
-    fun endReset(sequence: Long, completed: Boolean?)
+    fun endReset(completed: Boolean?)
 }
 
 /**
@@ -262,8 +267,8 @@ class SessionHost(
      * The reset-wide admission barrier (design D6). Guarded by [registry] and closed by the first
      * [beginReset] before a reset snapshots its generations, so no connection can be admitted —
      * and no identity read or handshake can start — while the store is being discarded. It is
-     * released only by the [endReset] of the last active reset, and its value is the newest
-     * completed reset's outcome, never the outcome of whichever hold was released last.
+     * released only by the [endReset] of the last active reset, and its value is the outcome the
+     * most recently completed reset body published.
      */
     private var admitting = true
 
@@ -274,20 +279,10 @@ class SessionHost(
      */
     private var resets = 0
 
-    /** The sequence handed to the next [beginReset]; also the order of the reset bodies. */
-    private var nextReset = 0L
-
     /**
-     * The newest reset body whose outcome was published. Outcomes of older bodies are ignored, so
-     * publication follows the serialized body order even when their holds are released in the
-     * opposite order. Guarded by [registry].
-     */
-    private var publishedReset = 0L
-
-    /**
-     * Set by the newest completed reset when the store did not confirm it: every later connection
-     * is then refused until a later reset succeeds, because the store may still hold the identity
-     * it could not discard. Guarded by [registry].
+     * Set by the most recently completed reset body when the store did not confirm it: every later
+     * connection is then refused until a later reset succeeds, because the store may still hold the
+     * identity it could not discard. Guarded by [registry].
      */
     private var resetRefused = false
 
@@ -312,21 +307,20 @@ class SessionHost(
         true
     }
 
-    override fun beginReset(): Long = synchronized(registry) {
-        admitting = false
-        resets += 1
-        ++nextReset
+    override suspend fun beginReset() {
+        // The whole state change is synchronous, so admission is closed before this call can
+        // suspend; a suspension only delays the request's serialized body.
+        synchronized(registry) {
+            admitting = false
+            resets += 1
+        }
     }
 
-    override fun endReset(sequence: Long, completed: Boolean?) {
+    override fun endReset(completed: Boolean?) {
         synchronized(registry) {
-            // Only a body that ran publishes an outcome, and only when it is newer than every
-            // outcome already published: the newest completed reset decides, never the scheduling
-            // order of the hold releases.
-            if (completed != null && sequence > publishedReset) {
-                publishedReset = sequence
-                resetRefused = !completed
-            }
+            // Only a body that ran publishes an outcome; a request cancelled before its body
+            // started releases its hold and leaves the most recently completed body's outcome.
+            if (completed != null) resetRefused = !completed
             resets = (resets - 1).coerceAtLeast(0)
             if (resets > 0) return
             admitting = !resetRefused

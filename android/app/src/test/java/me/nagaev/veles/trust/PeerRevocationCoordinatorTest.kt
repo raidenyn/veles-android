@@ -29,6 +29,7 @@ import me.nagaev.veles.session.TestClient
 import me.nagaev.veles.session.TestIdentity
 import me.nagaev.veles.session.TestPeers
 import me.nagaev.veles.sharing.ConnectionGeneration
+import me.nagaev.veles.sharing.PeerSessions
 import me.nagaev.veles.sharing.RecordAdmission
 import me.nagaev.veles.sharing.SessionHost
 import me.nagaev.veles.sharing.SessionTransport
@@ -65,9 +66,13 @@ class PeerRevocationCoordinatorTest {
         return SessionHost(scope, transport, create, trust, clock = { clock.now })
     }
 
-    private fun coordinator(host: SessionHost, scope: CoroutineScope): PeerRevocationCoordinator = PeerRevocationCoordinator(
+    private fun coordinator(
+        host: SessionHost,
+        scope: CoroutineScope,
+        sessions: PeerSessions = host,
+    ): PeerRevocationCoordinator = PeerRevocationCoordinator(
         trust,
-        host,
+        sessions,
         scope,
         onStatus = { statuses += it },
         historyCleanup = { cleaned += it },
@@ -348,50 +353,74 @@ class PeerRevocationCoordinatorTest {
     }
 
     /**
-     * Finding: an outcome must be published in the order the reset bodies ran, never in the order
-     * the admission holds happen to be released. Here the older body failed and its hold is
-     * released last, after the newer body succeeded: a release-ordered barrier would keep
-     * admission closed although the newest completed reset recovered the store.
+     * Finding: a reservation taken before the serialized section is not body order. The first
+     * request reserves admission and is then gated *before* it enters its body; the second request
+     * reserves later, runs its body first and succeeds; the first then runs its body and fails, so
+     * it is the most recently completed body and admission must stay closed.
      */
     @Test
-    fun anOlderFailedResetReleasingLastDoesNotCloseAdmission() = runTest {
+    fun aResetGatedBeforeItsBodyDecidesAdmissionWhenItRunsLastAndFails() = runTest {
         val client = TestClient()
         val host = host { engine(client, null) }
-        val older = host.beginReset()
-        val newer = host.beginReset()
-        host.endReset(newer, true)
-        host.endReset(older, false)
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val coordinator = coordinator(host, backgroundScope, GatedReservation(host, entered, gate))
 
+        val reservedFirst = async { runCatching { coordinator.reset() } }
+        entered.await()
+        // The second request reserves after the first, but its body runs first and succeeds.
+        trust.resetFailure = null
+        val reservedSecond = async { runCatching { coordinator.reset() } }
+        runCurrent()
+        assertTrue("the later reservation completed first", reservedSecond.isCompleted)
+        assertTrue("the later body succeeded", reservedSecond.await().isSuccess)
+
+        // The first request now runs its body, which fails: it is the most recently completed one.
+        trust.resetFailure = TrustStoreException()
+        gate.complete(Unit)
+        runCurrent()
+        val failure = reservedFirst.await().exceptionOrNull()
+
+        assertTrue("the last completed body failed", failure is TrustException)
         val gen = ConnectionGeneration("aa", 1)
         connect(host, gen)
         host.onRecord(gen, client.helloFrame.copyOf(), admission())
         runCurrent()
-
-        assertTrue("the newest completed reset decides", transport.closed.none { it == gen })
-        assertEquals("an admitted generation answers the hello", 2, transport.sent.count { it.gen == gen })
+        assertTrue("the most recently completed reset failed", transport.closed.contains(gen))
+        assertTrue("a refused generation sends nothing", transport.sent.none { it.gen == gen })
     }
 
     /**
-     * The mirror interleaving: the older body succeeded and its hold is released last, after the
-     * newer body failed. Admission must stay closed because the newest completed reset is the one
-     * that could not discard the identity.
+     * The mirror interleaving: the request that reserved first is gated before its body, the second
+     * one fails, and the first then succeeds. Admission must be open, because the most recently
+     * completed body recovered the store.
      */
     @Test
-    fun aNewerFailedResetKeepsAdmissionClosedWhenTheOlderHoldIsReleasedLast() = runTest {
+    fun aResetGatedBeforeItsBodyReopensAdmissionWhenItRunsLastAndSucceeds() = runTest {
         val client = TestClient()
         val host = host { engine(client, null) }
-        val older = host.beginReset()
-        val newer = host.beginReset()
-        host.endReset(newer, false)
-        host.endReset(older, true)
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val coordinator = coordinator(host, backgroundScope, GatedReservation(host, entered, gate))
 
+        val reservedFirst = async { runCatching { coordinator.reset() } }
+        entered.await()
+        trust.resetFailure = TrustStoreException()
+        val reservedSecond = async { runCatching { coordinator.reset() } }
+        runCurrent()
+        assertTrue("the later reservation completed first", reservedSecond.isCompleted)
+        assertTrue("the later body failed", reservedSecond.await().exceptionOrNull() is TrustException)
+
+        trust.resetFailure = null
+        gate.complete(Unit)
+        runCurrent()
+        assertTrue("the last completed body succeeded", reservedFirst.await().isSuccess)
         val gen = ConnectionGeneration("aa", 1)
         connect(host, gen)
         host.onRecord(gen, client.helloFrame.copyOf(), admission())
         runCurrent()
-
-        assertTrue("the newest completed reset decides", transport.closed.contains(gen))
-        assertTrue("a refused generation sends nothing", transport.sent.none { it.gen == gen })
+        assertTrue("the most recently completed reset recovered the store", transport.closed.none { it == gen })
+        assertEquals("an admitted generation answers the hello", 2, transport.sent.count { it.gen == gen })
     }
 
     @Test
@@ -825,6 +854,27 @@ class PeerRevocationCoordinatorTest {
     private class Sent(val gen: ConnectionGeneration, val bytes: ByteArray, val token: Long?)
 
     private class Closed(val gen: ConnectionGeneration)
+
+    /**
+     * The production session seam with one reservation gate: the first `beginReset` takes its hold
+     * and then waits, so that request owns admission but has not entered the serialized reset body
+     * yet. A second request can therefore reserve later and still run its body first.
+     */
+    private class GatedReservation(
+        private val delegate: PeerSessions,
+        private val entered: CompletableDeferred<Unit>,
+        private val gate: CompletableDeferred<Unit>,
+    ) : PeerSessions by delegate {
+        private var reservations = 0
+
+        override suspend fun beginReset() {
+            delegate.beginReset()
+            if (++reservations == 1) {
+                entered.complete(Unit)
+                gate.await()
+            }
+        }
+    }
 
     private class RecordingTransport(private val events: MutableList<String>) : SessionTransport {
         /** Every send and every close in call order, so ordering assertions are real. */

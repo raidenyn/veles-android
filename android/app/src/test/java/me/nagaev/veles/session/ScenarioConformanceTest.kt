@@ -817,9 +817,9 @@ private class ScenarioSessions(private val peer: PhoneSession) : PeerSessions {
 
     override suspend fun requestRemoval(peerIdHex: String): RemovalResult = RemovalResult.KEPT_NOT_CONNECTED
 
-    override fun beginReset(): Long = 0L
+    override suspend fun beginReset() = Unit
 
-    override fun endReset(sequence: Long, completed: Boolean?) = Unit
+    override fun endReset(completed: Boolean?) = Unit
 }
 
 /** The mutation check's session seam: it never terminates anything. */
@@ -832,9 +832,9 @@ private object NoOpSessions : PeerSessions {
 
     override suspend fun requestRemoval(peerIdHex: String): RemovalResult = RemovalResult.KEPT_NOT_CONNECTED
 
-    override fun beginReset(): Long = 0L
+    override suspend fun beginReset() = Unit
 
-    override fun endReset(sequence: Long, completed: Boolean?) = Unit
+    override fun endReset(completed: Boolean?) = Unit
 }
 
 private class ScenarioRun(
