@@ -58,13 +58,17 @@ export class ChromeTrustRepository {
         const candidate = structuredClone(input);
         return this.update(
             async (s) => {
-                exactFields(candidate, [
-                    'installationId',
-                    'publicKey',
-                    'label',
-                    'deviceType',
-                    'enrollmentTranscript',
-                ]);
+                // Caller-supplied record data: a malformed candidate is the store's to reject,
+                // never a peer-level rejection.
+                this.storeCheck(() =>
+                    exactFields(candidate, [
+                        'installationId',
+                        'publicKey',
+                        'label',
+                        'deviceType',
+                        'enrollmentTranscript',
+                    ]),
+                );
                 requireTrust(!s.peers.some((p) => p.installationId === candidate.installationId));
                 const peer: TrustedPeer = {
                     ...candidate,
@@ -144,7 +148,9 @@ export class ChromeTrustRepository {
             // changes and the record stays byte-identical (veles-v1.md §11.4).
             if (pending) return;
             if (hint !== undefined) {
-                this.validateHint(hint);
+                // A hint is caller-supplied record data: a malformed hint is a store failure,
+                // not a peer-level rejection.
+                this.storeCheck(() => this.validateHint(hint));
                 peer.platformHint = hint;
             }
             peer.lastSeenMillis = this.wall();
@@ -182,24 +188,38 @@ export class ChromeTrustRepository {
 
     /** Explicit user recovery discards all trust; never invoked automatically on errors. */
     async reset(): Promise<void> {
+        let report = false;
         try {
             await this.lock(async () => {
-                await this.local.restrict();
-                requireTrust(await this.owner.isAlive(this.owner.id));
-                // Durable invalid marker makes any interrupted reset fail closed.
-                await this.local.write({
-                    version: 1,
-                    identity: { installationId: '', publicKey: '' },
-                    peers: [],
-                });
-                await this.keys.clear();
-                await this.local.clear();
-                // A completed reset ends the failure episode; a reset failure opens none,
-                // because reset is never reached from a failure path.
-                this.endStoreFailureEpisode();
+                try {
+                    await this.local.restrict();
+                    requireTrust(await this.owner.isAlive(this.owner.id));
+                    // Durable invalid marker makes any interrupted reset fail closed.
+                    await this.local.write({
+                        version: 1,
+                        identity: { installationId: '', publicKey: '' },
+                        peers: [],
+                    });
+                    await this.keys.clear();
+                    await this.local.clear();
+                    // A completed reset ends the failure episode.
+                    this.endStoreFailureEpisode();
+                } catch (error) {
+                    // A reset failure is a store failure: the explicit user action still hit
+                    // the store, so it reports once per episode like every other transaction.
+                    report = this.beginStoreFailureEpisode();
+                    throw error instanceof TrustStoreError ? error : new TrustStoreError();
+                }
             });
         } catch (error) {
-            throw error instanceof TrustStoreError ? error : new TrustStoreError();
+            const failure = error instanceof TrustStoreError ? error : new TrustStoreError();
+            if (!(error instanceof TrustStoreError)) {
+                // A failure of the store itself (for example the lock) is a store failure too.
+                report = this.beginStoreFailureEpisode();
+            }
+            throw failure;
+        } finally {
+            if (report) this.onStoreFailure();
         }
     }
 
@@ -321,6 +341,15 @@ export class ChromeTrustRepository {
     }
 
     /** Caller-supplied record data is validated by the store: its failure is not a rejection. */
+    private storeCheck(block: () => void): void {
+        try {
+            block();
+        } catch {
+            throw new TrustStoreError();
+        }
+    }
+
+    /** The async form of `storeCheck`, for a fingerprint computed from caller-supplied hex. */
     private async storeValue<T>(block: () => Promise<T>): Promise<T> {
         try {
             return await block();

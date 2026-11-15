@@ -6,6 +6,7 @@ import {
     TrustError,
     TrustStoreError,
     TrustUnavailableError,
+    type PendingPeer,
     type TrustSnapshot,
 } from '../../src/trust/model';
 import { ChromeTrustRepository, type AuthenticationVerifier } from '../../src/trust/repository';
@@ -194,6 +195,48 @@ describe('trust-store failure classification', () => {
         expect(s.failures()).toBe(1);
     });
 
+    it('malformedCandidateIsStoreError', async () => {
+        const s = setup();
+        const repo = s.make();
+        await repo.identity();
+        const peer = await candidate();
+        const before = s.writes.length;
+
+        // The caller-supplied record shape is the store's to validate: an extra field and a
+        // missing field are store failures, not peer-level rejections.
+        await expect(
+            repo.addPending({ ...peer, secret: 'not allowed' } as unknown as PendingPeer),
+        ).rejects.toBeInstanceOf(TrustStoreError);
+        await expect(
+            repo.addPending({
+                installationId: peer.installationId,
+                publicKey: peer.publicKey,
+                label: peer.label,
+                deviceType: peer.deviceType,
+            } as unknown as PendingPeer),
+        ).rejects.toBeInstanceOf(TrustStoreError);
+
+        expect(s.writes.length).toBe(before);
+        expect(await repo.peers()).toEqual([]);
+        expect(s.failures()).toBe(1);
+    });
+
+    it('malformedHintIsStoreError', async () => {
+        const s = setup();
+        const repo = s.make();
+        const peer = await committed(repo);
+        const before = structuredClone(s.get());
+
+        // A hint is caller-supplied record data: a malformed one is a store failure and the
+        // existing record is published unchanged.
+        await expect(
+            repo.authenticated(peer.installationId, 'device\nsecret', new Uint8Array([1])),
+        ).rejects.toBeInstanceOf(TrustStoreError);
+
+        expect(s.get()).toEqual(before);
+        expect(s.failures()).toBe(1);
+    });
+
     it('missingPeerIsTrustError', async () => {
         const s = setup();
         const repo = s.make();
@@ -243,6 +286,28 @@ describe('trust-store failure classification', () => {
         await repo.reset();
 
         await expect(repo.identity()).rejects.toBeInstanceOf(TrustStoreError);
+        expect(s.failures()).toBe(2);
+    });
+
+    it('resetFailureReportsOncePerEpisode', async () => {
+        const s = setup();
+        const repo = s.make();
+        s.failWrites();
+
+        // An explicit user action still hits the store, so its failure reports once.
+        await expect(repo.reset()).rejects.toBeInstanceOf(TrustStoreError);
+        // A repeated failure in the same episode does not report again.
+        await expect(repo.reset()).rejects.toBeInstanceOf(TrustStoreError);
+        expect(s.failures()).toBe(1);
+
+        // A successful reset ends the episode...
+        s.failWrites(false);
+        await repo.reset();
+        expect(s.failures()).toBe(1);
+
+        // ...so the next failed reset is a new episode.
+        s.failWrites();
+        await expect(repo.reset()).rejects.toBeInstanceOf(TrustStoreError);
         expect(s.failures()).toBe(2);
     });
 });
