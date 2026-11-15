@@ -622,6 +622,27 @@ export class ConnectorApp {
             if (attempt === this.pairingAttempt) this.pairingEnded = true;
             return false;
         }
+        // A reset owns the trust store until it has discarded it and refreshed the identity. A
+        // startup begun during one waits here and installs nothing while it runs (finding 3):
+        // otherwise its link would be absent from `closeAll()`'s snapshot and would survive the
+        // reset, persisting enrollment state under the identity the reset deleted.
+        const identities = this.identities;
+        if (identities !== null) {
+            const admitted = await identities.settled();
+            // Recheck ownership after waiting: an abort, a cancel, a replacement or a tab
+            // teardown during the wait must stop this startup before it installs a link.
+            if (!this.isPairingAttemptLive(attempt)) {
+                if (attempt === this.pairingAttempt) this.pairingEnded = true;
+                return false;
+            }
+            if (!admitted) {
+                // The store may still hold the identity a failed reset could not discard: no
+                // enrollment may start with it.
+                this.pairingEnded = true;
+                this.applyFailure(synthesizeAuthenticationFailed());
+                return false;
+            }
+        }
         this.pairingEnded = false;
         try {
             const link = await PairingLink.start({

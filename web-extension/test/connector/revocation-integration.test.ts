@@ -1577,6 +1577,102 @@ describe('revocation integration: connector wiring', () => {
         expect(fixture.app.sessions?.authenticatedSessions()).toEqual([]);
     });
 
+    it('waits for a reset in flight before installing a pairing link', async () => {
+        const fixture = createAppFixture();
+        await startApp(fixture);
+        const repository = requireRepository(fixture);
+        const port = fixture.controller.currentPort();
+        const phone = await PhonePeer.create({ code: CODE });
+        // A seed identity exists before the reset, so the reset deletes a real one.
+        const oldIdentity = requireValue(await repository.identity()).installationId;
+
+        // Hold the reset inside its durable invalid-marker write, after `abortPairingStartup`.
+        const gate = deferred();
+        const entered = fixture.local.nextWriteEntered();
+        fixture.local.writeGate = gate.promise;
+        fixture.local.holdMarkerWrite = 1;
+        const resetting = fixture.app.resetTrust();
+        await entered;
+
+        // A pairing begun during the reset must not install a link or reach the transport: it
+        // would otherwise be absent from `closeAll()`'s snapshot and persist enrollment state
+        // after the reset completed.
+        const pairing = fixture.app.startPairing(PAIR_DEVICE, CODE);
+        await microFlush();
+        expect(postsOf(port, 'connect')).toHaveLength(0);
+        expect(postsOf(port, 'send')).toHaveLength(0);
+        expect(fixture.app.pairingState.phase).toBe('idle');
+
+        gate.resolve();
+        await resetting;
+        const refreshed = await repository.identity();
+        expect(refreshed.installationId).not.toBe(oldIdentity);
+
+        // It resumes only after the reset, under the refreshed identity, and owns its attempt.
+        const connect = await port.nextPosted();
+        expect(connect.type).toBe('connect');
+        await port.emit(
+            connectedEvent({
+                request_id: connect.request_id as string,
+                connection_handle: PAIR_HANDLE,
+            }),
+        );
+        const request = await nextSend(port);
+        await ackSend(port, request);
+        await emitRecord(port, PAIR_HANDLE, phone.offerFor(request.bytes));
+
+        const point = await nextSend(port);
+        await ackSend(port, point);
+        await emitRecord(
+            port,
+            PAIR_HANDLE,
+            encodePairingFrame(PairingFrameType.CA, phone.acceptPoint(point.bytes)),
+        );
+
+        const confirm = await nextSend(port);
+        await ackSend(port, confirm);
+        await phone.acceptConfirmB(confirm.bytes);
+
+        await emitRecord(port, PAIR_HANDLE, await phone.identityFrame());
+        const identity = await nextSend(port);
+        await ackSend(port, identity);
+        await phone.acceptClientIdentity(identity.bytes);
+
+        await emitRecord(port, PAIR_HANDLE, await phone.prepareFrame());
+        const commit = await nextSend(port);
+        await ackSend(port, commit);
+
+        await emitRecord(port, PAIR_HANDLE, await phone.completeFrame());
+        const ack = await nextSend(port);
+        await ackSend(port, ack);
+        await expect(pairing).resolves.toBe(true);
+        await ackDisconnect(port, PAIR_HANDLE);
+        await flush();
+
+        // The enrollment persisted one record under the fresh identity, never the deleted one.
+        const peers = await repository.peers();
+        expect(peers.map((peer) => peer.installationId)).toEqual([hexOf(phone.installationId)]);
+        expect(peers[0]?.state).toBe('active_activation_pending');
+        expect(requireValue(fixture.keys.value).installationId).toBe(refreshed.installationId);
+        expect(requireValue(fixture.keys.value).installationId).not.toBe(oldIdentity);
+    });
+
+    it('refuses a pairing begun after a reset that could not discard the identity', async () => {
+        const fixture = createAppFixture();
+        await startApp(fixture);
+        const repository = requireRepository(fixture);
+        await repository.identity();
+        const port = fixture.controller.currentPort();
+
+        // The reset's invalid-marker write fails, so admission stays latched closed.
+        fixture.local.writeFaultAt = fixture.local.writeCount + 1;
+        await expect(fixture.app.resetTrust()).rejects.toThrow('re-pair');
+
+        await expect(fixture.app.startPairing(PAIR_DEVICE, CODE)).resolves.toBe(false);
+        expect(postsOf(port, 'connect')).toHaveLength(0);
+        expect(fixture.app.pairingState).toEqual({ phase: 'idle', finished: true });
+    });
+
     it('resets, re-pairs and reconnects with a refreshed identity cache', async () => {
         const fixture = createAppFixture();
         await startApp(fixture);
