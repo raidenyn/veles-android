@@ -25,6 +25,9 @@ import {
 import { createRemovalHandler, type RemovalOperations } from '../../src/session/removal';
 import { ActivationEngine, composeHandlers } from '../../src/pairing/activation';
 import { ProofRegistry } from '../../src/pairing/proofs';
+import { createRevocationCoordinator } from '../../src/connector/revocation';
+import type { SessionManager } from '../../src/connector/sessions';
+import type { ChromeTrustRepository } from '../../src/trust/repository';
 import {
     FakeClock,
     PhoneHarness,
@@ -841,6 +844,61 @@ class ClientScenario {
     }
 
     /**
+     * The local revoke's repository seam (OTP2-REV-001, design D1/D2/D8): the production
+     * coordinator takes the fence, deletes, terminates, sweeps and releases through it. The
+     * durable fence and the store-failure classification are `ChromeTrustRepository`'s own path
+     * and stay covered there; this seam binds the coordinator to the scenario's real repository,
+     * so the fixture observes exactly the delete production ordered.
+     */
+    private revocationRepository(): ChromeTrustRepository {
+        const repository: Pick<
+            ChromeTrustRepository,
+            'beginRevocation' | 'endRevocation' | 'revoke'
+        > = {
+            beginRevocation: (peerId: string) => {
+                if (peerId !== this.peerId) {
+                    throw new Error(`${this.fixture.id}: the revoke fenced another peer`);
+                }
+            },
+            endRevocation: () => undefined,
+            revoke: async (peerId: string) => {
+                this.requireLivePeer(peerId);
+                // Production's `revoke` also classifies a store failure at its choke point; the
+                // runner's repository is a plain durable store, so the delete is the stage.
+                this.deleteRecord();
+            },
+        };
+        return repository as unknown as ChromeTrustRepository;
+    }
+
+    /**
+     * The local revoke's session seam (design D2/D3): production terminates every generation bound
+     * to the peer. The runner has one generation and no transport, so the seam performs the same
+     * logical termination — `teardown()` erases the keys and stops record processing — and the
+     * scenario's snapshot reads the closed engine it produced, never a runner-side flag.
+     */
+    private revocationSessions(): SessionManager {
+        const sessions: Pick<SessionManager, 'closePeer'> = {
+            closePeer: async (peerId: string) => {
+                this.requireLivePeer(peerId);
+                this.live().harness.engine.teardown();
+            },
+        };
+        return sessions as unknown as SessionManager;
+    }
+
+    private requirePeerId(): string {
+        if (this.peerId === null) throw new Error(`${this.fixture.id}: no peer to revoke`);
+        return this.peerId;
+    }
+
+    private requireLivePeer(peerId: string): void {
+        if (this.repository === null || peerId !== this.requirePeerId()) {
+            throw new Error(`${this.fixture.id}: a revoke requires the live peer's trust record`);
+        }
+    }
+
+    /**
      * The removal handler's deletion contract over this scenario's real repository
      * (OTP2-REC-013, design D2/D4). The coordinator's detached finish job, final sweep and
      * asynchronous fence release are `ChromeRevocationCoordinator`'s own path and are covered by
@@ -849,11 +907,7 @@ class ClientScenario {
     private removalOperations(): RemovalOperations {
         return {
             deleteFenced: async (peerId: string) => {
-                if (this.repository === null || peerId !== this.peerId) {
-                    throw new Error(
-                        `${this.fixture.id}: a removal requires the live peer's trust record`,
-                    );
-                }
+                this.requireLivePeer(peerId);
                 const before = this.recordState();
                 this.deleteRecord();
                 this.observations.removalDeletedTrust =
@@ -1058,17 +1112,18 @@ class ClientScenario {
                 this.live().harness.engine.teardown();
                 break;
             case 'revoke': {
-                // OTP2-REV-001/design D2: a local revoke deletes the durable record first, then
-                // ends the matching session. Termination is logical here — the engine erases its
-                // keys and accepts nothing further — and is never a protocol termination.
-                if (this.repository === null) {
-                    throw new Error(`${this.fixture.id}: a revoke requires a trust record`);
-                }
+                // OTP2-REV-001/design D1/D2: the local revoke runs through the production
+                // coordinator, which owns the fence → delete → terminate → sweep → release order.
+                // The adapters bind only the runner's real repository and its live engine to the
+                // coordinator's own seams, so a coordinator that failed to delete or to disconnect
+                // leaves the fixture's final state wrong instead of being masked by the runner.
                 const before = this.recordState();
-                this.deleteRecord();
+                await createRevocationCoordinator({
+                    repo: this.revocationRepository(),
+                    sessions: this.revocationSessions(),
+                }).revoke(this.requirePeerId());
                 this.observations.revokedTrust =
                     before !== 'deleted' && this.recordState() === 'deleted';
-                this.live().harness.engine.teardown();
                 break;
             }
             default:
@@ -1160,11 +1215,19 @@ class ClientScenario {
         const { harness, handler } = this.live();
         // OTP2-REC-013: the responder's removal handler has already sealed `removal_response`
         // and the engine's reply-then-close outcome ended the session, so this fixture step
-        // observes that reply. The runner must never send a second record on that session.
+        // observes that reply. The runner must never send a second record on that session, and
+        // the session must already be closed with its keys erased here: the fixture's later
+        // `close_connection` step must not be able to mask a delayed teardown.
         if (type === RecordType.REMOVAL_RESPONSE) {
             if (!this.observations.removalResponseSent) {
                 throw new Error(
                     `${this.fixture.id}: the fixture observes a removal_response the handler never sent`,
+                );
+            }
+            const engine = this.generation?.harness.engine;
+            if (engine === undefined || engine.isOpen || !engine._keysErased) {
+                throw new Error(
+                    `${this.fixture.id}: the removal responded on a session it did not close`,
                 );
             }
             return [];
