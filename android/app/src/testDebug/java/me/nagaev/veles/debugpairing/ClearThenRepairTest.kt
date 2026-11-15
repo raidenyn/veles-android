@@ -33,6 +33,7 @@ import me.nagaev.veles.trust.TrustRepository
 import me.nagaev.veles.trust.TrustSnapshot
 import me.nagaev.veles.trust.TrustStorage
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -126,6 +127,28 @@ class ClearThenRepairTest {
     }
 
     @Test
+    fun clear_without_a_coordinator_reports_unavailable_and_deletes_nothing() = runBlocking {
+        repository.identity()
+        repository.addPending(peer)
+        val logs = mutableListOf<String>()
+        val commands = commands(null, logs)
+
+        assertFalse(
+            "a clear without a running coordinator is refused, never a direct trust-store write",
+            clearIncompleteRecord(peer.installationId) { commands },
+        )
+        assertEquals(
+            "the stranded record is untouched",
+            listOf(peer.installationId),
+            repository.peers().map { it.installationId },
+        )
+        assertTrue(
+            "the unavailable path is logged",
+            logs.any { it == "revoke unavailable peer=${peer.installationId.take(8)}" },
+        )
+    }
+
+    @Test
     fun clear_with_an_open_session_deletes_instead_of_refusing() = runBlocking {
         repository.identity()
         repository.addPending(peer)
@@ -170,7 +193,7 @@ class ClearThenRepairTest {
     }
 
     private fun commands(
-        management: PeerManagement,
+        management: PeerManagement?,
         logs: MutableList<String>,
     ): ProbeCommands = ProbeCommands(
         sessions = NoSessions,

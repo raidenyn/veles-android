@@ -114,6 +114,11 @@ class PeerRevocationCoordinator(
      * The explicit identity reset (design D6): every session ends before anything is deleted,
      * then the repository deletes the stored trust without decoding it and the key alias. It is
      * idempotent and is never reached from a failure path.
+     *
+     * A completed reset is also the one recovery from the latched [TrustStatus.RE_PAIR_REQUIRED]:
+     * once the deletions have run and the repository has refreshed the identity cache (its
+     * `resetIdentity` does both), nothing is left to re-pair, so `OK` is published. A failing
+     * reset throws before this line and keeps the failure status.
      */
     suspend fun reset() {
         try {
@@ -124,6 +129,7 @@ class PeerRevocationCoordinator(
             // The generations were logically torn down; the deletion must still run.
         }
         trust.resetIdentity()
+        onStatus(TrustStatus.OK)
     }
 
     /**

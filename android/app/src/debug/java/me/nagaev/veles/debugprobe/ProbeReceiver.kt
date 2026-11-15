@@ -118,19 +118,26 @@ internal class ProbeCommands(
     }
 
     /**
-     * OTP-11 "Clear incomplete record": the clear goes through the revocation coordinator, so a
-     * record that is cleared while an authenticated session of that peer is open deletes the
-     * record and terminates the session instead of refusing. With no running service the
-     * repository delete is the same clear, because no session can exist without one.
+     * OTP-11 "Clear incomplete record": the clear goes through the revocation coordinator, which
+     * deletes the record and terminates any open session of that peer instead of refusing. There
+     * is no direct trust-store fallback: without a running coordinator the clear is unavailable
+     * and nothing is touched, because a nullable runtime snapshot is not proof that no service or
+     * no session can start before the delete.
      */
-    suspend fun revokePeer(id: String): Boolean = try {
+    suspend fun revokePeer(id: String): Boolean {
         val coordinator = revocation
-        if (coordinator == null) repository.revoke(id) else coordinator.revoke(id)
-        log("revoked peer=${id.take(LOG_PREFIX_CHARS)}")
-        true
-    } catch (_: TrustException) {
-        log("revoke refused peer=${id.take(LOG_PREFIX_CHARS)}")
-        false
+        if (coordinator == null) {
+            log("revoke unavailable peer=${id.take(LOG_PREFIX_CHARS)}")
+            return false
+        }
+        return try {
+            coordinator.revoke(id)
+            log("revoked peer=${id.take(LOG_PREFIX_CHARS)}")
+            true
+        } catch (_: TrustException) {
+            log("revoke refused peer=${id.take(LOG_PREFIX_CHARS)}")
+            false
+        }
     }
 
     private companion object {

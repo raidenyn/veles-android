@@ -419,7 +419,39 @@ class PeerRevocationCoordinatorTest {
         assertEquals("reset delegates the deletions", 1, trust.resetCalls)
         assertTrue("reset never revokes a record", trust.revokes == 0)
         assertTrue("reset never fences", trust.fenceDepth == 0)
-        assertTrue("reset emits no status", statuses.isEmpty())
+        assertEquals(
+            "a completed reset publishes the one recovery status",
+            listOf(TrustStatus.OK),
+            statuses,
+        )
+    }
+
+    /**
+     * OTP-11 D6 recovery: an explicit reset is the only path back from the latched
+     * "re-pair required" status. It publishes OK only after the deletions and the identity-cache
+     * refresh completed; a failed reset leaves the failure status in place.
+     */
+    @Test
+    fun aCompletedResetPublishesOkAndAFailedResetKeepsTheFailureStatus() = runTest {
+        val host = host { engine(TestClient(), null) }
+        val coordinator = coordinator(host, backgroundScope)
+
+        coordinator.failClosed()
+        assertEquals("the failure latches first", listOf(TrustStatus.RE_PAIR_REQUIRED), statuses)
+
+        trust.resetFailure = TrustStoreException()
+        try {
+            coordinator.reset()
+            fail("a failed reset propagates instead of publishing OK")
+        } catch (_: TrustException) {
+            // The deletes and the cache refresh failed; the status must still say re-pair.
+        }
+        assertTrue("a failed reset never publishes OK", statuses.none { it == TrustStatus.OK })
+        assertEquals(TrustStatus.RE_PAIR_REQUIRED, statuses.last())
+
+        trust.resetFailure = null
+        coordinator.reset()
+        assertEquals("a later completed reset publishes OK", TrustStatus.OK, statuses.last())
     }
 
     @Test
@@ -744,6 +776,9 @@ class PeerRevocationCoordinatorTest {
             private set
         var deleteFailure: Exception? = null
         var sweepFailure: Exception? = null
+
+        /** A reset that fails after the deletions; it must never publish the recovery status. */
+        var resetFailure: Exception? = null
         var deleteGate: CompletableDeferred<Unit>? = null
         var sweepGate: CompletableDeferred<Unit>? = null
 
@@ -803,6 +838,7 @@ class PeerRevocationCoordinatorTest {
         override suspend fun resetIdentity() {
             events += RESET
             resetCalls += 1
+            resetFailure?.let { throw reported(it) }
         }
     }
 

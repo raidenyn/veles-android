@@ -555,7 +555,7 @@ class PeerRevocationIntegrationTest {
         send(retry, client.reconnectClient().helloFrame.copyOf())
         assertArrayEquals("the refusal is generic", PairingFrames.preauthReject(), lastFrame(retry))
         assertTrue("the reconnect is closed", transport.closed.contains(retry))
-        assertTrue("reset is never a failure path", statuses.isEmpty())
+        assertEquals("a completed reset publishes OK", listOf(TrustStatus.OK), statuses)
     }
 
     @Test

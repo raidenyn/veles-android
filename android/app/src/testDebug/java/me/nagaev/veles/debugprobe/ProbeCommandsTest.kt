@@ -4,9 +4,11 @@ import kotlinx.coroutines.test.runTest
 import me.nagaev.veles.session.RecordType
 import me.nagaev.veles.session.TestIdentity
 import me.nagaev.veles.sharing.ConnectionGeneration
+import me.nagaev.veles.sharing.RemovalResult
 import me.nagaev.veles.trust.ActivationStep
 import me.nagaev.veles.trust.InstallationIdentity
 import me.nagaev.veles.trust.InstallationTrustRepository
+import me.nagaev.veles.trust.PeerSummary
 import me.nagaev.veles.trust.PendingPeer
 import me.nagaev.veles.trust.TrustEncoding
 import me.nagaev.veles.trust.TrustSnapshot
@@ -45,6 +47,7 @@ class ProbeCommandsTest {
         logs: MutableList<String>,
         results: MutableList<String>,
         storage: TrustStorage = MemoryStorage(snapshot()),
+        revocation: PeerManagement? = null,
     ): ProbeCommands = ProbeCommands(
         sessions = NoSessions,
         repository = IdentityRepository(localIdentity),
@@ -52,6 +55,7 @@ class ProbeCommandsTest {
         handler = ProbeEventSource { SyntheticEvent("VAAAAA", ByteArray(16), ByteArray(0)) },
         log = { logs += it },
         result = { results += it },
+        revocation = revocation,
     )
 
     private fun snapshot(): TrustSnapshot = TrustSnapshot(
@@ -86,12 +90,14 @@ class ProbeCommandsTest {
         val results = mutableListOf<String>()
         val peerId = "ffeeddccbbaa99887766554433221100"
         val peerPublicKey = TrustEncoding.hex(TestIdentity.generate().publicKey)
-        val commands = commands(logs, results)
+        val management = RecordingManagement()
+        val commands = commands(logs, results, revocation = management)
 
         commands.injectPeer(peerId, peerPublicKey)
         commands.revokePeer(peerId)
 
         assertTrue("the commands still report success", logs.any { it.startsWith("injected peer=") })
+        assertEquals("the Clear goes through the coordinator", listOf(peerId), management.revoked)
         assertTrue("the commands still report revocation", logs.any { it.startsWith("revoked peer=") })
         for (line in logs) {
             assertFalse("no full installation id in $line", line.contains(peerId))
@@ -103,6 +109,21 @@ class ProbeCommandsTest {
                 logs.any { it == "revoked peer=${peerId.take(8)}" },
         )
         assertTrue("no structured result for peer commands", results.isEmpty())
+    }
+
+    /** The coordinator the Clear goes through; it never falls back to the repository. */
+    private class RecordingManagement : PeerManagement {
+        val revoked = mutableListOf<String>()
+
+        override suspend fun peers(): List<PeerSummary> = emptyList()
+
+        override suspend fun revoke(peerId: String) {
+            revoked += peerId
+        }
+
+        override suspend fun removeMutually(peerId: String): RemovalResult = RemovalResult.KEPT_NOT_CONNECTED
+
+        override suspend fun reset() = Unit
     }
 
     private object NoSessions : ProbeSessions {
