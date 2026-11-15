@@ -1,5 +1,9 @@
 package me.nagaev.veles.trust
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -282,6 +286,56 @@ class TrustRepositoryTest {
         assertEquals(1, storeFailures)
     }
 
+    @Test fun `malformed peer key is a store failure and writes no record`() = runTest {
+        val repo = repository()
+        repo.identity()
+
+        // The fingerprint is computed from caller-supplied hex before post-operation validation.
+        assertStoreFailure { repo.addPending(peer().copy(publicKey = "zz".repeat(65))) }
+
+        assertTrue("a rejected record is rolled back", repo.peers().isEmpty())
+        assertEquals(1, storeFailures)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `a successful transaction cannot clear a later failure episode`() = runTest {
+        val interleaving = InterleavingTrustStorage()
+        val repo = TrustRepository(
+            interleaving,
+            identity,
+            { elapsed },
+            { boot },
+            { wall },
+            ActivationVerifier { _, _, _ -> true },
+            { storeFailures += 1 },
+        )
+
+        // The first transaction commits and then stalls before returning to the repository.
+        val successful = launch { repo.identity() }
+        interleaving.awaitCommitted()
+
+        // A second caller fails and reports while the first success has not been observed yet.
+        val failingStarted = CompletableDeferred<Unit>()
+        interleaving.failNext = true
+        val failing = launch {
+            failingStarted.complete(Unit)
+            runCatching { repo.peers() }
+        }
+        failingStarted.await()
+        advanceUntilIdle()
+
+        interleaving.releaseCommit()
+        successful.join()
+        failing.join()
+
+        // The failure after the commit opened a new episode; a later failure must not report again.
+        interleaving.failNext = true
+        assertStoreFailure { repo.peers() }
+
+        assertEquals(1, storeFailures)
+    }
+
     @Test fun `missingPeerIsPeerRejection`() = runTest {
         val repo = repository()
         repo.identity()
@@ -406,6 +460,32 @@ private class MemoryTrustStorage : TrustStorage {
         val (next, result) = block(value)
         if (fault == StorageFault.WRITE) throw IOException("durable write failed")
         value = next
+        return result
+    }
+}
+
+/** Commits the first transaction, then stalls it before it returns to the repository. */
+private class InterleavingTrustStorage : TrustStorage {
+    private val committed = CompletableDeferred<Unit>()
+    private val release = CompletableDeferred<Unit>()
+    private var value: TrustSnapshot? = null
+    var failNext = false
+
+    suspend fun awaitCommitted() = committed.await()
+
+    fun releaseCommit() = release.complete(Unit)
+
+    override suspend fun <T> transaction(block: (TrustSnapshot?) -> Pair<TrustSnapshot, T>): T {
+        if (failNext) {
+            failNext = false
+            throw IOException("store unavailable")
+        }
+        val (next, result) = block(value)
+        value = next
+        if (!committed.isCompleted) {
+            committed.complete(Unit)
+            release.await()
+        }
         return result
     }
 }
