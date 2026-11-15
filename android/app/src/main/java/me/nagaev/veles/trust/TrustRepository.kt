@@ -307,15 +307,13 @@ class TrustRepository(
         StoreTransaction.Committed(storage.transaction(block))
     } catch (cancelled: CancellationException) {
         StoreTransaction.Failed(cancelled)
+    } catch (failure: TrustStoreException) {
+        // Already a store failure; the operation's phase cannot reclassify it.
+        StoreTransaction.Failed(failure)
     } catch (failure: TrustException) {
         // A peer-level rejection raised by the operation's own checks or the fence keeps its own
         // classification; an infrastructure failure before or after it is normalized.
-        val classification = if (phase.inOperation || failure is TrustStoreException) {
-            failure
-        } else {
-            TrustStoreException()
-        }
-        StoreTransaction.Failed(classification)
+        StoreTransaction.Failed(if (phase.inOperation) failure else TrustStoreException())
     } catch (_: Exception) {
         StoreTransaction.Failed(TrustStoreException())
     }

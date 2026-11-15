@@ -99,8 +99,7 @@ class ResetAfterCorruptionTest {
     }
 
     /** The engine factory never runs: no connection is admitted in this test. */
-    private fun engineFactory(): (ConnectionGeneration) -> PhoneSessionEngine =
-        { error("no generation is admitted in this test") }
+    private fun engineFactory(): (ConnectionGeneration) -> PhoneSessionEngine = { error("no generation is admitted in this test") }
 
     /** A durable row that cannot be decoded until `reset()` deletes it without reading it. */
     private class CorruptStorage : TrustStorage {

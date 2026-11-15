@@ -50,6 +50,7 @@ import java.security.KeyPairGenerator
  * sleeps: a suspended step is held on an [CompletableDeferred] gate and released by the test.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("LargeClass") // One coordinator harness: ordering, fence lifetime, barrier, reset and summaries.
 class PeerRevocationCoordinatorTest {
     private val phone = TestIdentity.generate()
     private val clock = FakeClock()

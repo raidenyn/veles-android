@@ -163,7 +163,8 @@ class SessionHost(
     private val pairingFactory: (ConnectionGeneration) -> PairingConnection = { RejectingPairingConnection() },
     /** Session-bound proof cleanup when a generation is torn down (OTP-10 plan 9d). */
     private val onSessionClosed: (String) -> Unit = {},
-) : ConnectionListener, PeerSessions {
+) : ConnectionListener,
+    PeerSessions {
     private class OwnedRecord(val bytes: ByteArray, val admission: RecordAdmission)
 
     /**

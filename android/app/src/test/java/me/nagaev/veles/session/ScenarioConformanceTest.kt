@@ -1,8 +1,8 @@
 package me.nagaev.veles.session
 
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -11,9 +11,12 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import me.nagaev.veles.pairing.ActivationEngine
 import me.nagaev.veles.pairing.ProofRegistry
+import me.nagaev.veles.sharing.PeerSessions
+import me.nagaev.veles.sharing.RemovalResult
 import me.nagaev.veles.trust.ActivationVerifier
 import me.nagaev.veles.trust.IdentityKeyStore
 import me.nagaev.veles.trust.InstallationIdentity
+import me.nagaev.veles.trust.PeerRevocationCoordinator
 import me.nagaev.veles.trust.TrustEncoding
 import me.nagaev.veles.trust.TrustRepository
 import me.nagaev.veles.trust.TrustSnapshot
@@ -21,9 +24,6 @@ import me.nagaev.veles.trust.TrustState
 import me.nagaev.veles.trust.TrustStorage
 import me.nagaev.veles.trust.TrustedPeer
 import me.nagaev.veles.trust.peerFingerprint
-import me.nagaev.veles.trust.PeerRevocationCoordinator
-import me.nagaev.veles.sharing.PeerSessions
-import me.nagaev.veles.sharing.RemovalResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -801,8 +801,8 @@ private class PhoneSession(val name: String) {
  * engine this produced, never a runner-assigned flag.
  */
 private class ScenarioSessions(private val peer: PhoneSession) : PeerSessions {
-    override fun hasOpenSession(peerId: String): Boolean =
-        peer.engine?.isOpen == true && TrustEncoding.hex(peer.peer.installationId) == peerId
+    override fun hasOpenSession(peerId: String): Boolean = peer.engine?.isOpen == true &&
+        TrustEncoding.hex(peer.peer.installationId) == peerId
 
     override suspend fun closePeer(peerIdHex: String) {
         check(peerIdHex == TrustEncoding.hex(peer.peer.installationId)) {
