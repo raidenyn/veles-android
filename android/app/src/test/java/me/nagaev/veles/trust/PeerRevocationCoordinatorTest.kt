@@ -1,5 +1,6 @@
 package me.nagaev.veles.trust
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -497,6 +498,45 @@ class PeerRevocationCoordinatorTest {
     }
 
     @Test
+    fun cleanupCancellationNeverFailsRemoval() = runTest {
+        val client = TestClient()
+        val gen = ConnectionGeneration("aa", 1)
+        val cleanedByCancellation = mutableListOf<String>()
+        lateinit var coordinator: PeerRevocationCoordinator
+        val host = host { engine(client, RemovalHandler(operations(coordinator))) }
+        coordinator = PeerRevocationCoordinator(
+            trust,
+            host,
+            backgroundScope,
+            onStatus = { statuses += it },
+            historyCleanup = {
+                cleanedByCancellation += it
+                throw CancellationException("history cleanup cancelled itself")
+            },
+        ).also { created -> trust.reportStoreFailure = { created.failClosed() } }
+        connect(host, gen)
+        authenticate(host, gen, client)
+
+        host.onRecord(gen, client.record(RecordType.REMOVAL_REQUEST.wire, 1uL), admission())
+        runCurrent()
+
+        assertEquals("the cleanup ran once", listOf(TrustEncoding.hex(client.installationId)), cleanedByCancellation)
+        assertEquals(
+            "a cleanup-thrown cancellation never fails the removal response",
+            1,
+            transport.sent.count { wireType(it.bytes) == RecordType.REMOVAL_RESPONSE.wire },
+        )
+        assertTrue("the record is deleted", trust.revokes >= 1)
+        assertEquals("the fence is released", listOf(0), trust.endDepths)
+
+        events.clear()
+        coordinator.revoke(TrustEncoding.hex(client.installationId))
+
+        assertTrue("a local revoke also survives a cleanup-thrown cancellation", events.containsAll(listOf(FENCE, SWEEP, RELEASE)))
+        assertEquals("the fence is released after the local revoke", listOf(0, 0), trust.endDepths)
+    }
+
+    @Test
     fun overlappingRevocationsOfOnePeerKeepTheFence() = runTest {
         val client = TestClient()
         val gen = ConnectionGeneration("aa", 1)
@@ -647,17 +687,24 @@ class PeerRevocationCoordinatorTest {
 
     private class Sent(val gen: ConnectionGeneration, val bytes: ByteArray, val token: Long?)
 
+    private class Closed(val gen: ConnectionGeneration)
+
     private class RecordingTransport(private val events: MutableList<String>) : SessionTransport {
+        /** Every send and every close in call order, so ordering assertions are real. */
+        val calls = mutableListOf<Any>()
         val sent = mutableListOf<Sent>()
         val closed = mutableListOf<ConnectionGeneration>()
         var closeFailure: Exception? = null
 
         override fun send(gen: ConnectionGeneration, bytes: ByteArray, token: Long?): Boolean {
-            sent += Sent(gen, bytes.copyOf(), token)
+            val record = Sent(gen, bytes.copyOf(), token)
+            calls += record
+            sent += record
             return true
         }
 
         override fun close(gen: ConnectionGeneration) {
+            calls += Closed(gen)
             closed += gen
             events += CLOSE
             closeFailure?.let { throw it }

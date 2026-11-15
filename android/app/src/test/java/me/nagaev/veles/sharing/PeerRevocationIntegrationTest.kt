@@ -1,6 +1,5 @@
 package me.nagaev.veles.sharing
 
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -49,11 +48,13 @@ import me.nagaev.veles.trust.InstallationTrustRepository
 import me.nagaev.veles.trust.PeerRevocationCoordinator
 import me.nagaev.veles.trust.PendingPeer
 import me.nagaev.veles.trust.TrustEncoding
+import me.nagaev.veles.trust.TrustException
 import me.nagaev.veles.trust.TrustRepository
 import me.nagaev.veles.trust.TrustSnapshot
 import me.nagaev.veles.trust.TrustState
 import me.nagaev.veles.trust.TrustStatus
 import me.nagaev.veles.trust.TrustStorage
+import me.nagaev.veles.trust.TrustStoreException
 import me.nagaev.veles.trust.TrustedPeer
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -91,7 +92,7 @@ class PeerRevocationIntegrationTest {
 
     private lateinit var repository: TrustRepository
     private lateinit var trust: GatedTrust
-    private lateinit var identities: IdentityCache
+    private lateinit var identities: LocalIdentity
     private lateinit var host: SessionHost
     private lateinit var pairing: PairingEndpoint
     private lateinit var coordinator: PeerRevocationCoordinator
@@ -107,8 +108,9 @@ class PeerRevocationIntegrationTest {
             { clock.now },
             ActivationVerifier { peer, step, proof -> proofs.consume(peer, step, proof) },
         ) { created.failClosed() }
-        identities = IdentityCache(repository)
-        trust = GatedTrust(repository, identities)
+        // The production identity cache and reset decorator, wired exactly as the service does.
+        identities = LocalIdentity(repository)
+        trust = GatedTrust(ResettingTrust(repository, identities))
         pairing = PairingEndpoint(
             clock = { clock.now },
             trust = trust,
@@ -135,11 +137,11 @@ class PeerRevocationIntegrationTest {
         coordinator = created
         handler = checkNotNull(composeApplicationHandlers(RemovalHandler(coordinator), ActivationEngine(trust, proofs)))
         // The service warms the identity cache before the first link is admitted.
-        identities.refresh()
+        identities.warm()
     }
 
     private fun engine(): PhoneSessionEngine = PhoneSessionEngine(
-        localInstallationId = identities.peek(),
+        localInstallationId = identities.currentOrEmpty(),
         signer = IdentitySigner { message -> keys.sign(message) },
         lookup = PeerLookup { installationId -> lookup(installationId) },
         clock = { clock.now },
@@ -545,7 +547,7 @@ class PeerRevocationIntegrationTest {
         assertTrue("the peer set is empty", repository.peers().isEmpty())
         val fresh = repository.identity()
         assertNotEquals("the next use creates a fresh identity", original.installationId, fresh.installationId)
-        assertArrayEquals("the cache is refreshed after the reset", TrustEncoding.bytes(fresh.installationId), identities.peek())
+        assertArrayEquals("the cache is refreshed after the reset", TrustEncoding.bytes(fresh.installationId), identities.current())
 
         // The old peer record is gone: a reconnect of that client fails generically.
         val retry = ConnectionGeneration("bb", 2)
@@ -554,6 +556,53 @@ class PeerRevocationIntegrationTest {
         assertArrayEquals("the refusal is generic", PairingFrames.preauthReject(), lastFrame(retry))
         assertTrue("the reconnect is closed", transport.closed.contains(retry))
         assertTrue("reset is never a failure path", statuses.isEmpty())
+    }
+
+    @Test
+    fun failedRefreshAfterResetRefusesTheNextGeneration() = runTest {
+        start()
+        val client = PairingClient()
+        seedActive(client)
+        val deleted = repository.identity()
+        val gen = ConnectionGeneration("aa", 1)
+        reconnect(gen, client.reconnectClient())
+        assertEquals("the peer session is live", 1, host.authenticatedSessions().size)
+
+        // The store fails right after the reset's row and key deletions, so the production cache
+        // cannot be refreshed. The deleted installation id must never be served again.
+        storage.fault = Fault.READ
+        val failure = try {
+            coordinator.reset()
+            null
+        } catch (thrown: TrustException) {
+            thrown
+        }
+
+        assertTrue("a failed refresh fails the reset instead of keeping the stale id", failure is TrustStoreException)
+        assertEquals("the store failure is reported", listOf(TrustStatus.RE_PAIR_REQUIRED), statuses)
+        assertTrue("the session was terminated first", transport.closed.contains(gen))
+
+        // A generation created while no identity can be loaded is refused, never authenticated
+        // with the deleted installation id.
+        val refused = ConnectionGeneration("bb", 2)
+        connect(refused)
+        send(refused, client.reconnectClient().helloFrame.copyOf())
+        assertTrue(
+            "no phone hello is sent with a stale identity",
+            transport.calls.filterIsInstance<Sent>().none { it.isOn(refused) },
+        )
+        assertTrue("the refused generation is closed", transport.closed.contains(refused))
+        assertTrue("nothing authenticates", host.authenticatedSessions().isEmpty())
+
+        // Once the store answers again, the next generation reloads a fresh identity.
+        storage.fault = null
+        val reloaded = identities.current()
+        assertNotEquals("the deleted id is never served again", deleted.installationId, TrustEncoding.hex(reloaded))
+        assertArrayEquals(
+            "the reloaded id is the repository's current identity",
+            TrustEncoding.bytes(repository.identity().installationId),
+            reloaded,
+        )
     }
 
     // -------------------------------------------------------------------------------------
@@ -608,29 +657,9 @@ class PeerRevocationIntegrationTest {
         }
     }
 
-    private class IdentityCache(private val trust: InstallationTrustRepository) {
-        @Volatile private var cached: ByteArray? = null
-
-        fun peek(): ByteArray = checkNotNull(cached) { "the identity cache is not warm" }
-
-        /** Design D6: a reset refreshes the cache after `resetIdentity()` did both deletions. */
-        suspend fun refresh() {
-            cached = try {
-                TrustEncoding.bytes(trust.identity().installationId)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                // Both deletions already happened; a failed re-read leaves the stale id, so the
-                // next generation fails authentication and closes (fail-closed).
-                return
-            }
-        }
-    }
-
     /** The service's trust facade: gates the suspend points a test races and refreshes the cache. */
     private class GatedTrust(
         private val delegate: InstallationTrustRepository,
-        private val identities: IdentityCache,
     ) : InstallationTrustRepository by delegate {
         var peersGate: CompletableDeferred<Unit>? = null
         var peersEntered: CompletableDeferred<Unit>? = null
@@ -661,11 +690,6 @@ class PeerRevocationIntegrationTest {
             val remaining = (fences[peerId] ?: 1) - 1
             if (remaining <= 0) fences.remove(peerId) else fences[peerId] = remaining
             delegate.endRevocation(peerId)
-        }
-
-        override suspend fun resetIdentity() {
-            delegate.resetIdentity()
-            identities.refresh()
         }
     }
 

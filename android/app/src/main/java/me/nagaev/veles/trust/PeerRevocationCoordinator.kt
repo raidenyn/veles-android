@@ -190,14 +190,18 @@ class PeerRevocationCoordinator(
         }
     }
 
-    /** The OTP-history extension point: it has no consumer yet and never fails a removal. */
+    /**
+     * The OTP-history extension point: it has no consumer yet and never fails a removal. A
+     * consumer runs inside the removal's already-committed delete, so everything it throws —
+     * including a cancellation of its own synchronous work — is isolated here; only cancellation
+     * of the coordinator's own suspension points propagates.
+     */
     private fun cleanupHistory(peerId: String) {
         try {
             historyCleanup(peerId)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
         } catch (_: Exception) {
-            // OTP-13 registers the first consumer; a cleanup failure never fails the removal.
+            // OTP-13 registers the first consumer; nothing it throws may fail a removal whose
+            // record is already deleted.
         }
     }
 }
