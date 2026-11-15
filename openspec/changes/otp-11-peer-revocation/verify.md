@@ -1,8 +1,8 @@
 # Verification Report
 
 **Change**: `otp-11-peer-revocation`
-**Verified at**: `2026-11-15 11:20`
-**Iteration**: `1`
+**Verified at**: `2026-11-15 11:50`
+**Iteration**: `2`
 **Verifier**: OpenCode `openspec-verify-change` (subagent-driven apply; reviewers GPT-6.1-Sol, high)
 
 ---
@@ -74,6 +74,11 @@ Pending sync is expected at this point: archive applies the deltas.
 | D9 debug-only controls | peer list, Revoke, Mutual remove, confirmed Reset; release guards | `pairing-debug-harness` (all requirements) | D9 omits the Clear action migration that the proposal requires; implemented in Task 12 (deferred text gap) |
 | D10 evidence | per-endpoint tests, conformance, injected clocks | `mutual-peer-removal` "Removal conformance" | none |
 
+Re-verified in iteration 2 after the post-verify review wave: both endpoints now publish the reset
+outcome (`'ok'` on success, `'re-pair-required'` on failure) from the reset body itself, with exact
+status sequences pinned in tests, and the debug note states that the status latches until a reset
+succeeds.
+
 **Drift warnings** (non-blocking):
 
 - `design.md:137-145`: the reset section does not mention the admission barrier, serialized reset
@@ -92,7 +97,7 @@ Pending sync is expected at this point: archive applies the deltas.
 - [x] No unstaged files in the worktree
 - [ ] All related commits have been pushed
 
-**Commit range** (if known): `5d5b77c..f8999e0` (39 commits; this report adds one more)
+**Commit range** (if known): `5d5b77c..5f41436` (43 commits)
 
 Not pushed yet: the merge, push and pull request belong to the finalize artifact's closeout. The branch
 `feat/otp-11-planning` is local.

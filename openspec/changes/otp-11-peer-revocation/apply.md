@@ -5,8 +5,8 @@
 > Overwritten on each apply iteration; iteration counter grows.
 
 **Change**: `otp-11-peer-revocation`
-**Iteration**: `1`
-**Applied at**: `2026-11-15 11:00`
+**Iteration**: `2`
+**Applied at**: `2026-11-15 11:50`
 **Executor**: `subagent-driven-development`
 
 ---
@@ -20,8 +20,8 @@
 
 ## Commits
 
-- **Range**: `5d5b77c..6d59189` (planning scaffold through the final review fix wave)
-- **Count**: `39`
+- **Range**: `5d5b77c..5f41436` (planning scaffold through the post-verify review wave)
+- **Count**: `43`
 
 ---
 
@@ -52,8 +52,13 @@
 ## Review state
 
 - Per-task reviews: GPT-6.1-Sol (high) after every plan task, with fix rounds as needed.
-- Final whole-branch review: 6 Important findings, one fix wave, one scoped re-review, one residual
-  (Android overlapping-reset admission) resolved over four targeted rounds.
+- Final whole-branch review (Sol): 6 Important findings, one fix wave, one scoped re-review, one
+  residual (Android overlapping-reset admission) resolved over four targeted rounds.
+- Second whole-branch review (Opus 5.5, requested by the user): no Critical, 1 Important (Chrome did
+  not publish the reset status while Android did), 5 Minor. Fixed: both endpoints publish the reset
+  outcome, exact status sequences pinned, docs aligned. The removal-snapshot race and the blocking
+  identity reload were left, with the reviewer's reasoning that neither widens exposure.
+- Iteration 2 exists because code changed after the first verify; the same gates were re-run.
 
 ---
 
