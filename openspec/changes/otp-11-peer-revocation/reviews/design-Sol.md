@@ -46,3 +46,28 @@
 No critical or high findings remain. The reviewer notes that implementation must keep peer-rejection classification through Room's blanket exception wrapper and apply Chrome's classification before post-operation validation (carried into the tasks).
 
 Approved content: design sha256 555e091665837b759c16541d6fc2dbfcef0689491dd33300ae1c5c16a5f9280b
+
+## Pass 2 — audit repair: complete upstream set
+
+The Pass 1 approval header named only `brainstorm.md`. Under *Revision binding* the upstream set for
+`design` is every planning file earlier in the order, so `proposal.md` belongs in it. Design content is
+unchanged; this pass re-answers the three questions against the full upstream set so the latest approval
+is correctly bound.
+
+- Artifact: design.md
+- Reviewer: Sol (GPT-6.1-Sol, medium)
+- Session preset: [Sol]
+- Cap: 5 rounds per reviewer per pass
+- Upstream hashes (this pass): brainstorm.md sha256 4b4463045b9a541eada0adab14f893891adf1c61e70af3d14470ec4613492983; proposal.md sha256 47323e92d7693f47187fa07f59bd21998e8eb736b9f6899b2bcedaff65e60d4c
+
+### Round 1 — approve
+
+| Severity | Finding | Disposition |
+| --- | --- | --- |
+| medium | design.md:137-145 — reset ordering omits admission blocking, overlapping-reset serialization and the cached-identity refresh that both implementations now include | deferred: the behaviour is implemented and covered (`SessionHost` reset admission barrier, `PeerRevocationCoordinator` serialized outcomes, identity cache refresh); editing design.md now would reopen the whole approval chain, so the text is corrected at the next design touch |
+| medium | design.md:72-77 — the design names destructive `cancelPairings()` / link `cancel()`, while the implementation deliberately uses non-destructive `closeAll()` / `terminate()` for fail-closed and reset | rebutted: the approved plan's refinement (plan.md line 13) and ruling R8 require non-destructive teardown, because cancellation would delete incomplete trust records that fail-closed must keep |
+| low | design.md:182-186 — D9 covers the new debug controls but not the proposal's migration of the existing Clear action through the coordinator | fixed in implementation (Task 12); the design text gap is deferred with the medium items |
+
+VERDICT: approve. No critical or high findings.
+
+Approved content: design sha256 555e091665837b759c16541d6fc2dbfcef0689491dd33300ae1c5c16a5f9280b
