@@ -35,7 +35,13 @@ import {
 import type { ConnectorClose, ConnectorResult, NativePortLike } from './connector/port';
 import type { WireEvent } from './connector/protocol';
 import { ReconnectPolicy, type ReconnectAttempt } from './connector/reconnect';
-import { SessionManager, type SessionController } from './connector/sessions';
+import {
+    createRevocationCoordinator,
+    type PeerSummary,
+    type RevocationCoordinator,
+    type TrustStatus,
+} from './connector/revocation';
+import { SessionManager, type RemovalResult, type SessionController } from './connector/sessions';
 import type { ConnectorSnapshot } from './connector/state';
 import {
     buildViewModel,
@@ -46,10 +52,11 @@ import {
 } from './connector/view-model';
 import type { ClientEngineDeps } from './session/engine';
 import type { DevelopmentProbe } from './debug/probe';
-import { ActivationEngine } from './pairing/activation';
+import { ActivationEngine, composeHandlers } from './pairing/activation';
 import { initPairingCore } from './pairing/core';
 import { PairingLink } from './pairing/link';
 import { ProofRegistry } from './pairing/proofs';
+import { createRemovalHandler, type RemovalOperations } from './session/removal';
 import { bytes, type TrustedPeer } from './trust/model';
 import { normalizeLowS } from './session/ecdsa';
 import { IndexedDbIdentityStore } from './trust/identity';
@@ -198,6 +205,8 @@ export interface ConnectorSessionOptions {
     createRepository(
         verifier: AuthenticationVerifier,
         proofs: ProofRegistry,
+        /** The store-failure sink; the composition root routes it to fail-closed (design D6). */
+        onStoreFailure?: () => void,
     ): ChromeTrustRepository;
     createEngineDeps(
         handle: string,
@@ -246,6 +255,85 @@ function readySummary(event: ReadyEvent): ReadySummary {
     };
 }
 
+/**
+ * The composition root's store-failure sink (OTP-11 design D6). It exists before the coordinator
+ * — the first identity read can fail first — and reports the one mandated status on its own until
+ * the fail-closed action is attached; afterwards that action owns both the status and the
+ * termination. Exactly one status is emitted per repository failure episode.
+ */
+class StoreFailureSink {
+    private action: (() => void) | null = null;
+
+    constructor(private readonly onStatus: (status: TrustStatus) => void) {}
+
+    attach(action: () => void): void {
+        this.action = action;
+    }
+
+    detach(): void {
+        this.action = null;
+    }
+
+    readonly invoke = (): void => {
+        const action = this.action;
+        if (action === null) this.onStatus('re-pair-required');
+        else action();
+    };
+}
+
+/**
+ * The connector's installation-identity cache (OTP-11 design D6).
+ *
+ * The engine factory is synchronous, so it reads `current` from this cache. The first connect
+ * (and every recovery attempt) loads it lazily, an explicit reset refreshes it from the repository
+ * after the reset deleted the identity, and a new session open waits for any refresh still in
+ * flight, so the deleted installation id is never served again. Reload and refresh publication are
+ * serialized by an epoch: a reset always wins over a load that started before it.
+ */
+class InstallationIdentityCache {
+    private value: Uint8Array | null = null;
+    private epoch = 0;
+    private refreshing: Promise<void> | null = null;
+
+    constructor(private readonly read: () => Promise<Uint8Array>) {}
+
+    /** The identity the synchronous engine factory signs with, or null when none is loaded. */
+    get current(): Uint8Array | null {
+        return this.value;
+    }
+
+    /** Loads once; a failed read leaves the cache empty so the caller fails closed. */
+    async ensureLoaded(): Promise<void> {
+        if (this.value !== null) return;
+        await this.refresh();
+    }
+
+    /** Waits for a refresh in flight before a new session open reads the cache. */
+    async settled(): Promise<void> {
+        if (this.refreshing !== null) await this.refreshing;
+    }
+
+    /**
+     * Invalidates and reloads the identity. A failed refresh leaves the cache empty and
+     * propagates: the store cannot confirm an identity, so nothing may sign with the old one.
+     */
+    async refresh(): Promise<void> {
+        this.epoch += 1;
+        const epoch = this.epoch;
+        this.value = null;
+        const task = this.read().then((identity) => {
+            // A later reset owns the cache; this load must not publish over its identity.
+            if (this.epoch === epoch) this.value = identity;
+        });
+        this.refreshing = task;
+        try {
+            await task;
+        } finally {
+            if (this.refreshing === task) this.refreshing = null;
+        }
+    }
+}
+
 export class ConnectorApp {
     private readonly controller: ConnectorControllerLike;
     private readonly view: ConnectorView;
@@ -253,6 +341,11 @@ export class ConnectorApp {
     private readonly repository: ChromeTrustRepository | null;
     private readonly proofs: ProofRegistry;
     readonly sessions: SessionManager | null;
+    /** The OTP-11 coordinator; null when this connector has no trust wiring. */
+    private readonly coordinator: (RevocationCoordinator & RemovalOperations) | null;
+    private readonly removal: ReturnType<typeof createRemovalHandler> | null;
+    private readonly identities: InstallationIdentityCache | null;
+    private readonly storeFailure: StoreFailureSink | null;
     private readonly reconnect: ReconnectPolicy;
     private readonly unsubscribers: (() => void)[] = [];
     private readonly userDisconnectHandles = new Set<string>();
@@ -269,11 +362,15 @@ export class ConnectorApp {
     // so a startup that resolves later disposes its link instead of installing a
     // link nobody owns.
     private pairingAttempt = 0;
+    // Invalidates a startup still awaiting its transport on a trust teardown (fail-closed or
+    // reset). It is not the attempt generation: the abort path is non-destructive and must not
+    // be mistaken for a cancellation, which deletes the pending record.
+    private pairingAbort = 0;
     // An enrollment connection is not a session: its disappearance must never
     // schedule reconnect recovery.
     private pairingHandles = new Set<string>();
     private userDisconnectSeen = false;
-    private localInstallationId: Uint8Array | null = null;
+    private trustState: TrustStatus = 'ok';
 
     private phase: ConnectorPhase = 'starting';
     private ready: ReadySummary | null = null;
@@ -292,9 +389,21 @@ export class ConnectorApp {
         this.view = deps.view;
         const session = deps.session;
         this.proofs = new ProofRegistry();
+        // Built before the trust wiring: a store failure observed while the repository or the
+        // coordinator is being created still reaches a policy and a render.
+        this.reconnect = new ReconnectPolicy({
+            setTimeout: deps.setTimeout,
+            clearTimeout: deps.clearTimeout,
+            onAttempt: (attempt) => this.attemptRecovery(attempt),
+            onChange: () => this.render(),
+        });
         if (session === undefined) {
             this.repository = null;
             this.sessions = null;
+            this.coordinator = null;
+            this.removal = null;
+            this.identities = null;
+            this.storeFailure = null;
             this.trustSource = deps.trustSource ?? createChromeTrustHintSource();
         } else {
             // One repository per connector lifetime. Its verifier forwards to the
@@ -304,13 +413,22 @@ export class ConnectorApp {
             // refused.
             const holder: { verify: AuthenticationVerifier } = { verify: async () => false };
             const proofs = this.proofs;
+            // The sink exists before the repository does: a failure of the very first identity
+            // read is routed exactly like any later one (design D6).
+            const sink = new StoreFailureSink((status) => this.reportTrustStatus(status));
+            this.storeFailure = sink;
             const repository = session.createRepository(
                 (peer, stage, proof) =>
                     stage === 'complete' && proofs.consume(peer.installationId, stage, proof)
                         ? Promise.resolve(true)
                         : holder.verify(peer, stage, proof),
                 proofs,
+                sink.invoke,
             );
+            const identities = new InstallationIdentityCache(async () =>
+                bytes((await repository.identity()).installationId, 16),
+            );
+            this.identities = identities;
             const timers =
                 deps.setTimeout === undefined && deps.clearTimeout === undefined
                     ? undefined
@@ -324,25 +442,45 @@ export class ConnectorApp {
                 deps.controller,
                 repository,
                 (handle, peerId) => {
-                    const identity = this.localInstallationId;
+                    const identity = identities.current;
                     if (identity === null) throw new Error('installation identity unavailable');
-                    return session.createEngineDeps(handle, peerId, identity, repository, proofs);
+                    const engine = session.createEngineDeps(
+                        handle,
+                        peerId,
+                        identity,
+                        repository,
+                        proofs,
+                    );
+                    const removal = this.removal;
+                    // The removal handler is part of production composition, not only debug
+                    // builds (design D4): an authorized removal record must never fail closed.
+                    return removal === null
+                        ? engine
+                        : { ...engine, handler: composeHandlers(engine.handler, removal) };
                 },
                 () => deps.controller.portGeneration,
                 timers,
                 (sessionId) => this.proofs.revoke(sessionId),
+                // The coordinator selects a live enrollment link by its bound peer id only.
+                () => this.pairingLinks(),
             );
             holder.verify = manager.verifier;
             this.repository = repository;
             this.sessions = manager;
+            const coordinator = createRevocationCoordinator({
+                repo: repository,
+                sessions: manager,
+                onStatus: (status) => this.reportTrustStatus(status),
+                // The OTP-history cleanup extension point; OTP-13 registers the first consumer.
+            });
+            this.coordinator = coordinator;
+            // Late binding: the manager exists before the coordinator it hands to the handler.
+            this.removal = createRemovalHandler(coordinator);
+            // A store failure observed anywhere — lookup, authentication, pairing, activation
+            // or the coordinator — terminates everything and reports the one status.
+            sink.attach(() => this.failClosed());
             this.trustSource = deps.trustSource ?? createChromeTrustHintSource(repository);
         }
-        this.reconnect = new ReconnectPolicy({
-            setTimeout: deps.setTimeout,
-            clearTimeout: deps.clearTimeout,
-            onAttempt: (attempt) => this.attemptRecovery(attempt),
-            onChange: () => this.render(),
-        });
     }
 
     async start(): Promise<void> {
@@ -370,11 +508,10 @@ export class ConnectorApp {
     }
 
     private async loadInstallationIdentity(): Promise<void> {
-        const repository = this.repository;
-        if (repository === null || this.localInstallationId !== null) return;
+        const identities = this.identities;
+        if (identities === null || identities.current !== null) return;
         try {
-            const identity = await repository.identity();
-            this.localInstallationId = bytes(identity.installationId, 16);
+            await identities.ensureLoaded();
         } catch {
             // Trust storage unavailable: every connect fails closed with the
             // generic authentication failure instead of signing with an
@@ -419,9 +556,13 @@ export class ConnectorApp {
             this.applyFailure(synthesizeAuthenticationFailed());
             return false;
         }
-        // Own this attempt before the teardown await: a cancel, teardown or
-        // replacement that runs during it must make this startup stale.
+        // Own this attempt before the teardown await: a cancel, teardown, replacement or trust
+        // teardown that runs during it must make this startup stale.
         const attempt = this.nextPairingAttempt();
+        // The abort mark distinguishes a trust teardown (which keeps the durable record) from a
+        // user or connector-context cancellation (which deletes it).
+        const abortMark = this.pairingAbort;
+        const aborted = (): boolean => this.pairingAbort !== abortMark;
         await this.teardownPairing();
         if (!this.isPairingAttemptLive(attempt)) {
             if (attempt === this.pairingAttempt) this.pairingEnded = true;
@@ -439,6 +580,9 @@ export class ConnectorApp {
                 // replacement during startup must stop it before it processes an
                 // offer or releases `pB`.
                 isCancelled: () => !this.isPairingAttemptLive(attempt),
+                // A fail-closed recovery or a reset stops the startup without deleting any
+                // durable record; `PairingLink` then terminates instead of disposing.
+                isAborted: aborted,
                 // Register the handle from the connected event, before the first
                 // send: a link lost during start must never look like a session.
                 onConnected: (connectionHandle) => {
@@ -450,10 +594,12 @@ export class ConnectorApp {
                 },
             });
             if (!this.isPairingAttemptLive(attempt)) {
-                // Cancelled, torn down or replaced while starting: never install
+                // Aborted, cancelled, torn down or replaced while starting: never install
                 // a link for an attempt the connector no longer owns.
                 if (attempt === this.pairingAttempt) this.pairingEnded = true;
-                await link.dispose();
+                // Abort is non-destructive: only the handle and the core are released.
+                if (aborted()) await link.terminate();
+                else await link.dispose();
                 // A disconnect that already left the controller snapshot was
                 // consumed by `handleChange`; otherwise keep the registration so a
                 // later removal of an ambiguous link never schedules recovery.
@@ -518,11 +664,96 @@ export class ConnectorApp {
         return this.repository === null ? [] : this.repository.peers();
     }
 
-    /** Clear a stranded or injected record with `repository.revoke`; no revocation protocol. */
+    /**
+     * The read-only peer listing of design D5. It is computed fresh on every call and carries no
+     * key material, platform hint or native handle.
+     */
+    peerSummaries(): Promise<PeerSummary[]> {
+        const coordinator = this.coordinator;
+        return coordinator === null ? Promise.resolve([]) : coordinator.peers();
+    }
+
+    /** The single trust status a surface may show (design D6); fail-closed sets it to re-pair. */
+    get trustStatus(): TrustStatus {
+        return this.trustState;
+    }
+
+    /** Local revocation through the coordinator (design D2/D8): delete, then close that peer. */
+    async revokePeer(peerId: string): Promise<void> {
+        await this.requireCoordinator().revoke(peerId);
+    }
+
+    /**
+     * Mutual removal over OTP2-REC-013 (design D4). `kept-not-connected` means this endpoint has
+     * no full session of that peer; only a validated response deletes the local record.
+     */
+    removePeer(peerId: string): Promise<RemovalResult> {
+        return this.requireCoordinator().removeMutually(peerId);
+    }
+
+    /**
+     * The fail-closed action of design D6, also used by the store-failure sink: a pairing startup
+     * still awaiting its transport is aborted non-destructively, then the coordinator terminates
+     * every session and enrollment link and reports the one "re-pair required" status. It never
+     * deletes trust and never starts a reset.
+     */
+    failClosed(): void {
+        this.abortPairingStartup();
+        const coordinator = this.coordinator;
+        if (coordinator === null) {
+            this.reportTrustStatus('re-pair-required');
+            return;
+        }
+        coordinator.failClosed();
+    }
+
+    /**
+     * The explicit, user-only identity reset (design D6): abort any pairing startup still awaiting
+     * its transport, terminate every enrollment link and session, discard the stored trust through
+     * the repository's own reset, and refresh the identity cache from the repository before this
+     * resolves. A failed refresh propagates, so the deleted installation id is never served again.
+     */
+    async resetTrust(): Promise<void> {
+        this.abortPairingStartup();
+        const coordinator = this.coordinator;
+        if (coordinator === null) return;
+        await coordinator.reset();
+        if (this.identities !== null) await this.identities.refresh();
+    }
+
+    /**
+     * Stops a pairing startup that is still awaiting its transport, without deleting anything.
+     * It is deliberately not a cancellation: the abort path releases the handle and the core and
+     * keeps the durable pending record (design D2/R8). An installed link is terminated by the
+     * caller's `closeAll`.
+     */
+    abortPairingStartup(): void {
+        this.pairingAbort += 1;
+        // The startup is stale from here: no later await may install its link.
+        this.nextPairingAttempt();
+        this.pairingEnded = true;
+    }
+
+    private requireCoordinator(): RevocationCoordinator & RemovalOperations {
+        const coordinator = this.coordinator;
+        if (coordinator === null) throw new Error('trust store unavailable');
+        return coordinator;
+    }
+
+    private reportTrustStatus(status: TrustStatus): void {
+        this.trustState = status;
+        if (this.disposed) return;
+        // The mandated text of design D6: re-pair, never erase trust automatically.
+        if (status === 're-pair-required') this.applyFailure(synthesizeAuthenticationFailed());
+    }
+
+    private pairingLinks(): readonly PairingLink[] {
+        return this.pairingLink === null ? [] : [this.pairingLink];
+    }
+
+    /** Clear a stranded or injected record through the coordinator so its sessions end too. */
     async clearPairingPeer(peerId: string): Promise<void> {
-        const repository = this.repository;
-        if (repository === null) throw new Error('trust store unavailable');
-        await repository.revoke(peerId);
+        await this.requireCoordinator().revoke(peerId);
     }
 
     /** User cancel of the current enrollment attempt; false when its cleanup failed. */
@@ -558,6 +789,7 @@ export class ConnectorApp {
         this.nextPairingAttempt();
         this.session += 1;
         this.reconnect.dispose();
+        this.storeFailure?.detach();
         void this.teardownPairing();
         for (const unsubscribe of this.unsubscribers) unsubscribe();
         this.unsubscribers.length = 0;
@@ -888,6 +1120,12 @@ export class ConnectorApp {
     ): Promise<boolean> {
         const handle = event.connection_handle;
         const sessions = this.sessions;
+        // A new open is gated on an identity refresh still in flight: a reset must never let a
+        // session sign with the installation id it just deleted.
+        if (this.identities !== null) {
+            await this.identities.settled();
+            if (token !== this.session || this.disposed) return false;
+        }
         const opened =
             sessions === null ? { result: 'failed' as const } : await sessions.open(handle, peerId);
         if (token !== this.session || this.disposed) return false;
@@ -1411,8 +1649,21 @@ function createChromeConnectorOwnership(): ConnectorOwnership {
 function productionSessionOptions(): ConnectorSessionOptions {
     const keys = new IndexedDbIdentityStore();
     return {
-        createRepository(verifier: AuthenticationVerifier): ChromeTrustRepository {
-            return new ChromeTrustRepository(keys, new ChromeLocalStore(), trustLock, verifier);
+        createRepository(
+            verifier: AuthenticationVerifier,
+            _proofs: ProofRegistry,
+            onStoreFailure?: () => void,
+        ): ChromeTrustRepository {
+            return new ChromeTrustRepository(
+                keys,
+                new ChromeLocalStore(),
+                trustLock,
+                verifier,
+                undefined,
+                undefined,
+                undefined,
+                onStoreFailure,
+            );
         },
         createEngineDeps(
             _handle: string,

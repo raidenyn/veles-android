@@ -1,0 +1,1313 @@
+import { readFileSync } from 'node:fs';
+
+import { beforeAll, describe, expect, it } from 'vitest';
+
+import { ConnectorApp, type ConnectorView } from '../../src/connector';
+import {
+    createRevocationCoordinator,
+    type RevocationCoordinator,
+    type TrustStatus,
+} from '../../src/connector/revocation';
+import { SessionManager } from '../../src/connector/sessions';
+import { ActivationEngine, composeHandlers } from '../../src/pairing/activation';
+import { initPairingCore } from '../../src/pairing/core';
+import { fingerprintDisplay } from '../../src/pairing/enrollment';
+import { PairingFrameType, encodePairingFrame } from '../../src/pairing/frames';
+import { PairingLink, type PairingTransport } from '../../src/pairing/link';
+import { ProofRegistry } from '../../src/pairing/proofs';
+import { normalizeLowS } from '../../src/session/ecdsa';
+import type { ApplicationHandler, ClientEngineDeps } from '../../src/session/engine';
+import { decodeFrame } from '../../src/session/frames';
+import { concat, hmacSha256 } from '../../src/session/schedule';
+import { createRemovalHandler, type RemovalOperations } from '../../src/session/removal';
+import { RecordType } from '../../src/session/wire';
+import type { IdentityStore, StoredIdentity } from '../../src/trust/identity';
+import {
+    TrustError,
+    bytes,
+    fingerprint,
+    hex,
+    type TrustSnapshot,
+    type TrustState,
+} from '../../src/trust/model';
+import { ChromeTrustRepository, type AuthenticationVerifier } from '../../src/trust/repository';
+import type { ExclusiveLock, LocalStore } from '../../src/trust/storage';
+
+import { PACKAGE_BYTES, PhonePeer, hexOf } from '../pairing/enrollment-harness';
+import { TestPhone } from '../session/client-harness';
+import {
+    HANDLE_CONNECTION,
+    HANDLE_CONNECTION_2,
+    HANDLE_DEVICE,
+    HANDLE_DEVICE_2,
+    connectedEvent,
+    readyEvent,
+} from './fixtures';
+import type { MockNativePort } from './mock-port';
+import {
+    SessionClock,
+    ackSend,
+    answerHandshake,
+    connectForSession,
+    createTestController,
+    deferred,
+    emitRecord,
+    PhoneSide,
+    ackDisconnect,
+    flush,
+    negotiateHost,
+    nextSend,
+    type TestController,
+} from './session-harness';
+
+// OTP-11 Task 10: the revocation flows end to end on the production-shaped Chrome stack (design
+// D2/D3/D5/D6/D7/D8): the real `ChromeTrustRepository` over in-memory storage, the real
+// `SessionManager`, the real enrollment link and client machine, the real activation handler and
+// the real coordinator, with a fake BLE transport in place of the Native Messaging port.
+//
+// Every wait is event-driven (the next posted request or a settled promise); nothing sleeps and
+// nothing reads the wall clock.
+
+const CODE = '000042';
+const OWNER_ID = '0f1d2c3b-4a59-4e6f-8a7b-9c0d1e2f3a4b';
+const PAIR_HANDLE = 'c0000000000000f1';
+const PAIR_DEVICE = 'b0000000000000f1';
+const PAIR_DEVICE_2 = 'b0000000000000f2';
+const HANDSHAKE_HANDLE = 'c000000000000003';
+const HANDSHAKE_DEVICE = 'b000000000000003';
+const ET = new Uint8Array(32).fill(0x42);
+const STAGE_PREPARE = 0;
+const STAGE_COMPLETE = 2;
+
+beforeAll(async () => {
+    await initPairingCore(readFileSync(PACKAGE_BYTES));
+});
+
+async function microFlush(times = 24): Promise<void> {
+    for (let index = 0; index < times; index += 1) await Promise.resolve();
+}
+
+function requireValue<T>(value: T | undefined | null): T {
+    if (value === undefined || value === null) throw new Error('expected a value');
+    return value;
+}
+
+/** The in-memory durable store, with the faults the store-failure tests need. */
+class MemoryLocal implements LocalStore {
+    snapshot: TrustSnapshot | undefined;
+    writeCount = 0;
+    writes: TrustSnapshot[] = [];
+    clearCalls = 0;
+    readFault: Error | null = null;
+    writeFaultAt: number | null = null;
+
+    async restrict(): Promise<void> {
+        return undefined;
+    }
+
+    async read(): Promise<unknown> {
+        if (this.readFault !== null) throw this.readFault;
+        return this.snapshot === undefined ? undefined : structuredClone(this.snapshot);
+    }
+
+    async write(next: TrustSnapshot): Promise<void> {
+        this.writeCount += 1;
+        if (this.writeFaultAt === this.writeCount) throw new Error('durable write failed');
+        this.writes.push(structuredClone(next));
+        this.snapshot = structuredClone(next);
+    }
+
+    async clear(): Promise<void> {
+        this.clearCalls += 1;
+        this.snapshot = undefined;
+    }
+}
+
+/** The installation key store; `failure` makes `read()` an invalid identity. */
+class TestKeys implements IdentityStore {
+    value: StoredIdentity | undefined;
+    reads = 0;
+    failure: Error | null = null;
+
+    async read(): Promise<StoredIdentity | undefined> {
+        this.reads += 1;
+        if (this.failure !== null) throw this.failure;
+        return this.value;
+    }
+
+    async create(): Promise<StoredIdentity> {
+        const pair = (await crypto.subtle.generateKey(
+            { name: 'ECDSA', namedCurve: 'P-256' },
+            false,
+            ['sign', 'verify'],
+        )) as CryptoKeyPair;
+        const value: StoredIdentity = {
+            installationId: hex(crypto.getRandomValues(new Uint8Array(16))),
+            publicKey: hex(new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey))),
+            privateKey: pair.privateKey,
+        };
+        this.value = value;
+        return value;
+    }
+
+    async clear(): Promise<void> {
+        this.value = undefined;
+    }
+}
+
+function lock(): ExclusiveLock {
+    let chain: Promise<unknown> = Promise.resolve();
+    return <T>(operation: () => Promise<T>): Promise<T> => {
+        const result = chain.then(operation);
+        chain = result.then(
+            () => undefined,
+            () => undefined,
+        );
+        return result;
+    };
+}
+
+interface PeerIdentity {
+    installationId: Uint8Array;
+    publicKey: Uint8Array;
+}
+
+interface Stack {
+    controller: TestController;
+    clock: SessionClock;
+    local: MemoryLocal;
+    keys: TestKeys;
+    proofs: ProofRegistry;
+    repository: ChromeTrustRepository;
+    manager: SessionManager;
+    coordinator: RevocationCoordinator & RemovalOperations;
+    statuses: TrustStatus[];
+    cleaned: string[];
+    links: PairingLink[];
+    handler: ApplicationHandler | undefined;
+    bindVerifier(verifier: AuthenticationVerifier): void;
+}
+
+async function createStack(): Promise<Stack> {
+    const controller = createTestController();
+    const keys = new TestKeys();
+    const local = new MemoryLocal();
+    const proofs = new ProofRegistry();
+    const verifier: { current: AuthenticationVerifier } = { current: async () => false };
+    const failure: { action: (() => void) | null } = { action: null };
+    const repository = new ChromeTrustRepository(
+        keys,
+        local,
+        lock(),
+        (peer, stage, proof) => verifier.current(peer, stage, proof),
+        controller.clock.now,
+        () => 1_000,
+        { id: OWNER_ID, isAlive: async () => true },
+        () => {
+            const action = failure.action;
+            if (action === null) throw new Error('store failure before fail-closed is wired');
+            action();
+        },
+    );
+    // The first use creates the identity and the durable snapshot, exactly as production does.
+    const created = await repository.identity();
+    const identity = bytes(created.installationId, 16);
+    const statuses: TrustStatus[] = [];
+    const cleaned: string[] = [];
+    const links: PairingLink[] = [];
+    const stack: Stack = {
+        controller,
+        clock: controller.clock,
+        local,
+        keys,
+        proofs,
+        repository,
+        manager: undefined as unknown as SessionManager,
+        coordinator: undefined as unknown as RevocationCoordinator & RemovalOperations,
+        statuses,
+        cleaned,
+        links,
+        handler: undefined,
+        bindVerifier(next) {
+            verifier.current = next;
+        },
+    };
+    stack.manager = new SessionManager(
+        controller.controller,
+        repository,
+        (handle, peerId) => engineDeps(stack, handle, peerId, identity),
+        () => controller.controller.portGeneration,
+        { setTimeout: controller.clock.setTimeout, clearTimeout: controller.clock.clearTimeout },
+        (sessionId) => proofs.revoke(sessionId),
+        () => links,
+    );
+    verifier.current = async (peer, stage, proof) =>
+        stage === 'complete'
+            ? proofs.consume(peer.installationId, stage, proof)
+            : stack.manager.verifier(peer, stage, proof);
+    stack.coordinator = createRevocationCoordinator({
+        repo: repository,
+        sessions: stack.manager,
+        onStatus: (status) => statuses.push(status),
+        historyCleanup: (peerId) => cleaned.push(peerId),
+    });
+    failure.action = () => stack.coordinator.failClosed();
+    await negotiateHost(controller);
+    return stack;
+}
+
+/** The production engine wiring: the real client engine over this store and its identity. */
+function engineDeps(
+    stack: Stack,
+    _handle: string,
+    peerId: string,
+    identity: Uint8Array,
+): ClientEngineDeps {
+    return {
+        localInstallationId: identity,
+        expectedPeerId: peerId,
+        isCurrent: () => true,
+        lookupPhone: async (id) => {
+            const peers = await stack.repository.peers();
+            const peer = peers.find((candidate) => candidate.installationId === id);
+            if (peer === undefined) return undefined;
+            return {
+                publicKey: bytes(peer.publicKey, 65),
+                state: peer.state,
+                // OTP2-CRY-019f: the public `ET` persisted with the record binds the recovery keys.
+                et: bytes(peer.enrollmentTranscript, 32),
+            };
+        },
+        upgradeMirror: (id, proof) => stack.repository.confirm(id, 'phone_active', proof),
+        now: stack.clock.now,
+        sign: async (message) => {
+            const stored = requireValue(stack.keys.value);
+            return normalizeLowS(
+                new Uint8Array(
+                    await crypto.subtle.sign(
+                        { name: 'ECDSA', hash: 'SHA-256' },
+                        stored.privateKey,
+                        message,
+                    ),
+                ),
+            );
+        },
+        ...(stack.handler === undefined ? {} : { handler: stack.handler }),
+    };
+}
+
+/** The durable store and identity a peer record needs; a stack or an app fixture satisfies it. */
+interface PeerStore {
+    keys: TestKeys;
+    local: MemoryLocal;
+    clock: { now(): number };
+}
+
+/** Writes one durable record the way a completed enrollment or an earlier pairing left it. */
+async function addPeer(
+    store: PeerStore,
+    peer: PeerIdentity,
+    options: {
+        state?: TrustState;
+        hint?: string;
+        label?: string;
+        et?: Uint8Array;
+    } = {},
+): Promise<string> {
+    const identity = requireValue(store.keys.value);
+    const installationId = hex(peer.installationId);
+    const publicKey = hex(peer.publicKey);
+    const state = options.state ?? 'active';
+    const snapshot: TrustSnapshot = store.local.snapshot ?? {
+        version: 1,
+        identity: { installationId: identity.installationId, publicKey: identity.publicKey },
+        peers: [],
+    };
+    snapshot.peers = snapshot.peers.filter(
+        (candidate) => candidate.installationId !== installationId,
+    );
+    snapshot.peers.push({
+        installationId,
+        publicKey,
+        label: options.label ?? 'Pixel test phone',
+        deviceType: 0,
+        enrollmentTranscript: hex(options.et ?? ET),
+        fingerprint: await fingerprint(publicKey, identity.publicKey),
+        state,
+        createdAtMillis: 1_000,
+        lastSeenMillis: state === 'pending' ? null : 2_000,
+        pendingContext: state === 'pending' ? OWNER_ID : null,
+        pendingSince: state === 'pending' ? store.clock.now() : null,
+        ...(options.hint === undefined || state === 'pending'
+            ? {}
+            : { platformHint: options.hint }),
+    });
+    store.local.snapshot = snapshot;
+    return installationId;
+}
+
+function terminations(stack: Stack, handle: string): string[] {
+    return stack.controller.controller.state.diagnostics
+        .entries()
+        .filter(
+            (entry) => entry.type === 'session_terminated' && entry.connection_handle === handle,
+        )
+        .map((entry) => entry.code ?? '');
+}
+
+function postsOf(port: MockNativePort, type: string): Record<string, unknown>[] {
+    return port.posted.filter(
+        (message): message is Record<string, unknown> =>
+            typeof message === 'object' &&
+            message !== null &&
+            (message as { type?: unknown }).type === type,
+    );
+}
+
+/** The wire type of every posted send for one handle (frame types included). */
+function postedTypes(port: MockNativePort, handle: string): number[] {
+    return postsOf(port, 'send')
+        .filter((message) => message.connection_handle === handle)
+        .map((message) => {
+            const record = Uint8Array.from(Buffer.from(message.record_base64 as string, 'base64'));
+            return ((record[3] ?? 0) << 8) | (record[4] ?? 0);
+        });
+}
+
+async function openSession(
+    stack: Stack,
+    peer: { phone: TestPhone; peerId: string },
+    handle: string = HANDLE_CONNECTION,
+    deviceHandle: string = HANDLE_DEVICE,
+    et?: Uint8Array,
+): Promise<PhoneSide> {
+    await connectForSession(stack.controller, handle, deviceHandle);
+    const opened = stack.manager.open(handle, peer.peerId);
+    const side = await answerHandshake(stack.controller, {
+        phone: peer.phone,
+        connectionHandle: handle,
+        ...(et === undefined ? {} : { et }),
+    });
+    await expect(opened).resolves.toEqual({ result: 'authenticated', peerId: peer.peerId });
+    return side;
+}
+
+/** A direct enrollment transport: the pairing link never touches the Native Messaging port. */
+class FakeTransport implements PairingTransport {
+    readonly sent: Uint8Array[] = [];
+    disconnectCount = 0;
+
+    async connect(target: { deviceHandle: string }) {
+        return {
+            ok: true as const,
+            event: {
+                type: 'connected' as const,
+                envelope_version: 1 as const,
+                api_version: 1,
+                request_id: `connect-${target.deviceHandle}`,
+                connection_handle: `link-${target.deviceHandle}`,
+            },
+        };
+    }
+
+    async send(handle: string, record: Uint8Array) {
+        this.sent.push(record.slice());
+        return {
+            ok: true as const,
+            event: {
+                type: 'sent' as const,
+                envelope_version: 1 as const,
+                api_version: 1,
+                request_id: `send-${this.sent.length}`,
+                connection_handle: handle,
+            },
+        };
+    }
+
+    async disconnect(handle: string) {
+        this.disconnectCount += 1;
+        return {
+            ok: true as const,
+            event: {
+                type: 'disconnected' as const,
+                envelope_version: 1 as const,
+                api_version: 1,
+                connection_handle: handle,
+            },
+        };
+    }
+
+    onRecord(): () => void {
+        return () => undefined;
+    }
+}
+
+async function startLink(
+    stack: Stack,
+    options: {
+        repo?: PairingLinkRepository;
+        code?: string;
+        deviceHandle?: string;
+        isAborted?: () => boolean;
+    } = {},
+): Promise<{ link: PairingLink; transport: FakeTransport }> {
+    const transport = new FakeTransport();
+    const link = await PairingLink.start({
+        controller: transport,
+        repo: options.repo ?? stack.repository,
+        proofs: stack.proofs,
+        code: options.code ?? CODE,
+        clock: stack.clock.now,
+        deviceHandle: options.deviceHandle ?? 'device-link',
+        tickIntervalMs: 0,
+        ...(options.isAborted === undefined ? {} : { isAborted: options.isAborted }),
+    });
+    // The coordinator selects a live enrollment link by its bound peer id; the manager's
+    // registry is how a directly started link becomes visible to it (as the app's is).
+    stack.links.push(link);
+    return { link, transport };
+}
+
+/** The client-side repository surface the link needs; a test can gate `addPending`. */
+interface PairingLinkRepository {
+    identity(): ReturnType<ChromeTrustRepository['identity']>;
+    peers(): ReturnType<ChromeTrustRepository['peers']>;
+    addPending(input: Parameters<ChromeTrustRepository['addPending']>[0]): Promise<void>;
+    confirm(...args: Parameters<ChromeTrustRepository['confirm']>): Promise<void>;
+    revoke(peerId: string): Promise<void>;
+    revokePending(peerId: string): Promise<boolean>;
+}
+
+/** Drives the enrollment to the durable pending record, as OTP2-STA-010a requires. */
+async function driveToPending(
+    link: PairingLink,
+    transport: FakeTransport,
+    phone: PhonePeer,
+): Promise<void> {
+    await link.receive(phone.offerFor(transport.sent[0]));
+    const cA = phone.acceptPoint(transport.sent[1]);
+    await link.receive(encodePairingFrame(PairingFrameType.CA, cA));
+    await phone.acceptConfirmB(transport.sent[2]);
+    await link.receive(await phone.identityFrame());
+    await phone.acceptClientIdentity(transport.sent[3]);
+}
+
+/** Drives the enrollment through the verified commit to the active record. */
+async function driveToActive(
+    link: PairingLink,
+    transport: FakeTransport,
+    phone: PhonePeer,
+): Promise<void> {
+    await driveToPending(link, transport, phone);
+    await link.receive(await phone.prepareFrame());
+    await link.receive(await phone.completeFrame());
+}
+
+describe('revocation integration: store failures fail closed', () => {
+    it('closes unrelated sessions when the reconnect lookup reads an invalid identity', async () => {
+        const stack = await createStack();
+        const first = await TestPhone.create();
+        const second = await TestPhone.create();
+        const firstPeer = await addPeer(stack, first);
+        const secondPeer = await addPeer(stack, second);
+        await openSession(
+            stack,
+            { phone: first, peerId: firstPeer },
+            HANDLE_CONNECTION,
+            HANDLE_DEVICE,
+        );
+        await openSession(
+            stack,
+            { phone: second, peerId: secondPeer },
+            HANDLE_CONNECTION_2,
+            HANDLE_DEVICE_2,
+        );
+        expect(stack.manager.authenticatedSessions()).toHaveLength(2);
+        const before = structuredClone(stack.local.snapshot);
+
+        // The identity record becomes invalid: the next repository transaction is a store failure.
+        stack.keys.failure = new TrustError();
+        const third = await TestPhone.create();
+        await connectForSession(stack.controller, HANDSHAKE_HANDLE, HANDSHAKE_DEVICE);
+        const opened = stack.manager.open(HANDSHAKE_HANDLE, hexOf(third.installationId));
+        const port = stack.controller.currentPort();
+        const hello = await nextSend(port);
+        await ackSend(port, hello);
+        const side = new PhoneSide(third);
+        await emitRecord(
+            port,
+            HANDSHAKE_HANDLE,
+            await side.acceptClientHello(decodeFrame(hello.bytes).payload),
+        );
+        await flush();
+
+        await expect(opened).resolves.toEqual({ result: 'failed' });
+        expect(stack.statuses).toEqual(['re-pair-required']);
+        expect(terminations(stack, HANDLE_CONNECTION)).toEqual(['closed']);
+        expect(terminations(stack, HANDLE_CONNECTION_2)).toEqual(['closed']);
+        expect(stack.manager.authenticatedSessions()).toEqual([]);
+        // Fail-closed deletes nothing: the durable state is byte-identical.
+        expect(stack.local.snapshot).toEqual(before);
+    });
+
+    it('closes unrelated sessions when the durable authentication write fails', async () => {
+        const stack = await createStack();
+        const first = await TestPhone.create();
+        const second = await TestPhone.create();
+        const third = await TestPhone.create();
+        const firstPeer = await addPeer(stack, first);
+        const secondPeer = await addPeer(stack, second);
+        const thirdPeer = await addPeer(stack, third);
+        await openSession(
+            stack,
+            { phone: first, peerId: firstPeer },
+            HANDLE_CONNECTION,
+            HANDLE_DEVICE,
+        );
+        await openSession(
+            stack,
+            { phone: second, peerId: secondPeer },
+            HANDLE_CONNECTION_2,
+            HANDLE_DEVICE_2,
+        );
+
+        // Every handshake read succeeds and only the authentication metadata write fails: the
+        // fault is armed after the confirm exchange, when that write is the only one left.
+        await connectForSession(stack.controller, HANDSHAKE_HANDLE, HANDSHAKE_DEVICE);
+        const opened = stack.manager.open(HANDSHAKE_HANDLE, thirdPeer);
+        await answerHandshake(stack.controller, {
+            phone: third,
+            connectionHandle: HANDSHAKE_HANDLE,
+            beforeConfirm: async () => {
+                stack.local.writeFaultAt = stack.local.writeCount + 1;
+            },
+        });
+        await flush();
+
+        await expect(opened).resolves.toEqual({ result: 'failed' });
+        expect(stack.statuses).toEqual(['re-pair-required']);
+        expect(terminations(stack, HANDLE_CONNECTION)).toEqual(['closed']);
+        expect(terminations(stack, HANDLE_CONNECTION_2)).toEqual(['closed']);
+        expect(stack.manager.authenticatedSessions()).toEqual([]);
+    });
+});
+
+describe('revocation integration: revoke races an enrollment', () => {
+    it('refuses the pending write when the peer is revoked before addPending', async () => {
+        const stack = await createStack();
+        const phone = await PhonePeer.create({ code: CODE });
+        const gate = deferred();
+        const entered = deferred();
+        const gated: PairingLinkRepository = {
+            identity: () => stack.repository.identity(),
+            peers: () => stack.repository.peers(),
+            addPending: async (input) => {
+                entered.resolve();
+                await gate.promise;
+                return stack.repository.addPending(input);
+            },
+            confirm: (...args) => stack.repository.confirm(...args),
+            revoke: (peerId) => stack.repository.revoke(peerId),
+            revokePending: (peerId) => stack.repository.revokePending(peerId),
+        };
+        const { link, transport } = await startLink(stack, { repo: gated });
+        const peerId = hexOf(phone.installationId);
+        try {
+            await link.receive(phone.offerFor(transport.sent[0]));
+            const cA = phone.acceptPoint(transport.sent[1]);
+            await link.receive(encodePairingFrame(PairingFrameType.CA, cA));
+            await phone.acceptConfirmB(transport.sent[2]);
+            // The phone identity authenticates and binds the link before the durable write.
+            const persist = link.receive(await phone.identityFrame());
+            await entered.promise;
+            expect(link.boundPeerId()).toBe(peerId);
+
+            const revocation = stack.coordinator.revoke(peerId);
+            await microFlush();
+            // The delete happened; the termination waits behind the link's in-flight frame.
+            expect(await stack.repository.peers()).toEqual([]);
+            expect(transport.disconnectCount).toBe(0);
+
+            gate.resolve();
+            await persist;
+            await revocation;
+
+            // The fenced persist is a peer rejection, never a store failure.
+            expect(stack.statuses).toEqual([]);
+            expect(await stack.repository.peers()).toEqual([]);
+            // Both the abort's terminate and the failed machine end the same handle.
+            expect(transport.disconnectCount).toBeGreaterThanOrEqual(1);
+            // The enrollment never released its identity record or a prepare.
+            expect(transport.sent).toHaveLength(3);
+            expect(link.machine.state).toBe('idle');
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('fails a later activation step after a revoke between persist and commit', async () => {
+        const stack = await createStack();
+        const phone = await PhonePeer.create({ code: CODE });
+        const { link, transport } = await startLink(stack);
+        const peerId = hexOf(phone.installationId);
+        try {
+            await driveToPending(link, transport, phone);
+            expect((await stack.repository.peers())[0]?.state).toBe('pending');
+
+            await stack.coordinator.revoke(peerId);
+
+            expect(await stack.repository.peers()).toEqual([]);
+            expect(transport.disconnectCount).toBe(1);
+            expect(stack.statuses).toEqual([]);
+            // A later activation step reaches no live connection.
+            await link.receive(await phone.prepareFrame());
+            expect(transport.sent).toHaveLength(4);
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('fails a later acknowledgement after a revoke between commit and ack', async () => {
+        const stack = await createStack();
+        const phone = await PhonePeer.create({ code: CODE });
+        const { link, transport } = await startLink(stack);
+        const peerId = hexOf(phone.installationId);
+        try {
+            await driveToPending(link, transport, phone);
+            await link.receive(await phone.prepareFrame());
+            // The client's commit is out; the record moves only on activation_complete.
+            expect((await stack.repository.peers())[0]?.state).toBe('pending');
+            expect(link.machine.state).toBe('awaiting_complete');
+            expect(transport.sent).toHaveLength(5);
+
+            await stack.coordinator.revoke(peerId);
+
+            expect(await stack.repository.peers()).toEqual([]);
+            expect(transport.disconnectCount).toBe(1);
+            await link.receive(await phone.completeFrame());
+            expect(transport.sent).toHaveLength(5);
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('terminates a link aborted mid-frame without deleting its pending record', async () => {
+        const stack = await createStack();
+        const phone = await PhonePeer.create({ code: CODE });
+        let aborted = false;
+        const { link, transport } = await startLink(stack, { isAborted: () => aborted });
+        const peerId = hexOf(phone.installationId);
+        try {
+            await driveToPending(link, transport, phone);
+            expect((await stack.repository.peers())[0]?.state).toBe('pending');
+
+            aborted = true;
+            // A record that arrives after the abort is not processed: the link is terminated
+            // and the durable pending record survives, unlike a cancellation.
+            await link.receive(await phone.prepareFrame());
+            await link.terminate();
+
+            expect(transport.disconnectCount).toBe(1);
+            expect(transport.sent).toHaveLength(4);
+            expect(link.machine.state).toBe('idle');
+            const peer = (await stack.repository.peers()).find(
+                (candidate) => candidate.installationId === peerId,
+            );
+            expect(peer?.state).toBe('pending');
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('closes a signed-recovery session after a revoke', async () => {
+        const stack = await createStack();
+        const phone = await TestPhone.create();
+        const peerId = await addPeer(stack, phone, { state: 'pending', et: ET });
+        stack.handler = composeHandlers(
+            new ActivationEngine({ trust: stack.repository, proofs: stack.proofs }),
+            createRemovalHandler(stack.coordinator),
+        );
+        const side = await openSession(
+            stack,
+            { phone, peerId },
+            HANDLE_CONNECTION,
+            HANDLE_DEVICE,
+            ET,
+        );
+        expect(stack.manager.authenticatedSessions()[0]?.sessionClass).toBeTruthy();
+        expect(side.keys.recovery).not.toBeNull();
+
+        await stack.coordinator.revoke(peerId);
+
+        expect(await stack.repository.peers()).toEqual([]);
+        expect(stack.manager.authenticatedSessions()).toEqual([]);
+        expect(terminations(stack, HANDLE_CONNECTION)).toEqual(['revoked']);
+        expect(stack.statuses).toEqual([]);
+    });
+
+    it('keeps the fence across a duplicate activation complete and leaves no record', async () => {
+        const stack = await createStack();
+        const phone = await TestPhone.create();
+        const peerId = await addPeer(stack, phone, { state: 'pending', et: ET });
+        const gate = deferred();
+        const entered = deferred();
+        stack.handler = composeHandlers(
+            new ActivationEngine({
+                trust: {
+                    peers: () => stack.repository.peers(),
+                    revoke: (id) => stack.repository.revoke(id),
+                    confirm: async (id, stage, proof) => {
+                        entered.resolve();
+                        await gate.promise;
+                        return stack.repository.confirm(id, stage, proof);
+                    },
+                },
+                proofs: stack.proofs,
+            }),
+            createRemovalHandler(stack.coordinator),
+        );
+        const side = await openSession(
+            stack,
+            { phone, peerId },
+            HANDLE_CONNECTION,
+            HANDLE_DEVICE,
+            ET,
+        );
+        const port = stack.controller.currentPort();
+        const recovery = requireValue(side.keys.recovery);
+        const phoneMac = async (stage: number): Promise<Uint8Array> =>
+            hmacSha256(recovery.kRecPhone, concat(ET, Uint8Array.of(stage)));
+
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.applicationFrame(
+                RecordType.ENROLLMENT_PREPARE,
+                1n,
+                await phoneMac(STAGE_PREPARE),
+            ),
+        );
+        // The handler answered with this session's activation_commit.
+        const commit = await nextSend(port);
+        expect(postedTypes(port, HANDLE_CONNECTION)).toContain(RecordType.ACTIVATION_COMMIT);
+        await ackSend(port, commit);
+
+        const complete = emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.applicationFrame(
+                RecordType.ACTIVATION_COMPLETE,
+                2n,
+                await phoneMac(STAGE_COMPLETE),
+            ),
+        );
+        await entered.promise;
+        const revocation = stack.coordinator.revoke(peerId);
+        await microFlush();
+        gate.resolve();
+        await complete;
+        await revocation;
+        await flush();
+
+        expect(await stack.repository.peers()).toEqual([]);
+        expect(stack.manager.authenticatedSessions()).toEqual([]);
+        // The revoke won the race: the in-flight confirm was a peer rejection, not a store failure,
+        // and the engine's own failure path ended the generation.
+        expect(stack.statuses).toEqual([]);
+        expect(terminations(stack, HANDLE_CONNECTION)).toHaveLength(1);
+    });
+});
+
+describe('revocation integration: revoked peers stay out', () => {
+    it('fails a revoked peer reconnect generically and leaves other sessions alone', async () => {
+        const stack = await createStack();
+        const revoked = await TestPhone.create();
+        const other = await TestPhone.create();
+        const revokedPeer = await addPeer(stack, revoked);
+        const otherPeer = await addPeer(stack, other);
+        await openSession(
+            stack,
+            { phone: revoked, peerId: revokedPeer },
+            HANDLE_CONNECTION,
+            HANDLE_DEVICE,
+        );
+        await openSession(
+            stack,
+            { phone: other, peerId: otherPeer },
+            HANDLE_CONNECTION_2,
+            HANDLE_DEVICE_2,
+        );
+
+        await stack.coordinator.revoke(revokedPeer);
+
+        expect(terminations(stack, HANDLE_CONNECTION)).toEqual(['revoked']);
+        expect(terminations(stack, HANDLE_CONNECTION_2)).toEqual([]);
+        expect(stack.manager.authenticatedSessions()).toHaveLength(1);
+
+        // The offline-while-revoked counterpart reconnects: one generic pre-auth refusal.
+        const port = stack.controller.currentPort();
+        // Answer the disconnect the revocation posted, so the next request is the real one.
+        await ackDisconnect(port, HANDLE_CONNECTION);
+        await connectForSession(stack.controller, HANDSHAKE_HANDLE, HANDSHAKE_DEVICE);
+        const opened = stack.manager.open(HANDSHAKE_HANDLE, revokedPeer);
+        const hello = await nextSend(port);
+        await ackSend(port, hello);
+        const side = new PhoneSide(revoked);
+        await emitRecord(
+            port,
+            HANDSHAKE_HANDLE,
+            await side.acceptClientHello(decodeFrame(hello.bytes).payload),
+        );
+        await flush();
+
+        await expect(opened).resolves.toEqual({ result: 'failed' });
+        const refused = port.posted.filter(
+            (message) =>
+                (message as { type?: string; connection_handle?: string }).type === 'send' &&
+                (message as { connection_handle?: string }).connection_handle === HANDSHAKE_HANDLE,
+        );
+        expect(refused).toHaveLength(1);
+        expect(terminations(stack, HANDSHAKE_HANDLE)).toEqual(['closed_wire']);
+        expect(stack.statuses).toEqual([]);
+        expect(stack.manager.authenticatedSessions()).toHaveLength(1);
+    });
+
+    it('re-pairs after a revoke with matching fingerprints', async () => {
+        const stack = await createStack();
+        const phone = await PhonePeer.create({ code: CODE });
+        const peerId = hexOf(phone.installationId);
+        const first = await startLink(stack, { deviceHandle: 'device-first' });
+        try {
+            await driveToActive(first.link, first.transport, phone);
+            const original = (await stack.repository.peers()).find(
+                (peer) => peer.installationId === peerId,
+            );
+            // The record moves to active only on a later phone-active reconnect.
+            expect(original?.state).toBe('active_activation_pending');
+            const displayed = first.link.machine.fingerprint();
+            expect(displayed).toBe(
+                fingerprintDisplay(bytes(requireValue(original).fingerprint, 32)),
+            );
+
+            await stack.coordinator.revoke(peerId);
+            expect(await stack.repository.peers()).toEqual([]);
+
+            // The fence was released: a deliberate re-pairing of the same id succeeds.
+            const second = await startLink(stack, { deviceHandle: 'device-second' });
+            await driveToActive(second.link, second.transport, phone);
+            const repaired = (await stack.repository.peers()).find(
+                (peer) => peer.installationId === peerId,
+            );
+            expect(repaired?.state).toBe('active_activation_pending');
+            // The same identities define the same fingerprint on the new record.
+            expect(repaired?.fingerprint).toBe(original?.fingerprint);
+            expect(second.link.machine.fingerprint()).toBe(
+                fingerprintDisplay(bytes(requireValue(repaired).fingerprint, 32)),
+            );
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('refuses a pairing while a record is held', async () => {
+        const stack = await createStack();
+        const phone = await PhonePeer.create({ code: CODE });
+        const existing = await addPeer(stack, {
+            installationId: phone.installationId,
+            publicKey: phone.identityPubkey,
+        });
+        const before = (await stack.repository.peers()).find(
+            (peer) => peer.installationId === existing,
+        );
+        const { link, transport } = await startLink(stack);
+        try {
+            await link.receive(phone.offerFor(transport.sent[0]));
+            const cA = phone.acceptPoint(transport.sent[1]);
+            await link.receive(encodePairingFrame(PairingFrameType.CA, cA));
+            await phone.acceptConfirmB(transport.sent[2]);
+            await link.receive(await phone.identityFrame());
+
+            // The duplicate installation id is refused: no record is replaced, no identity released.
+            expect(transport.sent).toHaveLength(3);
+            expect(link.machine.failed).toBe(true);
+            expect(link.machine.state).toBe('idle');
+            const after = await stack.repository.peers();
+            expect(after).toHaveLength(1);
+            expect(after[0]).toEqual(before);
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('removes the platform hint with the peer and rejects a later hint write', async () => {
+        const stack = await createStack();
+        const phone = await TestPhone.create();
+        const peerId = await addPeer(stack, phone, { hint: 'winrt:phone-a' });
+        expect((await stack.repository.peers())[0]?.platformHint).toBe('winrt:phone-a');
+
+        await stack.coordinator.revoke(peerId);
+
+        expect(await stack.repository.peers()).toEqual([]);
+        await expect(
+            stack.repository.authenticated(peerId, 'winrt:phone-a', new Uint8Array(32)),
+        ).rejects.toBeInstanceOf(TrustError);
+        expect(stack.statuses).toEqual([]);
+    });
+});
+
+describe('revocation integration: peer listing', () => {
+    it('lists every peer fresh without secrets or hints', async () => {
+        const stack = await createStack();
+        const active = await TestPhone.create();
+        const pending = await TestPhone.create();
+        const activePeer = await addPeer(stack, active, { hint: 'winrt:phone-a', label: 'Pixel' });
+        const pendingPeer = await addPeer(stack, pending, { state: 'pending' });
+        await openSession(stack, { phone: active, peerId: activePeer });
+
+        const summaries = await stack.coordinator.peers();
+
+        expect(summaries).toHaveLength(2);
+        const listed = summaries.find((summary) => summary.installationId === activePeer);
+        expect(listed?.connected).toBe(true);
+        expect(listed?.label).toBe('Pixel');
+        expect(listed?.deviceType).toBe(0);
+        expect(listed?.state).toBe('active');
+        expect(listed?.createdAtMillis).toBe(1_000);
+        expect(listed?.lastSeenMillis).toBe(1_000);
+        expect(listed?.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+        const other = summaries.find((summary) => summary.installationId === pendingPeer);
+        expect(other?.connected).toBe(false);
+        expect(other?.state).toBe('pending');
+
+        const stored = (await stack.repository.peers()).find(
+            (peer) => peer.installationId === activePeer,
+        );
+        const serialized = JSON.stringify(summaries);
+        expect(serialized).not.toContain(requireValue(stored).publicKey);
+        expect(serialized).not.toContain('winrt:phone-a');
+        expect(serialized).not.toContain('platformHint');
+        expect(serialized).not.toContain('enrollmentTranscript');
+        expect(serialized).not.toContain('pendingContext');
+        expect(serialized).not.toContain('handle');
+    });
+});
+
+class SilentView implements ConnectorView {
+    render(): void {
+        // The wiring tests assert on the store, the sessions and the posted requests.
+    }
+    onAction(): () => void {
+        return () => undefined;
+    }
+}
+
+interface AppFixture {
+    app: ConnectorApp;
+    controller: TestController;
+    local: MemoryLocal;
+    keys: TestKeys;
+    proofs: ProofRegistry;
+    repository: ChromeTrustRepository | null;
+    usedIdentities: Uint8Array[];
+}
+
+/** The production wiring: one repository, one manager, the removal handler and the cache. */
+function createAppFixture(): AppFixture {
+    const controller = createTestController();
+    const local = new MemoryLocal();
+    const keys = new TestKeys();
+    const proofs = new ProofRegistry();
+    const usedIdentities: Uint8Array[] = [];
+    const fixture: AppFixture = {
+        app: undefined as unknown as ConnectorApp,
+        controller,
+        local,
+        keys,
+        proofs,
+        repository: null,
+        usedIdentities,
+    };
+    const app = new ConnectorApp({
+        controller: controller.controller,
+        view: new SilentView(),
+        setTimeout: controller.clock.setTimeout,
+        clearTimeout: controller.clock.clearTimeout,
+        session: {
+            createRepository(verifier, _proofs, onStoreFailure) {
+                const repository = new ChromeTrustRepository(
+                    keys,
+                    local,
+                    lock(),
+                    verifier,
+                    controller.clock.now,
+                    () => 1_000,
+                    { id: OWNER_ID, isAlive: async () => true },
+                    onStoreFailure,
+                );
+                fixture.repository = repository;
+                return repository;
+            },
+            createEngineDeps(_handle, peerId, localInstallationId, repository, appProofs) {
+                usedIdentities.push(localInstallationId.slice());
+                return {
+                    localInstallationId,
+                    expectedPeerId: peerId,
+                    isCurrent: () => true,
+                    lookupPhone: async (id) => {
+                        const peers = await repository.peers();
+                        const peer = peers.find((candidate) => candidate.installationId === id);
+                        if (peer === undefined) return undefined;
+                        return {
+                            publicKey: bytes(peer.publicKey, 65),
+                            state: peer.state,
+                            et: bytes(peer.enrollmentTranscript, 32),
+                        };
+                    },
+                    upgradeMirror: (id, proof) => repository.confirm(id, 'phone_active', proof),
+                    now: controller.clock.now,
+                    sign: async (message) => {
+                        const stored = requireValue(keys.value);
+                        return normalizeLowS(
+                            new Uint8Array(
+                                await crypto.subtle.sign(
+                                    { name: 'ECDSA', hash: 'SHA-256' },
+                                    stored.privateKey,
+                                    message,
+                                ),
+                            ),
+                        );
+                    },
+                    handler: new ActivationEngine({ trust: repository, proofs: appProofs }),
+                };
+            },
+        },
+    });
+    fixture.app = app;
+    return fixture;
+}
+
+function requireRepository(fixture: AppFixture): ChromeTrustRepository {
+    return requireValue(fixture.repository);
+}
+
+async function startApp(fixture: AppFixture): Promise<void> {
+    const started = fixture.app.start();
+    const posted = await fixture.controller.currentPort().nextPosted();
+    await fixture.controller
+        .currentPort()
+        .emit(readyEvent({ request_id: posted.request_id as string }));
+    await started;
+    await microFlush();
+}
+
+async function addAppPeer(
+    fixture: AppFixture,
+    phone: TestPhone,
+    options: { state?: TrustState; hint?: string } = {},
+): Promise<string> {
+    // The app loads the identity lazily; a seeded record needs the store's own identity first.
+    await requireRepository(fixture).identity();
+    return addPeer(
+        { keys: fixture.keys, local: fixture.local, clock: fixture.controller.clock },
+        phone,
+        options,
+    );
+}
+
+async function connectThroughApp(
+    fixture: AppFixture,
+    phone: TestPhone,
+    peerId: string,
+    handle: string = HANDLE_CONNECTION,
+    deviceHandle: string = HANDLE_DEVICE,
+): Promise<void> {
+    const port = fixture.controller.currentPort();
+    const action = fixture.app.handleAction({ type: 'connect', deviceHandle, peerId });
+    const posted = await port.nextPosted();
+    await port.emit(
+        connectedEvent({
+            request_id: posted.request_id as string,
+            connection_handle: handle,
+        }),
+    );
+    await answerHandshake(fixture.controller, { phone, connectionHandle: handle });
+    await action;
+    await flush();
+}
+
+/** Drives one full enrollment through the connector's own pairing flow and port. */
+async function pairThroughApp(
+    fixture: AppFixture,
+    phone: PhonePeer,
+    deviceHandle: string,
+): Promise<void> {
+    const port = fixture.controller.currentPort();
+    const pairing = fixture.app.startPairing(deviceHandle, CODE);
+    const connect = await port.nextPosted();
+    await port.emit(
+        connectedEvent({
+            request_id: connect.request_id as string,
+            connection_handle: PAIR_HANDLE,
+        }),
+    );
+    const request = await nextSend(port);
+    await ackSend(port, request);
+    await emitRecord(port, PAIR_HANDLE, phone.offerFor(request.bytes));
+
+    const point = await nextSend(port);
+    await ackSend(port, point);
+    await emitRecord(
+        port,
+        PAIR_HANDLE,
+        encodePairingFrame(PairingFrameType.CA, phone.acceptPoint(point.bytes)),
+    );
+
+    const confirm = await nextSend(port);
+    await ackSend(port, confirm);
+    await phone.acceptConfirmB(confirm.bytes);
+
+    await emitRecord(port, PAIR_HANDLE, await phone.identityFrame());
+    const identity = await nextSend(port);
+    await ackSend(port, identity);
+    await phone.acceptClientIdentity(identity.bytes);
+
+    await emitRecord(port, PAIR_HANDLE, await phone.prepareFrame());
+    const commit = await nextSend(port);
+    await ackSend(port, commit);
+
+    await emitRecord(port, PAIR_HANDLE, await phone.completeFrame());
+    const ack = await nextSend(port);
+    await ackSend(port, ack);
+    await expect(pairing).resolves.toBe(true);
+    // The activation end posts the link's terminal disconnect; answer it so the next
+    // request this test issues is the real one.
+    await ackDisconnect(port, PAIR_HANDLE);
+    await flush();
+}
+
+describe('revocation integration: connector wiring', () => {
+    it('aborts a startup whose pairing connect is pending when fail-closed runs', async () => {
+        const fixture = createAppFixture();
+        await startApp(fixture);
+        const repository = requireRepository(fixture);
+        const existing = await addAppPeer(fixture, await TestPhone.create(), { state: 'pending' });
+
+        const pairing = fixture.app.startPairing(PAIR_DEVICE, CODE);
+        await microFlush();
+        const port = fixture.controller.currentPort();
+        const connect = await port.nextPosted();
+        expect(connect.type).toBe('connect');
+
+        // A store failure observed elsewhere escalates to the fail-closed action.
+        fixture.local.readFault = new TrustError();
+        await expect(repository.peers()).rejects.toThrow('re-pair');
+        await microFlush();
+        expect(fixture.app.trustStatus).toBe('re-pair-required');
+
+        await port.emit(
+            connectedEvent({
+                request_id: connect.request_id as string,
+                connection_handle: PAIR_HANDLE,
+            }),
+        );
+        // The non-destructive teardown posts exactly one disconnect for the startup's handle.
+        await ackDisconnect(port, PAIR_HANDLE);
+        await expect(pairing).resolves.toBe(false);
+        await flush();
+
+        // The aborted startup sent nothing and released the handle without deleting anything.
+        expect(postsOf(port, 'send')).toHaveLength(0);
+        expect(
+            postsOf(port, 'disconnect').filter(
+                (message) => message.connection_handle === PAIR_HANDLE,
+            ),
+        ).toHaveLength(1);
+        expect(fixture.app.pairingFinished).toBe(true);
+        expect(fixture.app.pairingState).toEqual({ phase: 'idle', finished: true });
+        fixture.local.readFault = null;
+        expect((await repository.peers()).map((peer) => peer.installationId)).toEqual([existing]);
+    });
+
+    it('aborts a startup whose initial send is pending when reset runs', async () => {
+        const fixture = createAppFixture();
+        await startApp(fixture);
+        const repository = requireRepository(fixture);
+        const port = fixture.controller.currentPort();
+
+        const pairing = fixture.app.startPairing(PAIR_DEVICE, CODE);
+        const connect = await port.nextPosted();
+        await port.emit(
+            connectedEvent({
+                request_id: connect.request_id as string,
+                connection_handle: PAIR_HANDLE,
+            }),
+        );
+        const request = await nextSend(port);
+
+        await fixture.app.resetTrust();
+
+        // The send resolves after the reset: no link is installed and no record is written late.
+        await ackSend(port, request);
+        await ackDisconnect(port, PAIR_HANDLE);
+        await expect(pairing).resolves.toBe(false);
+        await flush();
+
+        expect(postsOf(port, 'send')).toHaveLength(1);
+        expect(
+            postsOf(port, 'disconnect').filter(
+                (message) => message.connection_handle === PAIR_HANDLE,
+            ),
+        ).toHaveLength(1);
+        expect(await repository.peers()).toEqual([]);
+        expect(fixture.local.snapshot?.peers).toEqual([]);
+    });
+
+    it('resets, re-pairs and reconnects with a refreshed identity cache', async () => {
+        const fixture = createAppFixture();
+        await startApp(fixture);
+        const repository = requireRepository(fixture);
+        const installationId = crypto.getRandomValues(new Uint8Array(16));
+        const identity = (await crypto.subtle.generateKey(
+            { name: 'ECDSA', namedCurve: 'P-256' },
+            true,
+            ['sign', 'verify'],
+        )) as CryptoKeyPair;
+        const phone = await TestPhone.create({ identity, installationId });
+        const phonePeer = await PhonePeer.create({ code: CODE, identity, installationId });
+        const peerId = await addAppPeer(fixture, phone);
+        await connectThroughApp(fixture, phone, peerId);
+        const originalIdentity = requireValue(fixture.usedIdentities[0]);
+        const originalHex = hex(originalIdentity);
+        expect(fixture.app.sessions?.authenticatedSessions()).toHaveLength(1);
+
+        await fixture.app.resetTrust();
+
+        // Reset terminates first, then discards the trust and the identity.
+        await ackDisconnect(fixture.controller.currentPort(), HANDLE_CONNECTION);
+        expect(fixture.app.sessions?.authenticatedSessions()).toEqual([]);
+        expect(await repository.peers()).toEqual([]);
+        const refreshed = await repository.identity();
+        expect(refreshed.installationId).not.toBe(originalHex);
+
+        // Re-pair the phone through the connector's own pairing flow.
+        await pairThroughApp(fixture, phonePeer, PAIR_DEVICE_2);
+        const repaired = (await repository.peers()).find(
+            (peer) => peer.installationId === hexOf(phonePeer.installationId),
+        );
+        // The pairing created a fresh record under the refreshed identity.
+        expect(repaired?.state).toBe('active_activation_pending');
+
+        // The next engine is created with the refreshed identity, never the deleted one.
+        await connectThroughApp(
+            fixture,
+            phone,
+            hexOf(phonePeer.installationId),
+            HANDLE_CONNECTION_2,
+            HANDLE_DEVICE_2,
+        );
+        const used = requireValue(fixture.usedIdentities.at(-1));
+        expect(hex(used)).toBe(refreshed.installationId);
+        expect(hex(used)).not.toBe(originalHex);
+        expect(fixture.app.sessions?.authenticatedSessions()).toHaveLength(1);
+    });
+});

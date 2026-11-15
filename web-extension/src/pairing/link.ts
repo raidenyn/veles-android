@@ -61,6 +61,14 @@ export interface PairingLinkDeps {
      * turns true, so a cancelled attempt never releases `pB` or processes a frame.
      */
     isCancelled?: () => boolean;
+    /**
+     * Startup abort, owned by the connector's trust teardown (a fail-closed recovery or an
+     * explicit reset). It is deliberately distinct from `isCancelled`: an abort releases the
+     * transport handle and the pairing core through `terminate()` and keeps every durable
+     * record, while a user or connector-context cancellation disposes the attempt and deletes
+     * its pending record (design D2/R8).
+     */
+    isAborted?: () => boolean;
     /** Test-only point-validation hook forwarded to the client machine. */
     validatePoint?: (point: Uint8Array) => Promise<unknown>;
     /** Called immediately after connect, before the first pairing frame is sent. */
@@ -77,6 +85,17 @@ export class PairingCancelled extends Error {
     }
 }
 
+/**
+ * A startup the connector's trust teardown stopped. It is a cancellation for every caller's
+ * control flow, but its teardown is non-destructive: the durable pending record is kept.
+ */
+export class PairingAborted extends PairingCancelled {
+    constructor() {
+        super();
+        this.name = 'PairingAborted';
+    }
+}
+
 function defaultClock(): number {
     return typeof performance === 'undefined' ? Date.now() : performance.now();
 }
@@ -90,6 +109,7 @@ export class PairingLink {
     private readonly clearIntervalFn: (handle: unknown) => void;
     private readonly onEnded: (() => void) | undefined;
     private readonly isCancelled: () => boolean;
+    private readonly isAborted: () => boolean;
     private unsubscribe: (() => void) | null = null;
     private timer: unknown = null;
     private disposed = false;
@@ -106,6 +126,7 @@ export class PairingLink {
         clearIntervalFn: (handle: unknown) => void,
         onEnded: (() => void) | undefined,
         isCancelled: () => boolean,
+        isAborted: () => boolean,
     ) {
         this.controller = controller;
         this.connectionHandle = connectionHandle;
@@ -113,6 +134,7 @@ export class PairingLink {
         this.clearIntervalFn = clearIntervalFn;
         this.onEnded = onEnded;
         this.isCancelled = isCancelled;
+        this.isAborted = isAborted;
     }
 
     /**
@@ -123,8 +145,11 @@ export class PairingLink {
      */
     static async start(deps: PairingLinkDeps): Promise<PairingLink> {
         const isCancelled = deps.isCancelled ?? (() => false);
+        const isAborted = deps.isAborted ?? (() => false);
+        if (isAborted()) throw new PairingAborted();
         if (isCancelled()) throw new PairingCancelled();
         await (deps.init ?? initPairingCore)();
+        if (isAborted()) throw new PairingAborted();
         if (isCancelled()) throw new PairingCancelled();
         // Construct (and validate the code/caps) before opening a link: a bad
         // request can never leave a connected BLE link without an owner.
@@ -138,9 +163,9 @@ export class PairingLink {
             ...(deps.deviceType === undefined ? {} : { deviceType: deps.deviceType }),
             ...(deps.nonce === undefined ? {} : { nonce: deps.nonce }),
             ...(deps.identityNonce === undefined ? {} : { identityNonce: deps.identityNonce }),
-            // A record already in flight when the attempt is cancelled must not
+            // A record already in flight when the attempt is cancelled or aborted must not
             // complete the machine's asynchronous work either.
-            isCancelled,
+            isCancelled: () => isCancelled() || isAborted(),
             ...(deps.validatePoint === undefined ? {} : { validatePoint: deps.validatePoint }),
         });
         const connected = await deps.controller.connect({ deviceHandle: deps.deviceHandle });
@@ -157,11 +182,18 @@ export class PairingLink {
             deps.clearInterval ?? ((timer) => globalThis.clearInterval(timer as never)),
             deps.onEnded,
             isCancelled,
+            isAborted,
         );
+        if (isAborted()) {
+            // The trust teardown owns this attempt: release the handle and the core, keep the
+            // durable record, and never install the link.
+            await link.abandon();
+            throw new PairingAborted();
+        }
         if (isCancelled()) {
             // The transport is already connected: close it and erase the machine
             // before anyone can mistake this attempt for an installed link.
-            await link.abandon();
+            await link.dispose();
             throw new PairingCancelled();
         }
         link.unsubscribe = deps.controller.onRecord((record) => {
@@ -171,11 +203,24 @@ export class PairingLink {
             void link.receive(record.bytes);
         });
         try {
+            if (isAborted()) throw new PairingAborted();
             if (isCancelled()) throw new PairingCancelled();
             await link.send(machine.start());
         } catch (error) {
+            if (isAborted()) {
+                // Abort is non-destructive: only the handle and the core are released.
+                await link.terminate();
+                throw new PairingAborted();
+            }
+            // A user or connector-context cancellation owns the pending-record cleanup.
             await link.dispose();
             throw error;
+        }
+        if (isAborted()) {
+            // An abort that landed while the initial send was pending: `receive` may already
+            // have torn the link down, so terminate and never install a timer or an unowned link.
+            await link.terminate();
+            throw new PairingAborted();
         }
         if (isCancelled()) {
             // A cancel that landed while the initial send was pending: `receive`
@@ -209,6 +254,12 @@ export class PairingLink {
     receive(bytes: Uint8Array): Promise<void> {
         const next = this.queue.then(async () => {
             if (this.disposed || this.stopped) return;
+            if (this.isAborted()) {
+                // The trust teardown owns the attempt: erase the machine and close the handle
+                // without touching this enrollment's durable record.
+                this.abortInFlight();
+                return;
+            }
             if (this.isCancelled()) {
                 // A cancelled attempt must not process an offer or release `pB`
                 // (or a later confirmation): erase the machine and drop the link,
@@ -218,6 +269,10 @@ export class PairingLink {
             }
             try {
                 const frames = await this.machine.onFrame(bytes);
+                if (this.isAborted()) {
+                    this.abortInFlight();
+                    return;
+                }
                 if (this.isCancelled()) {
                     // The machine was fenced mid-transition: drop the link and this
                     // enrollment's pending record instead of sending its frames.
@@ -228,6 +283,10 @@ export class PairingLink {
                 // A verified prepare authorizes the activation commit, and the link
                 // owns that step: `onFrame` deliberately returns no frame for it.
                 if (this.machine.state === 'verified_prepare_ready') {
+                    if (this.isAborted()) {
+                        this.abortInFlight();
+                        return;
+                    }
                     if (this.isCancelled()) {
                         await this.dispose();
                         return;
@@ -236,6 +295,10 @@ export class PairingLink {
                 }
                 if (this.machine.closed || this.machine.failed) await this.stop();
             } catch {
+                if (this.isAborted()) {
+                    this.abortInFlight();
+                    return;
+                }
                 if (this.isCancelled()) {
                     // Cancelled while the machine was doing asynchronous work: the
                     // attempt is over, so delete its pending record rather than
@@ -254,6 +317,15 @@ export class PairingLink {
             () => undefined,
         );
         return next;
+    }
+
+    /**
+     * The non-destructive teardown of an abort observed inside this link's own frame queue. It
+     * cannot be awaited here: `terminate()` waits for this very queue item to finish, so the
+     * teardown is started and completes behind this frame.
+     */
+    private abortInFlight(): void {
+        void this.terminate().catch(() => undefined);
     }
 
     /** User cancel: deletes the pending record and disconnects. False means cleanup failed. */
@@ -330,9 +402,9 @@ export class PairingLink {
     }
 
     private async send(frame: Uint8Array): Promise<void> {
-        // No outbound frame may leave once the attempt is cancelled, even when the
-        // machine returned it just before cancellation was observed.
-        if (this.isCancelled()) throw new PairingCancelled();
+        // No outbound frame may leave once the attempt is cancelled or aborted, even when the
+        // machine returned it just before the teardown was observed.
+        if (this.isAborted() || this.isCancelled()) throw new PairingCancelled();
         const result = await this.controller.send(this.connectionHandle, frame);
         if (!result.ok) throw new Error('pairing send failed');
     }

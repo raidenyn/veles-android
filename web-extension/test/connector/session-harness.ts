@@ -285,7 +285,10 @@ export class PhoneSide {
         return this.keys.sessionId.slice(0, 8);
     }
 
-    async acceptClientHello(payload: Uint8Array): Promise<Uint8Array> {
+    async acceptClientHello(
+        payload: Uint8Array,
+        et: Uint8Array | null = null,
+    ): Promise<Uint8Array> {
         const clientHello = decodeHello(payload, Role.CLIENT);
         this.transcript = reconnectRbase(this.phone.helloPayload(), payload);
         const clientPoint = await requireValidPoint(clientHello.ephemeralPublicKey);
@@ -296,7 +299,7 @@ export class PhoneSide {
                 256,
             ),
         );
-        const material = await deriveKeyMaterial(shared, this.phone.nonce, clientHello.nonce);
+        const material = await deriveKeyMaterial(shared, this.phone.nonce, clientHello.nonce, et);
         this.sessionKeys = await importKeys(material);
         material.c2pKey.fill(0);
         material.p2cKey.fill(0);
@@ -557,6 +560,8 @@ export async function answerHandshake(
         peerState?: number;
         ackConfirm?: boolean;
         hello?: PostedSend;
+        /** The public enrollment transcript, for a signed recovery session's activation keys. */
+        et?: Uint8Array;
         beforeConfirm?: (side: PhoneSide, clientConfirm: PostedSend) => Promise<void>;
     },
 ): Promise<PhoneSide> {
@@ -568,7 +573,10 @@ export async function answerHandshake(
     }
     await ackSend(port, hello);
     const side = new PhoneSide(options.phone);
-    const phoneHello = await side.acceptClientHello(decodeFrame(hello.bytes).payload);
+    const phoneHello = await side.acceptClientHello(
+        decodeFrame(hello.bytes).payload,
+        options.et ?? null,
+    );
     await emitRecord(port, handle, phoneHello);
     await emitRecord(port, handle, await side.signatureFrame());
     await flush();
