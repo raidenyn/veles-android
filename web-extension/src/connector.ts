@@ -57,7 +57,7 @@ import { initPairingCore } from './pairing/core';
 import { PairingLink } from './pairing/link';
 import { ProofRegistry } from './pairing/proofs';
 import { createRemovalHandler, type RemovalOperations } from './session/removal';
-import { bytes, type TrustedPeer } from './trust/model';
+import { bytes } from './trust/model';
 import { normalizeLowS } from './session/ecdsa';
 import { IndexedDbIdentityStore } from './trust/identity';
 import { ChromeLocalStore, trustLock } from './trust/storage';
@@ -713,11 +713,6 @@ export class ConnectorApp {
         return this.devices;
     }
 
-    /** Every trust record, for the debug Clear control (design D5). */
-    async pairingPeers(): Promise<readonly TrustedPeer[]> {
-        return this.repository === null ? [] : this.repository.peers();
-    }
-
     /**
      * The read-only peer listing of design D5. It is computed fresh on every call and carries no
      * key material, platform hint or native handle.
@@ -828,11 +823,6 @@ export class ConnectorApp {
 
     private pairingLinks(): readonly PairingLink[] {
         return this.pairingLink === null ? [] : [this.pairingLink];
-    }
-
-    /** Clear a stranded or injected record through the coordinator so its sessions end too. */
-    async clearPairingPeer(peerId: string): Promise<void> {
-        await this.requireCoordinator().revoke(peerId);
     }
 
     /** User cancel of the current enrollment attempt; false when its cleanup failed. */
@@ -1939,9 +1929,16 @@ async function bootstrapOwnedConnector(): Promise<ConnectorApp | null> {
             devices: () => app.pairingDevices,
             status: () => app.pairingState,
             trust: {
-                peers: () => app.pairingPeers(),
-                revoke: (peerId: string) => app.clearPairingPeer(peerId),
+                // Every peer-management control is the revocation coordinator's own operation
+                // (design D9): a debug Revoke, Mutual remove, Reset or Clear behaves exactly
+                // like the production path, including terminating that peer's sessions.
+                peers: () => app.peerSummaries(),
+                revoke: (peerId: string) => app.revokePeer(peerId),
+                removeMutually: (peerId: string) => app.removePeer(peerId),
+                reset: () => app.resetTrust(),
+                status: () => app.trustStatus,
             },
+            confirm: (message: string) => window.confirm(message),
             start: (deviceHandle: string, code: string) => app.startPairing(deviceHandle, code),
             cancel: () => app.cancelPairing(),
             onChange: (listener: () => void) => controller.onChange(() => listener()),

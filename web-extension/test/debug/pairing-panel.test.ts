@@ -2,10 +2,13 @@ import { readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { ConnectorApp, type ConnectorView } from '../../src/connector';
+import type { RemovalResult } from '../../src/connector/sessions';
+import type { TrustStatus } from '../../src/connector/revocation';
 import {
     mountPairingPanel,
     PAIRING_PANEL_TEST_ID,
     type PairingPanelDeps,
+    type PairingPanelPeer,
     type PairingPanelStatus,
 } from '../../src/debug/pairing-panel';
 import { initPairingCore } from '../../src/pairing/core';
@@ -111,9 +114,13 @@ function sectionText(section: FakeElement): string {
 function mountPanel(
     options: {
         devices?: { handle: string; label: string }[];
-        peers?: { installationId: string; label: string; state: string }[];
+        peers?: PairingPanelPeer[];
         start?: (deviceHandle: string, code: string) => Promise<boolean>;
         cancel?: () => Promise<boolean>;
+        removal?: RemovalResult;
+        status?: TrustStatus;
+        /** The injected confirmation; `false` simulates a dismissed dialog. */
+        confirm?: boolean;
     } = {},
 ) {
     const document = new FakeDocument();
@@ -121,15 +128,26 @@ function mountPanel(
     const status = vi.fn<() => PairingPanelStatus>(() => ({ phase: 'idle', finished: false }));
     const peers = vi.fn(async () => options.peers ?? []);
     const revoke = vi.fn(async () => undefined);
+    const removeMutually = vi.fn(async () => options.removal ?? 'removed');
+    const reset = vi.fn(async () => undefined);
+    const trustStatus = vi.fn<() => TrustStatus>(() => options.status ?? 'ok');
+    const confirm = vi.fn<(message: string) => boolean>(() => options.confirm ?? true);
     const start = vi.fn(options.start ?? (async () => true));
     const cancel = vi.fn(options.cancel ?? (async () => true));
     const deps: PairingPanelDeps = {
         document: document as unknown as Document,
         devices,
         status,
-        trust: { peers, revoke },
+        trust: {
+            peers,
+            revoke,
+            removeMutually,
+            reset,
+            status: trustStatus,
+        },
         start,
         cancel,
+        confirm,
         onChange: () => () => undefined,
         // No polling in unit tests: status is refreshed after every action.
         setInterval: () => 0,
@@ -137,8 +155,29 @@ function mountPanel(
     mountPairingPanel(document.body as unknown as HTMLElement, deps);
     const section = document.body.byTestId(PAIRING_PANEL_TEST_ID);
     if (section === undefined) throw new Error('panel is not mounted');
-    return { document, section, devices, status, peers, revoke, start, cancel };
+    return {
+        document,
+        section,
+        devices,
+        status,
+        peers,
+        revoke,
+        removeMutually,
+        reset,
+        trustStatus,
+        confirm,
+        start,
+        cancel,
+    };
 }
+
+const PEER: PairingPanelPeer = {
+    installationId: 'ffeeddccbbaa99887766554433221100',
+    label: 'Laptop',
+    state: 'pending',
+    connected: false,
+    fingerprint: '1122 3344 5566 7788',
+};
 
 describe('Chrome pairing debug panel', () => {
     it('chrome_clear_uses_revoke', async () => {
@@ -148,6 +187,7 @@ describe('Chrome pairing debug panel', () => {
                     installationId: 'ffeeddccbbaa99887766554433221100',
                     label: 'Pixel',
                     state: 'pending',
+                    connected: false,
                 },
             ],
         });
@@ -217,6 +257,150 @@ describe('Chrome pairing debug panel', () => {
 
         expect(sectionText(fixture.section)).toContain('cancel cleanup failed');
         expect(sectionText(fixture.section)).not.toMatch(/\b\d{6}\b/);
+    });
+});
+
+/** Every debug peer-management string, as required by the release exclusion guard. */
+const NEW_PANEL_STRINGS = [
+    'Known peers',
+    'Peer fingerprint:',
+    'live session open',
+    'no live session',
+    'Revoke peer',
+    'Mutual remove',
+    'Peer revoked',
+    'Revoke failed: trust store unavailable',
+    'Peer removed on both devices',
+    'No open full session: only local removal is possible. Nothing was deleted.',
+    'No response: the other device may keep its record',
+    'Mutual remove failed',
+    'Reset identity',
+    'Reset is destructive: it deletes every trusted peer and this extension identity.',
+    'Reset not confirmed: nothing was deleted',
+    'Identity reset; pair again to create new trust',
+    'Reset failed: trust store unavailable',
+    'Peers unavailable: trust store unreadable',
+    'Trust:',
+];
+
+describe('Chrome debug peer management', () => {
+    it('lists peers with label, state, fingerprint and connection state', async () => {
+        const fixture = mountPanel({ peers: [PEER] });
+        await flush();
+
+        const text = sectionText(fixture.section);
+        expect(text).toContain('Laptop');
+        expect(text).toContain('pending');
+        expect(text).toContain('1122 3344 5566 7788');
+        expect(text).toContain('no live session');
+        // D5: the listing carries no key material, so the installation id is never rendered.
+        expect(text).not.toContain(PEER.installationId);
+    });
+
+    it('revoke deletes the peer and its list entry', async () => {
+        const fixture = mountPanel({ peers: [PEER] });
+        await flush();
+
+        fixture.revoke.mockImplementationOnce(async () => {
+            fixture.peers.mockResolvedValue([]);
+        });
+        const revoke = fixture.section.button('Revoke peer');
+        if (revoke === undefined) throw new Error('revoke control is missing');
+        revoke.click();
+        await flush();
+
+        expect(fixture.revoke).toHaveBeenCalledWith(PEER.installationId);
+        expect(sectionText(fixture.section)).toContain('Peer revoked');
+        expect(sectionText(fixture.section)).not.toContain('Laptop');
+    });
+
+    it('mutual remove without a full session reports local only and deletes nothing', async () => {
+        const fixture = mountPanel({ peers: [PEER], removal: 'kept-not-connected' });
+        await flush();
+
+        fixture.section.button('Mutual remove')?.click();
+        await flush();
+
+        expect(fixture.removeMutually).toHaveBeenCalledWith(PEER.installationId);
+        expect(sectionText(fixture.section)).toContain('only local removal is possible');
+        expect(fixture.revoke).not.toHaveBeenCalled();
+        expect(sectionText(fixture.section)).toContain('Laptop');
+    });
+
+    it('reports a completed and a lost-response mutual removal separately', async () => {
+        const completed = mountPanel({ peers: [PEER], removal: 'removed' });
+        await flush();
+        completed.section.button('Mutual remove')?.click();
+        await flush();
+        expect(sectionText(completed.section)).toContain('Peer removed on both devices');
+
+        const lost = mountPanel({ peers: [PEER], removal: 'kept-no-response' });
+        await flush();
+        lost.section.button('Mutual remove')?.click();
+        await flush();
+        expect(sectionText(lost.section)).toContain('the other device may keep its record');
+        expect(lost.revoke).not.toHaveBeenCalled();
+    });
+
+    it('reset needs explicit confirmation and deletes nothing without it', async () => {
+        const fixture = mountPanel({ peers: [PEER], confirm: false });
+        await flush();
+
+        fixture.section.button('Reset identity')?.click();
+        await flush();
+
+        expect(fixture.confirm).toHaveBeenCalledTimes(1);
+        expect(fixture.confirm.mock.calls[0][0]).toContain('Reset is destructive');
+        expect(fixture.reset).not.toHaveBeenCalled();
+        expect(sectionText(fixture.section)).toContain('Reset not confirmed');
+        expect(sectionText(fixture.section)).toContain('Laptop');
+
+        fixture.confirm.mockReturnValue(true);
+        fixture.peers.mockResolvedValue([]);
+        fixture.section.button('Reset identity')?.click();
+        await flush();
+
+        expect(fixture.reset).toHaveBeenCalledTimes(1);
+        expect(sectionText(fixture.section)).toContain('pair again to create new trust');
+    });
+
+    it('clear goes through the coordinator and terminates an open session instead of refusing', async () => {
+        const fixture = mountPanel({ peers: [{ ...PEER, connected: true }] });
+        await flush();
+        expect(sectionText(fixture.section)).toContain('live session open');
+
+        fixture.revoke.mockImplementationOnce(async () => {
+            fixture.peers.mockResolvedValue([]);
+        });
+        fixture.section.button('Clear incomplete record')?.click();
+        await flush();
+
+        expect(fixture.revoke).toHaveBeenCalledWith(PEER.installationId);
+        expect(sectionText(fixture.section)).not.toContain('refused');
+        expect(sectionText(fixture.section)).not.toContain('Laptop');
+    });
+
+    it('shows the trust status the connector reports and never invents an ok transition', async () => {
+        const fixture = mountPanel({ peers: [PEER], status: 're-pair-required' });
+        await flush();
+        expect(sectionText(fixture.section)).toContain('re-pair-required');
+
+        fixture.reset.mockImplementationOnce(async () => {
+            fixture.peers.mockResolvedValue([]);
+        });
+        fixture.section.button('Reset identity')?.click();
+        await flush();
+
+        // The connector keeps reporting the fail-closed status after a reset; the panel only shows it.
+        expect(fixture.trustStatus).toHaveBeenCalled();
+        expect(sectionText(fixture.section)).toContain('re-pair-required');
+    });
+
+    it('every peer-management string is forbidden in the production bundle guard', () => {
+        const guard = readFileSync(new URL('../bundle.test.ts', import.meta.url), 'utf8');
+
+        const missing = NEW_PANEL_STRINGS.filter((needle) => !guard.includes(`'${needle}'`));
+        expect(missing).toEqual([]);
     });
 });
 
