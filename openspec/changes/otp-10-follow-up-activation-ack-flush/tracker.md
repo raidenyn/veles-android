@@ -1,0 +1,6 @@
+- Repository: raidenyn/veles-android
+- Project: Veles OTP external devices (3)
+- Issue: raidenyn/veles-android#155
+- Source documents: docs/otp-11-debug-controls.md (findings 1 and 3), docs/rfcs/2026-08-21-otp-external-devices.md (OTP-10), protocol/docs/veles-v1.md (OTP2-STA-010b, OTP2-SID-001), web-extension/src/pairing/client-machine.ts, android/app/src/main/java/me/nagaev/veles/pairing/PhonePairingMachine.kt
+- Created: 2026-11-15
+- Implementation PR:
