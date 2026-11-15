@@ -600,7 +600,7 @@ class PeerRevocationCoordinatorTest {
     /**
      * OTP-11 D6 recovery: an explicit reset is the only path back from the latched
      * "re-pair required" status. It publishes OK only after the deletions and the identity-cache
-     * refresh completed; a failed reset leaves the failure status in place.
+     * refresh completed; a failed reset publishes the fail-closed status itself.
      */
     @Test
     fun aCompletedResetPublishesOkAndAFailedResetKeepsTheFailureStatus() = runTest {
@@ -623,6 +623,32 @@ class PeerRevocationCoordinatorTest {
         trust.resetFailure = null
         coordinator.reset()
         assertEquals("a later completed reset publishes OK", TrustStatus.OK, statuses.last())
+    }
+
+    /**
+     * A failed reset is the only place the status can flip while admission stays refused:
+     * `resetIdentity` deliberately opens no store-failure episode, so the reset body must publish
+     * the fail-closed status itself instead of leaving a stale OK on screen.
+     */
+    @Test
+    fun aFailedResetPublishesRePairRequired() = runTest {
+        val host = host { engine(TestClient(), null) }
+        val coordinator = coordinator(host, backgroundScope)
+        assertTrue("the status starts OK", statuses.isEmpty())
+
+        trust.resetFailure = TrustStoreException()
+        try {
+            coordinator.reset()
+            fail("a failed reset propagates instead of publishing OK")
+        } catch (_: TrustException) {
+            // The failure is published, not swallowed.
+        }
+
+        assertEquals(
+            "the failed reset publishes the fail-closed status",
+            listOf(TrustStatus.RE_PAIR_REQUIRED),
+            statuses,
+        )
     }
 
     @Test
@@ -1034,12 +1060,17 @@ class PeerRevocationCoordinatorTest {
 
         override suspend fun markAuthenticated(peerId: String) = Unit
 
+        /**
+         * The repository contract for a reset: no reset step is a peer-level check and a failed
+         * reset deliberately opens no store-failure episode, exactly like `TrustRepository`. The
+         * coordinator publishes the fail-closed status itself.
+         */
         override suspend fun resetIdentity() {
             events += RESET
             resetCalls += 1
             resetGate?.await()
-            synchronized(resetFailures) { resetFailures.removeFirstOrNull() }?.let { throw reported(it) }
-            resetFailure?.let { throw reported(it) }
+            synchronized(resetFailures) { resetFailures.removeFirstOrNull() }?.let { throw it }
+            resetFailure?.let { throw it }
         }
     }
 

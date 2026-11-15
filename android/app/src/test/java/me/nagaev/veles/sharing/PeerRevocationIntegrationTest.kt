@@ -519,7 +519,11 @@ class PeerRevocationIntegrationTest {
 
         assertTrue("the older reset failed", olderResult.exceptionOrNull() is TrustException)
         assertTrue("the newer reset succeeded", newerResult.isSuccess)
-        assertEquals("only the completed reset publishes the recovery status", listOf(TrustStatus.OK), statuses)
+        assertEquals(
+            "the failed body reports re-pair, then the completed body publishes the recovery status",
+            listOf(TrustStatus.RE_PAIR_REQUIRED, TrustStatus.OK),
+            statuses,
+        )
         val fresh = repository.identity()
         assertNotEquals("a fresh identity is in use", original.installationId, fresh.installationId)
         assertArrayEquals(
@@ -888,7 +892,11 @@ class PeerRevocationIntegrationTest {
         }
 
         assertTrue("a failed refresh fails the reset instead of keeping the stale id", failure is TrustStoreException)
-        assertEquals("the store failure is reported", listOf(TrustStatus.RE_PAIR_REQUIRED), statuses)
+        // The store failure is reported at its choke point and the failed reset body publishes the
+        // fail-closed status itself; none of them may ever say OK.
+        assertTrue("the store failure is reported", statuses.isNotEmpty())
+        assertTrue("a failed reset never publishes OK", statuses.none { it == TrustStatus.OK })
+        assertEquals(TrustStatus.RE_PAIR_REQUIRED, statuses.last())
         assertTrue("the session was terminated first", transport.closed.contains(gen))
 
         // A generation created while no identity can be loaded is refused, never authenticated

@@ -78,6 +78,10 @@ Chrome pairing debug panel, mounted on the connector page:
   the same warning text.
 - The panel never renders an installation id.
 
+The trust status latches: once it reads `Re-pair required`, it stays there — even after sessions
+reconnect and work — until an identity reset (section 3) succeeds, and a failed reset leaves it at
+`Re-pair required`.
+
 ## 1. Revoke a peer (local removal)
 
 1. Open the peer list on the endpoint that holds the record and note the row (state, live-session
@@ -156,9 +160,9 @@ Android clear path (`REVOKE_PEER`), the non-UI form of the same local revoke:
 5. Read the outcome line: `Identity reset; pairing again creates new trust` on Android,
    `Identity reset; pair again to create new trust` on Chrome. A failure shows `Reset failed` /
    `Reset failed: trust store unavailable`.
-6. Confirm the peer list is empty on the reset endpoint. Android shows `No trusted peers` and,
-   after a successful reset, `Trust status: Trust OK`; the Chrome panel shows the status the
-   connector reports, without inventing one.
+6. Confirm the peer list is empty on the reset endpoint. Both surfaces then show `Trust OK`: the
+   Android screen's `Trust status: Trust OK` and the Chrome panel's `Trust:` value both come from
+   the reset's own published outcome, not from a later store read.
 7. Re-pair from the other endpoint and record the pairing result. This verifies only that pairing
    works after a reset; success alone does not prove the reset endpoint has a new identity.
 

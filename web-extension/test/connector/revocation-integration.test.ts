@@ -1513,6 +1513,27 @@ describe('revocation integration: connector wiring', () => {
         expect(fixture.app.sessions?.authenticatedSessions()).toEqual([]);
     });
 
+    it('reports ok after a successful reset recovers a corrupt store', async () => {
+        const fixture = createAppFixture();
+        await startApp(fixture);
+        const repository = requireRepository(fixture);
+        await repository.identity();
+        // A durable snapshot the store cannot decode fails closed, exactly like a corrupt store.
+        const corrupt = structuredClone(requireValue(fixture.local.snapshot));
+        (corrupt as unknown as { version: number }).version = 2;
+        fixture.local.snapshot = corrupt;
+
+        await expect(repository.peers()).rejects.toThrow('re-pair');
+        await microFlush();
+        expect(fixture.app.trustStatus).toBe('re-pair-required');
+
+        // The documented recovery: reset, then pair again. A successful reset leaves nothing to
+        // re-pair, so the status returns to `ok` instead of leaving the panel on "Re-pair required"
+        // and offering a second destructive reset of the trust the user just rebuilt.
+        await fixture.app.resetTrust();
+        expect(fixture.app.trustStatus).toBe('ok');
+    });
+
     it('refuses admission after a failed reset that left the old identity in the store', async () => {
         const fixture = createAppFixture();
         await startApp(fixture);

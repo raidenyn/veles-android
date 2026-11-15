@@ -787,6 +787,11 @@ export class ConnectorApp {
      * completes during the teardown or the repository reset waits for this method, then opens with
      * the refreshed identity (or is refused), so it can neither sign with the deleted identity nor
      * miss `closeAll()`'s snapshot.
+     *
+     * A completed reset is also the one recovery from a latched "re-pair required": once the
+     * deletions ran and the identity cache was refreshed, nothing is left to re-pair, so `ok` is
+     * published while this body still owns the serialized reset section (the same rule as the
+     * Android coordinator). A failing reset throws before that line and keeps the failure status.
      */
     async resetTrust(): Promise<void> {
         this.abortPairingStartup();
@@ -806,6 +811,9 @@ export class ConnectorApp {
                 identities.endReset(false);
                 throw error;
             }
+            // Published while this body still owns the serialized reset section and before
+            // admission is released, so a connection admitted by this reset already sees `ok`.
+            this.reportTrustStatus('ok');
             identities.endReset(true);
         };
         const next = this.resetChain.then(run, run);
