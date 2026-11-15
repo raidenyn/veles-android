@@ -1396,6 +1396,10 @@ private class TraceTrustStorage : TrustStorage {
         value = next
         return result
     }
+
+    override suspend fun reset() {
+        value = null
+    }
 }
 
 /** A trust store that owns its installation key only after the repository generates it. */
@@ -1410,6 +1414,10 @@ private class PhoneIdentityKeyStore(private val publicKeyHex: String) : Identity
     }
 
     override fun sign(message: ByteArray): ByteArray = ByteArray(0)
+
+    override fun delete() {
+        present = false
+    }
 }
 
 /**
@@ -1444,4 +1452,6 @@ private class RunTrust(private val delegate: TrustRepository) : InstallationTrus
     override suspend fun endRevocation(peerId: String) = delegate.endRevocation(peerId)
 
     override suspend fun markAuthenticated(peerId: String) = delegate.markAuthenticated(peerId)
+
+    override suspend fun resetIdentity() = delegate.resetIdentity()
 }

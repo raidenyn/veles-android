@@ -35,6 +35,10 @@ class ProbeCommandsTest {
             snapshot = next
             return result
         }
+
+        override suspend fun reset() {
+            snapshot = null
+        }
     }
 
     private fun commands(
@@ -122,5 +126,6 @@ class ProbeCommandsTest {
         override suspend fun beginRevocation(peerId: String) = Unit
         override suspend fun endRevocation(peerId: String) = Unit
         override suspend fun markAuthenticated(peerId: String) = Unit
+        override suspend fun resetIdentity() = error("reset is not part of the probe fixture")
     }
 }

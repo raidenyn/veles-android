@@ -509,6 +509,7 @@ class PhonePairingMachineTest : PairingTestBase() {
         override suspend fun beginRevocation(peerId: String) = error("enrollment is not under test")
         override suspend fun endRevocation(peerId: String) = error("enrollment is not under test")
         override suspend fun markAuthenticated(peerId: String) = error("enrollment is not under test")
+        override suspend fun resetIdentity() = error("enrollment is not under test")
     }
 
     private companion object {

@@ -541,6 +541,10 @@ private class ScenarioTrustStorage(snapshot: TrustSnapshot?) : TrustStorage {
         value = next
         return result
     }
+
+    override suspend fun reset() {
+        value = null
+    }
 }
 
 /** A scripted client built from the production codec, able to emit every simulated defect. */
@@ -837,6 +841,7 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
             override fun publicKey(): String = TrustEncoding.hex(local.publicKey)
             override fun generate(): String = TrustEncoding.hex(local.publicKey)
             override fun sign(message: ByteArray): ByteArray = ByteArray(0)
+            override fun delete() = Unit
         }
         peer.storage = ScenarioTrustStorage(snapshot)
         peer.identityKeys = keys

@@ -25,6 +25,9 @@ interface TrustDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun put(row: TrustRow)
+
+    @Query("DELETE FROM trust_snapshot")
+    suspend fun delete()
 }
 
 @Database(entities = [TrustRow::class], version = 1, exportSchema = false)
@@ -68,6 +71,20 @@ class RoomTrustStorage(private val database: TrustDatabase) : TrustStorage {
         } catch (_: Exception) {
             // Read, decode, validation and the durable write are all store failures. Do not
             // propagate database payloads, parser messages, peer identifiers or key details.
+            throw TrustStoreException()
+        }
+    }
+
+    /**
+     * Deletes the trust row without reading or decoding it, so a corrupt payload is no obstacle.
+     * Deleting an absent row is a no-op, which makes an interrupted or repeated reset safe.
+     */
+    override suspend fun reset() {
+        try {
+            database.trustDao().delete()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
             throw TrustStoreException()
         }
     }

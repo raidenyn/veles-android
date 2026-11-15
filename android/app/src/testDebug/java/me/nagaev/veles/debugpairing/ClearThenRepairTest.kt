@@ -56,6 +56,10 @@ class ClearThenRepairTest {
         }
 
         override fun sign(message: ByteArray): ByteArray = runBlocking { identity.signer.signDer(message) }
+
+        override fun delete() {
+            publicKey = null
+        }
     }
     private val repository = TrustRepository(
         storage = storage,
@@ -196,6 +200,10 @@ class ClearThenRepairTest {
             val (next, result) = block(value)
             value = next
             return result
+        }
+
+        override suspend fun reset() {
+            value = null
         }
     }
 

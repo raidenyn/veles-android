@@ -969,5 +969,7 @@ class SessionHostTest {
             events?.add("mark")
             marked += peerId
         }
+
+        override suspend fun resetIdentity() = error("not used by the adapter")
     }
 }

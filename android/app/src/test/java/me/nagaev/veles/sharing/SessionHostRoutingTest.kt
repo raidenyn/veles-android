@@ -375,6 +375,8 @@ class SessionHostRoutingTest {
         // The routing tests authenticate a known peer: the mark is the one trust write the
         // host performs, and reconnect routing is what they assert, so it is a no-op here.
         override suspend fun markAuthenticated(peerId: String) = Unit
+
+        override suspend fun resetIdentity() = error("not used")
     }
 
     private companion object {

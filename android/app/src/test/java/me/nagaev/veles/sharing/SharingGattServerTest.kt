@@ -1083,4 +1083,5 @@ private object NoTrust : InstallationTrustRepository {
     override suspend fun beginRevocation(peerId: String) = error("no trust in this fixture")
     override suspend fun endRevocation(peerId: String) = error("no trust in this fixture")
     override suspend fun markAuthenticated(peerId: String) = Unit
+    override suspend fun resetIdentity() = error("no trust in this fixture")
 }

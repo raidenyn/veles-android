@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -22,6 +23,7 @@ class TrustRepositoryTest {
     private var elapsed = 10L
     private var boot = "boot-a"
     private var wall = 1000L
+    private var keyDeleteFault = false
     private val identity = object : IdentityKeyStore {
         override fun publicKey(): String? = if (keyPresent) local.publicKey else null
         override fun generate(): String {
@@ -29,6 +31,10 @@ class TrustRepositoryTest {
             return local.publicKey
         }
         override fun sign(message: ByteArray): ByteArray = byteArrayOf()
+        override fun delete() {
+            if (keyDeleteFault) throw IOException("keystore unavailable")
+            keyPresent = false
+        }
     }
     private val proofGatedVerifier = ActivationVerifier { _, _, proof -> proof.contentEquals(byteArrayOf(1)) }
     private var storeFailures = 0
@@ -377,11 +383,135 @@ class TrustRepositoryTest {
         assertStoreFailure { repo.identity() }
         assertEquals(1, storeFailures)
 
-        // Task 2's resetIdentity() calls this same hook.
-        repo.endStoreFailureEpisode()
+        repo.resetIdentity()
+
+        storage.fault = StorageFault.READ
+        assertStoreFailure { repo.identity() }
+        assertEquals("a failure after an explicit reset starts a new episode", 2, storeFailures)
+    }
+
+    @Test fun `resetWorksWithUndecodablePayload`() = runTest {
+        val repo = repository()
+        val original = repo.identity()
+        repo.addPending(peer())
+        // The stored payload cannot be decoded: every transaction fails closed.
+        storage.fault = StorageFault.READ
+        assertStoreFailure { repo.identity() }
+
+        repo.resetIdentity()
+
+        assertNull("the trust row is deleted without decoding it", storage.snapshot)
+        assertFalse("the identity alias is deleted", keyPresent)
+
+        // Repeating a completed reset is a no-op, not an error.
+        repo.resetIdentity()
+        assertNull(storage.snapshot)
+        assertFalse(keyPresent)
+
+        storage.fault = null
+        val fresh = repo.identity()
+        assertNotEquals("the next use creates a new identity", original.installationId, fresh.installationId)
+        assertTrue("the next use has no peers", repo.peers().isEmpty())
+    }
+
+    @Test fun `interruptionAfterRowDeleteFailsClosedThenResetCompletes`() = runTest {
+        val repo = repository()
+        val original = repo.identity()
+        repo.addPending(peer())
+        // The row is deleted durably, then the process stops before the key is deleted.
+        keyDeleteFault = true
+        assertStoreFailure { repo.resetIdentity() }
+        assertNull(storage.snapshot)
+        assertTrue(keyPresent)
 
         assertStoreFailure { repo.identity() }
-        assertEquals(2, storeFailures)
+        assertStoreFailure { repo.peers() }
+
+        keyDeleteFault = false
+        repo.resetIdentity()
+
+        assertNull(storage.snapshot)
+        assertFalse(keyPresent)
+        val fresh = repo.identity()
+        assertNotEquals(original.installationId, fresh.installationId)
+        assertTrue(repo.peers().isEmpty())
+    }
+
+    @Test fun `interruptionAfterKeyDeleteFailsClosedThenResetCompletes`() = runTest {
+        val repo = repository()
+        val original = repo.identity()
+        repo.addPending(peer())
+        // The key deletion is durable while the row deletion was lost, so the metadata
+        // survives without its key.
+        identity.delete()
+        assertTrue("the trust row survives without its key", storage.snapshot != null)
+        assertFalse(keyPresent)
+
+        assertStoreFailure { repo.identity() }
+        assertStoreFailure { repo.peers() }
+
+        repo.resetIdentity()
+
+        assertNull(storage.snapshot)
+        assertFalse(keyPresent)
+        val fresh = repo.identity()
+        assertNotEquals(original.installationId, fresh.installationId)
+        assertTrue(repo.peers().isEmpty())
+    }
+
+    @Test fun `interruptionAfterBothDeletionsInitializesFresh`() = runTest {
+        val repo = repository()
+        val original = repo.identity()
+        repo.addPending(peer())
+        // Both deletions are durable; only the reset's return was interrupted.
+        storage.reset()
+        identity.delete()
+
+        val fresh = repo.identity()
+
+        assertNotEquals(original.installationId, fresh.installationId)
+        assertTrue(repo.peers().isEmpty())
+        assertEquals("a fresh identity is not a store failure", 0, storeFailures)
+    }
+
+    @Test fun `storeFailureNeverTriggersReset`() = runTest {
+        val repo = repository()
+        val original = repo.identity()
+        repo.addPending(peer())
+        storage.fault = StorageFault.READ
+
+        assertStoreFailure { repo.identity() }
+        assertStoreFailure { repo.peers() }
+
+        assertEquals("one callback for the episode", 1, storeFailures)
+        assertEquals("a store failure never resets the trust store", 0, storage.resets)
+        assertTrue("a store failure keeps the identity key", keyPresent)
+
+        storage.fault = null
+        assertEquals("the trust store is untouched", original, repo.identity())
+        assertEquals(1, repo.peers().size)
+    }
+
+    @Test fun `nextUseCreatesFreshIdentityAndNoPeers`() = runTest {
+        val repo = repository()
+        val original = repo.identity()
+        val active = peer()
+        repo.addPending(active)
+        repo.confirm(active.installationId, ActivationStep.COMMIT, byteArrayOf(1))
+        repo.confirm(active.installationId, ActivationStep.ACK, byteArrayOf(1))
+        repo.addPending(peer().copy(installationId = "07".repeat(16)))
+        assertEquals(2, repo.peers().size)
+
+        repo.resetIdentity()
+
+        val next = repository()
+        val fresh = next.identity()
+        assertNotEquals(original.installationId, fresh.installationId)
+        assertTrue(next.peers().isEmpty())
+        assertTrue(next.activePeers().isEmpty())
+        // A fresh installation accepts a new pairing again.
+        next.addPending(peer())
+        assertEquals(1, next.peers().size)
     }
 
     @Test fun `addPendingRefusedWhileFenced`() = runTest {
@@ -453,7 +583,10 @@ private enum class StorageFault { READ, WRITE }
 
 private class MemoryTrustStorage : TrustStorage {
     var fault: StorageFault? = null
+    var resets = 0
+        private set
     private var value: TrustSnapshot? = null
+    val snapshot: TrustSnapshot? get() = value
 
     override suspend fun <T> transaction(block: (TrustSnapshot?) -> Pair<TrustSnapshot, T>): T {
         if (fault == StorageFault.READ) throw IOException("undecodable trust payload")
@@ -461,6 +594,12 @@ private class MemoryTrustStorage : TrustStorage {
         if (fault == StorageFault.WRITE) throw IOException("durable write failed")
         value = next
         return result
+    }
+
+    /** Deletes the stored row without reading or decoding it. */
+    override suspend fun reset() {
+        resets += 1
+        value = null
     }
 }
 
@@ -487,5 +626,9 @@ private class InterleavingTrustStorage : TrustStorage {
             release.await()
         }
         return result
+    }
+
+    override suspend fun reset() {
+        value = null
     }
 }

@@ -620,12 +620,19 @@ class SyntheticProbeHandlerTest {
             snapshot = next
             return result
         }
+
+        override suspend fun reset() {
+            snapshot = null
+        }
     }
 
     private class FixedKeys(private val key: String) : IdentityKeyStore {
         override fun publicKey(): String = key
         override fun generate(): String = error("unused")
         override fun sign(message: ByteArray): ByteArray = error("unused")
+
+        /** The fixture identity is fixed, so the store cannot drop it. */
+        override fun delete() = Unit
     }
 
     private class RecordingTrust : InstallationTrustRepository {
@@ -644,6 +651,8 @@ class SyntheticProbeHandlerTest {
         override suspend fun markAuthenticated(peerId: String) {
             marked += peerId
         }
+
+        override suspend fun resetIdentity() = error("reset is not part of the probe fixture")
     }
 
     private class RecordingTransport : SessionTransport {

@@ -61,11 +61,17 @@ interface IdentityKeyStore {
     fun publicKey(): String?
     fun generate(): String
     fun sign(message: ByteArray): ByteArray
+
+    /** Removes the installation key; a missing key is not an error, so a repeat is safe. */
+    fun delete()
 }
 
 interface TrustStorage {
     /** Read, validate and replace occur in one durable transaction; exceptions roll back. */
     suspend fun <T> transaction(block: (TrustSnapshot?) -> Pair<TrustSnapshot, T>): T
+
+    /** Deletes the stored trust without reading or decoding it; a repeat is safe. */
+    suspend fun reset()
 }
 
 /** Supplied by the authenticated protocol session, never by a UI or a persisted flag.
@@ -99,8 +105,16 @@ interface InstallationTrustRepository {
      * unknown, expired or deleted id throws [TrustException].
      */
     suspend fun markAuthenticated(peerId: String)
+
+    /**
+     * The explicit, user-initiated identity reset: deletes the stored trust without decoding it,
+     * then deletes the installation key. It is idempotent, leaves the store fail-closed if it is
+     * interrupted after either deletion, and is never invoked by a failure path.
+     */
+    suspend fun resetIdentity()
 }
 
+@Suppress("TooManyFunctions") // Implements the whole InstallationTrustRepository surface.
 class TrustRepository(
     private val storage: TrustStorage,
     private val keys: IdentityKeyStore,
@@ -178,6 +192,29 @@ class TrustRepository(
         val peer = snapshot.peers.singleOrNull { it.installationId == peerId } ?: throw TrustException()
         val now = wallMillis()
         snapshot.copy(peers = snapshot.peers.map { if (it == peer) it.copy(lastSeenMillis = now) else it }) to Unit
+    }
+
+    /**
+     * The only path that discards trust and the installation key, and it decodes nothing, so it
+     * works on an undecodable payload. The trust row goes first, then the key: an interruption
+     * after either deletion still fails closed, and a repeated call completes it. It shares
+     * [storeLock] with transactions so no use can recreate a snapshot between the two deletions,
+     * and a completed reset ends the failure episode.
+     */
+    override suspend fun resetIdentity() {
+        storeLock.withLock {
+            try {
+                storage.reset()
+                keys.delete()
+                endStoreFailureEpisode()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // No reset step is a peer-level check, and a reset failure never opens a store
+                // failure episode: only an explicit user action reaches this path.
+                throw TrustStoreException()
+            }
+        }
     }
 
     /**

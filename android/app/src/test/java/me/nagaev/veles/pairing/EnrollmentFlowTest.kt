@@ -739,6 +739,10 @@ class EnrollmentFlowTest : PairingTestBase() {
         }
 
         override fun sign(message: ByteArray): ByteArray = ByteArray(0)
+
+        override fun delete() {
+            present = false
+        }
     }
 
     private class RecordingTrust(private val delegate: InstallationTrustRepository) : InstallationTrustRepository {
@@ -767,6 +771,8 @@ class EnrollmentFlowTest : PairingTestBase() {
         override suspend fun endRevocation(peerId: String) = delegate.endRevocation(peerId)
 
         override suspend fun markAuthenticated(peerId: String) = delegate.markAuthenticated(peerId)
+
+        override suspend fun resetIdentity() = delegate.resetIdentity()
     }
 
     private class FailingTrust(private val delegate: InstallationTrustRepository) : InstallationTrustRepository by delegate {
@@ -780,6 +786,10 @@ class EnrollmentFlowTest : PairingTestBase() {
             val (next, result) = block(value)
             value = next
             return result
+        }
+
+        override suspend fun reset() {
+            value = null
         }
     }
 
