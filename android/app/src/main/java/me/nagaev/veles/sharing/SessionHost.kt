@@ -112,16 +112,20 @@ interface PeerSessions {
     suspend fun requestRemoval(peerIdHex: String): RemovalResult
 
     /**
-     * Closes admission for a reset *before* it takes its snapshot (design D6): a connection that
+     * Closes admission for one reset *before* it takes its snapshot (design D6): a connection that
      * arrives later is refused instead of being admitted outside the snapshot, where the reset
      * could delete trust and refresh the identity without terminating it.
+     *
+     * Every call owns one hold on the barrier and must be paired with exactly one [endReset], so
+     * overlapping resets share it: an earlier reset's completion says nothing about the store a
+     * still-active reset has yet to discard and refresh, so it never reopens admission.
      */
     fun beginReset()
 
     /**
-     * Releases the reset barrier only for a completed reset. `completed = false` keeps every
-     * later connection refused, because the store may still hold the identity the reset could not
-     * discard.
+     * Releases this reset's own hold. Admission is reopened only when the last active reset
+     * ended, and only if that reset completed. `completed = false` keeps every later connection
+     * refused, because the store may still hold the identity the reset could not discard.
      */
     fun endReset(completed: Boolean)
 }
@@ -251,12 +255,26 @@ class SessionHost(
     private val all = LinkedHashSet<Live>()
 
     /**
-     * The reset-wide admission barrier (design D6). Guarded by [registry] and closed by
+     * The reset-wide admission barrier (design D6). Guarded by [registry] and closed by the first
      * [beginReset] before a reset snapshots its generations, so no connection can be admitted —
      * and no identity read or handshake can start — while the store is being discarded. It is
-     * released only by a completed reset's [endReset].
+     * released only by the [endReset] of the last active reset, and only when that reset completed.
      */
     private var admitting = true
+
+    /**
+     * How many resets currently hold admission closed. Guarded by [registry]. Per-reset ownership
+     * is what keeps overlapping resets safe: the first one to complete deletion and cache refresh
+     * must not reopen admission for a reset that has not even taken its snapshot yet.
+     */
+    private var resets = 0
+
+    /**
+     * Set by a reset the store did not confirm: every later connection is then refused until a
+     * later reset succeeds, because the store may still hold the identity it could not discard.
+     * Guarded by [registry].
+     */
+    private var resetRefused = false
 
     override fun onConnected(gen: ConnectionGeneration) {
         val live = Live(gen)
@@ -280,11 +298,21 @@ class SessionHost(
     }
 
     override fun beginReset() {
-        synchronized(registry) { admitting = false }
+        synchronized(registry) {
+            resets += 1
+            admitting = false
+        }
     }
 
     override fun endReset(completed: Boolean) {
-        synchronized(registry) { admitting = completed }
+        synchronized(registry) {
+            // The last ending reset decides, exactly as the Chrome connector's per-request reset
+            // counting does: a failed reset keeps admission closed until a later one succeeds.
+            resetRefused = !completed
+            resets = (resets - 1).coerceAtLeast(0)
+            if (resets > 0) return
+            admitting = !resetRefused
+        }
     }
 
     override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray, admission: RecordAdmission) {

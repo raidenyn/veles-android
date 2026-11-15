@@ -78,6 +78,7 @@ import javax.crypto.spec.SecretKeySpec
  * Every deadline runs on the injected [FakeClock]; nothing sleeps.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("LargeClass") // One end-to-end harness: the production stack, store faults, reset and revocation races.
 class PeerRevocationIntegrationTest {
     private val clock = FakeClock()
     private val events = mutableListOf<String>()
@@ -409,6 +410,86 @@ class PeerRevocationIntegrationTest {
         assertTrue("the trust is discarded", repository.peers().isEmpty())
         assertNotEquals("a fresh identity is published", original.installationId, TrustEncoding.hex(identities.current()))
         assertTrue("the refused enrollment wrote no record", repository.peers().isEmpty())
+    }
+
+    /**
+     * Finding: overlapping resets must own admission per request. The first reset completes its
+     * deletion and identity refresh while the second one is still active and has not taken its
+     * snapshot or deleted anything. Reopening admission there would admit a connection that
+     * authenticates with the identity the second reset deletes and that is absent from the second
+     * reset's snapshot, so it would survive that reset's trust deletion.
+     *
+     * Both bodies are held deterministically at their store entry (no sleeps): the first is
+     * released first, and the second only after the window has been probed.
+     */
+    @Test
+    fun overlappingResetsKeepAdmissionClosedUntilTheLastOneCompleted() = runTest {
+        start()
+        val first = PairingClient(ByteArray(16) { (0x10 + it).toByte() })
+        val second = PairingClient(ByteArray(16) { (0x20 + it).toByte() })
+        seedActive(first)
+        val original = repository.identity()
+
+        val firstEntry = CompletableDeferred<Unit>()
+        val secondEntry = CompletableDeferred<Unit>()
+        trust.resetEntryGates += listOf(firstEntry, secondEntry)
+        val firstReset = async { coordinator.reset() }
+        runCurrent()
+        val secondReset = async { coordinator.reset() }
+        runCurrent()
+
+        firstEntry.complete(Unit)
+        runCurrent()
+        assertTrue("the first reset completed", firstReset.isCompleted)
+        assertEquals("only the first reset deleted anything", 1, events.count { it == STORAGE_RESET })
+
+        // A connection that completes in this window must be refused: the second reset still owns
+        // admission, and it has neither snapshotted the generations nor deleted the store yet.
+        pairing.window.open()
+        val enrollmentGen = ConnectionGeneration("bb", 2)
+        connect(enrollmentGen)
+        send(enrollmentGen, second.requestFrame())
+        assertTrue(
+            "a generation admitted during the window sends nothing",
+            transport.calls.filterIsInstance<Sent>().none { it.isOn(enrollmentGen) },
+        )
+        assertTrue("the refused enrollment is closed", transport.closed.contains(enrollmentGen))
+
+        val reconnectGen = ConnectionGeneration("cc", 3)
+        connect(reconnectGen)
+        send(reconnectGen, second.reconnectClient().helloFrame.copyOf())
+        assertTrue(
+            "a reconnect admitted during the window sends nothing",
+            transport.calls.filterIsInstance<Sent>().none { it.isOn(reconnectGen) },
+        )
+        assertTrue("the refused reconnect is closed", transport.closed.contains(reconnectGen))
+        assertTrue("nothing authenticates during the window", host.authenticatedSessions().isEmpty())
+
+        secondEntry.complete(Unit)
+        firstReset.await()
+        secondReset.await()
+        runCurrent()
+
+        assertEquals("both resets deleted", 2, events.count { it == STORAGE_RESET })
+        assertTrue("no session from the window survives", host.authenticatedSessions().isEmpty())
+        assertTrue("the window enrollment stays closed", transport.closed.contains(enrollmentGen))
+        assertTrue("the window reconnect stays closed", transport.closed.contains(reconnectGen))
+        assertTrue("the trust is discarded", repository.peers().isEmpty())
+        val fresh = repository.identity()
+        assertNotEquals("a fresh identity is in use", original.installationId, fresh.installationId)
+        assertArrayEquals(
+            "the cache holds the last reset's identity",
+            TrustEncoding.bytes(fresh.installationId),
+            identities.current(),
+        )
+
+        // Admission is released only now, by the last reset: a peer recorded under the fresh
+        // identity reconnects normally, so the barrier is not stuck closed either.
+        val reopened = PairingClient(ByteArray(16) { (0x40 + it).toByte() })
+        seedActive(reopened)
+        val after = ConnectionGeneration("dd", 4)
+        reconnect(after, reopened.reconnectClient())
+        assertEquals("an admitted generation authenticates", listOf(after), host.authenticatedSessions().map { it.generation })
     }
 
     @Test
@@ -810,6 +891,13 @@ class PeerRevocationIntegrationTest {
         var peersEntered: CompletableDeferred<Unit>? = null
         var confirmGate: CompletableDeferred<Unit>? = null
         var confirmEntered: CompletableDeferred<Unit>? = null
+
+        /**
+         * Holds each `resetIdentity` call at its entry, before the delegate deletes anything.
+         * Consumed in call order, so a test can pause the second of two overlapping resets exactly
+         * before its deletion body while the first one completes.
+         */
+        val resetEntryGates = mutableListOf<CompletableDeferred<Unit>>()
         private val fences = mutableMapOf<String, Int>()
 
         val fenceReleased: Boolean get() = fences.isEmpty()
@@ -824,6 +912,12 @@ class PeerRevocationIntegrationTest {
             confirmEntered?.complete(Unit)
             confirmGate?.await()
             delegate.confirm(peerId, step, proof)
+        }
+
+        override suspend fun resetIdentity() {
+            val gate = synchronized(resetEntryGates) { resetEntryGates.removeFirstOrNull() }
+            gate?.await()
+            delegate.resetIdentity()
         }
 
         override suspend fun beginRevocation(peerId: String) {

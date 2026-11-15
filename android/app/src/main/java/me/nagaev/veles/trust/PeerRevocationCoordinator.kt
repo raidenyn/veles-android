@@ -5,6 +5,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import me.nagaev.veles.session.RemovalOperations
 import me.nagaev.veles.sharing.PeerSessions
@@ -25,8 +27,10 @@ import me.nagaev.veles.sharing.RemovalResult
  * - [failClosed] (store failure): terminate everything, non-destructively, and report the one
  *   "re-pair required" status. It runs asynchronously on [scope], so a store failure observed
  *   inside a handler step can never deadlock on that generation's mutex.
- * - [reset]: close admission, terminate everything, then discard the stored trust and the key,
- *   and only then release admission. Only an explicit user action reaches this path.
+ * - [reset]: reserve this request's admission hold and close admission, wait for any earlier
+ *   reset body, terminate everything, then discard the stored trust and the key, and release only
+ *   this request's hold. Overlapping resets therefore keep admission closed until the last one
+ *   completed. Only an explicit user action reaches this path.
  */
 @Suppress("TooManyFunctions") // One method per trust-changing operation plus the private stages.
 class PeerRevocationCoordinator(
@@ -116,11 +120,12 @@ class PeerRevocationCoordinator(
      * without decoding it and the key alias. It is idempotent and is never reached from a
      * failure path.
      *
-     * The barrier is released only after the deletions and the identity-cache refresh completed:
-     * while it is held, a connection completing mid-reset is refused instead of being admitted
-     * outside [sessions]' snapshot, where the reset could delete trust and refresh the identity
-     * without terminating it. A failed reset keeps admission closed, because the store may still
-     * hold the identity it could not discard.
+     * The barrier is released only by the *last* active reset, after its deletions and the
+     * identity-cache refresh completed: overlapping requests each hold admission closed while
+     * they wait for their serialized body, so an earlier completion can never admit a connection
+     * that would miss the still-active reset's snapshot — where that reset could delete trust and
+     * refresh the identity without terminating it. A failed reset keeps admission closed, because
+     * the store may still hold the identity it could not discard.
      *
      * A completed reset is also the one recovery from the latched [TrustStatus.RE_PAIR_REQUIRED]:
      * once the deletions have run and the repository has refreshed the identity cache (its
@@ -128,20 +133,31 @@ class PeerRevocationCoordinator(
      * reset throws before this line and keeps the failure status.
      */
     suspend fun reset() {
+        // Reserve this request's own hold on admission synchronously, before the first suspension:
+        // overlapping requests then share the barrier, so admission stays closed until the last of
+        // them finished deleting and refreshing (finding: an earlier reset's completion must not
+        // reopen admission for a reset that has not taken its snapshot yet).
         sessions.beginReset()
         var completed = false
         try {
-            try {
-                sessions.closeAll()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                // The generations were logically torn down; the deletion must still run.
+            // Bodies are serialized one at a time, like the Chrome connector's reset chain, so a
+            // queued request never tears the store down under a running one while it still holds
+            // its own admission hold.
+            resetLock.withLock {
+                try {
+                    sessions.closeAll()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    // The generations were logically torn down; the deletion must still run.
+                }
+                trust.resetIdentity()
+                completed = true
+                onStatus(TrustStatus.OK)
             }
-            trust.resetIdentity()
-            completed = true
-            onStatus(TrustStatus.OK)
         } finally {
+            // Exactly one release per request, including a request cancelled before its body ran:
+            // the barrier opens only after the last active reset completed.
             sessions.endReset(completed)
         }
     }
@@ -177,6 +193,12 @@ class PeerRevocationCoordinator(
             }
         }
     }
+
+    /**
+     * Serializes reset bodies. Admission is reserved per request in [reset] before it queues, so a
+     * queued reset keeps its own hold while it waits.
+     */
+    private val resetLock = Mutex()
 
     /** Delete first, always terminate (design D2). */
     private suspend fun delete(peerId: String) {
