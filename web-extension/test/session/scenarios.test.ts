@@ -1322,7 +1322,7 @@ describe('OTP-09 scenario inventory', () => {
         }
         expect(
             Object.values(INVENTORY_ENTRIES).filter((entry) => entry === 'execute'),
-        ).toHaveLength(21);
+        ).toHaveLength(23);
     });
 
     it('otp10InventoryOwnsTheFormerOtp09DeferralsWithoutOverlap', () => {

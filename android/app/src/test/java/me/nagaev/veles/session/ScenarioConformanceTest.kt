@@ -47,7 +47,11 @@ import javax.crypto.spec.SecretKeySpec
  * The harness follows the plan's step mapping: [ScenarioPeer] is a scripted client built from
  * the same codec, [ScenarioHandler] is passive (it records deliveries, acks and buffer state
  * but never replies on its own), and every `send_protected_record` step is exactly one
- * `sendApplication` call. One deliberate, inventory-recorded adaptation:
+ * `sendApplication` call. The production [RemovalHandler] is composed beside the passive
+ * handler, so `removal_request` / `removal_response` run through the real removal path: its
+ * reply-then-close outcome ends the session, which makes the fixture's `removal_response` send
+ * step observation-only instead of a second send (OTP2-REC-013). One deliberate,
+ * inventory-recorded adaptation:
  * `st-rec-heartbeat-rate-terminates` is an `engine-effect` scenario for OTP2-REC-034's *receive*
  * direction, because design D4 makes early outbound heartbeats non-fatal; its five heartbeat
  * steps are therefore injected as peer records and the scenario asserts termination, erasure and
@@ -82,7 +86,11 @@ class ScenarioConformanceTest {
         otp10Inventory.forEach { (id, entry) ->
             assertClassification("otp-10", id, entry, OTP10_DEFERRAL)
         }
-        assertEquals("execute scenarios", 21, inventory.values.count { it == "execute" })
+        assertEquals(
+            "execute scenarios (OTP-11 moved the mutual-removal and revoke scenarios in)",
+            23,
+            inventory.values.count { it == "execute" },
+        )
         assertTrue(
             "the OTP-09 inventory must defer explicit work",
             inventory.values.any { it is String && it.startsWith("deferred:") },
@@ -335,6 +343,12 @@ class ScenarioConformanceTest {
 private const val BOOT_MARKER = "boot"
 private const val BOOT_MARKER_RESTART = "boot-restart"
 
+/**
+ * Design D4/R6: the engine's terminal stage when the removal handler replied and asked to close
+ * (OTP2-REC-013). It is a close of a healthy session, never a protocol termination.
+ */
+private const val STAGE_REMOVAL = "removal"
+
 private object ScenarioFixtures {
     private fun read(path: String): JsonObject {
         val stream = checkNotNull(ScenarioFixtures::class.java.getResourceAsStream(path)) { "missing $path" }
@@ -422,6 +436,7 @@ private data class StepOutcome(
     val event: String,
     val peer: String,
     val simulate: Map<String, String>,
+    val recordType: Int?,
     val terminated: String?,
     val closed: Boolean,
     val sentTypes: List<Int>,
@@ -506,8 +521,6 @@ private class ScenarioHandler(private val buffer: EventBuffer) : ApplicationHand
         const val TYPE_ACTIVATION_COMPLETE = 0x0102
         const val TYPE_ACTIVATION_ACK = 0x0103
         const val TYPE_ENROLLMENT_PREPARE = 0x0104
-        const val TYPE_REMOVAL_REQUEST = 0x0205
-        const val TYPE_REMOVAL_RESPONSE = 0x0206
         const val INSTALLATION_BYTES = 16
         const val EVENT_ID_BYTES = 16
         const val EVENT_BYTES = 79
@@ -524,8 +537,6 @@ private class ScenarioHandler(private val buffer: EventBuffer) : ApplicationHand
             TYPE_ACTIVATION_COMPLETE,
             TYPE_ACTIVATION_ACK,
             TYPE_ENROLLMENT_PREPARE,
-            TYPE_REMOVAL_REQUEST,
-            TYPE_REMOVAL_RESPONSE,
         )
 
         fun hex(bytes: ByteArray): String = bytes.joinToString("") { it.toUByte().toString(16).padStart(2, '0') }
@@ -720,6 +731,15 @@ private class PhoneSession(val name: String) {
     var deletedIncomplete: Boolean = false
     var revokedTrust: Boolean = false
 
+    /** OTP2-REC-013: the removal handler replied and asked for the reply-then-close outcome. */
+    var removalClosed: Boolean = false
+
+    /** OTP2-REC-013: a removal (not a local revoke) deleted the durable record. */
+    var removalDeletedTrust: Boolean = false
+
+    /** OTP2-REC-013: the production removal handler sealed the `removal_response`. */
+    var removalResponseSent: Boolean = false
+
     /** The real store and its stable identity, reused across a simulated restart. */
     var storage: ScenarioTrustStorage? = null
     var identityKeys: IdentityKeyStore? = null
@@ -730,6 +750,8 @@ private class PhoneSession(val name: String) {
     val state: String
         get() = when {
             engine?.isOpen == true -> "session_open"
+            // Design D4/R6: the reply-then-close outcome is a close, not a failure.
+            removalClosed -> "closed"
             terminations.any { it != "app_error" } -> "terminated"
             else -> "closed"
         }
@@ -953,7 +975,18 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
             peer.activationSendSteps.putIfAbsent(it, index)
         }
         val delivered = effects.filterIsInstance<SessionEffect.Deliver>().map { it.type }
-        if (terminated != null) peer.terminations += terminated
+        if (terminated == STAGE_REMOVAL) {
+            // OTP2-REC-013/design D4: the production removal handler deleted the record and
+            // asked for the reply-then-close outcome, which the engine reports as its own
+            // terminal `removal` stage. That stage is a close, never a protocol termination.
+            peer.removalClosed = true
+            if (start.storeBefore != null && start.storeBefore != "deleted" && storeAfter == "deleted") {
+                peer.removalDeletedTrust = true
+            }
+        } else if (terminated != null) {
+            peer.terminations += terminated
+        }
+        if (sent.contains(RecordType.REMOVAL_RESPONSE.wire)) peer.removalResponseSent = true
         if (close) peer.closed = true
         if (peer.engine?.keysErasedForTest == true) peer.keysErased = true
         val type = step.simulate["record_type"]?.let { parseWire(it) }
@@ -992,6 +1025,7 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
             event = step.event,
             peer = step.peer,
             simulate = step.simulate,
+            recordType = type,
             terminated = terminated,
             closed = close,
             sentTypes = sent,
@@ -1125,6 +1159,15 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
             }
             return emptyList()
         }
+        // OTP2-REC-013: the responder's removal handler has already sealed `removal_response`
+        // and the engine's reply-then-close outcome ended the session, so this fixture step
+        // observes that reply. The runner must never send a second record on that session.
+        if (type == RecordType.REMOVAL_RESPONSE.wire) {
+            check(peer.removalResponseSent) {
+                "${fixture.id}: the fixture observes a removal_response the handler never sent"
+            }
+            return emptyList()
+        }
         val engine = engine(peer)
         val body = when (type) {
             ScenarioHandler.TYPE_PULL_EVENTS -> pullEventsBody(peer, step.simulate["event_count"]?.toInt() ?: 0)
@@ -1234,7 +1277,11 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
         val activation = repository?.let {
             peer.activation ?: ActivationEngine(it, peer.registry).also { activation -> peer.activation = activation }
         }
-        val handler = if (activation == null) peer.handler else composeApplicationHandlers(peer.handler, activation)
+        // Design D4: the production composition is the activation handler plus the removal
+        // handler. A removal needs a trust store, so it is composed exactly where production
+        // binds one, and the scenario exercises the real [RemovalHandler].
+        val removal = repository?.let { RemovalHandler(removalOperations(peer)) }
+        val handler = composeApplicationHandlers(peer.handler, activation, removal)
         return PhoneSessionEngine(
             localInstallationId = TestPeers.phoneInstallationId,
             signer = phoneIdentity.signer,
@@ -1263,6 +1310,27 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
             peer.authenticated = false
             peer.sessionClass = null
             peer.closed = false
+        }
+    }
+
+    /**
+     * The removal handler's deletion contract over this scenario's real [TrustRepository]
+     * (design D2/D8). The coordinator's detached finish job, final sweep and asynchronous fence
+     * release are [me.nagaev.veles.trust.PeerRevocationCoordinator]'s own path and are covered
+     * there; this runner executes the handler, so it takes and releases the peer fence inline
+     * around the delete it drives.
+     */
+    private fun removalOperations(peer: PhoneSession): RemovalOperations = object : RemovalOperations {
+        override suspend fun deleteFenced(peerId: String) {
+            val repository = checkNotNull(peer.repository) {
+                "${fixture.id}: a removal requires an existing trust record"
+            }
+            repository.beginRevocation(peerId)
+            try {
+                repository.revoke(peerId)
+            } finally {
+                repository.endRevocation(peerId)
+            }
         }
     }
 
@@ -1438,6 +1506,11 @@ private object Effects {
         "delete_incomplete_materials",
         "erase_incomplete_materials",
         "erase_trust_record_revoked",
+        "erase_trust_record_removed",
+        "removal_request_processed",
+        "removal_response_sent",
+        "removal_response_processed",
+        "revocation_disconnect",
         "reject_activation_mac_mismatch",
         "record_active_by_ack",
         "record_activated_by_ack",
@@ -1459,6 +1532,7 @@ private object Effects {
 
     @Suppress("CyclomaticComplexMethod") // The mapping table is one branch per effect name.
     fun observe(name: String, run: ScenarioRun): Boolean {
+        removalObservation(name, run)?.let { return it }
         val steps = run.steps
         val sessions = run.sessions.values
         val terminations = sessions.flatMap { it.terminations }
@@ -1577,6 +1651,31 @@ private object Effects {
             }
             else -> throw AssertionError("effect '$name' has no engine observation mapping")
         }
+    }
+
+    /**
+     * OTP2-REC-013/OTP2-REV-001: the removal-exchange and local-revoke observations, kept
+     * together beside the main table. Null means the name is not one of them.
+     */
+    private fun removalObservation(name: String, run: ScenarioRun): Boolean? = when (name) {
+        // Design D4: the responder processed `removal_request` through the production removal
+        // handler, whose reply-then-close outcome is the engine's own `removal` terminal stage.
+        "removal_request_processed" -> run.steps.any {
+            it.recordType == RecordType.REMOVAL_REQUEST.wire && it.terminated == STAGE_REMOVAL
+        }
+        // The removal deleted the durable record through the handler, not through a local revoke.
+        "erase_trust_record_removed" -> run.sessions.values.any { it.removalDeletedTrust }
+        // The descriptor's `record_effects` maps an accepted record's type to its processing
+        // effect in either direction, so the sealed `removal_response` is both sent and
+        // "processed" from the exchange's point of view.
+        "removal_response_sent", "removal_response_processed" ->
+            run.steps.any { it.sentTypes.contains(RecordType.REMOVAL_RESPONSE.wire) }
+        // OTP2-REV-001: the local revoke terminates the live authenticated session and erases
+        // its keys without a protocol termination.
+        "revocation_disconnect" -> run.sessions.values.any {
+            it.revokedTrust && it.closed && it.engine?.keysErasedForTest == true
+        }
+        else -> null
     }
 
     /** First step index for each `effects.order` name; null means the claim was never observed. */
