@@ -11,7 +11,7 @@
 - **Branch**: `spec/extend-superspec-workflow`
 - **Base branch**: `master`
 - **Final state**: `pr-open`
-- **PR URL**: `pending (created immediately after the first push)`
+- **PR URL**: `https://github.com/raidenyn/veles-android/pull/152`
 
 ---
 
@@ -24,7 +24,7 @@
 
 ## PR comment
 
-- **Comment status**: `pending`
+- **Comment status**: `posted` (issue comment 6887267825)
 
 ---
 
