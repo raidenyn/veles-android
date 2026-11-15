@@ -15,6 +15,7 @@ import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -39,10 +40,13 @@ import me.nagaev.veles.session.LocalRecordState
 import me.nagaev.veles.session.PeerLookup
 import me.nagaev.veles.session.PeerRecord
 import me.nagaev.veles.session.PhoneSessionEngine
+import me.nagaev.veles.session.RemovalHandler
+import me.nagaev.veles.session.RemovalOperations
 import me.nagaev.veles.session.composeApplicationHandlers
 import me.nagaev.veles.trust.ActivationVerifier
 import me.nagaev.veles.trust.AndroidIdentityKeyStore
 import me.nagaev.veles.trust.InstallationTrustRepository
+import me.nagaev.veles.trust.PeerRevocationCoordinator
 import me.nagaev.veles.trust.TrustEncoding
 import me.nagaev.veles.trust.TrustState
 import me.nagaev.veles.trust.createAndroidTrustRepository
@@ -54,6 +58,10 @@ internal class SharingService : Service() {
     private var pairing: PairingEndpoint? = null
     private var sessionScope: CoroutineScope? = null
     private var registered = false
+
+    /** The OTP-11 coordinator; the repository's store-failure callback reaches it. */
+    @Volatile
+    private var coordinator: PeerRevocationCoordinator? = null
     private val preferences get() = getSharedPreferences("sharing", MODE_PRIVATE)
     private val bluetoothChanges = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -131,28 +139,40 @@ internal class SharingService : Service() {
      * The production session path. The repository's verifier is the session-bound proof
      * registry the pairing machine and the recovery activation engine fill; the debug
      * `BuildSessionExtensions` and `ProbeReceiver` repositories deliberately stay reject-all
-     * (OTP-10 plan 9d). The installation id is read once, before the first link is admitted,
-     * because the engine factory is not suspending.
+     * (OTP-10 plan 9d).
      *
-     * The activation handler is always built and composed with the build-type extension handler
-     * (the debug probe), so a release build with a null extension still activates.
+     * The activation handler, the removal handler and the build-type extension handler are
+     * composed together in production (design D4): a release build with a null extension still
+     * activates and still handles mutual removal.
+     *
+     * The installation identity is a volatile cache read by the synchronous engine factory. It
+     * is warmed before the first link is admitted and refreshed from the repository after an
+     * explicit reset deleted the row and the key (design D6); a generation created between that
+     * termination and the refresh keeps the stale id, fails authentication and closes.
      */
     private fun sessionHost(transport: SessionTransport): SessionHost {
         val proofs = ProofRegistry()
         val repository = createAndroidTrustRepository(
             this,
             ActivationVerifier { peer, step, proof -> proofs.consume(peer, step, proof) },
+            onStoreFailure = { coordinator?.failClosed() },
         )
-        val localInstallationId = runBlocking { TrustEncoding.bytes(repository.identity().installationId) }
+        val identities = LocalIdentity(repository).also { it.warm() }
+        val trust = ResettingTrust(repository, identities)
         val keyStore = AndroidIdentityKeyStore()
-        val activation = ActivationEngine(repository, proofs)
-        val handler = composeApplicationHandlers(activation, BuildSessionExtensions.applicationHandler(this))
+        val activation = ActivationEngine(trust, proofs)
+        val removal = LateRemovalOperations()
+        val handler = composeApplicationHandlers(
+            RemovalHandler(removal),
+            activation,
+            BuildSessionExtensions.applicationHandler(this),
+        )
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         sessionScope = scope
         // One window and one admission for the service; the native core is resolved only
         // when a pairing_request actually starts an execution.
         val pairing = PairingEndpoint(
-            trust = repository,
+            trust = trust,
             proofs = proofs,
             onPairFingerprint = BuildSessionExtensions::publishPairFingerprint,
         )
@@ -161,19 +181,27 @@ internal class SharingService : Service() {
             transport,
             { _ ->
                 PhoneSessionEngine(
-                    localInstallationId = localInstallationId,
+                    localInstallationId = identities.current(),
                     signer = IdentitySigner { message -> keyStore.sign(message) },
-                    lookup = repository.peerLookup(),
+                    lookup = trust.peerLookup(),
                     clock = SystemClock::elapsedRealtime,
                     nonce = { ByteArray(NONCE_BYTES).also(SecureRandom()::nextBytes) },
                     handler = handler,
                 )
             },
-            repository,
+            trust,
             SystemClock::elapsedRealtime,
             pairingFactory = { gen -> pairing.connection(gen.serial) },
             onSessionClosed = { sessionId -> proofs.revoke(sessionId) },
         )
+        val coordinator = PeerRevocationCoordinator(
+            trust,
+            host,
+            scope,
+            onStatus = SharingState::updateTrustStatus,
+        )
+        this.coordinator = coordinator
+        removal.coordinator = coordinator
         this.pairing = pairing
         this.host = host
         BuildSessionExtensions.attach(host)
@@ -206,6 +234,8 @@ internal class SharingService : Service() {
         pairing = null
         sessionScope?.cancel()
         sessionScope = null
+        // No coordinator survives its host: a store failure after shutdown has nothing to close.
+        coordinator = null
     }
 
     override fun onDestroy() {
@@ -250,6 +280,67 @@ internal class SharingService : Service() {
         override fun send(gen: ConnectionGeneration, bytes: ByteArray, token: Long?): Boolean = server.send(gen, bytes, token)
 
         override fun close(gen: ConnectionGeneration) = server.close(gen)
+    }
+}
+
+/**
+ * The service's installation identity cache (OTP-11 design D6).
+ *
+ * The engine factory is not suspending, so it reads [current] from this cache. [warm] performs
+ * the startup read exactly once, before the first link is admitted, and fails closed the same
+ * way the once-captured identity did. An explicit reset refreshes the cache from the repository
+ * after `resetIdentity()` deleted the row and the key; a generation created in between reads the
+ * stale id, fails authentication and closes.
+ */
+private class LocalIdentity(private val trust: InstallationTrustRepository) {
+    @Volatile private var cached: ByteArray? = null
+
+    fun warm() {
+        cached = runBlocking { load() }
+    }
+
+    fun current(): ByteArray = checkNotNull(cached) { "the installation identity cache is not warm" }
+
+    suspend fun refresh() {
+        cached = try {
+            load()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Both deletions already happened and the next use still fails closed; keeping the
+            // stale id is preferable to inventing an identity here.
+            cached
+        }
+    }
+
+    private suspend fun load(): ByteArray = TrustEncoding.bytes(trust.identity().installationId)
+}
+
+/**
+ * The trust repository as the coordinator sees it: an explicit identity reset also refreshes the
+ * identity cache, after the repository's own row-then-key deletions (ruling R3: the coordinator
+ * calls `resetIdentity()` and never duplicates its body).
+ */
+private class ResettingTrust(
+    private val delegate: InstallationTrustRepository,
+    private val identities: LocalIdentity,
+) : InstallationTrustRepository by delegate {
+    override suspend fun resetIdentity() {
+        delegate.resetIdentity()
+        identities.refresh()
+    }
+}
+
+/**
+ * The removal handler is composed into every engine before the coordinator that owns the fence
+ * and the detached finish exists (the coordinator needs the host, the host needs the handler).
+ * This indirection is the only late binding; the handler itself never sees it.
+ */
+private class LateRemovalOperations : RemovalOperations {
+    @Volatile var coordinator: PeerRevocationCoordinator? = null
+
+    override suspend fun deleteFenced(peerId: String) {
+        checkNotNull(coordinator) { "removal before the coordinator is wired" }.deleteFenced(peerId)
     }
 }
 
