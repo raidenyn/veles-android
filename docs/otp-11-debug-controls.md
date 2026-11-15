@@ -182,8 +182,9 @@ Chrome, macOS host built from `5f41436`. Screenshots of the Android debug screen
 | Revoke with another peer connected | Android | not run | only one peer existed |
 | Clear via `REVOKE_PEER` (session open) | Android | not run | no peer existed after the reset |
 | Clear via `REVOKE_PEER` (service stopped) | Android | PASS | logcat `revoke unavailable peer=aaaaaaaa` (dummy id); screen `Clear failed or refused`; nothing deleted |
-| Mutual removal (live full session) | Android → Chrome | FAIL | `No open full session: only local removal is possible. Nothing was deleted.` while the phone showed `Chrome · ACTIVE · Peer connected` |
-| Mutual removal (live full session) | Chrome → Android | FAIL | same message while the panel row showed `live session open` |
+| Mutual removal (live full session) | Chrome → Android | PASS | `Peer removed on both devices`; both peer lists empty |
+| Mutual removal (live full session) | Android → Chrome | PARTIAL | Phone `No response: the other device may keep its record`; Chrome deleted its record and the phone kept its own, so the response was lost on the air |
+| Mutual removal from a recovery-only session | either | REFUSED (correct) | `No open full session: only local removal is possible. Nothing was deleted.` while the row said `Peer connected`/`live session open`; a `Disconnect` then `Connect` produced a full session and removal went through |
 | Mutual removal (disconnect) | either | not run | blocked by the same session-classification result |
 | Mutual removal (response timeout) | either | not run | exercise pending: needs controlled response suppression |
 | Mutual removal (no full session) | either | PASS | `No open full session: only local removal is possible. Nothing was deleted.` |
@@ -194,14 +195,22 @@ Chrome, macOS host built from `5f41436`. Screenshots of the Android debug screen
 
 ### Findings from the run
 
-1. **Mutual removal is unreachable from a live session.** Both endpoints answer
-   `No open full session: only local removal is possible. Nothing was deleted.` while the phone shows
-   `ACTIVE · Peer connected` and the panel shows `live session open`. The removal owner API selects
-   only a FULL-class generation, and after this enrollment the client record stayed
-   `active_activation_pending`, so no FULL session existed even after two reconnects. Either the
-   activation upgrade does not complete on this path or the client session class never becomes FULL;
-   the debug surfaces also give no way to tell a live session from a FULL one. Not investigated further
-   during the run.
+1. **A recovery-only session is advertised as ready.** After an interrupted activation the client
+   record stays `active_activation_pending`, so the generation is fixed at `ACTIVATION_RECOVERY` and
+   cannot carry a removal record (OTP2-REC-013 requires a FULL session; OTP2-STA-010b keeps a recovery
+   generation recovery-only until it is torn down). Both endpoints then answer `No open full session`
+   while the rows say `Peer connected` / `live session open`. `Disconnect` then `Connect` fixes it: the
+   next generation sees the phone `ACTIVE`, the mirror upgrades, and removal succeeds. The defect is
+   that the surfaces do not distinguish a recovery session from a full one.
+   Root cause of the state: enrollment's `activation_ack` is fire-and-forget and the phone disconnects
+   on it, leaving the phone at `committed_waiting_ack` while the client already reports `active`
+   (`web-extension/src/pairing/client-machine.ts:749-815`,
+   `android/app/src/main/java/me/nagaev/veles/pairing/PhonePairingMachine.kt:446-474`). That is OTP-10
+   enrollment territory, not this change.
+2. **The removal response is lost when the Android side requests it.** Chrome deleted its record and
+   closed after replying, but the phone reported `No response: the other device may keep its record`
+   and kept its own record, leaving the two sides disagreeing. The response, sent as the last record
+   before the close, did not reach the requester over BLE.
 2. **Chrome keeps a stale live-session marker after the phone revokes.** After `Peer revoked` on the
    phone, the panel row still read `live session open`, and the diagnostics showed no disconnect for
    that connection. The trust record staying on the Chrome side is expected (the offline counterpart
