@@ -77,6 +77,8 @@ const STAGE_AUTHORIZATION = 'authorization';
 const STAGE_UNHANDLED = 'unhandled';
 const STAGE_SEQUENCE = 'sequence';
 const STAGE_DEPENDENCY = 'dependency';
+/** The handler asked for the reply-then-close outcome (design D4). */
+const STAGE_CLOSE_AFTER_REPLY = 'close_after_reply';
 
 /** The fixed facts of one authenticated session (OTP-10 plan 9b). */
 export interface SessionContext {
@@ -118,6 +120,15 @@ export interface ApplicationHandler {
      * record (OTP-10 plan 9b).
      */
     forSession?(context: SessionContext): ApplicationHandler;
+
+    /**
+     * The explicit reply-then-close outcome (design D4): true means the engine seals and
+     * delivers this handler's buffered replies, tears the engine down and emits the terminal
+     * close effect, so the reply is the last record in that direction and nothing is accepted
+     * afterwards. A handler must never tear the session down itself or await its own
+     * generation; it returns this outcome instead.
+     */
+    closeAfterReply?(type: number): boolean;
 
     /**
      * Records the session-scoped handler owes as soon as the gate opens (OTP2-STA-010b steps
@@ -976,8 +987,13 @@ export class ClientSessionEngine {
 
         let handlerFailed = false;
         let handlerFailure: unknown;
+        let closeAfterReply = false;
         try {
             await handler.handle(opened.type, opened.body, reply);
+            // Design D4: the handler must not tear the session down itself; it asks for
+            // the reply-then-close outcome and the engine performs the terminal
+            // transition after the buffered reply is sealed.
+            closeAfterReply = handler.closeAfterReply?.(opened.type) === true;
         } catch (error) {
             handlerFailed = true;
             handlerFailure = error;
@@ -1003,9 +1019,16 @@ export class ClientSessionEngine {
                 failure instanceof SessionReject ? STAGE_AUTHORIZATION : STAGE_DEPENDENCY,
             );
         }
-        if (terminalError) {
+        if (terminalError || closeAfterReply) {
             this.#teardownInternal();
-            return [...replies, { kind: 'terminated', reason: STAGE_APP_ERROR }, { kind: 'close' }];
+            return [
+                ...replies,
+                {
+                    kind: 'terminated',
+                    reason: terminalError ? STAGE_APP_ERROR : STAGE_CLOSE_AFTER_REPLY,
+                },
+                { kind: 'close' },
+            ];
         }
         return [{ kind: 'deliver', type: opened.type, body: opened.body }, ...replies];
     }

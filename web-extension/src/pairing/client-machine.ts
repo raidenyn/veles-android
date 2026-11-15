@@ -275,6 +275,14 @@ export class ClientMachine {
     #clientBody: Uint8Array | null = null;
     #et: Uint8Array | null = null;
     #pendingPeerId: string | null = null;
+    /**
+     * The peer this enrollment connection is bound to once its identity record is
+     * verified and before the durable persist (design D3), or null while no peer
+     * identity is authenticated. It is cleared whenever the enrollment material is
+     * erased, but kept out of `#pendingPeerId` because that id outlives cancellation
+     * for the pending-record cleanup.
+     */
+    #boundPeerId: string | null = null;
     #fingerprint: string | undefined;
     #rxSequence = 0n;
     #txSequence = 0n;
@@ -314,6 +322,15 @@ export class ClientMachine {
     /** OTP2-REC-011 display, available only after both identity records are authenticated. */
     fingerprint(): string | undefined {
         return this.#fingerprint;
+    }
+
+    /**
+     * The peer this enrollment is bound to once its identity record is verified, or
+     * undefined while no peer identity is authenticated. Selection by this id is the
+     * only way a peer revocation reaches an enrollment connection (design D3).
+     */
+    boundPeerId(): string | undefined {
+        return this.#boundPeerId ?? undefined;
     }
 
     /** The live key holder, for the OTP2-CRY-011/019e erasure observations. */
@@ -614,6 +631,12 @@ export class ClientMachine {
             return this.#failPostAuthentication();
         }
         this.#assertNotCancelled();
+        // Design D3: the phone identity is authenticated now, so bind this enrollment
+        // to that peer *before* the suspending persist. A revocation racing the write
+        // still selects this connection and cannot fence the peer while a durable
+        // write is in flight. Every failure below erases the live material, which
+        // clears the binding.
+        this.#boundPeerId = hex(phone.installationId);
         let own: IdentityRecord;
         let ownBody: Uint8Array;
         let phoneBody: Uint8Array;
@@ -922,6 +945,7 @@ export class ClientMachine {
         // Every terminal path (success, failure, timeout, disconnect, cancel)
         // passes through here, so the code reference never outlives the attempt.
         this.#code = '';
+        this.#boundPeerId = null;
         this.#execution?.close();
         this.#execution = null;
         if (this.#keys !== null) {

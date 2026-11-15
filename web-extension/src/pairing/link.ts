@@ -194,6 +194,15 @@ export class PairingLink {
         return link;
     }
 
+    /**
+     * The peer this enrollment is bound to once its identity record is verified, or
+     * undefined while no peer identity is authenticated. Only this id selects the
+     * link for a peer revocation (design D3).
+     */
+    boundPeerId(): string | undefined {
+        return this.machine.boundPeerId();
+    }
+
     /** Processes one record or pairing frame from this link's connection. */
     receive(bytes: Uint8Array): Promise<void> {
         const next = this.queue.then(async () => {
@@ -272,19 +281,40 @@ export class PairingLink {
     }
 
     /**
+     * Peer revocation or fail-closed teardown (design D2/D3): close the handle and
+     * erase the live enrollment material without touching any durable record. The
+     * pending record stays for the recovery protocol; only `cancel()` and `dispose()`
+     * delete it. Distinct from a user or connector-context cancellation for that
+     * reason.
+     */
+    async terminate(): Promise<void> {
+        if (this.disposed || this.stopped) return;
+        // Fence new inbound work first, then let any frame already being processed
+        // finish before the keys are erased and the handle closes, so a record sealed
+        // just before the teardown cannot cross the bridge after it (design D8).
+        this.stopped = true;
+        this.clearTimer();
+        this.unsubscribe?.();
+        this.unsubscribe = null;
+        const task = this.queue.then(async () => {
+            await this.machine.onDisconnect();
+            await this.stop();
+        });
+        this.queue = task.then(
+            () => undefined,
+            () => undefined,
+        );
+        await task;
+    }
+
+    /**
      * Connection loss while the connector document still lives (for example a
      * native-host port death). OTP2-STA-010d ties pending-record deletion to
      * connector-context loss, so this closes the handle and erases live material
      * but keeps the durable pending record for the recovery protocol.
      */
     async abandon(): Promise<void> {
-        if (this.disposed || this.stopped) return;
-        this.stopped = true;
-        this.clearTimer();
-        this.unsubscribe?.();
-        this.unsubscribe = null;
-        await this.machine.onDisconnect();
-        await this.stop();
+        await this.terminate();
     }
 
     /** Waits for every inbound frame queued so far (tests and teardown sequencing). */

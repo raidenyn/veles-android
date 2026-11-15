@@ -33,6 +33,7 @@ import type { DiagnosticRing } from './diagnostics';
 import type { ConnectorClose, ConnectorResult } from './port';
 import type { WireEvent } from './protocol';
 import type { ConnectorSnapshot } from './state';
+import type { PairingLink } from '../pairing/link';
 
 export type SentResult = ConnectorResult<Extract<WireEvent, { type: 'sent' }>>;
 
@@ -79,6 +80,9 @@ interface Session {
     settled: boolean;
     /** The pending coarse deadline tick, cancelled on every teardown path. */
     tickTimer: unknown;
+    /** Resolves once the logical termination ran and the engine erased its keys. */
+    readonly closed: Promise<void>;
+    resolveClosed(): void;
     resolve(result: SessionOpenResult): void;
 }
 
@@ -128,6 +132,11 @@ export class SessionManager {
         timers: Partial<SessionTimers> = {},
         /** Session-bound proof cleanup when a generation is torn down. */
         private readonly onSessionClosed?: (sessionId: string) => void,
+        /**
+         * Live enrollment links, so a peer revocation also terminates the matching
+         * enrollment connection (design D3). Selection reads only `boundPeerId()`.
+         */
+        private readonly links: () => readonly PairingLink[] = () => [],
     ) {
         this.repository = repository;
         this.timers = {
@@ -195,6 +204,10 @@ export class SessionManager {
         const result = new Promise<SessionOpenResult>((resolve) => {
             settle = resolve;
         });
+        let resolveClosed!: () => void;
+        const closed = new Promise<void>((resolve) => {
+            resolveClosed = resolve;
+        });
         let session: Session | null = null;
         const engine = new ClientSessionEngine({
             ...base,
@@ -210,6 +223,8 @@ export class SessionManager {
             phase: 'handshake',
             settled: false,
             tickTimer: undefined,
+            closed,
+            resolveClosed,
             resolve: settle,
         };
         this.byHandle.set(handle, session);
@@ -256,6 +271,66 @@ export class SessionManager {
     close(handle: string): void {
         const session = this.byHandle.get(handle);
         if (session !== undefined) this.terminate(session, 'closed', true);
+    }
+
+    /**
+     * Terminates every session and enrollment link bound to one authenticated peer
+     * (design D3). Selection uses only the peer installation id — never a label, a
+     * native handle or a platform hint — so another phone and an unbound enrollment
+     * are untouched. Each session's termination is queued behind that session's
+     * in-flight step, so a handler's buffered reply is delivered before the close,
+     * and the promise resolves only after every selected generation has ended.
+     * Logical termination is authoritative: a failing transport close is best-effort
+     * and never aborts the termination of another selected session.
+     */
+    async closePeer(peerId: string): Promise<void> {
+        await this.closeSelected(
+            [...this.byHandle.values()].filter((session) => session.peerId === peerId),
+            this.links().filter((link) => link.boundPeerId() === peerId),
+            'revoked',
+        );
+    }
+
+    /**
+     * Terminates every session and enrollment link without touching durable trust
+     * records (design D2/R8): the non-destructive teardown used by fail-closed and a
+     * reset, distinct from the destructive pairing `cancel()`.
+     */
+    async closeAll(): Promise<void> {
+        await this.closeSelected([...this.byHandle.values()], [...this.links()], 'closed');
+    }
+
+    private async closeSelected(
+        sessions: readonly Session[],
+        links: readonly PairingLink[],
+        reason: string,
+    ): Promise<void> {
+        // Every selected generation is terminated even when one link close fails; the
+        // first failure is reported only after all of them settled.
+        const results = await Promise.allSettled([
+            ...sessions.map((session) => this.closeBehind(session, reason)),
+            ...links.map((link) => link.terminate()),
+        ]);
+        for (const result of results) {
+            if (result.status === 'rejected') throw result.reason;
+        }
+    }
+
+    /**
+     * Queues one logical termination behind the session's in-flight step. A queue
+     * that refuses the job must not leave an authorized session alive, so the
+     * teardown still runs and only the refusal is reported afterwards.
+     */
+    private closeBehind(session: Session, reason: string): Promise<void> {
+        const queued = session.queue.run(async () => {
+            this.terminate(session, reason, true);
+            await session.closed;
+        });
+        return queued.catch((error: unknown) => {
+            this.terminate(session, reason, true);
+            if (error instanceof QueueOverflow) return session.closed;
+            throw error;
+        });
     }
 
     private enqueue(session: Session, job: () => Promise<SessionEffect[]>): Promise<void> {
@@ -402,6 +477,7 @@ export class SessionManager {
         if (prefix !== null) this.onSessionClosed?.(hex(prefix));
         session.engine.teardown();
         if (this.byHandle.get(session.handle) === session) this.byHandle.delete(session.handle);
+        session.resolveClosed();
         this.controller.state.diagnostics.push({
             direction: 'local',
             type: 'session_terminated',
