@@ -536,7 +536,9 @@ describe('close after reply', () => {
 
         const opened = await side.openClientRecord(reply.bytes, 1n);
         expect(opened.type).toBe(RecordType.REMOVAL_RESPONSE);
-        expect(terminations(fixture.context, HANDLE_CONNECTION)).toEqual(['close_after_reply']);
+        // Ruling R6: a removal record type has its own terminal stage, so the requester's owner
+        // can tell a mutual removal from any other close-after-reply handler.
+        expect(terminations(fixture.context, HANDLE_CONNECTION)).toEqual(['removal']);
 
         const replyIndex = postedIndex(port, (message) => message.request_id === reply.requestId);
         const disconnectIndex = postedIndex(

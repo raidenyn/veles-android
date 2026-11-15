@@ -14,6 +14,7 @@ import { requireValidPoint } from './p256';
 import { authorized } from './policy';
 import { RECORD_MAX_CIPHERTEXT_BYTES, openRecord, sealRecord, type OpenedRecord } from './record';
 import { SessionReject } from './reject';
+import { isRemovalRecord } from './removal';
 import {
     confirmation,
     confirmInput,
@@ -79,6 +80,11 @@ const STAGE_SEQUENCE = 'sequence';
 const STAGE_DEPENDENCY = 'dependency';
 /** The handler asked for the reply-then-close outcome (design D4). */
 const STAGE_CLOSE_AFTER_REPLY = 'close_after_reply';
+/**
+ * The terminal stage reported when a removal record ended the session (design D4, ruling R6).
+ * The session owner maps exactly this stage to the removal outcome `removed`.
+ */
+export const STAGE_REMOVAL = 'removal';
 
 /** The fixed facts of one authenticated session (OTP-10 plan 9b). */
 export interface SessionContext {
@@ -234,6 +240,11 @@ interface EngineState {
     lastHeartbeatSentAt: number | null;
     receivedHeartbeats: number[];
     handshakeDeadlineAt: number;
+    /**
+     * The requester's removal-pending guard (design D4, OTP2-REC-013). Set by the owner right
+     * after it sealed `removal_request`; teardown clears it with the rest of the state.
+     */
+    removalPending: boolean;
 }
 
 function freshState(phase: Phase): EngineState {
@@ -270,6 +281,7 @@ function freshState(phase: Phase): EngineState {
         lastHeartbeatSentAt: null,
         receivedHeartbeats: [],
         handshakeDeadlineAt: 0,
+        removalPending: false,
     };
 }
 
@@ -401,6 +413,26 @@ function isActiveFamily(state: PhoneRecordState): boolean {
 }
 
 /**
+ * The requester's removal fencing (design D4, OTP2-REC-013). While a response is awaited only
+ * `removal_response` may reach the handler (`app_heartbeat` and `app_error` are handled before
+ * this check), and a response without the mark is unsolicited: either way the session ends and
+ * nothing is deleted.
+ */
+function acceptsDuringRemoval(pending: boolean, type: number): boolean {
+    if (type === RecordType.REMOVAL_RESPONSE) return pending;
+    return !pending;
+}
+
+/**
+ * Design D4/R6: a removal record type has its own terminal stage, so the owner can tell a mutual
+ * removal from any other close-after-reply handler.
+ */
+function terminalStage(terminalError: boolean, type: number): string {
+    if (terminalError) return STAGE_APP_ERROR;
+    return isRemovalRecord(type) ? STAGE_REMOVAL : STAGE_CLOSE_AFTER_REPLY;
+}
+
+/**
  * The §11.3 client class-selection rows. The mirror upgrade is applied first,
  * so `active_activation_pending` only reaches here without a proof (peer_state
  * `0x02`) or after a stale-generation refusal, and both stay recovery-only.
@@ -417,6 +449,11 @@ export class ClientSessionEngine {
     /** Pre-teardown counter snapshot, test-only (Task 10 counter observations). */
     #inboundAtTeardown = 0n;
     #outboundAtTeardown = 0n;
+    /**
+     * A handler outcome the engine sealed but could not report because an external teardown
+     * replaced the state first (design D4). Read once by the session owner.
+     */
+    #droppedTerminalStage: string | null = null;
 
     constructor(deps: ClientEngineDeps) {
         this.#deps = deps;
@@ -552,6 +589,9 @@ export class ClientSessionEngine {
         const expiry = this.#expiryFailure(now);
         if (expiry !== null) return this.#terminate(expiry);
         if (this.#exhausted(state)) return this.#terminate(STAGE_SEQUENCE);
+        // OTP2-REC-013: after `removal_request`, any application send fails the session, so no
+        // further record flows while the response is awaited.
+        if (state.removalPending) return this.#terminate(STAGE_AUTHORIZATION);
         let record: Uint8Array | null;
         try {
             record = await this.#sealApplication(state, type, body);
@@ -577,6 +617,15 @@ export class ClientSessionEngine {
         return [{ kind: 'send', bytes: record }];
     }
 
+    /**
+     * Sets the requester's removal-pending guard (design D4, OTP2-REC-013). The owner sets it on
+     * this session only, immediately after it sealed `removal_request` and inside the same
+     * serialized step, so no response can be processed before the guard is in place.
+     */
+    setRemovalPending(on: boolean): void {
+        this.#state.removalPending = on;
+    }
+
     /** Deadlines only. The client's heartbeat driver runs while processing inbound events. */
     async onTick(): Promise<SessionEffect[]> {
         const state = this.#state;
@@ -589,6 +638,17 @@ export class ClientSessionEngine {
 
     teardown(): void {
         this.#teardownInternal();
+    }
+
+    /**
+     * The terminal stage of a handler outcome whose effects an external teardown dropped, or
+     * `null`. Read once: a removal handler that completed still deleted the local record even
+     * though the generation ended before its terminal effects could be applied (design D4).
+     */
+    takeDroppedTerminalStage(): string | null {
+        const stage = this.#droppedTerminalStage;
+        this.#droppedTerminalStage = null;
+        return stage;
     }
 
     /**
@@ -938,6 +998,12 @@ export class ClientSessionEngine {
         if (opened.type === RecordType.RECONNECT_CONFIRM) {
             return this.#terminate(STAGE_AUTHORIZATION);
         }
+        // OTP2-REC-013 requester fencing: while a response is awaited only that response may
+        // arrive (the allowed heartbeat and app_error returned above). Without the mark, a
+        // response is a protocol violation. Either way the session ends and nothing is deleted.
+        if (!acceptsDuringRemoval(state.removalPending, opened.type)) {
+            return this.#terminate(STAGE_AUTHORIZATION);
+        }
         const sessionClass = state.sessionClass;
         if (sessionClass === null) return this.#terminate(STAGE_AUTHORIZATION);
         if (!authorized(opened.type, Direction.PHONE_TO_CLIENT, sessionClass)) {
@@ -1002,7 +1068,15 @@ export class ClientSessionEngine {
         // awaited or not, so no encryption can commit after this event.
         acceptingReplies = false;
         await replyChain;
-        if (this.#state !== state) return [];
+        if (this.#state !== state) {
+            // An external teardown dropped this step's effects. A handler that completed and
+            // asked for the reply-then-close outcome has already deleted its record on the
+            // removal path, so the owner must still learn the terminal stage (design D4).
+            if (!handlerFailed && closeAfterReply) {
+                this.#droppedTerminalStage = terminalStage(terminalError, opened.type);
+            }
+            return [];
+        }
         const expired = this.#expiryFailure(this.#deps.now());
         if (expired !== null) return this.#terminate(expired);
         if (replyFailed || handlerFailed) {
@@ -1025,7 +1099,7 @@ export class ClientSessionEngine {
                 ...replies,
                 {
                     kind: 'terminated',
-                    reason: terminalError ? STAGE_APP_ERROR : STAGE_CLOSE_AFTER_REPLY,
+                    reason: terminalStage(terminalError, opened.type),
                 },
                 { kind: 'close' },
             ];
