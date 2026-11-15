@@ -394,6 +394,24 @@ class SessionHost(
     }
 
     /**
+     * Settles an exchange from a sealed terminal effect that can no longer be applied because
+     * the generation ended first (design D4). The engine reports the removal stage only after
+     * the handler returned, so the stage proves the local record was deleted even though the
+     * terminal pair never reached the transport; any other terminal stage produced no valid
+     * response. Nothing in [effects] is used for anything else.
+     */
+    private fun settleTerminalFrom(live: Live, effects: List<SessionEffect>, from: Int) {
+        val reason = effects.drop(from).filterIsInstance<SessionEffect.Terminated>().lastOrNull()?.reason ?: return
+        settleRemoval(live, settlementOf(reason))
+    }
+
+    /** The removal outcome of a terminal stage: only a removal stage deleted the record. */
+    private fun settlementOf(reason: String): RemovalResult = when (reason) {
+        PhoneSessionEngine.STAGE_REMOVAL -> RemovalResult.REMOVED
+        else -> RemovalResult.KEPT_NO_RESPONSE
+    }
+
+    /**
      * Settles the generation's in-flight removal exchange exactly once (design D4): the first
      * outcome wins, so a disconnect racing a delivered response keeps whichever ended first.
      */
@@ -631,6 +649,11 @@ class SessionHost(
         var sent = false
         for ((index, effect) in effects.withIndex()) {
             if (!isCurrent(live)) {
+                // Design D4: a sealed terminal outcome is logical state, not transport admission.
+                // A disconnect can end the generation while a removal handler is still deleting;
+                // the deletion that already completed must still settle the exchange, while no
+                // send may reach the transport of an ended generation.
+                settleTerminalFrom(live, effects, index)
                 eraseSends(effects, index)
                 return false
             }
@@ -656,15 +679,7 @@ class SessionHost(
                     // it handled the gate, never from inside the handler's context hook.
                     if (!sendUnprompted(live, effect.unprompted)) return false
                 }
-                is SessionEffect.Terminated -> settleRemoval(
-                    live,
-                    if (effect.reason == PhoneSessionEngine.STAGE_REMOVAL) {
-                        RemovalResult.REMOVED
-                    } else {
-                        // Any other end of an awaiting session produced no valid response.
-                        RemovalResult.KEPT_NO_RESPONSE
-                    },
-                )
+                is SessionEffect.Terminated -> settleRemoval(live, settlementOf(effect.reason))
                 is SessionEffect.Deliver -> Unit // OTP-09 has no application consumer; OTP-10 adds one.
                 SessionEffect.Close -> {
                     teardownLocked(live)

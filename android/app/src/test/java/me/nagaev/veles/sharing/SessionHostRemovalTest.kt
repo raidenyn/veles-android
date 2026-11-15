@@ -1,5 +1,6 @@
 package me.nagaev.veles.sharing
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.TestScope
@@ -128,6 +129,45 @@ class SessionHostRemovalTest {
             1,
             wire.sent.count { wireTypeOf(it.bytes) == RecordType.REMOVAL_REQUEST.wire },
         )
+    }
+
+    @Test
+    fun removalSettlesRemovedWhenADisconnectRacesTheDeletion() = runTest {
+        val client = TestClient()
+        val wire = RecordingTransport()
+        val ops = SuspendedRemovalOperations()
+        lateinit var created: PhoneSessionEngine
+        val host = host(wire) { engine(client, ops).also { created = it } }
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+        authenticate(host, gen, client, wire)
+        val peerId = TrustEncoding.hex(client.installationId)
+
+        val removal = async { host.requestRemoval(peerId) }
+        runCurrent()
+        assertEquals(1, wire.sent.count { wireTypeOf(it.bytes) == RecordType.REMOVAL_REQUEST.wire })
+
+        host.onRecord(gen, client.record(RecordType.REMOVAL_RESPONSE.wire, 1uL), admission())
+        runCurrent()
+        assertTrue("the handler is suspended in the deletion", ops.entered.isCompleted)
+        assertTrue("nothing is deleted yet", ops.deleted.isEmpty())
+
+        host.onDisconnected(gen)
+        runCurrent()
+        val callsAtDisconnect = wire.calls.size
+
+        ops.allow()
+        runCurrent()
+
+        assertEquals(
+            "the deletion that already happened still settles the exchange as removed",
+            RemovalResult.REMOVED,
+            removal.await(),
+        )
+        assertEquals("the local record is deleted", listOf(peerId), ops.deleted)
+        assertEquals("nothing is sent after the disconnect", callsAtDisconnect, wire.calls.size)
+        assertFalse("no session remains authorized", host.authenticatedSessions().isNotEmpty())
+        assertFalse("the generation is torn down", created.isOpen)
     }
 
     @Test
@@ -313,6 +353,24 @@ class SessionHostRemovalTest {
 
         override fun close(gen: ConnectionGeneration) {
             calls += Wire.Closed(gen)
+        }
+    }
+
+    /**
+     * A fake [RemovalOperations] whose deletion suspends until [allow], so a test can race a
+     * disconnect into the handler's deletion.
+     */
+    private class SuspendedRemovalOperations : RemovalOperations {
+        val entered = CompletableDeferred<Unit>()
+        val deleted = mutableListOf<String>()
+        private val gate = CompletableDeferred<Unit>()
+
+        fun allow() = gate.complete(Unit)
+
+        override suspend fun deleteFenced(peerId: String) {
+            entered.complete(Unit)
+            gate.await()
+            deleted += peerId
         }
     }
 
