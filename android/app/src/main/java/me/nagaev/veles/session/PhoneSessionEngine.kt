@@ -378,6 +378,7 @@ class PhoneSessionEngine(
         if (!applicationHandler.handles(opened.type)) return terminateUnhandled()
         val replies = mutableListOf<SessionEffect>()
         var terminalError = false
+        var closeAfterReply = false
         try {
             applicationHandler.handle(opened.type, opened.body) { replyType, replyBody ->
                 if (terminalError) return@handle
@@ -385,6 +386,9 @@ class PhoneSessionEngine(
                 replies += SessionEffect.Send(record)
                 terminalError = replyType == RecordType.APP_ERROR.wire
             }
+            // Design D4: the handler must not tear the session down itself; it asks for the
+            // reply-then-close outcome and the engine performs the terminal transition.
+            closeAfterReply = applicationHandler.closeAfterReply(opened.type)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (_: SessionReject) {
@@ -394,9 +398,10 @@ class PhoneSessionEngine(
         }
         // A handler is suspending: it may return after teardown or after the idle deadline.
         if (state == State.CLOSED) return emptyList()
-        if (terminalError) {
+        if (terminalError || closeAfterReply) {
             teardownInternal()
-            return replies + listOf(SessionEffect.Terminated(STAGE_APP_ERROR), SessionEffect.Close)
+            val stage = if (terminalError) STAGE_APP_ERROR else STAGE_CLOSE_AFTER_REPLY
+            return replies + listOf(SessionEffect.Terminated(stage), SessionEffect.Close)
         }
         expiryFailure()?.let { return terminate(it) }
         return listOf(SessionEffect.Deliver(opened.type, opened.body)) + replies
@@ -767,5 +772,8 @@ class PhoneSessionEngine(
         const val STAGE_UNHANDLED = "unhandled"
         const val STAGE_SEQUENCE = "sequence"
         const val STAGE_DEPENDENCY = "dependency"
+
+        /** The handler asked for the reply-then-close outcome (design D4). */
+        const val STAGE_CLOSE_AFTER_REPLY = "close_after_reply"
     }
 }

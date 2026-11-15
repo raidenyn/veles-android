@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -16,6 +17,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import me.nagaev.veles.pairing.Outgoing
 import me.nagaev.veles.pairing.PairingConnection
+import me.nagaev.veles.pairing.RejectingPairingConnection
 import me.nagaev.veles.session.ApplicationHandler
 import me.nagaev.veles.session.Direction
 import me.nagaev.veles.session.FakeClock
@@ -40,6 +42,7 @@ import me.nagaev.veles.trust.InstallationTrustRepository
 import me.nagaev.veles.trust.PendingPeer
 import me.nagaev.veles.trust.TrustEncoding
 import me.nagaev.veles.trust.TrustException
+import me.nagaev.veles.trust.TrustState
 import me.nagaev.veles.trust.TrustedPeer
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -67,6 +70,7 @@ class SessionHostTest {
         repository: InstallationTrustRepository = trust,
         now: () -> Long = { clock.now },
         onSessionClosed: (String) -> Unit = {},
+        pairingFactory: (ConnectionGeneration) -> PairingConnection = { RejectingPairingConnection() },
         factory: (ConnectionGeneration) -> PhoneSessionEngine,
     ): SessionHost = SessionHost(
         backgroundScope,
@@ -74,6 +78,7 @@ class SessionHostTest {
         factory,
         repository,
         now,
+        pairingFactory,
         onSessionClosed = onSessionClosed,
     )
 
@@ -885,13 +890,236 @@ class SessionHostTest {
         host.shutdown()
     }
 
-    private class FakePairingConnection : PairingConnection {
+    @Test
+    fun closePeerClosesOnlyMatchingGenerations() = runTest {
+        val peerA = peer(0x11)
+        val peerB = peer(0x22)
+        val hexA = TrustEncoding.hex(peerA.installationId)
+        val hexB = TrustEncoding.hex(peerB.installationId)
+        // Two distinct peers that share one label: a label never selects a generation.
+        val repository = RecordingTrust(
+            known = listOf(trustedPeer(hexA, SAME_LABEL), trustedPeer(hexB, SAME_LABEL)),
+        )
+        val bound = FakePairingConnection(bound = hexA)
+        val unbound = FakePairingConnection()
+        val engines = mutableMapOf<String, PhoneSessionEngine>()
+        val host = host(
+            repository = repository,
+            pairingFactory = { gen -> if (gen.address == "enroll-bound") bound else unbound },
+        ) { gen ->
+            (if (gen.address == "b") engine(peerB) else engine(peerA)).also { engines[gen.address] = it }
+        }
+        val a = ConnectionGeneration("a", 1)
+        val b = ConnectionGeneration("b", 2)
+        val enrollBound = ConnectionGeneration("enroll-bound", 3)
+        val enrollUnbound = ConnectionGeneration("enroll-unbound", 4)
+        val handshaking = ConnectionGeneration("handshaking", 5)
+        connect(host, a)
+        connect(host, b)
+        authenticate(host, a, peerA)
+        authenticate(host, b, peerB)
+        connect(host, enrollBound)
+        host.onRecord(enrollBound, byteArrayOf(PAIRING_FIRST_FRAME), admission())
+        runCurrent()
+        connect(host, enrollUnbound)
+        host.onRecord(enrollUnbound, byteArrayOf(PAIRING_FIRST_FRAME), admission())
+        runCurrent()
+        connect(host, handshaking)
+        assertEquals("both trusted peers carry the same label", 1, repository.peers().map { it.label }.distinct().size)
+
+        host.closePeer(hexA)
+        runCurrent()
+
+        assertFalse("the matching authenticated session ended", engines.getValue("a").isOpen)
+        assertTrue("its transport was closed", wire.calls.contains(Wire.Closed(a)))
+        assertTrue("the other peer's session is untouched", engines.getValue("b").isOpen)
+        assertTrue("the other peer's transport stays open", wire.calls.none { it == Wire.Closed(b) })
+        assertEquals("the enrollment bound to the peer is torn down", 1, bound.disconnects)
+        assertEquals("a bound enrollment is never cancelled destructively", 0, bound.cancels)
+        assertTrue("the bound enrollment's transport was closed", wire.calls.contains(Wire.Closed(enrollBound)))
+        assertEquals("an unbound enrollment is untouched", 0, unbound.disconnects)
+        assertTrue("an unbound enrollment stays connected", wire.calls.none { it == Wire.Closed(enrollUnbound) })
+        assertTrue(
+            "a generation that authenticated no peer stays untouched",
+            wire.calls.none { it == Wire.Closed(handshaking) },
+        )
+        assertEquals(
+            "only the other peer's session remains listed",
+            listOf(b),
+            host.authenticatedSessions().map { it.generation },
+        )
+        host.shutdown()
+    }
+
+    @Test
+    fun closePeerReturnsAfterEnded() = runTest {
+        val client = TestClient()
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val handler = object : ApplicationHandler {
+            override fun handles(type: Int): Boolean = type == RecordType.EVENT_ACK.wire
+
+            override suspend fun handle(type: Int, body: ByteArray, reply: suspend (Int, ByteArray) -> Unit) {
+                entered.complete(Unit)
+                gate.await()
+            }
+        }
+        lateinit var created: PhoneSessionEngine
+        val host = host { engine(client, handler = handler).also { created = it } }
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+        authenticate(host, gen, client)
+        host.onRecord(gen, client.record(RecordType.EVENT_ACK.wire, 1uL, ackBody(1)), admission())
+        runCurrent()
+        assertTrue("the handler holds the generation", entered.isCompleted)
+
+        val closing = async { host.closePeer(TrustEncoding.hex(client.installationId)) }
+        runCurrent()
+        assertFalse("closePeer waits behind the in-flight step", closing.isCompleted)
+        assertTrue("the session is live while the handler runs", created.isOpen)
+
+        gate.complete(Unit)
+        runCurrent()
+
+        assertTrue("closePeer returned", closing.isCompleted)
+        assertFalse("the generation ended before closePeer returned", created.isOpen)
+        assertNull("the peer id is erased at teardown", created.peerId)
+        assertTrue("the session keys are erased", created.keysErasedForTest)
+        assertTrue("the transport was closed", wire.calls.contains(Wire.Closed(gen)))
+        host.shutdown()
+    }
+
+    @Test
+    fun closePeerWaitsBehindInFlightHandlerStep() = runTest {
+        val client = TestClient()
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val handler = object : ApplicationHandler {
+            override fun handles(type: Int): Boolean = type == RecordType.REMOVAL_REQUEST.wire
+
+            override suspend fun handle(type: Int, body: ByteArray, reply: suspend (Int, ByteArray) -> Unit) {
+                reply(RecordType.REMOVAL_RESPONSE.wire, ByteArray(0))
+                entered.complete(Unit)
+                gate.await()
+            }
+        }
+        lateinit var created: PhoneSessionEngine
+        val host = host { engine(client, handler = handler).also { created = it } }
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+        authenticate(host, gen, client)
+        host.onRecord(gen, client.record(RecordType.REMOVAL_REQUEST.wire, 1uL), admission())
+        runCurrent()
+        assertTrue("the handler holds the generation", entered.isCompleted)
+
+        val closing = async { host.closePeer(TrustEncoding.hex(client.installationId)) }
+        runCurrent()
+        assertFalse("the close waits behind the handler step", closing.isCompleted)
+        assertTrue(
+            "the reply has not reached the transport before the handler returns",
+            wire.sent.none { wireTypeOf(it.bytes) == RecordType.REMOVAL_RESPONSE.wire },
+        )
+        assertTrue("nothing is closed while the handler is in flight", wire.calls.none { it is Wire.Closed })
+
+        gate.complete(Unit)
+        runCurrent()
+
+        val replyIndex = wire.calls.indexOfFirst { it is Wire.Sent && wireTypeOf(it.bytes) == RecordType.REMOVAL_RESPONSE.wire }
+        val closeIndex = wire.calls.indexOfFirst { it is Wire.Closed && it.gen == gen }
+        assertTrue("the handler's reply reached the transport", replyIndex >= 0)
+        assertTrue("the transport closed only after the reply", closeIndex > replyIndex)
+        assertTrue("closePeer returned after the close", closing.isCompleted)
+        assertFalse(created.isOpen)
+        host.shutdown()
+    }
+
+    @Test
+    fun closeAllKeepsDurablePendingRecords() = runTest {
+        val client = TestClient()
+        val durable = mutableListOf("pending-record")
+        val pairing = FakePairingConnection(durable = durable)
+        val host = host(pairingFactory = { pairing }) { engine(client) }
+        val session = ConnectionGeneration("aa", 1)
+        val enrollment = ConnectionGeneration("bb", 2)
+        connect(host, session)
+        authenticate(host, session, client)
+        connect(host, enrollment)
+        host.onRecord(enrollment, byteArrayOf(PAIRING_FIRST_FRAME), admission())
+        runCurrent()
+
+        host.closeAll()
+        runCurrent()
+
+        assertEquals("the durable pending record is kept", listOf("pending-record"), durable)
+        assertEquals("no enrollment is destructively cancelled", 0, pairing.cancels)
+        assertEquals("the enrollment is disconnected non-destructively", 1, pairing.disconnects)
+        assertTrue("the session transport closed", wire.calls.contains(Wire.Closed(session)))
+        assertTrue("the enrollment transport closed", wire.calls.contains(Wire.Closed(enrollment)))
+        assertTrue("no session remains authorized", host.authenticatedSessions().isEmpty())
+
+        val next = ConnectionGeneration("cc", 3)
+        connect(host, next)
+        authenticate(host, next, client)
+        assertTrue(
+            "the host stays usable after a non-destructive closeAll",
+            host.authenticatedSessions().any { it.generation == next },
+        )
+        host.shutdown()
+    }
+
+    @Test
+    fun transportCloseFailureStillErasesKeys() = runTest {
+        val client = TestClient()
+        lateinit var created: PhoneSessionEngine
+        val failing = RecordingTransport(closeFails = true)
+        val host = host(transport = failing) { engine(client).also { created = it } }
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+        authenticate(host, gen, client, transport = failing)
+
+        val failure = runCatching { host.closePeer(TrustEncoding.hex(client.installationId)) }
+
+        assertTrue("the best-effort disconnect failure is reported", failure.isFailure)
+        assertFalse("logical termination does not depend on the transport", created.isOpen)
+        assertTrue("the keys were erased before the close", created.keysErasedForTest)
+        assertTrue("no session remains authorized", host.authenticatedSessions().isEmpty())
+        assertFalse("the ended generation is never selected again", host.hasOpenSession(TrustEncoding.hex(client.installationId)))
+    }
+
+    /** A distinct peer: its own identity, installation id and ephemeral key. */
+    private fun peer(seed: Int): TestClient = TestClient(
+        identity = TestIdentity.generate(),
+        installationId = ByteArray(16) { seed.toByte() },
+        ephemeral = P256.generate(),
+    )
+
+    private fun trustedPeer(installationId: String, label: String): TrustedPeer = TrustedPeer(
+        installationId = installationId,
+        publicKey = "04" + "00".repeat(64),
+        label = label,
+        deviceType = 1,
+        enrollmentTranscript = "",
+        fingerprint = "",
+        state = TrustState.ACTIVE,
+        createdAtMillis = 0L,
+        lastSeenMillis = null,
+        createdElapsedMillis = 0L,
+        bootToken = "",
+        stateChangedAtMillis = 0L,
+    )
+
+    private class FakePairingConnection(
+        private val bound: String? = null,
+        private val durable: MutableList<String>? = null,
+    ) : PairingConnection {
         var frames = 0
             private set
         var cancels = 0
             private set
         var disconnects = 0
             private set
+
+        override fun boundPeerId(): String? = bound
 
         override suspend fun onFrame(bytes: ByteArray): List<Outgoing> {
             frames++
@@ -906,6 +1134,7 @@ class SessionHostTest {
 
         override suspend fun cancel(): List<Outgoing> {
             cancels++
+            durable?.clear()
             return listOf(Outgoing.Disconnect)
         }
     }
@@ -917,8 +1146,20 @@ class SessionHostTest {
         /** Any `0x02`-`0x05` first frame selects the pairing path. */
         const val PAIRING_FIRST_FRAME: Byte = 0x03
 
+        /** The version byte every protected record starts with (pre-auth frames never carry it). */
+        const val RECORD_PROTOCOL_VERSION = 1
+
+        /** Both trusted peers in the selection test carry this one label. */
+        const val SAME_LABEL = "Desktop"
+
+        /**
+         * The record type of a protected record, or null for a pre-auth frame. A pre-auth frame
+         * starts with its frame type (`0x06`/`0x07`/`0x0F`); its payload bytes 0-1 would
+         * otherwise read as a record type and a signature's first byte randomly matched one.
+         */
         fun wireTypeOf(bytes: ByteArray): Int? {
             if (bytes.size < 5) return null
+            if (bytes[0].toInt() and 0xFF != RECORD_PROTOCOL_VERSION) return null
             return ((bytes[3].toInt() and 0xFF) shl 8) or (bytes[4].toInt() and 0xFF)
         }
     }
@@ -935,6 +1176,7 @@ class SessionHostTest {
     private class RecordingTransport(
         var accept: Boolean = true,
         private val events: MutableList<String>? = null,
+        private val closeFails: Boolean = false,
     ) : SessionTransport {
         val calls = mutableListOf<Wire>()
         val sent get() = calls.filterIsInstance<Wire.Sent>()
@@ -947,18 +1189,20 @@ class SessionHostTest {
 
         override fun close(gen: ConnectionGeneration) {
             calls += Wire.Closed(gen)
+            if (closeFails) error("the transport disconnect failed")
         }
     }
 
     private class RecordingTrust(
         private val events: MutableList<String>? = null,
         private val failMark: Boolean = false,
+        private val known: List<TrustedPeer> = emptyList(),
     ) : InstallationTrustRepository {
         val marked = mutableListOf<String>()
 
         override suspend fun identity(): InstallationIdentity = error("not used by the adapter")
-        override suspend fun peers(): List<TrustedPeer> = emptyList()
-        override suspend fun activePeers(): List<TrustedPeer> = emptyList()
+        override suspend fun peers(): List<TrustedPeer> = known
+        override suspend fun activePeers(): List<TrustedPeer> = known
         override suspend fun addPending(peer: PendingPeer) = error("not used by the adapter")
         override suspend fun confirm(peerId: String, step: ActivationStep, proof: ByteArray) = error("not used by the adapter")
         override suspend fun revoke(peerId: String) = error("not used by the adapter")

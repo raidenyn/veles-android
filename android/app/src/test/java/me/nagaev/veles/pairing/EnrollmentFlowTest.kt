@@ -128,6 +128,29 @@ class EnrollmentFlowTest : PairingTestBase() {
     }
 
     @Test
+    fun boundPeerIdIsSetOnlyWhileTheClientIdentityIsDurable() = runBlocking {
+        val h = Harness()
+        try {
+            h.runToCb()
+            assertNull(
+                "an enrollment that authenticated no peer is never a termination target",
+                h.machine.boundPeerId(),
+            )
+
+            h.sendClientIdentity()
+            assertEquals("the verified durable client identity binds the connection", h.clientInstallationHex, h.machine.boundPeerId())
+            assertEquals("the pending record is durable", 1, h.trust.peers().size)
+
+            h.machine.onDisconnect()
+
+            assertNull("a disconnected enrollment is unbound", h.machine.boundPeerId())
+            assertEquals("a non-destructive disconnect keeps the pending record", 1, h.trust.peers().size)
+        } finally {
+            h.close()
+        }
+    }
+
+    @Test
     fun duplicate_identity_after_commit_rejected_in_committed_waiting_ack() = runBlocking {
         val h = Harness()
         try {

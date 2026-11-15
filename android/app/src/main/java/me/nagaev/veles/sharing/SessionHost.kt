@@ -97,7 +97,7 @@ internal object TransportMode {
  * [SessionEffect.Authenticated] effect, still under the mutex, after re-checking that the
  * generation is current and the engine is open.
  */
-@Suppress("TooManyFunctions") // Lifecycle callbacks, three public queries, worker and effect applier.
+@Suppress("TooManyFunctions") // Lifecycle callbacks, five queries/commands, worker and effect applier.
 class SessionHost(
     private val scope: CoroutineScope,
     private val transport: SessionTransport,
@@ -164,6 +164,18 @@ class SessionHost(
         @Volatile var peerId: ByteArray? = null
 
         @Volatile var sessionIdPrefix: ByteArray? = null
+
+        /**
+         * Completes when [teardownLocked] has erased this generation (design D8). A peer
+         * termination awaits it, so "the call returned" means "the generation ended".
+         */
+        val endedSignal = CompletableDeferred<Unit>()
+
+        /** True when this generation is bound to [peerIdHex]; never by a label or address. */
+        fun isBoundTo(peerIdHex: String): Boolean {
+            val authenticated = peerId?.let(TrustEncoding::hex)
+            return authenticated == peerIdHex || pairing?.boundPeerId() == peerIdHex
+        }
     }
 
     private val registry = Any()
@@ -337,6 +349,48 @@ class SessionHost(
     }
 
     private fun enqueue(live: Live, step: Step): Boolean = !live.ended && live.queue.trySend(step).isSuccess
+
+    /**
+     * Terminates every generation bound to [peerIdHex] and returns only after each of them has
+     * ended (design D3). A generation is selected by its authenticated peer id or by the peer
+     * its live enrollment connection is bound to; connections of other peers, enrollments not
+     * yet bound to a peer, and address-based reconnects are never selected, and a label, native
+     * handle or hint is never an input.
+     *
+     * Each match runs the teardown and the transport close under that generation's own mutex,
+     * so this waits behind an in-flight step — including a handler's reply sends and close
+     * effects — and the reply is delivered first. A handler must never call this on its own
+     * generation: the call would wait for the step it is running inside.
+     */
+    suspend fun closePeer(peerIdHex: String) {
+        val lives = synchronized(registry) { all.filter { it.isBoundTo(peerIdHex) } }
+        lives.forEach { endGeneration(it) }
+    }
+
+    /**
+     * Non-destructive teardown of every generation (design D6): keys are erased and the
+     * transport is closed, while every durable enrollment record and pairing state is kept.
+     * Distinct from [cancelPairings], the destructive path that deletes the incomplete records
+     * of live enrollments; fail-closed recovery and identity reset use this one.
+     */
+    suspend fun closeAll() {
+        val lives = synchronized(registry) { all.toList() }
+        lives.forEach { endGeneration(it) }
+    }
+
+    /**
+     * Tears [live] down and closes its transport when it is still admitted, then awaits the end
+     * signal: the teardown is authoritative, the disconnect is best-effort and may throw without
+     * leaving authorization behind (design D2).
+     */
+    private suspend fun endGeneration(live: Live) {
+        live.mutex.withLock {
+            val admitted = isCurrent(live)
+            teardownLocked(live)
+            if (admitted) transport.close(live.gen)
+        }
+        live.endedSignal.await()
+    }
 
     private suspend fun runTicks(live: Live) {
         var last = clock()
@@ -703,6 +757,9 @@ class SessionHost(
             if (sessions[live.gen] === live) sessions.remove(live.gen)
             all.remove(live)
         }
+        // Design D8: a peer termination awaits this signal, so it completes only after the
+        // generation's keys, records and host state are all gone.
+        live.endedSignal.complete(Unit)
     }
 
     private fun isCurrent(live: Live): Boolean = !live.ended && synchronized(registry) { sessions[live.gen] === live }

@@ -24,6 +24,12 @@ private class CompositeApplicationHandler(
 
     override fun handles(type: Int): Boolean = sessionHandlers.any { it.handles(type) }
 
+    /**
+     * Design D4: forward the reply-then-close outcome from the child that handled [type]. A
+     * missed forward would silently disable it, so composition is covered by its own test.
+     */
+    override fun closeAfterReply(type: Int): Boolean = sessionHandlers.any { it.handles(type) && it.closeAfterReply(type) }
+
     override suspend fun handle(
         type: Int,
         body: ByteArray,

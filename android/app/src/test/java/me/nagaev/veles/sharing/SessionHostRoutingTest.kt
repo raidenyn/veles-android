@@ -102,6 +102,8 @@ class SessionHostRoutingTest {
     private class RecordingPairingConnection : PairingConnection {
         val frames = mutableListOf<ByteArray>()
 
+        override fun boundPeerId(): String? = null
+
         override suspend fun onFrame(bytes: ByteArray): List<Outgoing> {
             frames += bytes.copyOf()
             return listOf(Outgoing.Frame(byteArrayOf(PAIRING_MARKER.toByte())), Outgoing.Disconnect)

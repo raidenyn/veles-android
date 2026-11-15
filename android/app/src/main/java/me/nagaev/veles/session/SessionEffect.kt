@@ -64,6 +64,15 @@ interface ApplicationHandler {
     suspend fun handle(type: Int, body: ByteArray, reply: suspend (type: Int, body: ByteArray) -> Unit)
 
     /**
+     * The explicit reply-then-close outcome (design D4): true means the handler wants the
+     * engine to seal and deliver its buffered replies, tear itself down and emit the terminal
+     * `Close`, so the reply is the last record in that direction and nothing is accepted
+     * afterwards. A handler must never tear the session down itself or await its own
+     * generation; it returns this outcome instead.
+     */
+    fun closeAfterReply(type: Int): Boolean = false
+
+    /**
      * Optional per-session context: the engine asks for the handler instance of one
      * authenticated session once, when the class is fixed, and uses only that instance for
      * the session's records. The default keeps this same instance.
