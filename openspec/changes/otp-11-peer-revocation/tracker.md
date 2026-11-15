@@ -3,4 +3,4 @@
 - Issue: raidenyn/veles-android#93
 - Source documents: docs/rfcs/2026-08-21-otp-external-devices.md (section OTP-11)
 - Created: 2026-11-15
-- Implementation PR:
+- Implementation PR: https://github.com/raidenyn/veles-android/pull/156
