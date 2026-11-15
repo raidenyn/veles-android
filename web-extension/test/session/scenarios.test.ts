@@ -2,7 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { Direction, RecordType, SessionClass, recordTypeFromWire } from '../../src/session/wire';
+import {
+    Direction,
+    RecordType,
+    SessionClass,
+    recordTypeAllows,
+    recordTypeFromWire,
+} from '../../src/session/wire';
 import { SessionReject } from '../../src/session/reject';
 import {
     confirmation,
@@ -11,7 +17,12 @@ import {
     rbase as reconnectRbase,
 } from '../../src/session/schedule';
 import { RECORD_HEADER_BYTES, RECORD_MAX_BYTES } from '../../src/session/record';
-import type { ApplicationHandler, SessionEffect } from '../../src/session/engine';
+import {
+    STAGE_REMOVAL,
+    type ApplicationHandler,
+    type SessionEffect,
+} from '../../src/session/engine';
+import { createRemovalHandler, type RemovalOperations } from '../../src/session/removal';
 import { ActivationEngine, composeHandlers } from '../../src/pairing/activation';
 import { ProofRegistry } from '../../src/pairing/proofs';
 import {
@@ -34,6 +45,13 @@ import {
 // one `sendApplication` call. Every simulated flag the inventory allows is applied
 // to real bytes (hello caps, signature, confirm HMAC, tag, 4097-byte record, session
 // prefix, policy flag) and the engine's bounded rejection reasons are observed.
+//
+// OTP-11 adds two adaptations, both recorded in the inventory as executed entries:
+// the production removal handler is composed beside the passive handler, so
+// `removal_request` / `removal_response` run through the real delete-then-reply-then-
+// close path, and the two phone-role traces both endpoints must execute are replayed
+// against the client engine (`PHONE_ROLE_REPLAY_IDS`). Their `removal_response` send
+// step is observation-only because the handler already replied and ended the session.
 
 const PROTOCOL_ROOT = resolve(import.meta.dirname, '../../../protocol');
 const INVENTORY = resolve(PROTOCOL_ROOT, 'conformance/otp-09-scenarios.json');
@@ -76,6 +94,17 @@ const EFFECTIVE_INVENTORY: Record<string, unknown> = {
     ...INVENTORY_ENTRIES,
     ...OTP10_INVENTORY_ENTRIES,
 };
+/**
+ * OTP-11: the mutual-removal and local-revoke traces are authored for the phone (`role: phone`),
+ * and `mutual-peer-removal` "Removal conformance" requires both endpoints to execute the removal
+ * fixture. Design D10 names this suite, so the client runner replays these two phone traces
+ * against the client engine: the endpoint under test is this endpoint's engine and the fixture's
+ * durable-record machine is its own record.
+ */
+const PHONE_ROLE_REPLAY_IDS = new Set([
+    'st-rec-removal-mutual-authenticated',
+    'st-rec-revoke-disconnects-connected-peer',
+]);
 const SESSION_IDS = new Set(FIXTURES.map((fixture) => fixture.id));
 const ENROLLMENT_IDS = new Set(ENROLLMENT_FIXTURES.map((fixture) => fixture.id));
 /** The OTP-09 runner executes `records.json`/`reconnect.json` ids only. */
@@ -102,6 +131,11 @@ function readInventory(path: string): Record<string, unknown> {
 function classificationOf(entry: unknown, deferral: RegExp): boolean {
     if (typeof entry === 'string') return entry === 'execute' || deferral.test(entry);
     return engineEffectOf(entry) !== null;
+}
+
+/** True for every inventory id this suite executes (client traces plus the OTP-11 replays). */
+function executesInClientRunner(id: string): boolean {
+    return roleOf(byId(id)) === 'client' || PHONE_ROLE_REPLAY_IDS.has(id);
 }
 
 const byId = (id: string): Fixture => {
@@ -396,6 +430,7 @@ interface StepOutcome {
     index: number;
     event: string;
     simulate: Record<string, string>;
+    recordType: number | null;
     terminated: string | null;
     closed: boolean;
     sentTypes: number[];
@@ -445,6 +480,14 @@ interface RunObservations {
     /** State the repository loaded from durable storage before any session upgrade. */
     reloadedState: string;
     durableState: string;
+    /** OTP2-REC-013: the removal handler replied and asked for the reply-then-close outcome. */
+    removalClosed: boolean;
+    /** OTP2-REC-013: a removal (not a local revoke) deleted the durable trust record. */
+    removalDeletedTrust: boolean;
+    /** OTP2-REC-013: the removal handler sealed `removal_response` as the last record it sent. */
+    removalResponseSent: boolean;
+    /** OTP2-REV-001: a local revoke deleted the durable trust record and ended the session. */
+    revokedTrust: boolean;
 }
 
 function wireType(bytes: Uint8Array): number | null {
@@ -585,6 +628,8 @@ class ClientRepository {
 
 class ClientScenario {
     private readonly fixture: Fixture;
+    /** The fixture's durable-record machine for the endpoint under test (`durable_*_record:main`). */
+    private readonly localMachine: string;
     private readonly clock = new FakeClock();
     private readonly observations: RunObservations = {
         steps: [],
@@ -607,6 +652,10 @@ class ClientScenario {
         storeState: '',
         reloadedState: '',
         durableState: '',
+        removalClosed: false,
+        removalDeletedTrust: false,
+        removalResponseSent: false,
+        revokedTrust: false,
     };
 
     private generation: {
@@ -631,12 +680,16 @@ class ClientScenario {
 
     constructor(fixture: Fixture) {
         this.fixture = fixture;
+        // A client trace names this endpoint's durable record `durable_client_record:main`; a
+        // replayed phone trace names it `durable_phone_record:main`. Either way it is the same
+        // local machine, so the runner reads and reports the trace's own name.
+        this.localMachine =
+            roleOf(fixture) === 'client' ? `${RECORD_PREFIX}main` : 'durable_phone_record:main';
     }
 
     async run(): Promise<RunObservations> {
         const persistedState = persistedOf(this.fixture);
-        this.persistedState = (persistedState[`${RECORD_PREFIX}main`] ??
-            'active') as PersistedState;
+        this.persistedState = (persistedState[this.localMachine] ?? 'active') as PersistedState;
         this.persistedToken = persistedState.continuity_token ?? 'boot1';
         this.processToken = this.persistedToken;
         // The running process already has the repository loaded before the fixture's first
@@ -749,7 +802,14 @@ class ClientScenario {
         const harness = await PhoneHarness.create({
             state: durableRecord.state,
             clock: this.clock,
-            handler: composeHandlers(activation, handler),
+            // Design D4: the production composition is the activation handler plus the removal
+            // handler; a removal needs a trust store, so it is composed exactly where production
+            // binds one, and the replayed trace exercises the real removal handler.
+            handler: composeHandlers(
+                activation,
+                createRemovalHandler(this.removalOperations()),
+                handler,
+            ),
             store: this.repository.store,
             phoneIdentity: identity,
             phoneId: this.peerId,
@@ -770,7 +830,72 @@ class ClientScenario {
         return this.generation;
     }
 
-    private async execute(index: number, step: Step): Promise<void> {
+    /** Opens a generation and sends the client hello, for a replayed phone trace. */
+    private async openAndStart(): Promise<{
+        harness: PhoneHarness;
+        handler: ScenarioHandler;
+    }> {
+        const generation = await this.open();
+        this.started = await generation.harness.start();
+        return generation;
+    }
+
+    /**
+     * The removal handler's deletion contract over this scenario's real repository
+     * (OTP2-REC-013, design D2/D4). The coordinator's detached finish job, final sweep and
+     * asynchronous fence release are `ChromeRevocationCoordinator`'s own path and are covered by
+     * its tests; this runner executes the handler, so it deletes the record the handler names.
+     */
+    private removalOperations(): RemovalOperations {
+        return {
+            deleteFenced: async (peerId: string) => {
+                if (this.repository === null || peerId !== this.peerId) {
+                    throw new Error(
+                        `${this.fixture.id}: a removal requires the live peer's trust record`,
+                    );
+                }
+                const before = this.recordState();
+                this.deleteRecord();
+                this.observations.removalDeletedTrust =
+                    before !== 'deleted' && this.recordState() === 'deleted';
+            },
+        };
+    }
+
+    /** Design D2: delete the local durable record from the live repository and its storage. */
+    private deleteRecord(): void {
+        this.repository?.delete();
+        this.persistedState = 'deleted';
+        this.observations.storeState = 'deleted';
+    }
+
+    /** The local durable record's state: the live repository first, then storage, then the seed. */
+    private recordState(): string {
+        const live = this.repository?.store.get(this.peerId ?? '');
+        return live?.state ?? this.durable?.read(this.peerId ?? '')?.state ?? this.persistedState;
+    }
+
+    /**
+     * OTP2-ENC-020 / OTP-11: a replayed phone trace names every record from the phone's side.
+     * This endpoint is the client, so a `protected_record` step whose type §7.3 lets only the
+     * client originate (`pull_request`) cannot arrive here: the step is replayed in its legal
+     * direction, as the client's own send. The descriptor's `record_effects` are orientation
+     * neutral, so the record's processing effect is observed either way.
+     */
+    private replay(step: Step): Step {
+        if (roleOf(this.fixture) === 'client' || step.event !== 'protected_record') return step;
+        const type =
+            step.simulate.record_type === undefined ? null : Number(step.simulate.record_type);
+        if (type === null) return step;
+        const recordType = recordTypeFromWire(type);
+        if (recordType !== null && recordTypeAllows(recordType, Direction.PHONE_TO_CLIENT)) {
+            return step;
+        }
+        return { ...step, event: 'send_protected_record' };
+    }
+
+    private async execute(index: number, traceStep: Step): Promise<void> {
+        const step = this.replay(traceStep);
         const unmapped = Object.keys(step.simulate).filter((key) => !MAPPED_SIMULATE_KEYS.has(key));
         if (unmapped.length > 0) {
             throw new Error(
@@ -823,7 +948,11 @@ class ClientScenario {
                 break;
             }
             case 'reconnect_hello': {
-                const generation = this.live();
+                // A client trace opens its connection with `send_hello`; a replayed phone trace
+                // starts at the client's hello, which the client sends as its opening move, so
+                // the runner opens the generation and sends it here.
+                const generation =
+                    roleOf(this.fixture) === 'client' ? this.live() : await this.openAndStart();
                 if (step.simulate.record_exists === 'false') {
                     this.repository?.delete();
                     this.persistedState = 'deleted';
@@ -928,6 +1057,20 @@ class ClientScenario {
             case 'close_connection':
                 this.live().harness.engine.teardown();
                 break;
+            case 'revoke': {
+                // OTP2-REV-001/design D2: a local revoke deletes the durable record first, then
+                // ends the matching session. Termination is logical here — the engine erases its
+                // keys and accepts nothing further — and is never a protocol termination.
+                if (this.repository === null) {
+                    throw new Error(`${this.fixture.id}: a revoke requires a trust record`);
+                }
+                const before = this.recordState();
+                this.deleteRecord();
+                this.observations.revokedTrust =
+                    before !== 'deleted' && this.recordState() === 'deleted';
+                this.live().harness.engine.teardown();
+                break;
+            }
             default:
                 throw new Error(`unmapped scenario event '${step.event}' in ${this.fixture.id}`);
         }
@@ -943,8 +1086,16 @@ class ClientScenario {
                 this.activationSends.add(sent);
             }
         }
-        if (classified.terminated !== null) {
+        if (classified.terminated === STAGE_REMOVAL) {
+            // Design D4/R6: the removal handler deleted the record, replied and asked for the
+            // reply-then-close outcome, which the engine reports as its own terminal `removal`
+            // stage. That stage closes a healthy session and is never a protocol termination.
+            this.observations.removalClosed = true;
+        } else if (classified.terminated !== null) {
             this.observations.terminations.push(classified.terminated);
+        }
+        if (classified.sentTypes.includes(RecordType.REMOVAL_RESPONSE)) {
+            this.observations.removalResponseSent = true;
         }
         if (classified.deliveredTypes.length > 0) this.observations.delivered = true;
         const unauthorized =
@@ -972,6 +1123,7 @@ class ClientScenario {
             index,
             event: step.event,
             simulate: step.simulate,
+            recordType: type,
             terminated: classified.terminated,
             closed: classified.closed,
             sentTypes: classified.sentTypes,
@@ -1006,6 +1158,17 @@ class ClientScenario {
 
     private async send(type: number, step: Step): Promise<SessionEffect[]> {
         const { harness, handler } = this.live();
+        // OTP2-REC-013: the responder's removal handler has already sealed `removal_response`
+        // and the engine's reply-then-close outcome ended the session, so this fixture step
+        // observes that reply. The runner must never send a second record on that session.
+        if (type === RecordType.REMOVAL_RESPONSE) {
+            if (!this.observations.removalResponseSent) {
+                throw new Error(
+                    `${this.fixture.id}: the fixture observes a removal_response the handler never sent`,
+                );
+            }
+            return [];
+        }
         // COMMIT/ACK are observations, never fabricated: the activation handler must already
         // have emitted them (OTP2-STA-010b steps 1 and 5).
         if (type === RecordType.ACTIVATION_COMMIT || type === RecordType.ACTIVATION_ACK) {
@@ -1094,14 +1257,12 @@ class ClientScenario {
         const open = this.generation?.harness.engine.isOpen ?? false;
         const terminated = this.observations.terminations.some((reason) => reason !== 'app_error');
         const session = terminated ? 'terminated' : open ? 'session_open' : 'closed';
-        const live = this.repository?.store.get(this.peerId ?? '');
-        const store =
-            live?.state ?? this.durable?.read(this.peerId ?? '')?.state ?? this.persistedState;
+        const store = this.recordState();
         this.persistedState = store as PersistedState;
         this.observations.storeState = store;
         return new Map([
             ['session:main', session],
-            [`${RECORD_PREFIX}main`, store],
+            [this.localMachine, store],
         ]);
     }
 }
@@ -1228,6 +1389,26 @@ const CLIENT_EFFECTS: Record<string, (run: RunObservations) => boolean> = {
         run.steps.some(
             (step) => step.terminated === 'authorization' && step.simulate.act_mac_ok === 'false',
         ),
+    // OTP2-REC-013/OTP2-REV-001: the removal-exchange and local-revoke observations.
+    // `removal_request_processed` is the record the real removal handler consumed, whose
+    // reply-then-close outcome is the engine's own terminal `removal` stage.
+    removal_request_processed: (run) =>
+        run.removalClosed &&
+        run.steps.some(
+            (step) =>
+                step.recordType === RecordType.REMOVAL_REQUEST && step.terminated === STAGE_REMOVAL,
+        ),
+    // The removal deleted the durable record through the handler, not through a local revoke.
+    erase_trust_record_removed: (run) => run.removalDeletedTrust,
+    // The descriptor's `record_effects` maps an accepted record's type to its processing effect
+    // for a send as well as a receive, so the sealed `removal_response` is both sent and
+    // "processed" from the exchange's point of view.
+    removal_response_sent: (run) => run.removalResponseSent,
+    removal_response_processed: (run) => run.removalResponseSent,
+    // OTP2-REV-001: the local revoke deleted the record and terminated the live session without
+    // a protocol termination.
+    erase_trust_record_revoked: (run) => run.revokedTrust && run.storeState === 'deleted',
+    revocation_disconnect: (run) => run.revokedTrust && !run.sessionOpen && run.keysErased,
 };
 
 /**
@@ -1382,7 +1563,7 @@ describe('OTP-09 scenario inventory', () => {
         const executed = Object.entries(EXECUTION_INVENTORY).filter(
             ([id, entry]) =>
                 (entry === 'execute' || engineEffectOf(entry) !== null) &&
-                roleOf(byId(id)) === 'client',
+                executesInClientRunner(id),
         );
         for (const [id] of executed) {
             const effects = effectsOf(byId(id));
@@ -1396,31 +1577,43 @@ describe('OTP-09 scenario inventory', () => {
         }
     });
 
-    it('clientRoleScenariosAreDrivenByTheTypeScriptRunner', () => {
+    it('everyExecutedScenarioIsDrivenByOneRunner', () => {
         const executed = Object.entries(EXECUTION_INVENTORY).filter(
             ([, entry]) => entry === 'execute',
         );
         const phone = executed.filter(([id]) => roleOf(byId(id)) === 'phone');
         const client = executed.filter(([id]) => roleOf(byId(id)) === 'client');
-        expect(phone.length + client.length, 'every execute id belongs to one runner').toBe(
-            executed.length,
-        );
+        expect(
+            phone.length + client.length,
+            'every execute id belongs to one runner, one of which is the phone runner',
+        ).toBe(executed.length);
         // The client-id set is read from the inventory (the fixture role of every execute entry),
         // not a fixed list, so an OTP-10 entry that flips a recovery trace to `execute` reaches
-        // this runner without editing the test.
-        const inventoryClientIds = executed
-            .filter(([id]) => roleOf(byId(id)) === 'client')
-            .map(([id]) => id)
-            .sort();
+        // this runner without editing the test. OTP-11 adds the two phone-role traces both
+        // endpoints must execute (mutual-peer-removal "Removal conformance"), so this runner's
+        // set is exactly the client-role entries plus those two replays.
+        const inventoryClientIds = client.map(([id]) => id).sort();
         expect(inventoryClientIds.length).toBeGreaterThan(0);
-        expect(client.map(([id]) => id).sort()).toEqual(inventoryClientIds);
+        expect(
+            executed
+                .filter(([id]) => executesInClientRunner(id))
+                .map(([id]) => id)
+                .sort(),
+        ).toEqual([...inventoryClientIds, ...PHONE_ROLE_REPLAY_IDS].sort());
+        // The two replays stay executed entries authored for the phone, so this suite keeps
+        // exercising them as the endpoint-adapted replay rather than as client traces.
+        for (const id of PHONE_ROLE_REPLAY_IDS) {
+            expect(EFFECTIVE_INVENTORY[id], `${id} executes`).toBe('execute');
+            expect(roleOf(byId(id)), `${id} role`).toBe('phone');
+            expect(byId(id).expected.effects, `${id} effects`).toBeDefined();
+        }
     });
 });
 
 describe('client conformance scenarios', () => {
     for (const [id, entry] of Object.entries(EXECUTION_INVENTORY)) {
         const fixture = byId(id);
-        if (roleOf(fixture) !== 'client') continue;
+        if (!executesInClientRunner(id)) continue;
         const endpoint = engineEffectOf(entry);
         if (entry !== 'execute' && endpoint === null) continue;
 
