@@ -412,6 +412,45 @@ class PeerRevocationIntegrationTest {
     }
 
     @Test
+    fun aStoreFailureDuringTheRemovalHandlersDeleteFailsClosedGlobally() = runTest {
+        start()
+        val first = PairingClient(ByteArray(16) { (0x10 + it).toByte() })
+        val second = PairingClient(ByteArray(16) { (0x20 + it).toByte() })
+        seedActive(first)
+        seedActive(second)
+        val firstGen = ConnectionGeneration("aa", 1)
+        val secondGen = ConnectionGeneration("bb", 2)
+        val firstClient = first.reconnectClient()
+        reconnect(firstGen, firstClient)
+        reconnect(secondGen, second.reconnectClient())
+        assertEquals("both peers are live", 2, host.authenticatedSessions().size)
+
+        // The removal handler's durable delete is the next transaction, and its write fails:
+        // the real repository reports the episode, the real callback runs the fail-closed action,
+        // the real coordinator owns the fence and the real composed handler is in the session.
+        storage.writeFaultAt = storage.nextTransaction()
+        send(firstGen, firstClient.record(RecordType.REMOVAL_REQUEST.wire, 1uL))
+        runCurrent()
+
+        assertTrue(
+            "no removal_response is sent for a delete that did not commit",
+            transport.calls.filterIsInstance<Sent>().none {
+                it.gen == firstGen && recordTypeOf(it.bytes) == RecordType.REMOVAL_RESPONSE.wire
+            },
+        )
+        assertEquals("the one re-pair status", listOf(TrustStatus.RE_PAIR_REQUIRED), statuses)
+        assertTrue("the handler's own session is logically torn down", host.authenticatedSessions().isEmpty())
+        assertTrue("the unrelated session is terminated too", transport.closed.contains(secondGen))
+        assertTrue("the failing session is terminated too", transport.closed.contains(firstGen))
+        assertTrue("the removal fence is released", trust.fenceReleased)
+        assertTrue("no reset runs", events.none { it == STORAGE_RESET || it == KEY_DELETED })
+        assertTrue(
+            "the unrelated peer's trust is not deleted",
+            repository.peers().any { it.installationId == second.installationHex },
+        )
+    }
+
+    @Test
     fun revokeBeforeAddPendingLeavesNoRecordOrConnection() = runTest {
         start()
         val client = PairingClient()

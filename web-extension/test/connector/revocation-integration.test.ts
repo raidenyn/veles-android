@@ -566,6 +566,64 @@ describe('revocation integration: store failures fail closed', () => {
         expect(stack.local.snapshot).toEqual(before);
     });
 
+    it('fails closed when the removal handler durable delete fails in a live session', async () => {
+        const stack = await createStack();
+        const first = await TestPhone.create();
+        const second = await TestPhone.create();
+        const firstPeer = await addPeer(stack, first);
+        const secondPeer = await addPeer(stack, second);
+        // Production composition: the real activation handler plus the real removal handler,
+        // whose `deleteFenced` is the real coordinator over the real repository.
+        stack.handler = composeHandlers(
+            new ActivationEngine({ trust: stack.repository, proofs: stack.proofs }),
+            createRemovalHandler(stack.coordinator),
+        );
+        const side = await openSession(stack, { phone: first, peerId: firstPeer });
+        await openSession(
+            stack,
+            { phone: second, peerId: secondPeer },
+            HANDLE_CONNECTION_2,
+            HANDLE_DEVICE_2,
+        );
+        expect(stack.manager.authenticatedSessions()).toHaveLength(2);
+        const port = stack.controller.currentPort();
+
+        // The handler's durable delete is the next write, and it fails: the real repository
+        // reports the episode, the real callback runs the fail-closed action and the real
+        // coordinator still owns the fence.
+        stack.local.writeFaultAt = stack.local.writeCount + 1;
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.applicationFrame(RecordType.REMOVAL_REQUEST, 1n),
+        );
+        await flush();
+
+        expect(postedTypes(port, HANDLE_CONNECTION)).not.toContain(RecordType.REMOVAL_RESPONSE);
+        expect(stack.statuses).toEqual(['re-pair-required']);
+        expect(stack.manager.authenticatedSessions()).toEqual([]);
+        expect(terminations(stack, HANDLE_CONNECTION)).toHaveLength(1);
+        expect(terminations(stack, HANDLE_CONNECTION_2)).toHaveLength(1);
+        expect(stack.local.clearCalls).toBe(0);
+        expect((await stack.repository.peers()).map((peer) => peer.installationId)).toContain(
+            secondPeer,
+        );
+
+        // The fence was released after the failed handler: a deliberate pairing of the same id
+        // can write a fresh pending record.
+        await stack.repository.revoke(firstPeer);
+        await stack.repository.addPending({
+            installationId: firstPeer,
+            publicKey: hex(first.publicKey),
+            label: 'Pixel test phone',
+            deviceType: 0,
+            enrollmentTranscript: hex(ET),
+        });
+        expect((await stack.repository.peers()).map((peer) => peer.installationId)).toContain(
+            firstPeer,
+        );
+    });
+
     it('closes unrelated sessions when the durable authentication write fails', async () => {
         const stack = await createStack();
         const first = await TestPhone.create();
