@@ -347,6 +347,53 @@ class PeerRevocationCoordinatorTest {
         assertEquals("an admitted generation answers the hello", 2, transport.sent.count { it.gen == after })
     }
 
+    /**
+     * Finding: an outcome must be published in the order the reset bodies ran, never in the order
+     * the admission holds happen to be released. Here the older body failed and its hold is
+     * released last, after the newer body succeeded: a release-ordered barrier would keep
+     * admission closed although the newest completed reset recovered the store.
+     */
+    @Test
+    fun anOlderFailedResetReleasingLastDoesNotCloseAdmission() = runTest {
+        val client = TestClient()
+        val host = host { engine(client, null) }
+        val older = host.beginReset()
+        val newer = host.beginReset()
+        host.endReset(newer, true)
+        host.endReset(older, false)
+
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+        host.onRecord(gen, client.helloFrame.copyOf(), admission())
+        runCurrent()
+
+        assertTrue("the newest completed reset decides", transport.closed.none { it == gen })
+        assertEquals("an admitted generation answers the hello", 2, transport.sent.count { it.gen == gen })
+    }
+
+    /**
+     * The mirror interleaving: the older body succeeded and its hold is released last, after the
+     * newer body failed. Admission must stay closed because the newest completed reset is the one
+     * that could not discard the identity.
+     */
+    @Test
+    fun aNewerFailedResetKeepsAdmissionClosedWhenTheOlderHoldIsReleasedLast() = runTest {
+        val client = TestClient()
+        val host = host { engine(client, null) }
+        val older = host.beginReset()
+        val newer = host.beginReset()
+        host.endReset(newer, false)
+        host.endReset(older, true)
+
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+        host.onRecord(gen, client.helloFrame.copyOf(), admission())
+        runCurrent()
+
+        assertTrue("the newest completed reset decides", transport.closed.contains(gen))
+        assertTrue("a refused generation sends nothing", transport.sent.none { it.gen == gen })
+    }
+
     @Test
     fun aFailedResetKeepsAdmissionClosed() = runTest {
         val client = TestClient()

@@ -492,6 +492,89 @@ class PeerRevocationIntegrationTest {
         assertEquals("an admitted generation authenticates", listOf(after), host.authenticatedSessions().map { it.generation })
     }
 
+    /**
+     * Outcome publication follows the serialized body order, not the order the admission holds are
+     * released. The older of two overlapping resets fails and the newer one succeeds: admission
+     * must be open, and the fresh identity the successful reset published must be usable.
+     */
+    @Test
+    fun aSuccessfulResetAfterAFailedOverlappingOneReopensAdmission() = runTest {
+        start()
+        val first = PairingClient(ByteArray(16) { (0x10 + it).toByte() })
+        seedActive(first)
+        val original = repository.identity()
+        // The older body's store refuses the reset before deleting anything; the newer one runs.
+        trust.resetFailures += listOf(TrustStoreException(), null)
+        val entry = CompletableDeferred<Unit>()
+        trust.resetEntryGates += entry
+
+        val older = async { runCatching { coordinator.reset() } }
+        runCurrent()
+        val newer = async { runCatching { coordinator.reset() } }
+        runCurrent()
+        entry.complete(Unit)
+        runCurrent()
+        val olderResult = older.await()
+        val newerResult = newer.await()
+
+        assertTrue("the older reset failed", olderResult.exceptionOrNull() is TrustException)
+        assertTrue("the newer reset succeeded", newerResult.isSuccess)
+        assertEquals("only the completed reset publishes the recovery status", listOf(TrustStatus.OK), statuses)
+        val fresh = repository.identity()
+        assertNotEquals("a fresh identity is in use", original.installationId, fresh.installationId)
+        assertArrayEquals(
+            "the cache holds the successful reset's identity",
+            TrustEncoding.bytes(fresh.installationId),
+            identities.current(),
+        )
+
+        // Admission is open: a peer recorded under the fresh identity reconnects and authenticates.
+        val reopened = PairingClient(ByteArray(16) { (0x40 + it).toByte() })
+        seedActive(reopened)
+        val after = ConnectionGeneration("bb", 2)
+        reconnect(after, reopened.reconnectClient())
+        assertEquals("an admitted generation authenticates", listOf(after), host.authenticatedSessions().map { it.generation })
+    }
+
+    /**
+     * The mirror interleaving: the older of two overlapping resets succeeds and the newest one
+     * fails, so the store the last completed body could not confirm keeps admission closed and no
+     * connection is admitted after them.
+     */
+    @Test
+    fun aFailedResetAfterASuccessfulOverlappingOneKeepsAdmissionClosed() = runTest {
+        start()
+        val first = PairingClient(ByteArray(16) { (0x10 + it).toByte() })
+        seedActive(first)
+        // The newer body's store refuses the reset before deleting anything, after the older body
+        // already reset the store and refreshed the identity.
+        trust.resetFailures += listOf(null, TrustStoreException())
+        val entry = CompletableDeferred<Unit>()
+        trust.resetEntryGates += entry
+
+        val older = async { runCatching { coordinator.reset() } }
+        runCurrent()
+        val newer = async { runCatching { coordinator.reset() } }
+        runCurrent()
+        entry.complete(Unit)
+        runCurrent()
+        val olderResult = older.await()
+        val newerResult = newer.await()
+
+        assertTrue("the older reset succeeded", olderResult.isSuccess)
+        assertTrue("the newer reset failed", newerResult.exceptionOrNull() is TrustException)
+
+        val refused = ConnectionGeneration("bb", 2)
+        connect(refused)
+        send(refused, first.reconnectClient().helloFrame.copyOf())
+        assertTrue(
+            "no generation is admitted after the newest reset failed",
+            transport.calls.filterIsInstance<Sent>().none { it.isOn(refused) },
+        )
+        assertTrue("the refused generation is closed", transport.closed.contains(refused))
+        assertTrue("nothing authenticates", host.authenticatedSessions().isEmpty())
+    }
+
     @Test
     fun aStoreFailureDuringTheRemovalHandlersDeleteFailsClosedGlobally() = runTest {
         start()
@@ -898,6 +981,12 @@ class PeerRevocationIntegrationTest {
          * before its deletion body while the first one completes.
          */
         val resetEntryGates = mutableListOf<CompletableDeferred<Unit>>()
+
+        /**
+         * Failures injected into `resetIdentity` calls, in call order, before the delegate deletes
+         * anything: the store refused the reset, so nothing was discarded.
+         */
+        val resetFailures = mutableListOf<Exception?>()
         private val fences = mutableMapOf<String, Int>()
 
         val fenceReleased: Boolean get() = fences.isEmpty()
@@ -917,6 +1006,7 @@ class PeerRevocationIntegrationTest {
         override suspend fun resetIdentity() {
             val gate = synchronized(resetEntryGates) { resetEntryGates.removeFirstOrNull() }
             gate?.await()
+            synchronized(resetFailures) { resetFailures.removeFirstOrNull() }?.let { throw it }
             delegate.resetIdentity()
         }
 

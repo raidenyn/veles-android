@@ -124,8 +124,10 @@ class PeerRevocationCoordinator(
      * identity-cache refresh completed: overlapping requests each hold admission closed while
      * they wait for their serialized body, so an earlier completion can never admit a connection
      * that would miss the still-active reset's snapshot — where that reset could delete trust and
-     * refresh the identity without terminating it. A failed reset keeps admission closed, because
-     * the store may still hold the identity it could not discard.
+     * refresh the identity without terminating it. Each body's outcome is published under its own
+     * sequence, so the newest completed reset decides admission even when an older hold happens to
+     * be released after it. A failed reset keeps admission closed, because the store may still
+     * hold the identity it could not discard.
      *
      * A completed reset is also the one recovery from the latched [TrustStatus.RE_PAIR_REQUIRED]:
      * once the deletions have run and the repository has refreshed the identity cache (its
@@ -137,13 +139,16 @@ class PeerRevocationCoordinator(
         // overlapping requests then share the barrier, so admission stays closed until the last of
         // them finished deleting and refreshing (finding: an earlier reset's completion must not
         // reopen admission for a reset that has not taken its snapshot yet).
-        sessions.beginReset()
-        var completed = false
+        val sequence = sessions.beginReset()
+        // Only a body that actually ran publishes an outcome: a request cancelled while queued
+        // releases its hold with `null`, so the newest completed reset still decides admission.
+        var completed: Boolean? = null
         try {
             // Bodies are serialized one at a time, like the Chrome connector's reset chain, so a
             // queued request never tears the store down under a running one while it still holds
             // its own admission hold.
             resetLock.withLock {
+                completed = false
                 try {
                     sessions.closeAll()
                 } catch (cancelled: CancellationException) {
@@ -156,9 +161,9 @@ class PeerRevocationCoordinator(
                 onStatus(TrustStatus.OK)
             }
         } finally {
-            // Exactly one release per request, including a request cancelled before its body ran:
-            // the barrier opens only after the last active reset completed.
-            sessions.endReset(completed)
+            // Exactly one release per request. The outcome is published for [sequence], so the
+            // newest completed body decides even when an older hold is released after it.
+            sessions.endReset(sequence, completed)
         }
     }
 

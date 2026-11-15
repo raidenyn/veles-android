@@ -116,18 +116,22 @@ interface PeerSessions {
      * arrives later is refused instead of being admitted outside the snapshot, where the reset
      * could delete trust and refresh the identity without terminating it.
      *
-     * Every call owns one hold on the barrier and must be paired with exactly one [endReset], so
+     * Every call owns one hold on the barrier and must be given back by exactly one [endReset], so
      * overlapping resets share it: an earlier reset's completion says nothing about the store a
-     * still-active reset has yet to discard and refresh, so it never reopens admission.
+     * still-active reset has yet to discard and refresh, so it never reopens admission. The
+     * returned sequence orders the bodies: [endReset] publishes an outcome only for a body that is
+     * newer than every outcome already published, never by the order the holds are released.
      */
-    fun beginReset()
+    fun beginReset(): Long
 
     /**
-     * Releases this reset's own hold. Admission is reopened only when the last active reset
-     * ended, and only if that reset completed. `completed = false` keeps every later connection
-     * refused, because the store may still hold the identity the reset could not discard.
+     * Releases this reset's hold. [completed] publishes this reset's outcome only when its body
+     * actually ran, and only when no newer body published one: `true` reopens admission once the
+     * last hold is gone, `false` keeps every later connection refused because the store may still
+     * hold the identity the reset could not discard, and `null` (a request cancelled before its
+     * body ran) publishes nothing, so the newest completed reset still decides.
      */
-    fun endReset(completed: Boolean)
+    fun endReset(sequence: Long, completed: Boolean?)
 }
 
 /**
@@ -258,7 +262,8 @@ class SessionHost(
      * The reset-wide admission barrier (design D6). Guarded by [registry] and closed by the first
      * [beginReset] before a reset snapshots its generations, so no connection can be admitted —
      * and no identity read or handshake can start — while the store is being discarded. It is
-     * released only by the [endReset] of the last active reset, and only when that reset completed.
+     * released only by the [endReset] of the last active reset, and its value is the newest
+     * completed reset's outcome, never the outcome of whichever hold was released last.
      */
     private var admitting = true
 
@@ -269,10 +274,20 @@ class SessionHost(
      */
     private var resets = 0
 
+    /** The sequence handed to the next [beginReset]; also the order of the reset bodies. */
+    private var nextReset = 0L
+
     /**
-     * Set by a reset the store did not confirm: every later connection is then refused until a
-     * later reset succeeds, because the store may still hold the identity it could not discard.
-     * Guarded by [registry].
+     * The newest reset body whose outcome was published. Outcomes of older bodies are ignored, so
+     * publication follows the serialized body order even when their holds are released in the
+     * opposite order. Guarded by [registry].
+     */
+    private var publishedReset = 0L
+
+    /**
+     * Set by the newest completed reset when the store did not confirm it: every later connection
+     * is then refused until a later reset succeeds, because the store may still hold the identity
+     * it could not discard. Guarded by [registry].
      */
     private var resetRefused = false
 
@@ -297,18 +312,21 @@ class SessionHost(
         true
     }
 
-    override fun beginReset() {
-        synchronized(registry) {
-            resets += 1
-            admitting = false
-        }
+    override fun beginReset(): Long = synchronized(registry) {
+        admitting = false
+        resets += 1
+        ++nextReset
     }
 
-    override fun endReset(completed: Boolean) {
+    override fun endReset(sequence: Long, completed: Boolean?) {
         synchronized(registry) {
-            // The last ending reset decides, exactly as the Chrome connector's per-request reset
-            // counting does: a failed reset keeps admission closed until a later one succeeds.
-            resetRefused = !completed
+            // Only a body that ran publishes an outcome, and only when it is newer than every
+            // outcome already published: the newest completed reset decides, never the scheduling
+            // order of the hold releases.
+            if (completed != null && sequence > publishedReset) {
+                publishedReset = sequence
+                resetRefused = !completed
+            }
             resets = (resets - 1).coerceAtLeast(0)
             if (resets > 0) return
             admitting = !resetRefused
