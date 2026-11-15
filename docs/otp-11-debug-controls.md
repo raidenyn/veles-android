@@ -130,11 +130,19 @@ Android clear path (`REVOKE_PEER`), the non-UI form of the same local revoke:
      did not arrive; the local record is kept.
    - `Mutual remove failed` — the operation failed.
 4. Check the peer list on both endpoints and record whether each row remains.
-5. Lost-response case: with a live session, press `Mutual remove` and cut the link before the
-   response arrives (for example stop the peer endpoint's sharing service or the connector page
-   immediately after the click). The panel or screen reports the no-response line after the
-   10 000 ms removal deadline; the local record is kept.
-6. No-session case: disconnect the peer or stop one endpoint, press `Mutual remove`, and confirm
+5. Disconnect case: with a live session, press `Mutual remove` and cut the link (for example stop
+   the peer endpoint's sharing service or close the connector page immediately after the click).
+   The record is kept and the session ends on disconnect; the panel or screen reports the
+   no-response line. This exercises the disconnect path, not the response deadline: both
+   implementations settle a pending removal as soon as the session disconnects, and the response
+   can still arrive first. The no-response line alone does not identify which of those ended the
+   exchange.
+6. Response-timeout case: this needs a controlled method that suppresses only the removal response
+   while keeping the session alive until the 10 000 ms deadline, so a plain link cut cannot
+   exercise it. No such method is described here yet; this exercise is **pending**. Once one
+   exists, press `Mutual remove`, suppress the response, and record whether the no-response line
+   appears at the deadline with the local record kept.
+7. No-session case: disconnect the peer or stop one endpoint, press `Mutual remove`, and confirm
    the local-only line with no deletion on either side.
 
 ## 3. Reset identity (endpoint-wide, destructive)
@@ -151,8 +159,8 @@ Android clear path (`REVOKE_PEER`), the non-UI form of the same local revoke:
 6. Confirm the peer list is empty on the reset endpoint. Android shows `No trusted peers` and,
    after a successful reset, `Trust status: Trust OK`; the Chrome panel shows the status the
    connector reports, without inventing one.
-7. Re-pair from the other endpoint to prove the reset endpoint has a new identity, and record the
-   pairing result.
+7. Re-pair from the other endpoint and record the pairing result. This verifies only that pairing
+   works after a reset; success alone does not prove the reset endpoint has a new identity.
 
 ## Observed values — NOT YET RUN
 
@@ -168,7 +176,8 @@ below is unrun; nothing in this document is an observed result.
 | Clear via `REVOKE_PEER` (service stopped) | Android | not run | — |
 | Mutual removal (live full session) | Android → Chrome | not run | — |
 | Mutual removal (live full session) | Chrome → Android | not run | — |
-| Mutual removal (lost response) | either | not run | — |
+| Mutual removal (disconnect) | either | not run | — |
+| Mutual removal (response timeout) | either | not run (exercise pending) | — |
 | Mutual removal (no full session) | either | not run | — |
 | Reset (cancelled) | Android | not run | — |
 | Reset (cancelled) | Chrome | not run | — |
