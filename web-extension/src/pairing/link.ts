@@ -96,6 +96,8 @@ export class PairingLink {
     private stopped = false;
     private ended = false;
     private queue: Promise<unknown> = Promise.resolve();
+    /** The one shared teardown for every concurrent `terminate()` caller. */
+    private termination: Promise<void> | null = null;
 
     private constructor(
         controller: PairingTransport,
@@ -287,8 +289,12 @@ export class PairingLink {
      * delete it. Distinct from a user or connector-context cancellation for that
      * reason.
      */
-    async terminate(): Promise<void> {
-        if (this.disposed || this.stopped) return;
+    terminate(): Promise<void> {
+        // Concurrent closePeer()/closeAll() calls must all wait for the same teardown:
+        // returning early here would let a coordinator's sweep and fence release run
+        // while enrollment secrets and persistence work are still live.
+        if (this.termination !== null) return this.termination;
+        if (this.disposed || this.stopped) return Promise.resolve();
         // Fence new inbound work first, then let any frame already being processed
         // finish before the keys are erased and the handle closes, so a record sealed
         // just before the teardown cannot cross the bridge after it (design D8).
@@ -304,7 +310,8 @@ export class PairingLink {
             () => undefined,
             () => undefined,
         );
-        await task;
+        this.termination = task;
+        return task;
     }
 
     /**

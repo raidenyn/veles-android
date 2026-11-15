@@ -14,8 +14,10 @@ import { HANDLE_CONNECTION, HANDLE_CONNECTION_2, HANDLE_DEVICE, HANDLE_DEVICE_2 
 import type { MockNativePort } from './mock-port';
 import {
     PhoneSide,
+    type PostedSend,
     type TestController,
     type TestTrust,
+    SessionClock,
     ackSend,
     answerHandshake,
     connectForSession,
@@ -23,10 +25,8 @@ import {
     createTestTrust,
     deferred,
     emitRecord,
-    flush,
     negotiateHost,
     nextSend,
-    postedSends,
     sessionEngineDeps,
 } from './session-harness';
 import { PACKAGE_BYTES, PhonePeer, hexOf } from '../pairing/enrollment-harness';
@@ -156,10 +156,15 @@ function noopHandler(): ApplicationHandler {
 }
 
 /** A removal-handler stand-in: replies `removal_response`, optionally closing after it. */
-function removalHandler(options: { close: boolean; gate?: Promise<void> }): ApplicationHandler {
+function removalHandler(options: {
+    close: boolean;
+    gate?: Promise<void>;
+    onHandle?: () => void;
+}): ApplicationHandler {
     return {
         handles: (type) => type === RecordType.REMOVAL_REQUEST,
         async handle(_type, _body, reply) {
+            options.onHandle?.();
             if (options.gate !== undefined) await options.gate;
             await reply(RecordType.REMOVAL_RESPONSE, new Uint8Array(0));
         },
@@ -170,6 +175,7 @@ function removalHandler(options: { close: boolean; gate?: Promise<void> }): Appl
 class FakeTransport implements PairingTransport {
     readonly sent: Uint8Array[] = [];
     disconnected = false;
+    disconnectCount = 0;
 
     async connect(target: { deviceHandle: string }) {
         return {
@@ -200,6 +206,7 @@ class FakeTransport implements PairingTransport {
 
     async disconnect() {
         this.disconnected = true;
+        this.disconnectCount += 1;
         return {
             ok: true as const,
             event: {
@@ -216,6 +223,33 @@ class FakeTransport implements PairingTransport {
     }
 }
 
+/**
+ * Waits for the next posted send of one handle without a timer budget. Messages
+ * posted in between (for example the disconnects a close queued) are skipped.
+ */
+async function nextSendFor(port: MockNativePort, handle: string): Promise<PostedSend> {
+    for (;;) {
+        const message = await port.nextPosted();
+        if (message.type !== 'send' || message.connection_handle !== handle) continue;
+        return {
+            requestId: message.request_id as string,
+            handle,
+            bytes: Uint8Array.from(Buffer.from(message.record_base64 as string, 'base64')),
+        };
+    }
+}
+
+/** Waits for the next posted disconnect request of one handle, without a timer budget. */
+async function nextDisconnectFor(
+    port: MockNativePort,
+    handle: string,
+): Promise<Record<string, unknown>> {
+    for (;;) {
+        const message = await port.nextPosted();
+        if (message.type === 'disconnect' && message.connection_handle === handle) return message;
+    }
+}
+
 /** Drives a link until the phone identity is verified and its pending record persisted. */
 async function driveToPending(link: PairingLink, transport: FakeTransport, phone: PhonePeer) {
     await link.receive(phone.offerFor(transport.sent[0]));
@@ -225,6 +259,60 @@ async function driveToPending(link: PairingLink, transport: FakeTransport, phone
     await link.receive(await phone.identityFrame());
     await phone.acceptClientIdentity(transport.sent[3]);
 }
+
+describe('PairingLink.terminate', () => {
+    it('shares one teardown with every concurrent caller', async () => {
+        const clock = new SessionClock();
+        const trust = await createTestTrust(clock);
+        const transport = new FakeTransport();
+        const phone = await PhonePeer.create({ code: '000042' });
+        const frameStarted = deferred();
+        const frameGate = deferred();
+        const link = await PairingLink.start({
+            controller: transport,
+            repo: trust.repository,
+            code: '000042',
+            clock: clock.now,
+            deviceHandle: 'device-concurrent',
+            tickIntervalMs: 0,
+            validatePoint: async () => {
+                frameStarted.resolve();
+                await frameGate.promise;
+            },
+        });
+        try {
+            const receiving = link.receive(phone.offerFor(transport.sent[0]));
+            // The frame is now genuinely in flight and blocked inside the machine.
+            await frameStarted.promise;
+
+            let firstSettled = false;
+            let secondSettled = false;
+            const first = link.terminate().then(() => {
+                firstSettled = true;
+            });
+            const second = link.terminate().then(() => {
+                secondSettled = true;
+            });
+            // A microtask turn proves neither call resolved early; both wait behind
+            // the in-flight frame for the single shared teardown.
+            await Promise.resolve();
+            expect(firstSettled).toBe(false);
+            expect(secondSettled).toBe(false);
+            expect(transport.disconnectCount).toBe(0);
+
+            frameGate.resolve();
+            await receiving;
+            await Promise.all([first, second]);
+            expect(firstSettled).toBe(true);
+            expect(secondSettled).toBe(true);
+            // One teardown, not two: both callers awaited the same cached promise.
+            expect(transport.disconnectCount).toBe(1);
+            expect(link.machine.state).toBe('idle');
+        } finally {
+            phone.close();
+        }
+    });
+});
 
 describe('SessionManager.closePeer', () => {
     it('closes only matching handles, including a handshaking generation', async () => {
@@ -267,16 +355,14 @@ describe('SessionManager.closePeer', () => {
             RecordType.EVENT_ACK,
             new Uint8Array(32).fill(7),
         );
-        await flush();
-        const outbound = postedSends(port).find((send) => send.handle === HANDLE_CONNECTION_2);
-        expect(outbound).toBeDefined();
-        await ackSend(port, defined(outbound));
+        const outbound = await nextSendFor(port, HANDLE_CONNECTION_2);
+        await ackSend(port, outbound);
         await sending;
     });
 
     it('resolves only after the selected session is torn down', async () => {
         const fixture = await createFixture();
-        const side = await openSession(fixture);
+        await openSession(fixture);
 
         await fixture.manager.closePeer(fixture.peerId);
 
@@ -290,7 +376,6 @@ describe('SessionManager.closePeer', () => {
         ).rejects.toBeTruthy();
         expect(terminations(fixture.context, HANDLE_CONNECTION)).toEqual(['revoked']);
         expect(disconnects(fixture.context.currentPort(), HANDLE_CONNECTION)).toHaveLength(1);
-        expect(side.keys.sessionId.length).toBe(32);
     });
 
     it('terminates a matching enrollment link without deleting its pending record', async () => {
@@ -349,7 +434,7 @@ describe('SessionManager.closePeer', () => {
         const fixture = await createFixture({
             links: () => (registry.link === undefined ? [] : [registry.link]),
         });
-        const side = await openSession(fixture);
+        await openSession(fixture);
         const transport = new FakeTransport();
         const phone = await PhonePeer.create({ code: '000042' });
         const link = await PairingLink.start({
@@ -374,7 +459,6 @@ describe('SessionManager.closePeer', () => {
                 (peer) => peer.installationId === bound,
             );
             expect(pending?.state).toBe('pending');
-            expect(side.keys.sessionId.length).toBe(32);
         } finally {
             phone.close();
         }
@@ -384,10 +468,15 @@ describe('SessionManager.closePeer', () => {
 describe('close after reply', () => {
     it('delivers a handler reply before closePeer terminates the session', async () => {
         const gate = deferred();
+        const entered = deferred();
         const fixture = await createFixture({
             handler: composeHandlers(
                 noopHandler(),
-                removalHandler({ close: false, gate: gate.promise }),
+                removalHandler({
+                    close: false,
+                    gate: gate.promise,
+                    onHandle: () => entered.resolve(),
+                }),
             ),
         });
         const side = await openSession(fixture);
@@ -398,18 +487,21 @@ describe('close after reply', () => {
             HANDLE_CONNECTION,
             await side.applicationFrame(RecordType.REMOVAL_REQUEST, 1n),
         );
-        await flush();
+        // The handler has the session's in-flight step and is blocked on the gate.
+        await entered.promise;
 
-        // The handler still holds the session's in-flight step, so closePeer must
-        // queue behind it instead of terminating first.
-        const closing = fixture.manager.closePeer(fixture.peerId);
-        await flush();
+        // closePeer must queue behind that step instead of terminating first.
+        let closed = false;
+        const closing = fixture.manager.closePeer(fixture.peerId).then(() => {
+            closed = true;
+        });
+        await Promise.resolve();
+        expect(closed).toBe(false);
         expect(disconnects(port, HANDLE_CONNECTION)).toHaveLength(0);
         expect(fixture.manager.authenticatedSessions()).toHaveLength(1);
 
         gate.resolve();
-        await flush();
-        const reply = defined(await postedSends(port).at(-1));
+        const reply = await nextSendFor(port, HANDLE_CONNECTION);
         await ackSend(port, reply);
         await closing;
 
@@ -437,10 +529,10 @@ describe('close after reply', () => {
             HANDLE_CONNECTION,
             await side.applicationFrame(RecordType.REMOVAL_REQUEST, 1n),
         );
-        await flush();
-        const reply = defined(await postedSends(port).at(-1));
+        const reply = await nextSendFor(port, HANDLE_CONNECTION);
         await ackSend(port, reply);
-        await flush();
+        // The terminal effects run after the acknowledged reply send.
+        await nextDisconnectFor(port, HANDLE_CONNECTION);
 
         const opened = await side.openClientRecord(reply.bytes, 1n);
         expect(opened.type).toBe(RecordType.REMOVAL_RESPONSE);
