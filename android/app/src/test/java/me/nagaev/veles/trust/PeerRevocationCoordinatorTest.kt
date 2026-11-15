@@ -182,16 +182,17 @@ class PeerRevocationCoordinatorTest {
         runCurrent()
 
         assertEquals("the detachment finishes after the step", listOf(FENCE, DELETE, CLOSE, SWEEP, RELEASE), events)
-        val response = transport.sent.single { wireType(it.bytes) == RecordType.REMOVAL_RESPONSE.wire }
-        assertTrue("the reply is delivered before the close", transport.sent.indexOf(response) < transport.sent.size)
-        assertEquals(
-            "the reply is the last record",
-            1,
-            transport.sent.withIndex().count { index ->
-                wireType(index.value.bytes) == RecordType.REMOVAL_RESPONSE.wire && index.value.gen == gen
-            },
-        )
-        assertTrue("the response is delivered", transport.sent.any { wireType(it.bytes) == RecordType.REMOVAL_RESPONSE.wire })
+        // One ordered send/close log: the reply must be the last record sent, the close must be
+        // issued after it, and nothing at all may follow the close (design D4).
+        val responseIndex = transport.calls.indexOfFirst {
+            it is Sent && it.gen == gen && wireType(it.bytes) == RecordType.REMOVAL_RESPONSE.wire
+        }
+        val closeIndex = transport.calls.indexOfFirst { it is Closed && it.gen == gen }
+        assertTrue("the response record is delivered", responseIndex >= 0)
+        assertTrue("the close is issued", closeIndex >= 0)
+        assertTrue("the response precedes the close", responseIndex < closeIndex)
+        assertTrue("nothing is sent after the response", transport.calls.drop(responseIndex + 1).none { it is Sent })
+        assertTrue("nothing is called after the close", closeIndex == transport.calls.lastIndex)
     }
 
     @Test

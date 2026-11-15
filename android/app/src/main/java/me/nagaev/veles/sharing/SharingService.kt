@@ -328,8 +328,15 @@ internal class StoreFailureSink(private val onStatus: (TrustStatus) -> Unit) {
  * after `resetIdentity()` deleted the row and the key. A failed refresh invalidates the cache and
  * propagates: the deleted installation id is never served again, and the next generation reloads
  * from the repository (or, when that also fails, is refused by [currentOrEmpty]).
+ *
+ * Reload and reset publication are serialized by an epoch: a reset always wins over a load that
+ * started before it, so a suspended reload can never overwrite the identity a later reset
+ * published (which would resurrect a deleted installation id for every later generation).
  */
 internal class LocalIdentity(private val trust: InstallationTrustRepository) {
+    private val lock = Any()
+    private var epoch = 0L
+
     @Volatile private var cached: ByteArray? = null
 
     fun warm() {
@@ -337,7 +344,7 @@ internal class LocalIdentity(private val trust: InstallationTrustRepository) {
     }
 
     /** The identity for a new generation, reloading after an invalidation; may throw TrustException. */
-    fun current(): ByteArray = cached ?: runBlocking { load() }.also { cached = it }
+    fun current(): ByteArray = cached ?: reload()
 
     /**
      * The identity for a new generation, or an empty value when the store cannot supply one. The
@@ -354,13 +361,39 @@ internal class LocalIdentity(private val trust: InstallationTrustRepository) {
     }
 
     /**
-     * Called after `resetIdentity()` deleted the row and the key. The cache is invalidated first,
-     * so a failed reload can never leave the deleted id in place; the failure propagates to the
-     * reset's caller because the store cannot confirm the new identity.
+     * Called after `resetIdentity()` deleted the row and the key. The cache is invalidated and the
+     * epoch advanced in one critical section, so no load that started before this reset can publish
+     * afterwards; a failure propagates because the store cannot confirm the new identity.
      */
     suspend fun refresh() {
-        cached = null
-        cached = load()
+        val started = synchronized(lock) {
+            epoch += 1
+            cached = null
+            epoch
+        }
+        val loaded = load()
+        synchronized(lock) {
+            // A later reset owns the cache; this one must not overwrite its identity.
+            if (epoch == started) cached = loaded
+        }
+    }
+
+    /**
+     * Loads an identity for a generation and publishes it only under the epoch it started with. A
+     * load superseded by a reset is discarded and retried, so the caller receives the reset's
+     * identity and the deleted one is never served.
+     */
+    private fun reload(): ByteArray {
+        while (true) {
+            val started = synchronized(lock) { epoch }
+            val loaded = runBlocking { load() }
+            synchronized(lock) {
+                if (epoch == started) {
+                    cached = loaded
+                    return loaded
+                }
+            }
+        }
     }
 
     private suspend fun load(): ByteArray = TrustEncoding.bytes(trust.identity().installationId)

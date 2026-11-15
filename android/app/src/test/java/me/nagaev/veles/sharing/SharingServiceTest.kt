@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import me.nagaev.veles.trust.ActivationStep
 import me.nagaev.veles.trust.InstallationIdentity
@@ -89,6 +92,82 @@ class SharingServiceTest {
         trust.identityFailure = null
         trust.identityValue = "03".repeat(16)
         assertEquals("the next read retries the load", "03".repeat(16), TrustEncoding.hex(identities.currentOrEmpty()))
+    }
+
+    @Test fun aResetWinsOverAnOlderInFlightReload() = runTest {
+        val trust = GatedIdentityTrust()
+        trust.identityValue = "01".repeat(16)
+        val identities = LocalIdentity(trust)
+        identities.warm()
+        assertEquals("01".repeat(16), TrustEncoding.hex(identities.current()))
+
+        // A failed refresh leaves an empty cache; the next generation starts a gated reload.
+        trust.identityFailure = TrustStoreException()
+        runCatching { identities.refresh() }
+        trust.identityFailure = null
+        trust.gateNextLoad()
+        val inFlight = async(Dispatchers.Default) { identities.current() }
+        trust.loadEntered.await()
+
+        // The reset publishes its identity while the older load is still suspended.
+        trust.identityValue = "03".repeat(16)
+        identities.refresh()
+        assertEquals("the reset published its identity", "03".repeat(16), TrustEncoding.hex(identities.current()))
+
+        trust.releaseLoad.complete(Unit)
+        val served = inFlight.await()
+
+        assertEquals(
+            "the superseded load is discarded and the reset's identity is served",
+            "03".repeat(16),
+            TrustEncoding.hex(served),
+        )
+        assertEquals("the cache still holds the reset's identity", "03".repeat(16), TrustEncoding.hex(identities.current()))
+        assertEquals("warm, the failed refresh, the gated load, the reset and its retry", 5, trust.loads)
+    }
+
+    /** A trust repository whose identity read can be gated, fail and recover. */
+    private class GatedIdentityTrust : InstallationTrustRepository {
+        var identityValue: String = "01".repeat(16)
+        var identityFailure: Exception? = null
+        var loads = 0
+            private set
+        private var gateNext = false
+        val loadEntered = CompletableDeferred<Unit>()
+        val releaseLoad = CompletableDeferred<Unit>()
+
+        fun gateNextLoad() {
+            gateNext = true
+        }
+
+        override suspend fun identity(): InstallationIdentity {
+            loads += 1
+            if (gateNext) {
+                gateNext = false
+                loadEntered.complete(Unit)
+                releaseLoad.await()
+            }
+            identityFailure?.let { throw it }
+            return InstallationIdentity(identityValue, "04".repeat(65))
+        }
+
+        override suspend fun peers(): List<TrustedPeer> = emptyList()
+
+        override suspend fun activePeers(): List<TrustedPeer> = emptyList()
+
+        override suspend fun addPending(peer: PendingPeer) = error("not used")
+
+        override suspend fun confirm(peerId: String, step: ActivationStep, proof: ByteArray) = error("not used")
+
+        override suspend fun revoke(peerId: String) = error("not used")
+
+        override suspend fun beginRevocation(peerId: String) = Unit
+
+        override suspend fun endRevocation(peerId: String) = Unit
+
+        override suspend fun markAuthenticated(peerId: String) = Unit
+
+        override suspend fun resetIdentity() = Unit
     }
 
     /** A trust repository whose identity read can fail and recover, with one value at a time. */
