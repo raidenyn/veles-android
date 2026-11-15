@@ -325,11 +325,13 @@ internal class StoreFailureSink(private val onStatus: (TrustStatus) -> Unit) {
  * The service's installation identity cache (OTP-11 design D6).
  *
  * The engine factory is not suspending, so it reads [current] from this cache. [warm] performs
- * the startup read exactly once, before the first link is admitted, and fails closed the same
- * way the once-captured identity did. An explicit reset refreshes the cache from the repository
- * after `resetIdentity()` deleted the row and the key. A failed refresh invalidates the cache and
- * propagates: the deleted installation id is never served again, and the next generation reloads
- * from the repository (or, when that also fails, is refused by [currentOrEmpty]).
+ * the startup read exactly once, before the first link is admitted, and a failed startup read
+ * only leaves the cache cold (the repository's store-failure callback reports it), so the
+ * explicit reset stays reachable after a restart with corrupt storage. An explicit reset
+ * refreshes the cache from the repository after `resetIdentity()` deleted the row and the key. A
+ * failed refresh invalidates the cache and propagates: the deleted installation id is never
+ * served again, and the next generation reloads from the repository (or, when that also fails, is
+ * refused by [currentOrEmpty]).
  *
  * Reload and reset publication are serialized by an epoch: a reset always wins over a load that
  * started before it, so a suspended reload can never overwrite the identity a later reset
@@ -341,8 +343,20 @@ internal class LocalIdentity(private val trust: InstallationTrustRepository) {
 
     @Volatile private var cached: ByteArray? = null
 
+    /**
+     * Performs the startup read exactly once, before the first link is admitted. A store failure
+     * is reported by the repository's own callback and only leaves the cache cold: the service
+     * must still build the recovery coordinator after a restart with corrupt storage, while a
+     * cold cache still refuses every handshake through [currentOrEmpty].
+     */
     fun warm() {
-        cached = runBlocking { load() }
+        cached = try {
+            runBlocking { load() }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: TrustException) {
+            null
+        }
     }
 
     /** The identity for a new generation, reloading after an invalidation; may throw TrustException. */

@@ -2,6 +2,7 @@ package me.nagaev.veles.session
 
 import android.content.Context
 import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import me.nagaev.veles.debugpairing.PairingDebugHooks
 import me.nagaev.veles.debugprobe.DebugProbeEntryPoint
@@ -15,6 +16,7 @@ import me.nagaev.veles.sharing.SessionHost
 import me.nagaev.veles.trust.ActivationVerifier
 import me.nagaev.veles.trust.PeerRevocationCoordinator
 import me.nagaev.veles.trust.TrustEncoding
+import me.nagaev.veles.trust.TrustException
 import me.nagaev.veles.trust.createAndroidTrustRepository
 
 /**
@@ -29,13 +31,25 @@ internal val debugRejectAllVerifier: ActivationVerifier = ActivationVerifier { _
  * The release build type keeps the null handler and the no-op attach.
  */
 object BuildSessionExtensions {
-    fun applicationHandler(context: Context): ApplicationHandler {
+    /**
+     * The synthetic probe needs its own installation id. A store that cannot supply one (corrupt
+     * payload, missing identity) must not abort the service wiring: the probe handler is simply
+     * absent, while the production activation and removal handlers still run and the explicit
+     * reset stays reachable (OTP-11 design D6).
+     */
+    fun applicationHandler(context: Context): ApplicationHandler? {
         val logger = EntryPointAccessors.fromApplication(
             context.applicationContext,
             DebugProbeEntryPoint::class.java,
         ).velesLog()
         val repository = createAndroidTrustRepository(context, debugRejectAllVerifier)
-        val identity = runBlocking { repository.identity() }
+        val identity = try {
+            runBlocking { repository.identity() }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: TrustException) {
+            return null
+        }
         val handler = SyntheticProbeHandler(
             localInstallationId = TrustEncoding.bytes(identity.installationId),
             clock = System::currentTimeMillis,
