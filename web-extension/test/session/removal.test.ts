@@ -7,6 +7,7 @@ import {
 } from '../../src/connector/sessions';
 import { composeHandlers } from '../../src/pairing/activation';
 import { IDLE_TIMEOUT_MS } from '../../src/session/limits';
+import { SESSION_QUEUE_LIMIT } from '../../src/session/queue';
 import { createRemovalHandler, type RemovalOperations } from '../../src/session/removal';
 import { AppErrorCode, RecordType, SessionClass } from '../../src/session/wire';
 import { TrustStoreError, bytes, type TrustState } from '../../src/trust/model';
@@ -91,6 +92,21 @@ class SuspendedOperations implements RemovalOperations {
         this.entered.resolve();
         await this.#gate.promise;
         this.deleted.push(peerId);
+    }
+}
+
+/**
+ * Fills every remaining queue slot behind the suspended handler (the handler step holds the only
+ * other one), so the next submission — the teardown's or the deadline's settlement — would be
+ * refused by the bounded queue. The accepted jobs only run when the suspended handler returns.
+ * Nothing here refuses a submission: a refused `sendApplication`/record would itself end the
+ * session through the queue's overflow path, which is not the race under test.
+ */
+function saturateQueue(fixture: RemovalFixture): void {
+    for (let index = 0; index < SESSION_QUEUE_LIMIT - 1; index += 1) {
+        void fixture.manager
+            .sendApplication(HANDLE_CONNECTION, RecordType.EVENT_ACK, new Uint8Array(32).fill(0x33))
+            .catch(() => undefined);
     }
 }
 
@@ -622,5 +638,82 @@ describe('SessionManager.requestRemoval', () => {
         expect(fixture.timers.deadlines()[0]?.cancelled).toBe(true);
         // Nothing is sent after the removal request.
         expect(sentTypes(port, HANDLE_CONNECTION).at(-1)).toBe(RecordType.REMOVAL_REQUEST);
+    });
+
+    it('settles removed when a teardown races the deletion on a saturated queue', async () => {
+        const ops = new SuspendedOperations();
+        const fixture = await createFixture({ operations: ops });
+        const side = await openSession(fixture);
+        const port = fixture.currentPort();
+
+        const { removal } = await sendRequest(fixture);
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.applicationFrame(RecordType.REMOVAL_RESPONSE, 1n),
+        );
+        await ops.entered.promise;
+        expect(ops.deleted).toEqual([]);
+
+        // The queue is at its limit, so the teardown's settlement job would be refused and an
+        // unconditional fallback would settle before the deletion below completes.
+        saturateQueue(fixture);
+        fixture.manager.close(HANDLE_CONNECTION);
+        ops.allow();
+
+        await expect(removal).resolves.toBe('removed');
+        expect(ops.deleted).toEqual([fixture.peerId]);
+        expect(fixture.manager.authenticatedSessions()).toHaveLength(0);
+        expect(fixture.timers.deadlines()[0]?.cancelled).toBe(true);
+    });
+
+    it('settles removed when the deadline fires on a saturated queue during the deletion', async () => {
+        const ops = new SuspendedOperations();
+        const fixture = await createFixture({ operations: ops });
+        const side = await openSession(fixture);
+        const port = fixture.currentPort();
+
+        const { removal } = await sendRequest(fixture);
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.applicationFrame(RecordType.REMOVAL_RESPONSE, 1n),
+        );
+        await ops.entered.promise;
+
+        // The deadline expires while the deletion is suspended; its expiry cannot take a queue
+        // slot either, so it must wait for the deletion instead of settling first.
+        saturateQueue(fixture);
+        fixture.timers.deadlines()[0]?.run();
+        ops.allow();
+
+        await expect(removal).resolves.toBe('removed');
+        expect(ops.deleted).toEqual([fixture.peerId]);
+        expect(terminations(fixture, HANDLE_CONNECTION)).toEqual(['removal']);
+    });
+
+    it('settles removed when the deletion outlives the idle deadline', async () => {
+        const ops = new SuspendedOperations();
+        const fixture = await createFixture({ operations: ops });
+        const side = await openSession(fixture);
+        const port = fixture.currentPort();
+
+        const { removal } = await sendRequest(fixture);
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.applicationFrame(RecordType.REMOVAL_RESPONSE, 1n),
+        );
+        await ops.entered.promise;
+
+        // The handler's successful deletion is the outcome that matters, not the idle deadline
+        // it happened to outlive: trust is already gone.
+        fixture.clock.advance(IDLE_TIMEOUT_MS);
+        ops.allow();
+
+        await expect(removal).resolves.toBe('removed');
+        expect(ops.deleted).toEqual([fixture.peerId]);
+        expect(terminations(fixture, HANDLE_CONNECTION)).toEqual(['removal']);
+        expect(fixture.manager.authenticatedSessions()).toHaveLength(0);
     });
 });

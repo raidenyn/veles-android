@@ -1078,8 +1078,10 @@ export class ClientSessionEngine {
             return [];
         }
         const expired = this.#expiryFailure(this.#deps.now());
-        if (expired !== null) return this.#terminate(expired);
         if (replyFailed || handlerFailed) {
+            // A handler or reply that outlived the deadline ends through the deadline: a late
+            // failure must never revive the session either.
+            if (expired !== null) return this.#terminate(expired);
             if (terminalError) {
                 this.#teardownInternal();
                 return [
@@ -1094,6 +1096,10 @@ export class ClientSessionEngine {
             );
         }
         if (terminalError || closeAfterReply) {
+            // A completed handler outcome is decided before the deadline, as on the phone: a
+            // handler that already deleted its record must report its terminal stage even when
+            // its work outlived the idle deadline, or the owner would keep a record that trust no
+            // longer holds. A failed or late reply above still ends through the deadline.
             this.#teardownInternal();
             return [
                 ...replies,
@@ -1104,6 +1110,7 @@ export class ClientSessionEngine {
                 { kind: 'close' },
             ];
         }
+        if (expired !== null) return this.#terminate(expired);
         return [{ kind: 'deliver', type: opened.type, body: opened.body }, ...replies];
     }
 

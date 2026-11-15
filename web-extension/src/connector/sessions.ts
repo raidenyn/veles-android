@@ -635,25 +635,26 @@ export class SessionManager {
 
     /**
      * Arms the requester's response deadline. The engine tick is 15 000 ms, longer than
-     * `REMOVAL_RESPONSE_TIMEOUT_MS`, so this owner-owned timer enforces it; its expiry runs
-     * through the serialized queue so a response already dequeued settles first.
+     * `REMOVAL_RESPONSE_TIMEOUT_MS`, so this owner-owned timer enforces it; its expiry waits for
+     * the work already submitted, so a response or a deletion that is completing right now
+     * settles first.
      */
     private armRemovalDeadline(session: Session): void {
         this.cancelRemovalDeadline(session);
         session.removalTimer = this.timers.setTimeout(() => {
             session.removalTimer = undefined;
             if (session.removal === null) return;
-            const expired = session.queue.run(async () => {
-                if (session.removal === null) return;
-                this.settleRemoval(session, 'kept-no-response');
-                this.terminate(session, REMOVAL_TIMEOUT_REASON, true);
-            });
-            void expired.catch(() => {
-                if (session.removal === null) return;
-                this.settleRemoval(session, 'kept-no-response');
-                this.terminate(session, REMOVAL_TIMEOUT_REASON, true);
-            });
+            // `drained()` takes no queue slot: a saturated queue must not settle the exchange
+            // before an in-flight deletion can prove its outcome.
+            void session.queue.drained().then(() => this.expireRemoval(session));
         }, REMOVAL_RESPONSE_TIMEOUT_MS);
+    }
+
+    /** The deadline outcome: an expired exchange keeps the record and fails the session. */
+    private expireRemoval(session: Session): void {
+        if (session.removal === null) return;
+        this.settleRemoval(session, 'kept-no-response');
+        this.terminate(session, REMOVAL_TIMEOUT_REASON, true);
     }
 
     private cancelRemovalDeadline(session: Session): void {
@@ -672,9 +673,10 @@ export class SessionManager {
     }
 
     /**
-     * Settles an exchange from a session end. The settlement waits behind the session's in-flight
+     * Settles an exchange from a session end. The settlement waits for the session's in-flight
      * step, because a removal handler deleting right now can still prove the deletion; an idle
-     * queue settles at once.
+     * queue settles at once. It uses `drained()` rather than another queue job, so a saturated
+     * queue can never settle the exchange before that deletion completes.
      */
     private settleRemovalBehind(session: Session, outcome: RemovalResult): void {
         if (session.removal === null) return;
@@ -682,10 +684,7 @@ export class SessionManager {
             this.settleRemoval(session, outcome);
             return;
         }
-        const queued = session.queue.run(async () => {
-            this.settleRemoval(session, outcome);
-        });
-        void queued.catch(() => this.settleRemoval(session, outcome));
+        void session.queue.drained().then(() => this.settleRemoval(session, outcome));
     }
 
     /**
