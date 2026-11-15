@@ -1491,7 +1491,29 @@ describe('revocation integration: connector wiring', () => {
         expect(fixture.usedIdentities).toEqual([]);
         expect(fixture.app.sessions?.authenticatedSessions()).toEqual([]);
         expect(fixture.app.trustStatus).toBe('re-pair-required');
+
+        // The refused handle was already connected and belongs to no session, so nothing but
+        // this path can close it: exactly one disconnect is issued for it, and its disappearance
+        // must not schedule an authentication-failure recovery.
+        const refusals = postsOf(port, 'disconnect').filter(
+            (message) => message.connection_handle === HANDLE_CONNECTION,
+        );
+        expect(refusals).toHaveLength(1);
+        await ackDisconnect(port, HANDLE_CONNECTION);
         await action;
+        await flush();
+        // No recovery cycle is armed for the refused handle, and advancing the injected clock
+        // cannot produce a recovery connect or search for it.
+        expect(fixture.controller.clock.pendingTimers).toBe(0);
+        expect(port.posted.map((message) => (message as { type?: string }).type)).toEqual([
+            'hello',
+            'connect',
+            'disconnect',
+        ]);
+        fixture.controller.clock.advance(1_000);
+        await flush();
+        expect(postsOf(port, 'connect')).toHaveLength(1);
+        expect(postsOf(port, 'start_scan')).toHaveLength(0);
     });
 
     it('keeps admission closed while a second overlapping reset is still pending', async () => {

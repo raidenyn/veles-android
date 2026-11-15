@@ -1206,6 +1206,13 @@ export class ConnectorApp {
             const admitted = await this.identities.settled();
             if (token !== this.session || this.disposed) return false;
             if (!admitted) {
+                // No session owns this transport, so nothing else can ever close it: a session
+                // deadline and a later `closeAll()` only see the session registry. Close the
+                // refused handle here, and mark it so its disappearance never schedules an
+                // authentication-failure recovery for a peer this connector may not serve.
+                this.sessionFailedHandles.add(handle);
+                await this.controller.disconnect(handle).catch(() => undefined);
+                if (token !== this.session || this.disposed) return false;
                 // Surface the refusal as the generic authentication failure; the reset's own
                 // failure already reported the single "re-pair required" status.
                 this.applyFailure(synthesizeAuthenticationFailed());
