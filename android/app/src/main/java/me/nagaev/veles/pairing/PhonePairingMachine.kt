@@ -11,6 +11,7 @@ import me.nagaev.veles.session.Role
 import me.nagaev.veles.session.SessionReject
 import me.nagaev.veles.trust.ActivationStep
 import me.nagaev.veles.trust.InstallationTrustRepository
+import me.nagaev.veles.trust.TrustEncoding
 import me.nagaev.veles.trust.TrustState
 import java.security.SecureRandom
 
@@ -522,6 +523,12 @@ class PhonePairingMachine(
             canonical.fill(0)
         }
         return try {
+            // The client identity is verified and authenticated now, so the connection is bound
+            // to that installation id *before* the suspending persistence: a revocation racing
+            // the persist still selects this connection and cannot release its fence while a
+            // durable write is in flight (design D3/D8). Every failure below ends in
+            // reject()/terminate(), which clears the binding with the enrollment.
+            boundPeerIdHex = TrustEncoding.hex(client.installationId)
             when (session.persist(client, et)) {
                 EnrollmentSession.PersistResult.DUPLICATE -> {
                     val error = try {
@@ -534,9 +541,6 @@ class PhonePairingMachine(
                 }
                 EnrollmentSession.PersistResult.FAILED -> reject()
                 EnrollmentSession.PersistResult.PERSISTED -> {
-                    // A verified client identity is durable from here on, so this enrollment
-                    // connection is bound to that peer and selectable for termination (D3).
-                    boundPeerIdHex = session.persistedPeerId
                     // OTP2-REC-011: both identities are authenticated and durable now, so the
                     // public pair fingerprint may reach the UI layer exactly once.
                     session.pairFingerprintDisplay?.let(onPairFingerprint)

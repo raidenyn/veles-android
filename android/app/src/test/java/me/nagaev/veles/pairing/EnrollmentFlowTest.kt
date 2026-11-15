@@ -1,6 +1,10 @@
 package me.nagaev.veles.pairing
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import me.nagaev.veles.session.AppErrorCode
 import me.nagaev.veles.session.Direction
 import me.nagaev.veles.session.P256
@@ -146,6 +150,47 @@ class EnrollmentFlowTest : PairingTestBase() {
             assertNull("a disconnected enrollment is unbound", h.machine.boundPeerId())
             assertEquals("a non-destructive disconnect keeps the pending record", 1, h.trust.peers().size)
         } finally {
+            h.close()
+        }
+    }
+
+    @Test
+    fun revocationCanSelectTheEnrollmentWhilePersistenceIsSuspended() = runBlocking {
+        val gate = CompletableDeferred<Unit>()
+        val h = Harness(peersGate = gate)
+        try {
+            h.runToCb()
+            assertNull(
+                "nothing is selectable before the client identity is authenticated",
+                h.machine.boundPeerId(),
+            )
+
+            val identity = launch(Dispatchers.Default) { h.sendClientIdentity() }
+            // A hang guard only: a machine that never reaches the duplicate check has regressed.
+            withTimeout(SUSPENSION_GUARD_MS) { h.peersEntered.await() }
+
+            // The persistence path is suspended inside `trust.peers()`, before `addPending`. A
+            // revoking selector must already see this connection, or it would sweep, release the
+            // fence and let the suspended enrollment recreate the record.
+            assertEquals(
+                "the authenticated installation id is published before the suspending persist",
+                h.clientInstallationHex,
+                h.machine.boundPeerId(),
+            )
+            assertEquals("no record is durable while persistence is suspended", 0, h.trust.addPendingCalls)
+
+            gate.complete(Unit)
+            identity.join()
+
+            assertEquals("the enrollment still completes", PairingState.AWAITING_COMMIT, h.machine.state)
+            assertEquals("the record became durable after the suspension", 1, h.trust.addPendingCalls)
+            assertEquals(
+                "the connection stays bound to its peer until the enrollment ends",
+                h.clientInstallationHex,
+                h.machine.boundPeerId(),
+            )
+        } finally {
+            gate.complete(Unit)
             h.close()
         }
     }
@@ -483,7 +528,10 @@ class EnrollmentFlowTest : PairingTestBase() {
     // Harness
     // -----------------------------------------------------------------------------------------
 
-    private inner class Harness(private val failPersist: Boolean = false) {
+    private inner class Harness(
+        private val failPersist: Boolean = false,
+        peersGate: CompletableDeferred<Unit>? = null,
+    ) {
         var now = 1_000L
         private var nonceCounter = 0
         val window = PairingWindow({ now })
@@ -499,7 +547,10 @@ class EnrollmentFlowTest : PairingTestBase() {
             { now },
             ActivationVerifier { _, _, _ -> true },
         )
-        val trust = RecordingTrust(repository)
+
+        /** Completed as soon as the duplicate check is entered, before the durable write. */
+        val peersEntered = CompletableDeferred<Unit>()
+        val trust = RecordingTrust(repository, peersGate, peersEntered)
         val fingerprints = mutableListOf<String>()
         lateinit var machine: PhonePairingMachine
         var phoneRecord: ByteArray = ByteArray(0)
@@ -768,13 +819,24 @@ class EnrollmentFlowTest : PairingTestBase() {
         }
     }
 
-    private class RecordingTrust(private val delegate: InstallationTrustRepository) : InstallationTrustRepository {
+    private class RecordingTrust(
+        private val delegate: InstallationTrustRepository,
+        private val peersGate: CompletableDeferred<Unit>? = null,
+        private val peersEntered: CompletableDeferred<Unit>? = null,
+    ) : InstallationTrustRepository {
         var addPendingCalls = 0
             private set
         val revoked = mutableListOf<String>()
 
         override suspend fun identity(): InstallationIdentity = delegate.identity()
-        override suspend fun peers(): List<TrustedPeer> = delegate.peers()
+
+        /** The duplicate check that suspends before the durable write in [EnrollmentSession.persist]. */
+        override suspend fun peers(): List<TrustedPeer> {
+            peersEntered?.complete(Unit)
+            peersGate?.await()
+            return delegate.peers()
+        }
+
         override suspend fun activePeers(): List<TrustedPeer> = delegate.activePeers()
 
         override suspend fun addPending(peer: PendingPeer) {
@@ -817,6 +879,8 @@ class EnrollmentFlowTest : PairingTestBase() {
     }
 
     private companion object {
+        /** Hang guard for the gated persistence test: an unreached duplicate check is a regression. */
+        const val SUSPENSION_GUARD_MS = 5_000L
         const val U8_MASK = 0xFF
         const val BITS_PER_BYTE = 8
         const val U16_BYTES = 2

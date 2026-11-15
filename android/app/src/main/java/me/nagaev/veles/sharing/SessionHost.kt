@@ -364,7 +364,7 @@ class SessionHost(
      */
     suspend fun closePeer(peerIdHex: String) {
         val lives = synchronized(registry) { all.filter { it.isBoundTo(peerIdHex) } }
-        lives.forEach { endGeneration(it) }
+        endAll(lives)
     }
 
     /**
@@ -375,21 +375,56 @@ class SessionHost(
      */
     suspend fun closeAll() {
         val lives = synchronized(registry) { all.toList() }
-        lives.forEach { endGeneration(it) }
+        endAll(lives)
+    }
+
+    /**
+     * Ends every generation in [lives], continuing across failures (design D2): a best-effort
+     * transport disconnect that fails for one generation must never abort the logical termination
+     * of another, so every selected generation is torn down before the first failure is reported,
+     * with the remaining failures attached to it.
+     */
+    @Suppress("TooGenericExceptionCaught") // A disconnect failure of one generation never aborts another.
+    private suspend fun endAll(lives: List<Live>) {
+        var failure: Exception? = null
+        for (live in lives) {
+            try {
+                endGeneration(live)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
+                if (failure == null) {
+                    failure = error
+                } else {
+                    failure.addSuppressed(error)
+                }
+            }
+        }
+        if (failure != null) throw failure
     }
 
     /**
      * Tears [live] down and closes its transport when it is still admitted, then awaits the end
-     * signal: the teardown is authoritative, the disconnect is best-effort and may throw without
-     * leaving authorization behind (design D2).
+     * signal: the teardown is authoritative, the disconnect is best-effort and its failure is
+     * reported only after the logical termination is complete (design D2).
      */
     private suspend fun endGeneration(live: Live) {
-        live.mutex.withLock {
+        val failure = live.mutex.withLock {
             val admitted = isCurrent(live)
             teardownLocked(live)
-            if (admitted) transport.close(live.gen)
+            if (admitted) closeTransport(live) else null
         }
         live.endedSignal.await()
+        if (failure != null) throw failure
+    }
+
+    /** The best-effort disconnect; a failure is reported once the generation has ended. */
+    @Suppress("TooGenericExceptionCaught") // The transport is not allowed to keep authorization alive.
+    private fun closeTransport(live: Live): Exception? = try {
+        transport.close(live.gen)
+        null
+    } catch (error: Exception) {
+        error
     }
 
     private suspend fun runTicks(live: Live) {

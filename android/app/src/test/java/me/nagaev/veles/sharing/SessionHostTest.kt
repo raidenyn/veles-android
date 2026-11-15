@@ -1071,7 +1071,7 @@ class SessionHostTest {
     fun transportCloseFailureStillErasesKeys() = runTest {
         val client = TestClient()
         lateinit var created: PhoneSessionEngine
-        val failing = RecordingTransport(closeFails = true)
+        val failing = RecordingTransport(closeFailsFor = { true })
         val host = host(transport = failing) { engine(client).also { created = it } }
         val gen = ConnectionGeneration("aa", 1)
         connect(host, gen)
@@ -1084,6 +1084,66 @@ class SessionHostTest {
         assertTrue("the keys were erased before the close", created.keysErasedForTest)
         assertTrue("no session remains authorized", host.authenticatedSessions().isEmpty())
         assertFalse("the ended generation is never selected again", host.hasOpenSession(TrustEncoding.hex(client.installationId)))
+    }
+
+    @Test
+    fun closePeerCloseFailureStillEndsEveryMatchingGeneration() = runTest {
+        val peer = TestClient()
+        // The same authenticated peer on two generations; the first disconnect fails.
+        val second = clientLike(peer)
+        val clients = mapOf("aa" to peer, "bb" to second)
+        val engines = mutableMapOf<String, PhoneSessionEngine>()
+        val first = ConnectionGeneration("aa", 1)
+        val secondGen = ConnectionGeneration("bb", 2)
+        val failing = RecordingTransport(closeFailsFor = { it == first })
+        val host = host(transport = failing) { gen ->
+            engine(clients.getValue(gen.address)).also { engines[gen.address] = it }
+        }
+        connect(host, first)
+        connect(host, secondGen)
+        authenticate(host, first, peer, transport = failing)
+        authenticate(host, secondGen, second, transport = failing)
+
+        val failure = runCatching { host.closePeer(TrustEncoding.hex(peer.installationId)) }
+
+        assertTrue("the first disconnect failure is reported", failure.isFailure)
+        assertTrue("the failing generation's close was attempted", failing.calls.contains(Wire.Closed(first)))
+        assertTrue("the later matching generation was closed too", failing.calls.contains(Wire.Closed(secondGen)))
+        assertFalse("the failing session was torn down", engines.getValue("aa").isOpen)
+        assertFalse("the later session ended despite the first failure", engines.getValue("bb").isOpen)
+        assertTrue("the first session's keys were erased", engines.getValue("aa").keysErasedForTest)
+        assertTrue("the later session's keys were erased too", engines.getValue("bb").keysErasedForTest)
+        assertTrue("no session remains authorized", host.authenticatedSessions().isEmpty())
+        assertFalse(host.hasOpenSession(TrustEncoding.hex(peer.installationId)))
+    }
+
+    @Test
+    fun closeAllCloseFailureStillEndsEveryGeneration() = runTest {
+        val client = TestClient()
+        val pairing = FakePairingConnection(bound = TrustEncoding.hex(client.installationId))
+        val engines = mutableMapOf<String, PhoneSessionEngine>()
+        val session = ConnectionGeneration("aa", 1)
+        val enrollment = ConnectionGeneration("bb", 2)
+        val failing = RecordingTransport(closeFailsFor = { it == session })
+        val host = host(transport = failing, pairingFactory = { pairing }) { gen ->
+            engine(client).also { engines[gen.address] = it }
+        }
+        connect(host, session)
+        connect(host, enrollment)
+        authenticate(host, session, client, transport = failing)
+        host.onRecord(enrollment, byteArrayOf(PAIRING_FIRST_FRAME), admission())
+        runCurrent()
+
+        val failure = runCatching { host.closeAll() }
+
+        assertTrue("the failing disconnect is reported", failure.isFailure)
+        assertTrue("the failing generation's close was attempted", failing.calls.contains(Wire.Closed(session)))
+        assertTrue("the enrollment generation was closed too", failing.calls.contains(Wire.Closed(enrollment)))
+        assertFalse("the session was torn down despite its failing disconnect", engines.getValue("aa").isOpen)
+        assertTrue("the session's keys were erased", engines.getValue("aa").keysErasedForTest)
+        assertEquals("the enrollment was disconnected non-destructively", 1, pairing.disconnects)
+        assertEquals("no enrollment was cancelled", 0, pairing.cancels)
+        assertTrue("no session remains authorized", host.authenticatedSessions().isEmpty())
     }
 
     /** A distinct peer: its own identity, installation id and ephemeral key. */
@@ -1176,7 +1236,7 @@ class SessionHostTest {
     private class RecordingTransport(
         var accept: Boolean = true,
         private val events: MutableList<String>? = null,
-        private val closeFails: Boolean = false,
+        private val closeFailsFor: (ConnectionGeneration) -> Boolean = { false },
     ) : SessionTransport {
         val calls = mutableListOf<Wire>()
         val sent get() = calls.filterIsInstance<Wire.Sent>()
@@ -1189,7 +1249,7 @@ class SessionHostTest {
 
         override fun close(gen: ConnectionGeneration) {
             calls += Wire.Closed(gen)
-            if (closeFails) error("the transport disconnect failed")
+            if (closeFailsFor(gen)) error("the transport disconnect failed")
         }
     }
 
