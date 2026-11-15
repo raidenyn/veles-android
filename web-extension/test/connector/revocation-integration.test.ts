@@ -1595,6 +1595,54 @@ describe('revocation integration: connector wiring', () => {
         expect(postsOf(port, 'start_scan')).toHaveLength(0);
     });
 
+    it('publishes re-pair-required when a reset fails outside the store', async () => {
+        const fixture = createAppFixture();
+        await startApp(fixture);
+        const phone = await TestPhone.create();
+        const peerId = await addAppPeer(fixture, phone);
+        const port = fixture.controller.currentPort();
+        expect(fixture.app.trustStatus).toBe('ok');
+
+        // The failure never reaches the repository, so no store-failure episode reports it: only
+        // the reset body itself can tell the surface that admission is now latched closed.
+        const coordinator = (fixture.app as unknown as { coordinator: RevocationCoordinator })
+            .coordinator;
+        coordinator.reset = async () => {
+            throw new Error('reset body failed outside the store');
+        };
+        await expect(fixture.app.resetTrust()).rejects.toThrow(
+            'reset body failed outside the store',
+        );
+        expect(fixture.app.trustStatus).toBe('re-pair-required');
+
+        // Admission stayed closed: the completion delivered now builds no engine and opens no
+        // session, even though the store still holds the identity the reset never discarded.
+        const action = fixture.app.handleAction({
+            type: 'connect',
+            deviceHandle: HANDLE_DEVICE,
+            peerId,
+        });
+        const connect = await port.nextPosted();
+        await port.emit(
+            connectedEvent({
+                request_id: connect.request_id as string,
+                connection_handle: HANDLE_CONNECTION,
+            }),
+        );
+        await flush();
+
+        expect(fixture.usedIdentities).toEqual([]);
+        expect(fixture.app.sessions?.authenticatedSessions()).toEqual([]);
+        expect(fixture.app.trustStatus).toBe('re-pair-required');
+        const refusals = postsOf(port, 'disconnect').filter(
+            (message) => message.connection_handle === HANDLE_CONNECTION,
+        );
+        expect(refusals).toHaveLength(1);
+        await ackDisconnect(port, HANDLE_CONNECTION);
+        await action;
+        await flush();
+    });
+
     it('keeps admission closed while a second overlapping reset is still pending', async () => {
         const fixture = createAppFixture();
         await startApp(fixture);

@@ -791,7 +791,10 @@ export class ConnectorApp {
      * A completed reset is also the one recovery from a latched "re-pair required": once the
      * deletions ran and the identity cache was refreshed, nothing is left to re-pair, so `ok` is
      * published while this body still owns the serialized reset section (the same rule as the
-     * Android coordinator). A failing reset throws before that line and keeps the failure status.
+     * Android coordinator). A failing reset publishes `re-pair-required` itself before throwing:
+     * a reset can fail outside the repository's store-failure reporting (for example a coordinator
+     * error before its transaction), and an earlier `ok` from an overlapping reset must never
+     * stand while admission is refused.
      */
     async resetTrust(): Promise<void> {
         this.abortPairingStartup();
@@ -808,6 +811,11 @@ export class ConnectorApp {
                 await coordinator.reset();
                 await identities.refresh();
             } catch (error) {
+                // Published even when the failure never reached the repository's own reporting,
+                // and before admission is released, so no surface keeps a stale `ok` while every
+                // later open is refused. The repository may already have published the same value
+                // for a store failure observed during the reset.
+                this.reportTrustStatus('re-pair-required');
                 identities.endReset(false);
                 throw error;
             }

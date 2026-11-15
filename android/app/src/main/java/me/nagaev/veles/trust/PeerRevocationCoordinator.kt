@@ -137,7 +137,9 @@ class PeerRevocationCoordinator(
      * once the deletions have run and the repository has refreshed the identity cache (its
      * `resetIdentity` does both), nothing is left to re-pair, so `OK` is published. A failing
      * reset throws before this line, so the body publishes [TrustStatus.RE_PAIR_REQUIRED] itself:
-     * `resetIdentity` deliberately opens no store-failure episode to do it.
+     * the delete steps of `resetIdentity` deliberately open no store-failure episode to do it.
+     * A failure of the refresh that follows those deletions may already publish the same status
+     * once through the repository's own store-failure reporting at its choke point.
      */
     suspend fun reset() {
         // `null` until this request's body starts discarding the store: a request that never got
@@ -172,7 +174,8 @@ class PeerRevocationCoordinator(
                     // the last body to run is the last to publish, whatever the scheduling of the
                     // reservations: admission always reflects the most recently completed reset.
                     // A body that reached the store and failed reports the fail-closed status
-                    // itself; a completed one already published OK above.
+                    // itself; the repository may already have published it for a refresh failure
+                    // observed after the delete steps. A completed one published OK above.
                     if (completed == false) onStatus(TrustStatus.RE_PAIR_REQUIRED)
                     published = true
                     sessions.endReset(completed)

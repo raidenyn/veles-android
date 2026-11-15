@@ -892,11 +892,13 @@ class PeerRevocationIntegrationTest {
         }
 
         assertTrue("a failed refresh fails the reset instead of keeping the stale id", failure is TrustStoreException)
-        // The store failure is reported at its choke point and the failed reset body publishes the
-        // fail-closed status itself; none of them may ever say OK.
-        assertTrue("the store failure is reported", statuses.isNotEmpty())
-        assertTrue("a failed reset never publishes OK", statuses.none { it == TrustStatus.OK })
-        assertEquals(TrustStatus.RE_PAIR_REQUIRED, statuses.last())
+        // The cache-refresh store failure reports at its choke point and the failed reset body
+        // publishes the fail-closed status itself: exactly one publication each, never OK.
+        assertEquals(
+            "the refresh failure and the failed reset body each publish re-pair",
+            listOf(TrustStatus.RE_PAIR_REQUIRED, TrustStatus.RE_PAIR_REQUIRED),
+            statuses,
+        )
         assertTrue("the session was terminated first", transport.closed.contains(gen))
 
         // A generation created while no identity can be loaded is refused, never authenticated

@@ -617,12 +617,19 @@ class PeerRevocationCoordinatorTest {
         } catch (_: TrustException) {
             // The deletes and the cache refresh failed; the status must still say re-pair.
         }
-        assertTrue("a failed reset never publishes OK", statuses.none { it == TrustStatus.OK })
-        assertEquals(TrustStatus.RE_PAIR_REQUIRED, statuses.last())
+        assertEquals(
+            "the latched failure and the failed reset body each publish re-pair",
+            listOf(TrustStatus.RE_PAIR_REQUIRED, TrustStatus.RE_PAIR_REQUIRED),
+            statuses,
+        )
 
         trust.resetFailure = null
         coordinator.reset()
-        assertEquals("a later completed reset publishes OK", TrustStatus.OK, statuses.last())
+        assertEquals(
+            "a later completed reset publishes only the recovery status",
+            listOf(TrustStatus.RE_PAIR_REQUIRED, TrustStatus.RE_PAIR_REQUIRED, TrustStatus.OK),
+            statuses,
+        )
     }
 
     /**
@@ -1061,9 +1068,11 @@ class PeerRevocationCoordinatorTest {
         override suspend fun markAuthenticated(peerId: String) = Unit
 
         /**
-         * The repository contract for a reset: no reset step is a peer-level check and a failed
-         * reset deliberately opens no store-failure episode, exactly like `TrustRepository`. The
-         * coordinator publishes the fail-closed status itself.
+         * The repository contract for a reset: no reset step is a peer-level check and the delete
+         * steps of a failed reset deliberately open no store-failure episode, exactly like
+         * `TrustRepository.resetIdentity`. The production reset body may publish once more through
+         * the repository when its own refresh after those deletes fails; the coordinator publishes
+         * the fail-closed status itself either way.
          */
         override suspend fun resetIdentity() {
             events += RESET
