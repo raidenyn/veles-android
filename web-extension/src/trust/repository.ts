@@ -8,7 +8,7 @@ import {
     importPublicKey,
     requireTrust,
     TrustError,
-    TrustUnavailableError,
+    TrustStoreError,
     type InstallationIdentity,
     type PendingPeer,
     type ProofStage,
@@ -16,7 +16,7 @@ import {
     type TrustSnapshot,
 } from './model';
 
-export { TrustError, TrustUnavailableError } from './model';
+export { TrustError, TrustStoreError, TrustUnavailableError } from './model';
 
 /** Must verify the stage-specific MAC/signature, ET and current authenticated session.
  * The callback is supplied by protocol code, never a UI flag or persisted evidence.
@@ -29,6 +29,9 @@ export type AuthenticationVerifier = (
 
 /** One instance per connector lifetime. A new connector cannot inherit a pending clock. */
 export class ChromeTrustRepository {
+    private readonly revoking = new Map<string, number>();
+    private storeFailureReported = false;
+
     constructor(
         private readonly keys: IdentityStore = new IndexedDbIdentityStore(),
         private readonly local: LocalStore = new ChromeLocalStore(),
@@ -37,6 +40,8 @@ export class ChromeTrustRepository {
         private readonly elapsed: () => number = () => performance.now(),
         private readonly wall: () => number = () => Date.now(),
         private readonly owner: PendingOwner = browserPendingOwner(),
+        /** Invoked once per store-failure episode; wired to the fail-closed action. */
+        private readonly onStoreFailure: () => void = () => undefined,
     ) {}
 
     identity(): Promise<InstallationIdentity> {
@@ -51,27 +56,52 @@ export class ChromeTrustRepository {
 
     addPending(input: PendingPeer): Promise<void> {
         const candidate = structuredClone(input);
-        return this.update(async (s) => {
-            exactFields(candidate, [
-                'installationId',
-                'publicKey',
-                'label',
-                'deviceType',
-                'enrollmentTranscript',
-            ]);
-            requireTrust(!s.peers.some((p) => p.installationId === candidate.installationId));
-            const peer: TrustedPeer = {
-                ...candidate,
-                fingerprint: await fingerprint(candidate.publicKey, s.identity.publicKey),
-                state: 'pending',
-                createdAtMillis: this.wall(),
-                lastSeenMillis: null,
-                pendingContext: this.owner.id,
-                pendingSince: this.elapsed(),
-            };
-            await this.validatePeer(peer, s.identity);
-            s.peers.push(peer);
-        });
+        return this.update(
+            async (s) => {
+                exactFields(candidate, [
+                    'installationId',
+                    'publicKey',
+                    'label',
+                    'deviceType',
+                    'enrollmentTranscript',
+                ]);
+                requireTrust(!s.peers.some((p) => p.installationId === candidate.installationId));
+                const peer: TrustedPeer = {
+                    ...candidate,
+                    // The fingerprint is computed from caller-supplied hex, and the resulting
+                    // record is the store's to validate: a bad key is a store failure.
+                    fingerprint: await this.storeValue(() =>
+                        fingerprint(candidate.publicKey, s.identity.publicKey),
+                    ),
+                    state: 'pending',
+                    createdAtMillis: this.wall(),
+                    lastSeenMillis: null,
+                    pendingContext: this.owner.id,
+                    pendingSince: this.elapsed(),
+                };
+                s.peers.push(peer);
+            },
+            // The revocation mark is checked immediately before the durable write, inside the
+            // same locked transaction, so no in-flight enrollment can recreate a revoked peer.
+            () => !this.revoking.has(candidate.installationId),
+        );
+    }
+
+    /**
+     * Marks `peerId` while its revocation is in progress: reference-counted and in memory
+     * only. While marked, `addPending` for the id is a peer-level rejection, so a revoked
+     * peer's record cannot be recreated; the fence is released with `endRevocation` and a
+     * later, deliberate pairing of the same installation id is not blocked.
+     */
+    beginRevocation(peerId: string): void {
+        this.revoking.set(peerId, (this.revoking.get(peerId) ?? 0) + 1);
+    }
+
+    /** Releases one `beginRevocation` for `peerId`; the fence lifts after the last one. */
+    endRevocation(peerId: string): void {
+        const remaining = (this.revoking.get(peerId) ?? 0) - 1;
+        if (remaining > 0) this.revoking.set(peerId, remaining);
+        else this.revoking.delete(peerId);
     }
 
     confirm(peerId: string, stage: 'complete' | 'phone_active', proof: Uint8Array): Promise<void> {
@@ -126,6 +156,11 @@ export class ChromeTrustRepository {
             delete this.find(s, peerId).platformHint;
         });
     }
+
+    /** Unconditional for any state. The platform hint lives on the record, so the delete
+     * removes it with the peer; a later hint write for the id finds no record and is a
+     * peer rejection.
+     */
     revoke(peerId: string): Promise<void> {
         return this.update((s) => {
             s.peers = s.peers.filter((p) => p.installationId !== peerId);
@@ -159,9 +194,12 @@ export class ChromeTrustRepository {
                 });
                 await this.keys.clear();
                 await this.local.clear();
+                // A completed reset ends the failure episode; a reset failure opens none,
+                // because reset is never reached from a failure path.
+                this.endStoreFailureEpisode();
             });
         } catch (error) {
-            throw error instanceof TrustError ? error : new TrustUnavailableError();
+            throw error instanceof TrustStoreError ? error : new TrustStoreError();
         }
     }
 
@@ -175,82 +213,132 @@ export class ChromeTrustRepository {
         operation: (snapshot: TrustSnapshot) => T | Promise<T>,
         fence?: () => boolean,
     ): Promise<T> {
+        let report = false;
         try {
             return await this.lock(async () => {
-                await this.local.restrict();
-                requireTrust(await this.owner.isAlive(this.owner.id));
-                let identity = await this.keys.read();
-                const raw = await this.local.read();
-                let snapshot: TrustSnapshot;
-                if (raw === undefined) {
-                    requireTrust(identity === undefined);
-                    identity = await this.keys.create();
-                    snapshot = {
-                        version: 1,
-                        identity: {
-                            installationId: identity.installationId,
-                            publicKey: identity.publicKey,
-                        },
-                        peers: [],
-                    };
-                    // A rejected first operation must not strand a valid key
-                    // without metadata. Only an actual interrupted save fails closed.
-                    await this.local.write(snapshot);
-                } else {
-                    requireTrust(identity);
-                    exactFields(raw, ['version', 'identity', 'peers']);
-                    requireTrust(raw.version === 1);
-                    exactFields(raw.identity, ['installationId', 'publicKey']);
-                    requireTrust(
-                        raw.identity.installationId === identity.installationId &&
-                            raw.identity.publicKey === identity.publicKey,
-                    );
-                    requireTrust(Array.isArray(raw.peers) && raw.peers.length <= 256);
-                    snapshot = raw as unknown as TrustSnapshot;
+                // Failures are classified by what failed at this one choke point: only the
+                // operation's own explicit peer-level checks and the fences raise a plain
+                // `TrustError`; every other failure, before or after the operation, is a
+                // store failure.
+                let phase: 'store' | 'peer' = 'store';
+                try {
+                    await this.local.restrict();
+                    requireTrust(await this.owner.isAlive(this.owner.id));
+                    let identity = await this.keys.read();
+                    const raw = await this.local.read();
+                    let snapshot: TrustSnapshot;
+                    if (raw === undefined) {
+                        requireTrust(identity === undefined);
+                        identity = await this.keys.create();
+                        snapshot = {
+                            version: 1,
+                            identity: {
+                                installationId: identity.installationId,
+                                publicKey: identity.publicKey,
+                            },
+                            peers: [],
+                        };
+                        // A rejected first operation must not strand a valid key
+                        // without metadata. Only an actual interrupted save fails closed.
+                        await this.local.write(snapshot);
+                    } else {
+                        requireTrust(identity);
+                        exactFields(raw, ['version', 'identity', 'peers']);
+                        requireTrust(raw.version === 1);
+                        exactFields(raw.identity, ['installationId', 'publicKey']);
+                        requireTrust(
+                            raw.identity.installationId === identity.installationId &&
+                                raw.identity.publicKey === identity.publicKey,
+                        );
+                        requireTrust(Array.isArray(raw.peers) && raw.peers.length <= 256);
+                        snapshot = raw as unknown as TrustSnapshot;
+                        for (const peer of snapshot.peers)
+                            await this.validatePeer(peer, snapshot.identity);
+                        requireTrust(
+                            new Set(snapshot.peers.map((p) => p.installationId)).size ===
+                                snapshot.peers.length,
+                        );
+                    }
+                    const now = this.elapsed();
+                    requireTrust(Number.isFinite(now) && now >= 0);
+                    const retained: TrustedPeer[] = [];
+                    for (const peer of snapshot.peers) {
+                        if (peer.state !== 'pending') {
+                            retained.push(peer);
+                            continue;
+                        }
+                        if (peer.pendingContext === this.owner.id) {
+                            if (
+                                peer.pendingSince !== null &&
+                                now >= peer.pendingSince &&
+                                now - peer.pendingSince < 86_400_000
+                            )
+                                retained.push(peer);
+                        } else if (
+                            peer.pendingContext !== null &&
+                            (await this.owner.isAlive(peer.pendingContext))
+                        ) {
+                            // Another live connector owns this monotonic interval. Do not
+                            // recreate its clock or allow this instance to activate its pending record.
+                            retained.push(peer);
+                        }
+                    }
+                    snapshot.peers = retained;
+                    phase = 'peer';
+                    const result = await operation(snapshot);
+                    phase = 'store';
+                    requireTrust(snapshot.peers.length <= 256);
                     for (const peer of snapshot.peers)
                         await this.validatePeer(peer, snapshot.identity);
-                    requireTrust(
-                        new Set(snapshot.peers.map((p) => p.installationId)).size ===
-                            snapshot.peers.length,
-                    );
-                }
-                const now = this.elapsed();
-                requireTrust(Number.isFinite(now) && now >= 0);
-                const retained: TrustedPeer[] = [];
-                for (const peer of snapshot.peers) {
-                    if (peer.state !== 'pending') {
-                        retained.push(peer);
-                        continue;
+                    // The caller's generation fence and the revocation mark run after every
+                    // asynchronous step and immediately before the durable write.
+                    if (fence !== undefined) {
+                        phase = 'peer';
+                        requireTrust(fence());
+                        phase = 'store';
                     }
-                    if (peer.pendingContext === this.owner.id) {
-                        if (
-                            peer.pendingSince !== null &&
-                            now >= peer.pendingSince &&
-                            now - peer.pendingSince < 86_400_000
-                        )
-                            retained.push(peer);
-                    } else if (
-                        peer.pendingContext !== null &&
-                        (await this.owner.isAlive(peer.pendingContext))
-                    ) {
-                        // Another live connector owns this monotonic interval. Do not
-                        // recreate its clock or allow this instance to activate its pending record.
-                        retained.push(peer);
-                    }
+                    await this.local.write(snapshot);
+                    this.endStoreFailureEpisode();
+                    return result;
+                } catch (error) {
+                    const failure =
+                        phase === 'peer' && error instanceof TrustError
+                            ? error
+                            : new TrustStoreError();
+                    report = failure instanceof TrustStoreError && this.beginStoreFailureEpisode();
+                    throw failure;
                 }
-                snapshot.peers = retained;
-                const result = await operation(snapshot);
-                requireTrust(snapshot.peers.length <= 256);
-                for (const peer of snapshot.peers) await this.validatePeer(peer, snapshot.identity);
-                // The caller's generation fence runs after every asynchronous
-                // step and immediately before the durable write.
-                if (fence !== undefined) requireTrust(fence());
-                await this.local.write(snapshot);
-                return result;
             });
         } catch (error) {
-            throw error instanceof TrustError ? error : new TrustUnavailableError();
+            // A failure of the store itself (for example the lock) is a store failure too.
+            if (error instanceof TrustError) throw error;
+            const failure = new TrustStoreError();
+            if (this.beginStoreFailureEpisode()) report = true;
+            throw failure;
+        } finally {
+            if (report) this.onStoreFailure();
         }
+    }
+
+    /** Caller-supplied record data is validated by the store: its failure is not a rejection. */
+    private async storeValue<T>(block: () => Promise<T>): Promise<T> {
+        try {
+            return await block();
+        } catch {
+            throw new TrustStoreError();
+        }
+    }
+
+    /** Ends the current store-failure episode; a later store failure reports again. */
+    private endStoreFailureEpisode(): void {
+        this.storeFailureReported = false;
+    }
+
+    /** Starts a store-failure episode, returning true only for the failure that opened it. */
+    private beginStoreFailureEpisode(): boolean {
+        if (this.storeFailureReported) return false;
+        this.storeFailureReported = true;
+        return true;
     }
 
     private validateHint(hint: unknown): asserts hint is string {
