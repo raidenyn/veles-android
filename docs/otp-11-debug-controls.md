@@ -7,8 +7,10 @@ source set (`:app:releaseHookGuard` proves they are absent from the release APK)
 panel is a dynamic import behind the build-time development channel (`npm run test:bundle` proves
 it is absent from the production bundle).
 
-No device run of these controls has been recorded yet. The observed-values section at the end is
-marked **not yet run** and stays empty until someone records values they actually saw.
+A device run was performed on 2026-11-15: a OnePlus 6T running the debug APK
+(`me.nagaev.veles.debug`, built from `5f41436`) against the development-channel extension in a
+dedicated Chrome profile on macOS 26.5.2, with the local Native Messaging host built from the same
+commit. The observed-values section records what those screens showed.
 
 ## Prerequisites
 
@@ -166,27 +168,50 @@ Android clear path (`REVOKE_PEER`), the non-UI form of the same local revoke:
 7. Re-pair from the other endpoint and record the pairing result. This verifies only that pairing
    works after a reset; success alone does not prove the reset endpoint has a new identity.
 
-## Observed values — NOT YET RUN
+## Observed values — run of 2026-11-15
 
-No Android device or Chrome host run has been performed for OTP-11 peer revocation. Every row
-below is unrun; nothing in this document is an observed result.
+Android: OnePlus 6T, debug APK `me.nagaev.veles.debug`, version `0.1.0-55-g8808694` extension on
+Chrome, macOS host built from `5f41436`. Screenshots of the Android debug screen are blank
+(`FLAG_SECURE`); values below were read from the accessibility tree.
 
 | Procedure | Endpoint | Result | Observed control response |
 | --- | --- | --- | --- |
-| Revoke while connected | Android | not run | — |
-| Revoke while connected | Chrome | not run | — |
-| Revoke with another peer connected | Android | not run | — |
-| Clear via `REVOKE_PEER` (session open) | Android | not run | — |
-| Clear via `REVOKE_PEER` (service stopped) | Android | not run | — |
-| Mutual removal (live full session) | Android → Chrome | not run | — |
-| Mutual removal (live full session) | Chrome → Android | not run | — |
-| Mutual removal (disconnect) | either | not run | — |
-| Mutual removal (response timeout) | either | not run (exercise pending) | — |
-| Mutual removal (no full session) | either | not run | — |
-| Reset (cancelled) | Android | not run | — |
-| Reset (cancelled) | Chrome | not run | — |
-| Reset (confirmed) | Android | not run | — |
-| Reset (confirmed) | Chrome | not run | — |
+| Enrollment over BLE | Android + Chrome | PASS | Phone row `Chrome · COMMITTED_WAITING_ACK`; panel `State: active · Fingerprint: 3DD5 D01F 7A2B`; both sides carried the same fingerprint |
+| Reconnect to a live session | Android + Chrome | PASS | Phone `Chrome · ACTIVE · Peer connected`; panel row `live session open` |
+| Revoke while connected | Android | PASS | `Peer revoked`; row left the list; trust stayed `Trust OK` |
+| Revoke with another peer connected | Android | not run | only one peer existed |
+| Clear via `REVOKE_PEER` (session open) | Android | not run | no peer existed after the reset |
+| Clear via `REVOKE_PEER` (service stopped) | Android | PASS | logcat `revoke unavailable peer=aaaaaaaa` (dummy id); screen `Clear failed or refused`; nothing deleted |
+| Mutual removal (live full session) | Android → Chrome | FAIL | `No open full session: only local removal is possible. Nothing was deleted.` while the phone showed `Chrome · ACTIVE · Peer connected` |
+| Mutual removal (live full session) | Chrome → Android | FAIL | same message while the panel row showed `live session open` |
+| Mutual removal (disconnect) | either | not run | blocked by the same session-classification result |
+| Mutual removal (response timeout) | either | not run | exercise pending: needs controlled response suppression |
+| Mutual removal (no full session) | either | PASS | `No open full session: only local removal is possible. Nothing was deleted.` |
+| Reset (cancelled) | Android | PASS | dialog with the destructive warning; `Cancel reset` left the list unchanged and published no outcome |
+| Reset (cancelled) | Chrome | PASS | `Reset not confirmed: nothing was deleted`; peer retained |
+| Reset (confirmed) | Android | PASS | `Identity reset; pairing again creates new trust`; `Trust status: Trust OK`; `No trusted peers` |
+| Reset (confirmed) | Chrome | PASS | `Identity reset; pair again to create new trust`; `Trust: ok`; `Known peers` empty |
+
+### Findings from the run
+
+1. **Mutual removal is unreachable from a live session.** Both endpoints answer
+   `No open full session: only local removal is possible. Nothing was deleted.` while the phone shows
+   `ACTIVE · Peer connected` and the panel shows `live session open`. The removal owner API selects
+   only a FULL-class generation, and after this enrollment the client record stayed
+   `active_activation_pending`, so no FULL session existed even after two reconnects. Either the
+   activation upgrade does not complete on this path or the client session class never becomes FULL;
+   the debug surfaces also give no way to tell a live session from a FULL one. Not investigated further
+   during the run.
+2. **Chrome keeps a stale live-session marker after the phone revokes.** After `Peer revoked` on the
+   phone, the panel row still read `live session open`, and the diagnostics showed no disconnect for
+   that connection. The trust record staying on the Chrome side is expected (the offline counterpart
+   keeps its copy); the stale session marker is not.
+3. **After a confirmed Android reset the peer list reads `Peers unavailable: trust store unreadable`.**
+   Seen after the reset, an app force-stop and a restart with the sharing service stopped; the reset
+   outcome itself and `Trust status: Trust OK` were correct. The list did not show `No trusted peers`
+   in that state.
+4. **Cosmetic:** the Android screen still displayed `Pairing fingerprint: 3DD5 D01F 7A2B` after the
+   confirmed reset, i.e. the last pairing's fingerprint, not a property of the fresh identity.
 
 ## Limits
 
