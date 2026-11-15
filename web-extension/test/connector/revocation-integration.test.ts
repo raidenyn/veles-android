@@ -100,12 +100,16 @@ class MemoryLocal implements LocalStore {
     clearCalls = 0;
     readFault: Error | null = null;
     writeFaultAt: number | null = null;
-    /** Holds the next durable write, so a test can observe a reset mid-transaction. */
+    /** Holds the given 1-based invalid-marker write (the first write of an identity reset). */
+    holdMarkerWrite: number | null = null;
     writeGate: Promise<void> | null = null;
-    private enterWrite: (() => void) | null = null;
-    readonly writeEntered = new Promise<void>((resolve) => {
-        this.enterWrite = resolve;
-    });
+    markerWrites = 0;
+    private readonly writeWaiters: (() => void)[] = [];
+
+    /** Resolves when the held marker write is entered; one waiter per held write. */
+    nextWriteEntered(): Promise<void> {
+        return new Promise<void>((resolve) => this.writeWaiters.push(resolve));
+    }
 
     async restrict(): Promise<void> {
         return undefined;
@@ -117,8 +121,10 @@ class MemoryLocal implements LocalStore {
     }
 
     async write(next: TrustSnapshot): Promise<void> {
-        if (this.writeGate !== null) {
-            this.enterWrite?.();
+        const marker = next.identity.installationId === '' && next.identity.publicKey === '';
+        if (marker) this.markerWrites += 1;
+        if (this.writeGate !== null && marker && this.holdMarkerWrite === this.markerWrites) {
+            for (const resolve of this.writeWaiters.splice(0)) resolve();
             await this.writeGate;
         }
         this.writeCount += 1;
@@ -1407,9 +1413,11 @@ describe('revocation integration: connector wiring', () => {
         // Hold the reset inside its repository transaction, so the connect completion lands in
         // the exact window the old identity is still valid in the store but must not be admitted.
         const gate = deferred();
+        const entered = fixture.local.nextWriteEntered();
         fixture.local.writeGate = gate.promise;
+        fixture.local.holdMarkerWrite = 1;
         const resetting = fixture.app.resetTrust();
-        await fixture.local.writeEntered;
+        await entered;
         await port.emit(
             connectedEvent({
                 request_id: connect.request_id as string,
@@ -1444,6 +1452,106 @@ describe('revocation integration: connector wiring', () => {
         expect(hex(requireValue(fixture.usedIdentities[0]))).toBe(refreshed.installationId);
         expect(hex(requireValue(fixture.usedIdentities[0]))).not.toBe(oldIdentity);
         // The reset deleted the peer record, so that session cannot authenticate either.
+        expect(fixture.app.sessions?.authenticatedSessions()).toEqual([]);
+    });
+
+    it('refuses admission after a failed reset that left the old identity in the store', async () => {
+        const fixture = createAppFixture();
+        await startApp(fixture);
+        const repository = requireRepository(fixture);
+        const phone = await TestPhone.create();
+        const peerId = await addAppPeer(fixture, phone);
+        const oldIdentity = requireValue(fixture.keys.value).installationId;
+        const port = fixture.controller.currentPort();
+
+        // The reset's invalid-marker write is the next durable write: it fails, so nothing was
+        // deleted and the store still holds the old identity and its records.
+        fixture.local.writeFaultAt = fixture.local.writeCount + 1;
+        await expect(fixture.app.resetTrust()).rejects.toThrow('re-pair');
+        expect(fixture.app.trustStatus).toBe('re-pair-required');
+        expect((await repository.peers()).map((peer) => peer.installationId)).toEqual([peerId]);
+        expect(requireValue(fixture.keys.value).installationId).toBe(oldIdentity);
+
+        const action = fixture.app.handleAction({
+            type: 'connect',
+            deviceHandle: HANDLE_DEVICE,
+            peerId,
+        });
+        const connect = await port.nextPosted();
+        await port.emit(
+            connectedEvent({
+                request_id: connect.request_id as string,
+                connection_handle: HANDLE_CONNECTION,
+            }),
+        );
+        await flush();
+
+        // The connect reloaded the still-durable identity, but a failed reset keeps admission
+        // closed: no engine is ever created with it and no session becomes live.
+        expect(fixture.usedIdentities).toEqual([]);
+        expect(fixture.app.sessions?.authenticatedSessions()).toEqual([]);
+        expect(fixture.app.trustStatus).toBe('re-pair-required');
+        await action;
+    });
+
+    it('keeps admission closed while a second overlapping reset is still pending', async () => {
+        const fixture = createAppFixture();
+        await startApp(fixture);
+        const repository = requireRepository(fixture);
+        const phone = await TestPhone.create();
+        const peerId = await addAppPeer(fixture, phone);
+        const port = fixture.controller.currentPort();
+
+        // A connect whose transport completion is delivered between the two resets.
+        const action = fixture.app.handleAction({
+            type: 'connect',
+            deviceHandle: HANDLE_DEVICE,
+            peerId,
+        });
+        const connect = await port.nextPosted();
+        expect(connect.type).toBe('connect');
+
+        // Hold the second request's invalid-marker write: the first reset finishes while the
+        // second one is still inside its own store transaction.
+        const gate = deferred();
+        const entered = fixture.local.nextWriteEntered();
+        fixture.local.writeGate = gate.promise;
+        fixture.local.holdMarkerWrite = 2;
+        const first = fixture.app.resetTrust();
+        const second = fixture.app.resetTrust();
+        await first;
+        await entered;
+
+        // The first reset is done while the second still owns admission: a completion delivered
+        // now stays out, so it can never be admitted with the identity the second will delete.
+        await port.emit(
+            connectedEvent({
+                request_id: connect.request_id as string,
+                connection_handle: HANDLE_CONNECTION,
+            }),
+        );
+        await microFlush();
+        expect(fixture.usedIdentities).toEqual([]);
+        expect(fixture.app.sessions?.authenticatedSessions()).toEqual([]);
+
+        gate.resolve();
+        await second;
+        const refreshed = await repository.identity();
+
+        // Only the last reset releases admission, and the session opens with its identity.
+        const hello = await nextSend(port);
+        await ackSend(port, hello);
+        const side = new PhoneSide(phone);
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.acceptClientHello(decodeFrame(hello.bytes).payload),
+        );
+        await flush();
+        await action;
+
+        expect(fixture.usedIdentities).toHaveLength(1);
+        expect(hex(requireValue(fixture.usedIdentities[0]))).toBe(refreshed.installationId);
         expect(fixture.app.sessions?.authenticatedSessions()).toEqual([]);
     });
 

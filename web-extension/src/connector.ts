@@ -295,13 +295,19 @@ class InstallationIdentityCache {
     private epoch = 0;
     private refreshing: Promise<void> | null = null;
     /**
-     * The reset-wide admission barrier (finding 1). It is closed from the moment a reset begins,
-     * before the reset's first await, so a session opened while the reset tears the store down and
-     * rewrites it is never admitted with the identity that reset deletes and never slips past the
-     * reset's `closeAll()` snapshot.
+     * The reset-wide admission barrier (finding A/B). It is closed from the moment a reset begins,
+     * before the reset's first await, so a session opened while a reset tears the store down and
+     * rewrites it is never admitted with the identity a reset deletes and never slips past the
+     * reset's `closeAll()` snapshot. Overlapping resets share it: it stays closed until the last
+     * one has refreshed, and a reset that failed keeps every later open refused (the old identity
+     * may still be durable).
      */
     private admission: Promise<void> | null = null;
     private releaseAdmission: (() => void) | null = null;
+    /** How many resets currently hold admission closed. */
+    private resets = 0;
+    /** True after a reset the store did not confirm: every open is refused, not served stale. */
+    private refused = false;
 
     constructor(private readonly read: () => Promise<Uint8Array>) {}
 
@@ -317,21 +323,24 @@ class InstallationIdentityCache {
     }
 
     /**
-     * Waits for a reset in flight and for any refresh, before a new session open reads the cache.
-     * Admission is released by `endReset()`, only after the reset refreshed the identity.
+     * Waits for every reset in flight and for any refresh, then reports whether an open may be
+     * admitted. Admission is released by `endReset()` once the last reset refreshed the identity;
+     * a failed reset keeps `false` (and every open refused) until a later reset succeeds.
      */
-    async settled(): Promise<void> {
+    async settled(): Promise<boolean> {
         const admission = this.admission;
         if (admission !== null) await admission;
         if (this.refreshing !== null) await this.refreshing;
+        return !this.refused;
     }
 
     /**
-     * Closes admission and drops the cached identity. It runs synchronously before the reset's
-     * first await: the deleted identity is never served to a session admitted during the reset,
-     * and its epoch advance discards any load that started before the reset.
+     * Closes admission for one reset and drops the cached identity. It runs synchronously before
+     * the reset's first await: the deleted identity is never served to a session admitted during
+     * the reset, and its epoch advance discards any load that started before the reset.
      */
     beginReset(): void {
+        this.resets += 1;
         this.epoch += 1;
         this.value = null;
         if (this.admission !== null) return;
@@ -341,11 +350,15 @@ class InstallationIdentityCache {
     }
 
     /**
-     * Releases admission once the reset settled. On a successful reset the cache holds the
-     * refreshed identity; on a failed one it stays empty, so an admitted open reloads from the
-     * repository and is otherwise refused — the old identity is never served again.
+     * Ends one reset. `succeeded` is false when the reset could not delete and refresh the
+     * identity (the store may still hold it): every open is then refused until a later reset
+     * succeeds. Admission stays closed while another reset is still in flight and is released
+     * only after the last one finished successfully.
      */
-    endReset(): void {
+    endReset(succeeded: boolean): void {
+        this.refused = !succeeded;
+        this.resets = Math.max(0, this.resets - 1);
+        if (this.resets > 0) return;
         const release = this.releaseAdmission;
         this.admission = null;
         this.releaseAdmission = null;
@@ -386,6 +399,8 @@ export class ConnectorApp {
     private readonly identities: InstallationIdentityCache | null;
     private readonly storeFailure: StoreFailureSink | null;
     private readonly reconnect: ReconnectPolicy;
+    /** Serializes reset bodies; admission is reserved per request before it queued. */
+    private resetChain: Promise<void> = Promise.resolve();
     private readonly unsubscribers: (() => void)[] = [];
     private readonly userDisconnectHandles = new Set<string>();
     private readonly sessionFailedHandles = new Set<string>();
@@ -762,13 +777,27 @@ export class ConnectorApp {
         const coordinator = this.coordinator;
         const identities = this.identities;
         if (coordinator === null || identities === null) return;
+        // Reserve admission synchronously for this request, then run the reset bodies one at a
+        // time. Overlapping requests therefore share the barrier and admission stays closed until
+        // the last one refreshed the identity (finding B), while a failure never releases another
+        // request's hold and keeps every later open refused (finding A).
         identities.beginReset();
-        try {
-            await coordinator.reset();
-            await identities.refresh();
-        } finally {
-            identities.endReset();
-        }
+        const run = async (): Promise<void> => {
+            try {
+                await coordinator.reset();
+                await identities.refresh();
+            } catch (error) {
+                identities.endReset(false);
+                throw error;
+            }
+            identities.endReset(true);
+        };
+        const next = this.resetChain.then(run, run);
+        this.resetChain = next.then(
+            () => undefined,
+            () => undefined,
+        );
+        return next;
     }
 
     /**
@@ -1170,11 +1199,18 @@ export class ConnectorApp {
     ): Promise<boolean> {
         const handle = event.connection_handle;
         const sessions = this.sessions;
-        // A new open is gated on an identity refresh still in flight: a reset must never let a
-        // session sign with the installation id it just deleted.
+        // A new open is gated on every reset in flight and on an identity refresh: a reset must
+        // never let a session sign with the installation id it deleted, and a failed reset must
+        // never be bypassed with the identity the store still holds (finding A).
         if (this.identities !== null) {
-            await this.identities.settled();
+            const admitted = await this.identities.settled();
             if (token !== this.session || this.disposed) return false;
+            if (!admitted) {
+                // Surface the refusal as the generic authentication failure; the reset's own
+                // failure already reported the single "re-pair required" status.
+                this.applyFailure(synthesizeAuthenticationFailed());
+                return false;
+            }
         }
         const opened =
             sessions === null ? { result: 'failed' as const } : await sessions.open(handle, peerId);
