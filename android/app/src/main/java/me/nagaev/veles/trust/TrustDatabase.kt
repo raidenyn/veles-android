@@ -54,7 +54,7 @@ class RoomTrustStorage(private val database: TrustDatabase) : TrustStorage {
         try {
             return database.withTransaction {
                 val rows = database.trustDao().rows()
-                checkTrust(rows.size <= 1 && rows.all { it.id == 1 })
+                if (!(rows.size <= 1 && rows.all { it.id == 1 })) throw TrustStoreException()
                 val previous = rows.singleOrNull()?.let { json.decodeFromString<TrustSnapshot>(it.payload) }
                 val (next, result) = block(previous)
                 database.trustDao().put(TrustRow(payload = json.encodeToString(next)))
@@ -62,9 +62,13 @@ class RoomTrustStorage(private val database: TrustDatabase) : TrustStorage {
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
+        } catch (failure: TrustException) {
+            // A peer rejection raised by the block keeps its own classification.
+            throw failure
         } catch (_: Exception) {
-            // Do not propagate database payloads, parser messages, peer identifiers or key details.
-            throw TrustException()
+            // Read, decode, validation and the durable write are all store failures. Do not
+            // propagate database payloads, parser messages, peer identifiers or key details.
+            throw TrustStoreException()
         }
     }
 }

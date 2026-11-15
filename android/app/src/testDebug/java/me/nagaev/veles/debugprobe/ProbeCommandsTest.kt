@@ -119,6 +119,8 @@ class ProbeCommandsTest {
         override suspend fun addPending(peer: PendingPeer) = Unit
         override suspend fun confirm(peerId: String, step: ActivationStep, proof: ByteArray) = Unit
         override suspend fun revoke(peerId: String) = Unit
+        override suspend fun beginRevocation(peerId: String) = Unit
+        override suspend fun endRevocation(peerId: String) = Unit
         override suspend fun markAuthenticated(peerId: String) = Unit
     }
 }

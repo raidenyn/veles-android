@@ -762,6 +762,10 @@ class EnrollmentFlowTest : PairingTestBase() {
             delegate.revoke(peerId)
         }
 
+        override suspend fun beginRevocation(peerId: String) = delegate.beginRevocation(peerId)
+
+        override suspend fun endRevocation(peerId: String) = delegate.endRevocation(peerId)
+
         override suspend fun markAuthenticated(peerId: String) = delegate.markAuthenticated(peerId)
     }
 

@@ -369,6 +369,8 @@ class SessionHostRoutingTest {
         override suspend fun addPending(peer: PendingPeer) = error("not used")
         override suspend fun confirm(peerId: String, step: ActivationStep, proof: ByteArray) = error("not used")
         override suspend fun revoke(peerId: String) = error("not used")
+        override suspend fun beginRevocation(peerId: String) = error("not used")
+        override suspend fun endRevocation(peerId: String) = error("not used")
 
         // The routing tests authenticate a known peer: the mark is the one trust write the
         // host performs, and reconnect routing is what they assert, so it is a no-op here.

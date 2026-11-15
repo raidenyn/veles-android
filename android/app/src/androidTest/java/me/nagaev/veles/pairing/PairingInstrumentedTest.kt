@@ -442,6 +442,10 @@ private class ClientTrust(private val identity: IdentityMaterial) : Installation
         peers.removeAll { it.installationId == peerId }
     }
 
+    override suspend fun beginRevocation(peerId: String) = Unit
+
+    override suspend fun endRevocation(peerId: String) = Unit
+
     override suspend fun markAuthenticated(peerId: String) = Unit
 }
 

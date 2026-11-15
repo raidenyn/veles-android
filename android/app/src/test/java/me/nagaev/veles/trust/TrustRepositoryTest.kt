@@ -2,10 +2,12 @@ package me.nagaev.veles.trust
 
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import java.io.IOException
 import java.security.KeyPairGenerator
 
 class TrustRepositoryTest {
@@ -25,9 +27,11 @@ class TrustRepositoryTest {
         override fun sign(message: ByteArray): ByteArray = byteArrayOf()
     }
     private val proofGatedVerifier = ActivationVerifier { _, _, proof -> proof.contentEquals(byteArrayOf(1)) }
+    private var storeFailures = 0
     private fun repository(
         confirmed: Boolean = true,
         verifier: ActivationVerifier = ActivationVerifier { _, _, _ -> confirmed },
+        onStoreFailure: () -> Unit = { storeFailures += 1 },
     ) = TrustRepository(
         storage,
         identity,
@@ -35,6 +39,7 @@ class TrustRepositoryTest {
         { boot },
         { wall },
         verifier,
+        onStoreFailure,
     )
     private fun peer() = PendingPeer(
         "02".repeat(16),
@@ -246,6 +251,142 @@ class TrustRepositoryTest {
         assertEquals(9000L, repository().peers().single().lastSeenMillis)
     }
 
+    @Test fun `corruptStoredStateIsStoreFailure`() = runTest {
+        storage.fault = StorageFault.READ
+        assertStoreFailure { repository().identity() }
+        assertEquals(1, storeFailures)
+    }
+
+    @Test fun `failingDurableWriteIsStoreFailure`() = runTest {
+        val repo = repository()
+        repo.identity()
+        val peer = peer()
+        storage.fault = StorageFault.WRITE
+
+        assertStoreFailure { repo.addPending(peer) }
+
+        storage.fault = null
+        assertTrue("a failed write leaves no record", repo.peers().isEmpty())
+        assertEquals(1, storeFailures)
+    }
+
+    @Test fun `postOperationValidationFailureIsStoreFailure`() = runTest {
+        val repo = repository()
+        repo.identity()
+
+        // The operation returns an invalid record; validating the resulting snapshot is a store
+        // failure, not a peer rejection.
+        assertStoreFailure { repo.addPending(peer().copy(publicKey = "04" + "00".repeat(64))) }
+
+        assertTrue(repo.peers().isEmpty())
+        assertEquals(1, storeFailures)
+    }
+
+    @Test fun `missingPeerIsPeerRejection`() = runTest {
+        val repo = repository()
+        repo.identity()
+
+        assertPeerRejection { repo.confirm("09".repeat(16), ActivationStep.COMMIT, byteArrayOf(1)) }
+        assertPeerRejection { repo.markAuthenticated("09".repeat(16)) }
+
+        assertEquals(0, storeFailures)
+    }
+
+    @Test fun `onStoreFailureRunsOncePerEpisode`() = runTest {
+        val repo = repository()
+        storage.fault = StorageFault.READ
+
+        assertStoreFailure { repo.identity() }
+        assertStoreFailure { repo.peers() }
+
+        assertEquals(1, storeFailures)
+    }
+
+    @Test fun `newEpisodeAfterSuccessfulTransaction`() = runTest {
+        val repo = repository()
+        storage.fault = StorageFault.READ
+        assertStoreFailure { repo.identity() }
+        assertEquals(1, storeFailures)
+
+        storage.fault = null
+        repo.identity()
+        assertEquals("a successful transaction does not report", 1, storeFailures)
+
+        storage.fault = StorageFault.READ
+        assertStoreFailure { repo.peers() }
+        assertEquals("a later failure starts a new episode", 2, storeFailures)
+    }
+
+    @Test fun `episodeEndsOnReset`() = runTest {
+        val repo = repository()
+        storage.fault = StorageFault.READ
+        assertStoreFailure { repo.identity() }
+        assertEquals(1, storeFailures)
+
+        // Task 2's resetIdentity() calls this same hook.
+        repo.endStoreFailureEpisode()
+
+        assertStoreFailure { repo.identity() }
+        assertEquals(2, storeFailures)
+    }
+
+    @Test fun `addPendingRefusedWhileFenced`() = runTest {
+        val repo = repository()
+        repo.identity()
+        val peer = peer()
+        repo.beginRevocation(peer.installationId)
+
+        assertPeerRejection { repo.addPending(peer) }
+        assertTrue(repo.peers().isEmpty())
+        assertEquals(0, storeFailures)
+
+        repo.endRevocation(peer.installationId)
+        repo.addPending(peer)
+        assertEquals(peer.installationId, repo.peers().single().installationId)
+    }
+
+    @Test fun `overlappingFencesReleaseOnlyWhenBothEnd`() = runTest {
+        val repo = repository()
+        repo.identity()
+        val peer = peer()
+        repo.beginRevocation(peer.installationId)
+        repo.beginRevocation(peer.installationId)
+
+        assertPeerRejection { repo.addPending(peer) }
+        repo.endRevocation(peer.installationId)
+        assertPeerRejection { repo.addPending(peer) }
+
+        repo.endRevocation(peer.installationId)
+        repo.addPending(peer)
+        assertEquals(1, repo.peers().size)
+    }
+
+    private suspend fun assertStoreFailure(block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (failure: TrustException) {
+            assertTrue(
+                "expected a store failure but got ${failure::class.qualifiedName}",
+                failure is TrustStoreException,
+            )
+            return
+        }
+        fail("Expected a store failure")
+    }
+
+    private suspend fun assertPeerRejection(block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (failure: TrustException) {
+            assertFalse(
+                "expected a peer rejection but got ${failure::class.qualifiedName}",
+                failure is TrustStoreException,
+            )
+            return
+        }
+        fail("Expected a peer rejection")
+    }
+
     private suspend fun assertFails(block: suspend () -> Unit) {
         try {
             block()
@@ -254,10 +395,16 @@ class TrustRepositoryTest {
     }
 }
 
+private enum class StorageFault { READ, WRITE }
+
 private class MemoryTrustStorage : TrustStorage {
+    var fault: StorageFault? = null
     private var value: TrustSnapshot? = null
+
     override suspend fun <T> transaction(block: (TrustSnapshot?) -> Pair<TrustSnapshot, T>): T {
+        if (fault == StorageFault.READ) throw IOException("undecodable trust payload")
         val (next, result) = block(value)
+        if (fault == StorageFault.WRITE) throw IOException("durable write failed")
         value = next
         return result
     }

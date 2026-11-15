@@ -962,6 +962,8 @@ class SessionHostTest {
         override suspend fun addPending(peer: PendingPeer) = error("not used by the adapter")
         override suspend fun confirm(peerId: String, step: ActivationStep, proof: ByteArray) = error("not used by the adapter")
         override suspend fun revoke(peerId: String) = error("not used by the adapter")
+        override suspend fun beginRevocation(peerId: String) = error("not used by the adapter")
+        override suspend fun endRevocation(peerId: String) = error("not used by the adapter")
         override suspend fun markAuthenticated(peerId: String) {
             if (failMark) throw TrustException()
             events?.add("mark")

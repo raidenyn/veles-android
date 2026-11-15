@@ -639,6 +639,8 @@ class SyntheticProbeHandlerTest {
         override suspend fun revoke(peerId: String) {
             revoked += peerId
         }
+        override suspend fun beginRevocation(peerId: String) = Unit
+        override suspend fun endRevocation(peerId: String) = Unit
         override suspend fun markAuthenticated(peerId: String) {
             marked += peerId
         }
