@@ -220,13 +220,19 @@ class TrustRepository(
     /**
      * One transaction and its failure-episode transition share the same critical section, so a
      * success can only clear the episode, or a failure start one, in transaction order.
+     *
+     * Failures are classified at this one choke point by *what* failed (design D6): only the
+     * caller's own operation — its explicit peer-level checks and the revocation fence — keeps a
+     * plain rejection. Everything before it (storage read, identity read, continuity/boot
+     * validation) and after it (result validation and the durable write) is a store failure.
      */
     private suspend fun <T> update(block: (TrustSnapshot) -> Pair<TrustSnapshot, T>): T {
         var report = false
+        val phase = StorePhase()
         try {
             val result = storeLock.withLock {
                 when (
-                    val outcome = storeTransaction { stored ->
+                    val outcome = storeTransaction(phase) { stored ->
                         val snapshot = stored ?: run {
                             // A surviving key without its installation metadata is not a fresh installation.
                             storeTrust(readIdentityKey(keys) == null)
@@ -248,6 +254,9 @@ class TrustRepository(
                         } else {
                             TrustEncoding.hex(ByteArray(HASH_BYTES).also(SecureRandom()::nextBytes))
                         }
+                        // The operation's own checks and the fence run here; only what they raise
+                        // keeps its peer-rejection classification.
+                        phase.inOperation = true
                         val (next, value) = block(
                             snapshot.copy(
                                 bootMarker = boot,
@@ -262,6 +271,7 @@ class TrustRepository(
                                 },
                             ),
                         )
+                        phase.inOperation = false
                         // Failures after the operation returned — validating its result and the durable
                         // write in [TrustStorage.transaction] — are store failures too.
                         validateSnapshot(next, stored = false)
@@ -285,19 +295,27 @@ class TrustRepository(
     }
 
     /**
-     * Runs one storage transaction and classifies its failure, without throwing. Any failure that
-     * is not an explicit peer rejection is normalised to [TrustStoreException]; cancellation is
-     * returned untouched so it is never reported.
+     * Runs one storage transaction and classifies its failure, without throwing. A plain
+     * [TrustException] is a peer rejection only while the caller's operation is running; any
+     * other failure becomes [TrustStoreException]. Cancellation is returned untouched so it is
+     * never reported.
      */
     private suspend fun <T> storeTransaction(
+        phase: StorePhase,
         block: (TrustSnapshot?) -> Pair<TrustSnapshot, T>,
     ): StoreTransaction<T> = try {
         StoreTransaction.Committed(storage.transaction(block))
     } catch (cancelled: CancellationException) {
         StoreTransaction.Failed(cancelled)
     } catch (failure: TrustException) {
-        // A peer-level rejection keeps its own classification.
-        StoreTransaction.Failed(failure)
+        // A peer-level rejection raised by the operation's own checks or the fence keeps its own
+        // classification; an infrastructure failure before or after it is normalized.
+        val classification = if (phase.inOperation || failure is TrustStoreException) {
+            failure
+        } else {
+            TrustStoreException()
+        }
+        StoreTransaction.Failed(classification)
     } catch (_: Exception) {
         StoreTransaction.Failed(TrustStoreException())
     }
@@ -323,6 +341,14 @@ private sealed interface StoreTransaction<out T> {
     class Committed<T>(val value: T) : StoreTransaction<T>
 
     class Failed(val failure: Exception) : StoreTransaction<Nothing>
+}
+
+/**
+ * Which part of a transaction is running (design D6). It is true only inside the caller's own
+ * operation, so a plain rejection raised there — and nowhere else — stays a peer rejection.
+ */
+private class StorePhase {
+    var inOperation = false
 }
 
 private fun readIdentityKey(keys: IdentityKeyStore): String? = try {

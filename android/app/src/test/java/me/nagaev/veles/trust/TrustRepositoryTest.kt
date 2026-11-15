@@ -22,6 +22,9 @@ class TrustRepositoryTest {
     private var keyPresent = false
     private var elapsed = 10L
     private var boot = "boot-a"
+
+    /** The production supplier throws a plain [TrustException] when `BOOT_COUNT` is unavailable. */
+    private var bootFailure: TrustException? = null
     private var wall = 1000L
     private var keyDeleteFault = false
     private val identity = object : IdentityKeyStore {
@@ -46,7 +49,7 @@ class TrustRepositoryTest {
         storage,
         identity,
         { elapsed },
-        { boot },
+        { bootFailure?.let { throw it } ?: boot },
         { wall },
         verifier,
         onStoreFailure,
@@ -350,6 +353,31 @@ class TrustRepositoryTest {
         assertPeerRejection { repo.markAuthenticated("09".repeat(16)) }
 
         assertEquals(0, storeFailures)
+    }
+
+    /**
+     * OTP-11 D6: `BOOT_COUNT` unavailable is an infrastructure failure before the operation runs,
+     * not a peer's explicit rejection. The production supplier throws a plain `TrustException`,
+     * which must still be normalized so the fail-closed action terminates live sessions.
+     */
+    @Test fun `unavailableBootTokenIsStoreFailure`() = runTest {
+        val repo = repository()
+        repo.identity()
+        bootFailure = TrustException()
+
+        assertStoreFailure { repo.peers() }
+        assertStoreFailure { repo.markAuthenticated("02".repeat(16)) }
+
+        assertEquals("the failure is reported as one store-failure episode", 1, storeFailures)
+    }
+
+    /** The pre-operation boot-marker check is infrastructure validation, never a peer rejection. */
+    @Test fun `emptyBootMarkerIsStoreFailure`() = runTest {
+        boot = ""
+
+        assertStoreFailure { repository().identity() }
+
+        assertEquals(1, storeFailures)
     }
 
     @Test fun `onStoreFailureRunsOncePerEpisode`() = runTest {

@@ -90,6 +90,9 @@ class PeerRevocationIntegrationTest {
     private val fingerprints = mutableListOf<String>()
     private val pairings = mutableMapOf<Long, PairingConnection>()
 
+    /** The production boot-token supplier's failure: `BOOT_COUNT` unavailable or invalid. */
+    private var bootFailure: TrustException? = null
+
     private lateinit var repository: TrustRepository
     private lateinit var trust: GatedTrust
     private lateinit var identities: LocalIdentity
@@ -104,7 +107,7 @@ class PeerRevocationIntegrationTest {
             storage,
             keys,
             { clock.now },
-            { BOOT },
+            { bootFailure?.let { throw it } ?: BOOT },
             { clock.now },
             ActivationVerifier { peer, step, proof -> proofs.consume(peer, step, proof) },
         ) { created.failClosed() }
@@ -303,6 +306,40 @@ class PeerRevocationIntegrationTest {
         assertTrue("the unrelated second session is closed", transport.closed.contains(secondGen))
         assertFalse("the failing session never authenticated", host.authenticatedSessions().any { it.generation == thirdGen })
         assertTrue("no session remains authorized", host.authenticatedSessions().isEmpty())
+    }
+
+    @Test
+    fun unavailableBootTokenClosesUnrelatedSessions() = runTest {
+        start()
+        val first = PairingClient(ByteArray(16) { (0x10 + it).toByte() })
+        val second = PairingClient(ByteArray(16) { (0x20 + it).toByte() })
+        seedActive(first)
+        seedActive(second)
+        val firstGen = ConnectionGeneration("aa", 1)
+        val secondGen = ConnectionGeneration("bb", 2)
+        reconnect(firstGen, first.reconnectClient())
+        reconnect(secondGen, second.reconnectClient())
+        assertEquals("two live sessions", 2, host.authenticatedSessions().size)
+        val storedBefore = storage.snapshot
+
+        // The production supplier cannot read `BOOT_COUNT`; continuity validation is
+        // unavailable, so the plain TrustException must be classified as a store failure.
+        bootFailure = TrustException()
+        val failure = try {
+            repository.peers()
+            null
+        } catch (thrown: TrustException) {
+            thrown
+        }
+        runCurrent()
+
+        assertTrue("a boot-token failure is a store failure", failure is TrustStoreException)
+        assertEquals("the single re-pair status", listOf(TrustStatus.RE_PAIR_REQUIRED), statuses)
+        assertTrue("the unrelated first session is closed", transport.closed.contains(firstGen))
+        assertTrue("the unrelated second session is closed", transport.closed.contains(secondGen))
+        assertTrue("no session remains authorized", host.authenticatedSessions().isEmpty())
+        assertEquals("fail-closed deletes nothing", storedBefore, storage.snapshot)
+        assertTrue("fail-closed never resets", events.none { it == STORAGE_RESET || it == KEY_DELETED })
     }
 
     @Test
