@@ -5,8 +5,8 @@
 > Overwritten on each apply iteration; iteration counter grows.
 
 **Change**: `otp-11-peer-revocation`
-**Iteration**: `2`
-**Applied at**: `2026-11-15 11:50`
+**Iteration**: `3`
+**Applied at**: `2026-11-15 13:35`
 **Executor**: `subagent-driven-development`
 
 ---
@@ -20,8 +20,8 @@
 
 ## Commits
 
-- **Range**: `5d5b77c..5f41436` (planning scaffold through the post-verify review wave)
-- **Count**: `43`
+- **Range**: `5d5b77c..71931b2` (planning scaffold through the device-run fix)
+- **Count**: `47`
 
 ---
 
@@ -59,6 +59,11 @@
   outcome, exact status sequences pinned, docs aligned. The removal-snapshot race and the blocking
   identity reload were left, with the reviewer's reasoning that neither widens exposure.
 - Iteration 2 exists because code changed after the first verify; the same gates were re-run.
+- Iteration 3 follows the real-device run (2026-11-15). Mutual removal passed Chrome to Android on
+  hardware; a recovery-only session correctly refuses removal, and the panel now shows the live
+  session class instead of a bare "live session open". Two follow-ups were filed: the OTP-10
+  activation-ack race that produces the recovery session, and the removal response lost when Android
+  requests removal.
 
 ---
 

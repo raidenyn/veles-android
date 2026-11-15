@@ -1,8 +1,8 @@
 # Verification Report
 
 **Change**: `otp-11-peer-revocation`
-**Verified at**: `2026-11-15 11:50`
-**Iteration**: `2`
+**Verified at**: `2026-11-15 13:35`
+**Iteration**: `3`
 **Verifier**: OpenCode `openspec-verify-change` (subagent-driven apply; reviewers GPT-6.1-Sol, high)
 
 ---
@@ -79,6 +79,12 @@ outcome (`'ok'` on success, `'re-pair-required'` on failure) from the reset body
 status sequences pinned in tests, and the debug note states that the status latches until a reset
 succeeds.
 
+Re-verified in iteration 3 after the real-device run: the panel reports the live session class
+(`full` / `recovery` / `none`) instead of a bare "live session open", so a recovery-only generation no
+longer contradicts the removal refusal. Device evidence is recorded in `docs/otp-11-debug-controls.md`;
+the two defects it exposed are filed as follow-ups (OTP-10 activation-ack race; removal response loss
+when Android requests removal) and are not part of this change.
+
 **Drift warnings** (non-blocking):
 
 - `design.md:137-145`: the reset section does not mention the admission barrier, serialized reset
@@ -97,7 +103,7 @@ succeeds.
 - [x] No unstaged files in the worktree
 - [ ] All related commits have been pushed
 
-**Commit range** (if known): `5d5b77c..5f41436` (43 commits)
+**Commit range** (if known): `5d5b77c..71931b2` (47 commits)
 
 Not pushed yet: the merge, push and pull request belong to the finalize artifact's closeout. The branch
 `feat/otp-11-planning` is local.
