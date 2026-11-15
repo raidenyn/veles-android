@@ -129,27 +129,29 @@ class PeerRevocationCoordinator(
      * the order in which the requests reserved their holds. A failed reset keeps admission closed,
      * because the store may still hold the identity it could not discard.
      *
+     * The hold itself cannot be leaked: taking it is a non-suspending call and every release path
+     * is a `finally`, so a cancellation after the request owns admission still gives the hold
+     * back. A request cancelled before its body reaches the store publishes no outcome at all.
+     *
      * A completed reset is also the one recovery from the latched [TrustStatus.RE_PAIR_REQUIRED]:
      * once the deletions have run and the repository has refreshed the identity cache (its
      * `resetIdentity` does both), nothing is left to re-pair, so `OK` is published. A failing
      * reset throws before this line and keeps the failure status.
      */
     suspend fun reset() {
-        // Reserve this request's own hold on admission before the first suspension: overlapping
-        // requests then share the barrier, so admission stays closed until the last of them
-        // finished deleting and refreshing (an earlier reset's completion must not reopen
-        // admission for a reset that has not taken its snapshot yet).
-        sessions.beginReset()
-        // `null` until this request's serialized body starts: a request cancelled while queued
-        // releases its hold without publishing an outcome.
+        // `null` until this request's body starts discarding the store: a request that never got
+        // that far publishes no outcome, so it cannot latch a refusal for a store it never touched.
         var completed: Boolean? = null
         var published = false
         try {
+            // Taking the hold cannot be cancelled: `beginReset` is a plain call that closes
+            // admission and returns, and the `finally` below always releases it, so a cancellation
+            // after this line can never leak the hold and keep admission closed forever.
+            sessions.beginReset()
             // Bodies are serialized one at a time, like the Chrome connector's reset chain, so a
             // queued request never tears the store down under a running one while it still holds
             // its own admission hold.
             resetLock.withLock {
-                completed = false
                 try {
                     try {
                         sessions.closeAll()
@@ -158,6 +160,9 @@ class PeerRevocationCoordinator(
                     } catch (_: Exception) {
                         // The generations were logically torn down; the deletion must still run.
                     }
+                    // From here the body discards the store, so a failure or a cancellation is
+                    // published fail-closed.
+                    completed = false
                     trust.resetIdentity()
                     completed = true
                     onStatus(TrustStatus.OK)
@@ -170,9 +175,9 @@ class PeerRevocationCoordinator(
                 }
             }
         } finally {
-            // A request cancelled before its body started releases its hold without an outcome, so
-            // the most recently completed body still decides.
-            if (!published) sessions.endReset(null)
+            // A request cancelled before its body reached the store releases its hold without an
+            // outcome, so the most recently completed body still decides.
+            if (!published) sessions.endReset(completed)
         }
     }
 

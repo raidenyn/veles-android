@@ -353,35 +353,32 @@ class PeerRevocationCoordinatorTest {
     }
 
     /**
-     * Finding: a reservation taken before the serialized section is not body order. The first
-     * request reserves admission and is then gated *before* it enters its body; the second request
-     * reserves later, runs its body first and succeeds; the first then runs its body and fails, so
-     * it is the most recently completed body and admission must stay closed.
+     * Ordering: the reset bodies decide admission in the order they run, and the last one wins. The
+     * first request takes its hold and is gated inside its body (after acquisition); the second
+     * takes its hold while the first still owns the serialized section, so its body always runs
+     * last and here fails: admission must stay closed.
      */
     @Test
-    fun aResetGatedBeforeItsBodyDecidesAdmissionWhenItRunsLastAndFails() = runTest {
+    fun theLastCompletedResetBodyDecidesAdmissionWhenItFails() = runTest {
         val client = TestClient()
         val host = host { engine(client, null) }
         val entered = CompletableDeferred<Unit>()
         val gate = CompletableDeferred<Unit>()
-        val coordinator = coordinator(host, backgroundScope, GatedReservation(host, entered, gate))
+        val coordinator = coordinator(host, backgroundScope, GatedBody(host, entered, gate))
+        // The body that runs first succeeds, the one that runs last fails.
+        trust.resetFailures += listOf(null, TrustException())
 
-        val reservedFirst = async { runCatching { coordinator.reset() } }
+        val first = async { runCatching { coordinator.reset() } }
         entered.await()
-        // The second request reserves after the first, but its body runs first and succeeds.
-        trust.resetFailure = null
-        val reservedSecond = async { runCatching { coordinator.reset() } }
+        val second = async { runCatching { coordinator.reset() } }
         runCurrent()
-        assertTrue("the later reservation completed first", reservedSecond.isCompleted)
-        assertTrue("the later body succeeded", reservedSecond.await().isSuccess)
+        assertFalse("the second body waits for the serialized section", second.isCompleted)
 
-        // The first request now runs its body, which fails: it is the most recently completed one.
-        trust.resetFailure = TrustStoreException()
         gate.complete(Unit)
         runCurrent()
-        val failure = reservedFirst.await().exceptionOrNull()
 
-        assertTrue("the last completed body failed", failure is TrustException)
+        assertTrue("the first body succeeded", first.await().isSuccess)
+        assertTrue("the last body failed", second.await().exceptionOrNull() is TrustException)
         val gen = ConnectionGeneration("aa", 1)
         connect(host, gen)
         host.onRecord(gen, client.helloFrame.copyOf(), admission())
@@ -391,36 +388,77 @@ class PeerRevocationCoordinatorTest {
     }
 
     /**
-     * The mirror interleaving: the request that reserved first is gated before its body, the second
-     * one fails, and the first then succeeds. Admission must be open, because the most recently
-     * completed body recovered the store.
+     * The mirror ordering: the body that runs last succeeds, so it is the one admission reflects
+     * even though the body that ran before it failed.
      */
     @Test
-    fun aResetGatedBeforeItsBodyReopensAdmissionWhenItRunsLastAndSucceeds() = runTest {
+    fun theLastCompletedResetBodyReopensAdmissionWhenItSucceeds() = runTest {
         val client = TestClient()
         val host = host { engine(client, null) }
         val entered = CompletableDeferred<Unit>()
         val gate = CompletableDeferred<Unit>()
-        val coordinator = coordinator(host, backgroundScope, GatedReservation(host, entered, gate))
+        val coordinator = coordinator(host, backgroundScope, GatedBody(host, entered, gate))
+        // The body that runs first fails, the one that runs last succeeds.
+        trust.resetFailures += listOf(TrustException(), null)
 
-        val reservedFirst = async { runCatching { coordinator.reset() } }
+        val first = async { runCatching { coordinator.reset() } }
         entered.await()
-        trust.resetFailure = TrustStoreException()
-        val reservedSecond = async { runCatching { coordinator.reset() } }
+        val second = async { runCatching { coordinator.reset() } }
         runCurrent()
-        assertTrue("the later reservation completed first", reservedSecond.isCompleted)
-        assertTrue("the later body failed", reservedSecond.await().exceptionOrNull() is TrustException)
+        assertFalse("the second body waits for the serialized section", second.isCompleted)
 
-        trust.resetFailure = null
         gate.complete(Unit)
         runCurrent()
-        assertTrue("the last completed body succeeded", reservedFirst.await().isSuccess)
+
+        assertTrue("the first body failed", first.await().exceptionOrNull() is TrustException)
+        assertTrue("the last body succeeded", second.await().isSuccess)
         val gen = ConnectionGeneration("aa", 1)
         connect(host, gen)
         host.onRecord(gen, client.helloFrame.copyOf(), admission())
         runCurrent()
         assertTrue("the most recently completed reset recovered the store", transport.closed.none { it == gen })
         assertEquals("an admitted generation answers the hello", 2, transport.sent.count { it.gen == gen })
+    }
+
+    /**
+     * Regression: cancelling a reset must not leak its admission hold. The request takes its hold
+     * and is gated inside its body, before it discards anything; the cancellation releases the hold
+     * without publishing an outcome, so admission reopens at once and a later completed reset still
+     * decides it.
+     */
+    @Test
+    fun aCancelledResetReleasesItsHoldWithoutPublishingAnOutcome() = runTest {
+        val client = TestClient()
+        val host = host { engine(client, null) }
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val coordinator = coordinator(host, backgroundScope, GatedBody(host, entered, gate))
+
+        val cancelled = async { coordinator.reset() }
+        entered.await()
+        // The request owns admission and its body is suspended before any store deletion.
+        assertTrue("the body is still suspended", gate.isActive)
+        cancelled.cancel()
+        runCurrent()
+
+        // The released hold reopens admission: a leaked hold would keep it closed for good.
+        val reopened = ConnectionGeneration("aa", 1)
+        connect(host, reopened)
+        host.onRecord(reopened, client.helloFrame.copyOf(), admission())
+        runCurrent()
+        assertTrue("the released hold reopens admission", transport.closed.none { it == reopened })
+        assertEquals("an admitted generation answers the hello", 2, transport.sent.count { it.gen == reopened })
+        assertTrue("the cancelled reset published no outcome", statuses.isEmpty())
+
+        // A later completed reset behaves exactly as before.
+        coordinator.reset()
+        assertEquals("the later completed reset publishes the recovery status", listOf(TrustStatus.OK), statuses)
+        val after = ConnectionGeneration("bb", 2)
+        connect(host, after)
+        host.onRecord(after, client.helloFrame.copyOf(), admission())
+        runCurrent()
+        assertTrue("the later reset leaves admission open", transport.closed.none { it == after })
+        assertEquals("an admitted generation answers the hello", 2, transport.sent.count { it.gen == after })
     }
 
     @Test
@@ -856,23 +894,24 @@ class PeerRevocationCoordinatorTest {
     private class Closed(val gen: ConnectionGeneration)
 
     /**
-     * The production session seam with one reservation gate: the first `beginReset` takes its hold
-     * and then waits, so that request owns admission but has not entered the serialized reset body
-     * yet. A second request can therefore reserve later and still run its body first.
+     * The production session seam with one body gate: `closeAll` is the first step of a reset body,
+     * so the first request is held after it has taken its admission hold, inside the serialized
+     * section and before it discards anything. The gate is a test decision: it is never completed
+     * in the cancellation case, where the awaiting coroutine is cancelled instead.
      */
-    private class GatedReservation(
+    private class GatedBody(
         private val delegate: PeerSessions,
         private val entered: CompletableDeferred<Unit>,
         private val gate: CompletableDeferred<Unit>,
     ) : PeerSessions by delegate {
-        private var reservations = 0
+        private var bodies = 0
 
-        override suspend fun beginReset() {
-            delegate.beginReset()
-            if (++reservations == 1) {
+        override suspend fun closeAll() {
+            if (++bodies == 1) {
                 entered.complete(Unit)
                 gate.await()
             }
+            delegate.closeAll()
         }
     }
 
@@ -933,6 +972,9 @@ class PeerRevocationCoordinatorTest {
 
         /** A reset that fails after the deletions; it must never publish the recovery status. */
         var resetFailure: Exception? = null
+
+        /** Per-call reset failures, consumed in call order, so two resets can differ. */
+        val resetFailures = mutableListOf<Exception?>()
         var deleteGate: CompletableDeferred<Unit>? = null
         var sweepGate: CompletableDeferred<Unit>? = null
 
@@ -996,6 +1038,7 @@ class PeerRevocationCoordinatorTest {
             events += RESET
             resetCalls += 1
             resetGate?.await()
+            synchronized(resetFailures) { resetFailures.removeFirstOrNull() }?.let { throw reported(it) }
             resetFailure?.let { throw reported(it) }
         }
     }

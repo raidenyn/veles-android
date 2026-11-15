@@ -120,18 +120,18 @@ interface PeerSessions {
      * overlapping resets share it: an earlier reset's completion says nothing about the store a
      * still-active reset has yet to discard and refresh, so it never reopens admission.
      *
-     * The host closes admission and takes the hold synchronously, before this call can suspend;
-     * suspending here only delays the request's serialized body, which the coordinator publishes
-     * its outcome from. Ordering is therefore not carried by the reservation: the last body to
-     * run publishes last.
+     * Taking the hold is a plain, non-suspending call that has no cancellation window: it either
+     * returns with the hold taken or it does not run at all, never suspending in between. The
+     * caller therefore takes the hold inside a `try` whose `finally` releases it, and a
+     * cancellation after this call can no longer lose the hold.
      */
-    suspend fun beginReset()
+    fun beginReset()
 
     /**
      * Releases this reset's hold and publishes its outcome. [completed] is `true` only when the
-     * body ran and its deletions and identity refresh returned, `false` when it ran and did not,
-     * and `null` when the request was cancelled before its body started — then nothing is
-     * published and the most recently completed body still decides.
+     * body ran and its deletions and identity refresh returned, `false` when it began discarding
+     * the store and did not finish, and `null` when the request never reached the store — then
+     * nothing is published and the most recently completed body's outcome stands.
      *
      * The coordinator calls this while the serialized reset section is still held, so the outcome
      * of the last body to run is the one admission reflects.
@@ -307,9 +307,9 @@ class SessionHost(
         true
     }
 
-    override suspend fun beginReset() {
-        // The whole state change is synchronous, so admission is closed before this call can
-        // suspend; a suspension only delays the request's serialized body.
+    override fun beginReset() {
+        // One non-suspending critical section: the hold is taken and admission is closed before
+        // this call returns, so a cancelled request cannot lose the hold between the two.
         synchronized(registry) {
             admitting = false
             resets += 1
@@ -318,8 +318,8 @@ class SessionHost(
 
     override fun endReset(completed: Boolean?) {
         synchronized(registry) {
-            // Only a body that ran publishes an outcome; a request cancelled before its body
-            // started releases its hold and leaves the most recently completed body's outcome.
+            // Only a body that reached the store publishes an outcome; a request that never got
+            // there releases its hold and leaves the most recently completed body's outcome.
             if (completed != null) resetRefused = !completed
             resets = (resets - 1).coerceAtLeast(0)
             if (resets > 0) return
