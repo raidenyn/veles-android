@@ -102,15 +102,20 @@ unassigned types, wrong-direction types, and types the class does not authorize.
 
 ### Requirement: Authorized records without a handler fail closed
 An authorized record type with no registered handler MUST end the session with `app_error`
-`protocol_violation`. Release builds have no OTP application handler, so every OTP application
-record fails this way. Activation records MUST be handled by the activation handler in the
-classes the protocol allows; when no activation handler is registered they MUST end the session
-with `protocol_violation`. Classes that do not allow them are covered by the record and class
-authorization requirement.
+`protocol_violation`. Release builds have no OTP data application handler, so every OTP data
+record fails this way. The removal handler for `removal_request` (0x0205) and `removal_response`
+(0x0206) is installed in production builds and handles only those two types. Activation records
+MUST be handled by the activation handler in the classes the protocol allows; when no activation
+handler is registered they MUST end the session with `protocol_violation`. Classes that do not
+allow them are covered by the record and class authorization requirement.
 
 #### Scenario: Release build has no application handler
 - **WHEN** a release build in a `full` session receives an authorized `pull_request`
 - **THEN** it sends `app_error` `protocol_violation`, closes, and erases keys
+
+#### Scenario: Removal record in a release build
+- **WHEN** a release build in a `full` session receives `removal_request`
+- **THEN** the removal handler handles it per the mutual-removal requirements
 
 #### Scenario: Activation record in an allowed class
 - **WHEN** an `activation_recovery` or `full_pending_peer` session receives an authorized
@@ -175,15 +180,29 @@ On disconnect, link loss, a terminal error or a timeout, each endpoint MUST eras
 - the session id
 - the counters
 
-It MUST refuse any later input for that session. Durable trust records MUST be unaffected.
+It MUST refuse any later input for that session. Teardown itself MUST NOT modify durable trust
+records. Trust changes only through the explicit coordinator operations, each with its own
+ordering: local revocation and mutual removal delete the record and then terminate the matching
+sessions, and still terminate them if the deletion fails; identity reset terminates every session
+before it deletes anything.
 
 #### Scenario: Input after teardown
 - **WHEN** an engine receives bytes after its session ended
 - **THEN** it processes nothing and emits nothing
 
 #### Scenario: Trust survives teardown
-- **WHEN** a session ends for any reason
+- **WHEN** a session ends for any reason other than a coordinator operation (disconnect, link
+  loss, a terminal error or a timeout)
 - **THEN** the peer's trust record and identity key are unchanged
+
+#### Scenario: Teardown caused by revocation
+- **WHEN** a session ends because the peer was revoked or mutually removed
+- **THEN** the keys were erased, and the record was deleted first or, if the deletion failed, the
+  session was still terminated
+
+#### Scenario: Teardown caused by identity reset
+- **WHEN** a session ends because the identity was reset
+- **THEN** it ended before any deletion and its keys were erased
 
 ### Requirement: Fresh session on every reconnect
 Each new link MUST run a complete new handshake. No traffic key, nonce prefix, session id or
@@ -229,7 +248,8 @@ The Chrome connector MUST run one client engine per phone handle. Each engine MU
 inbound records and outbound requests strictly in order through a bounded, serialized queue.
 It MUST reserve each outbound sequence and nonce inside the sealing step. Overflow MUST end
 the session with `resource_exhausted`. Results tied to a stale handle or port generation MUST
-be discarded. One engine ending MUST NOT affect other phones.
+be discarded. One engine ending MUST NOT affect other phones, except that a store-level trust
+failure terminates every session as required by the fail-closed requirement.
 
 #### Scenario: Simultaneous outbound records
 - **WHEN** an ack and a heartbeat are requested at the same moment
@@ -244,8 +264,12 @@ be discarded. One engine ending MUST NOT affect other phones.
 - **THEN** the late result is discarded, and nothing is sent
 
 #### Scenario: Peer isolation
-- **WHEN** one phone's session ends with an error
+- **WHEN** one phone's session ends with an error or a peer-level rejection
 - **THEN** other phones' sessions continue unaffected
+
+#### Scenario: Store failure terminates all
+- **WHEN** a store-level trust failure is observed
+- **THEN** every session is terminated, not only the one that observed it
 
 ### Requirement: No plaintext path
 The OTP-06 plaintext echo MUST run only in an explicitly enabled, instrumentation-only

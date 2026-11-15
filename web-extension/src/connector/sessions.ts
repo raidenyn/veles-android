@@ -22,19 +22,40 @@ import type { AuthenticationVerifier, ChromeTrustRepository } from '../trust/rep
 import {
     ClientSessionEngine,
     PEER_STATE_ACTIVE,
+    STAGE_REMOVAL,
     type ClientEngineDeps,
     type SessionEffect,
 } from '../session/engine';
 import { QueueOverflow, SESSION_QUEUE_LIMIT, SerialQueue } from '../session/queue';
 import { SessionReject } from '../session/reject';
-import type { SessionClass } from '../session/wire';
+import { RecordType, SessionClass } from '../session/wire';
 
 import type { DiagnosticRing } from './diagnostics';
 import type { ConnectorClose, ConnectorResult } from './port';
 import type { WireEvent } from './protocol';
 import type { ConnectorSnapshot } from './state';
+import type { PairingLink } from '../pairing/link';
 
 export type SentResult = ConnectorResult<Extract<WireEvent, { type: 'sent' }>>;
+
+/**
+ * The requester's mutual-removal outcome (design D4, OTP2-REC-013).
+ *
+ * `removed` means a valid `removal_response` deleted the local record; `kept-not-connected`
+ * means there was no FULL session of that peer to ask; `kept-no-response` means the exchange
+ * produced no valid response — a lost response, a disconnect, the deadline or a protocol
+ * violation — so the local record is kept and the other endpoint may keep its own.
+ */
+export type RemovalResult = 'removed' | 'kept-not-connected' | 'kept-no-response';
+
+/**
+ * The requester's `removal_response` deadline (design call, not a protocol value; design D4). It
+ * is armed on the injected `SessionTimers`, because the engine's 15 000 ms tick is longer.
+ */
+export const REMOVAL_RESPONSE_TIMEOUT_MS = 10_000;
+
+/** The owner-owned removal deadline diagnostic code. */
+const REMOVAL_TIMEOUT_REASON = 'removal_timeout';
 
 export interface SessionRecord {
     connectionHandle: string;
@@ -68,6 +89,11 @@ export interface AuthenticatedSession {
 
 type SessionPhase = 'handshake' | 'open' | 'closed';
 
+/** The settle seam of one requester removal exchange (design D4): the first outcome wins. */
+interface RemovalExchange {
+    settle(result: RemovalResult): void;
+}
+
 interface Session {
     readonly handle: string;
     readonly peerId: string;
@@ -79,6 +105,13 @@ interface Session {
     settled: boolean;
     /** The pending coarse deadline tick, cancelled on every teardown path. */
     tickTimer: unknown;
+    /** The requester's in-flight removal exchange, or null. */
+    removal: RemovalExchange | null;
+    /** The pending `removal_response` deadline, cancelled on response, disconnect and teardown. */
+    removalTimer: unknown;
+    /** Resolves once the logical termination ran and the engine erased its keys. */
+    readonly closed: Promise<void>;
+    resolveClosed(): void;
     resolve(result: SessionOpenResult): void;
 }
 
@@ -128,6 +161,11 @@ export class SessionManager {
         timers: Partial<SessionTimers> = {},
         /** Session-bound proof cleanup when a generation is torn down. */
         private readonly onSessionClosed?: (sessionId: string) => void,
+        /**
+         * Live enrollment links, so a peer revocation also terminates the matching
+         * enrollment connection (design D3). Selection reads only `boundPeerId()`.
+         */
+        private readonly links: () => readonly PairingLink[] = () => [],
     ) {
         this.repository = repository;
         this.timers = {
@@ -195,6 +233,10 @@ export class SessionManager {
         const result = new Promise<SessionOpenResult>((resolve) => {
             settle = resolve;
         });
+        let resolveClosed!: () => void;
+        const closed = new Promise<void>((resolve) => {
+            resolveClosed = resolve;
+        });
         let session: Session | null = null;
         const engine = new ClientSessionEngine({
             ...base,
@@ -210,6 +252,10 @@ export class SessionManager {
             phase: 'handshake',
             settled: false,
             tickTimer: undefined,
+            removal: null,
+            removalTimer: undefined,
+            closed,
+            resolveClosed,
             resolve: settle,
         };
         this.byHandle.set(handle, session);
@@ -228,6 +274,44 @@ export class SessionManager {
         return this.enqueue(session, () => session.engine.sendApplication(type, copy)).then(
             () => undefined,
         );
+    }
+
+    /**
+     * Asks the peer to remove this endpoint's record (OTP2-REC-013, design D4).
+     *
+     * The request runs on the serialized queue of the peer's FULL session: the engine seals
+     * `removal_request`, then the removal-pending guard is set on that session only and the
+     * response deadline is armed on the injected timers. This manager never deletes anything
+     * itself; the removal handler does that inside the validated response's step.
+     *
+     * `removed` is returned only when the session ended through the engine's `removal` stage.
+     * Every other end — a lost response, a disconnect, `REMOVAL_RESPONSE_TIMEOUT_MS` or a
+     * protocol violation — returns `kept-no-response`; without a live FULL session of `peerId`
+     * the call returns `kept-not-connected`. A second request while one is already awaiting a
+     * response returns `kept-no-response` without sending anything.
+     */
+    requestRemoval(peerId: string): Promise<RemovalResult> {
+        const session = [...this.byHandle.values()].find(
+            (candidate) =>
+                candidate.peerId === peerId &&
+                candidate.phase === 'open' &&
+                candidate.engine.sessionClass === SessionClass.FULL,
+        );
+        if (session === undefined) return Promise.resolve('kept-not-connected');
+        if (session.removal !== null) return Promise.resolve('kept-no-response');
+        let settle!: (result: RemovalResult) => void;
+        const result = new Promise<RemovalResult>((resolve) => {
+            settle = resolve;
+        });
+        // Registered before the step can run, so a disconnect or teardown always settles it.
+        session.removal = { settle };
+        const started = session.queue.run(() => this.startRemoval(session));
+        void started.catch((error: unknown) => {
+            this.settleRemoval(session, 'kept-no-response');
+            // A queue refusal sent nothing; any other failure ends the session like a queue step.
+            if (!(error instanceof QueueOverflow)) this.terminate(session, 'dependency', true);
+        });
+        return result;
     }
 
     /**
@@ -258,12 +342,72 @@ export class SessionManager {
         if (session !== undefined) this.terminate(session, 'closed', true);
     }
 
+    /**
+     * Terminates every session and enrollment link bound to one authenticated peer
+     * (design D3). Selection uses only the peer installation id — never a label, a
+     * native handle or a platform hint — so another phone and an unbound enrollment
+     * are untouched. Each session's termination is queued behind that session's
+     * in-flight step, so a handler's buffered reply is delivered before the close,
+     * and the promise resolves only after every selected generation has ended.
+     * Logical termination is authoritative: a failing transport close is best-effort
+     * and never aborts the termination of another selected session.
+     */
+    async closePeer(peerId: string): Promise<void> {
+        await this.closeSelected(
+            [...this.byHandle.values()].filter((session) => session.peerId === peerId),
+            this.links().filter((link) => link.boundPeerId() === peerId),
+            'revoked',
+        );
+    }
+
+    /**
+     * Terminates every session and enrollment link without touching durable trust
+     * records (design D2/R8): the non-destructive teardown used by fail-closed and a
+     * reset, distinct from the destructive pairing `cancel()`.
+     */
+    async closeAll(): Promise<void> {
+        await this.closeSelected([...this.byHandle.values()], [...this.links()], 'closed');
+    }
+
+    private async closeSelected(
+        sessions: readonly Session[],
+        links: readonly PairingLink[],
+        reason: string,
+    ): Promise<void> {
+        // Every selected generation is terminated even when one link close fails; the
+        // first failure is reported only after all of them settled.
+        const results = await Promise.allSettled([
+            ...sessions.map((session) => this.closeBehind(session, reason)),
+            ...links.map((link) => link.terminate()),
+        ]);
+        for (const result of results) {
+            if (result.status === 'rejected') throw result.reason;
+        }
+    }
+
+    /**
+     * Queues one logical termination behind the session's in-flight step. A queue
+     * that refuses the job must not leave an authorized session alive, so the
+     * teardown still runs and only the refusal is reported afterwards.
+     */
+    private closeBehind(session: Session, reason: string): Promise<void> {
+        const queued = session.queue.run(async () => {
+            this.terminate(session, reason, true);
+            await session.closed;
+        });
+        return queued.catch((error: unknown) => {
+            this.terminate(session, reason, true);
+            if (error instanceof QueueOverflow) return session.closed;
+            throw error;
+        });
+    }
+
     private enqueue(session: Session, job: () => Promise<SessionEffect[]>): Promise<void> {
         const generation = this.portGeneration();
         const task = session.queue.run(async () => {
             const effects = await job();
-            if (!this.isCurrent(session, generation)) return;
             await this.apply(session, generation, effects);
+            this.settleSealedRemoval(session, effects);
         });
         void task.catch((error: unknown) => {
             if (error instanceof QueueOverflow) {
@@ -398,10 +542,20 @@ export class SessionManager {
         if (session.phase === 'closed') return;
         session.phase = 'closed';
         this.cancelTick(session);
+        this.cancelRemovalDeadline(session);
+        // Design D4/R6: only the engine's removal stage proves the handler deleted the local
+        // record. Every other end keeps it — deferred behind the in-flight step, because a
+        // handler that is deleting right now can still prove the deletion.
+        if (reason === STAGE_REMOVAL) {
+            this.settleRemoval(session, 'removed');
+        } else {
+            this.settleRemovalBehind(session, 'kept-no-response');
+        }
         const prefix = session.engine.sessionIdPrefix;
         if (prefix !== null) this.onSessionClosed?.(hex(prefix));
         session.engine.teardown();
         if (this.byHandle.get(session.handle) === session) this.byHandle.delete(session.handle);
+        session.resolveClosed();
         this.controller.state.diagnostics.push({
             direction: 'local',
             type: 'session_terminated',
@@ -439,6 +593,118 @@ export class SessionManager {
         if (session.tickTimer === undefined) return;
         this.timers.clearTimeout(session.tickTimer);
         session.tickTimer = undefined;
+    }
+
+    /**
+     * Seals the requester's `removal_request` inside the peer's serialized session step and arms
+     * the guard and the deadline in that same step. The request is sealed before the guard is
+     * set, so the request itself is never rejected by it.
+     */
+    private async startRemoval(session: Session): Promise<void> {
+        if (session.removal === null) return;
+        const generation = this.portGeneration();
+        if (
+            session.phase !== 'open' ||
+            session.engine.sessionClass !== SessionClass.FULL ||
+            !this.isCurrent(session, generation)
+        ) {
+            this.settleRemoval(session, 'kept-no-response');
+            return;
+        }
+        let effects: SessionEffect[];
+        try {
+            effects = await session.engine.sendApplication(
+                RecordType.REMOVAL_REQUEST,
+                new Uint8Array(0),
+            );
+        } catch {
+            this.settleRemoval(session, 'kept-no-response');
+            this.terminate(session, 'dependency', true);
+            return;
+        }
+        if (session.removal === null) return;
+        session.engine.setRemovalPending(true);
+        this.armRemovalDeadline(session);
+        if (!this.isCurrent(session, generation)) {
+            // The session is already gone: the request cannot be delivered from here.
+            this.settleRemoval(session, 'kept-no-response');
+            return;
+        }
+        await this.apply(session, generation, effects);
+    }
+
+    /**
+     * Arms the requester's response deadline. The engine tick is 15 000 ms, longer than
+     * `REMOVAL_RESPONSE_TIMEOUT_MS`, so this owner-owned timer enforces it; its expiry waits for
+     * the work already submitted, so a response or a deletion that is completing right now
+     * settles first.
+     */
+    private armRemovalDeadline(session: Session): void {
+        this.cancelRemovalDeadline(session);
+        session.removalTimer = this.timers.setTimeout(() => {
+            session.removalTimer = undefined;
+            if (session.removal === null) return;
+            // `drained()` takes no queue slot: a saturated queue must not settle the exchange
+            // before an in-flight deletion can prove its outcome.
+            void session.queue.drained().then(() => this.expireRemoval(session));
+        }, REMOVAL_RESPONSE_TIMEOUT_MS);
+    }
+
+    /** The deadline outcome: an expired exchange keeps the record and fails the session. */
+    private expireRemoval(session: Session): void {
+        if (session.removal === null) return;
+        this.settleRemoval(session, 'kept-no-response');
+        this.terminate(session, REMOVAL_TIMEOUT_REASON, true);
+    }
+
+    private cancelRemovalDeadline(session: Session): void {
+        if (session.removalTimer === undefined) return;
+        this.timers.clearTimeout(session.removalTimer);
+        session.removalTimer = undefined;
+    }
+
+    /** Settles the session's in-flight removal exchange exactly once: the first outcome wins. */
+    private settleRemoval(session: Session, outcome: RemovalResult): void {
+        const exchange = session.removal;
+        if (exchange === null) return;
+        session.removal = null;
+        this.cancelRemovalDeadline(session);
+        exchange.settle(outcome);
+    }
+
+    /**
+     * Settles an exchange from a session end. The settlement waits for the session's in-flight
+     * step, because a removal handler deleting right now can still prove the deletion; an idle
+     * queue settles at once. It uses `drained()` rather than another queue job, so a saturated
+     * queue can never settle the exchange before that deletion completes.
+     */
+    private settleRemovalBehind(session: Session, outcome: RemovalResult): void {
+        if (session.removal === null) return;
+        if (session.queue.pending === 0) {
+            this.settleRemoval(session, outcome);
+            return;
+        }
+        void session.queue.drained().then(() => this.settleRemoval(session, outcome));
+    }
+
+    /**
+     * Design D4/R6: a removal stage the engine sealed still proves the handler deleted the local
+     * record even when an external teardown dropped the step's effects before they were applied.
+     */
+    private settleSealedRemoval(session: Session, effects: SessionEffect[]): void {
+        const dropped = session.engine.takeDroppedTerminalStage();
+        if (session.removal === null) return;
+        let sealed = dropped;
+        if (sealed !== STAGE_REMOVAL) {
+            for (let index = effects.length - 1; index >= 0; index -= 1) {
+                const effect = effects[index];
+                if (effect.kind !== 'terminated') continue;
+                sealed = effect.reason;
+                break;
+            }
+        }
+        if (sealed !== STAGE_REMOVAL) return;
+        this.settleRemoval(session, 'removed');
     }
 
     /**

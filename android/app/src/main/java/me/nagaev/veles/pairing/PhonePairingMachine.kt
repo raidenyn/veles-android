@@ -11,6 +11,7 @@ import me.nagaev.veles.session.Role
 import me.nagaev.veles.session.SessionReject
 import me.nagaev.veles.trust.ActivationStep
 import me.nagaev.veles.trust.InstallationTrustRepository
+import me.nagaev.veles.trust.TrustEncoding
 import me.nagaev.veles.trust.TrustState
 import java.security.SecureRandom
 
@@ -46,6 +47,15 @@ interface PairingConnection {
 
     /** Local cancel: tears the connection down and deletes this enrollment's pending record. */
     suspend fun cancel(): List<Outgoing>
+
+    /**
+     * The peer this enrollment connection is bound to, or null while no peer identity is
+     * authenticated. It is set once the client identity record is verified and durable, so a
+     * `pending` or `committed_waiting_ack` enrollment is also selectable, and cleared when the
+     * connection ends (design D3). Selection by this id is the only way a revocation reaches an
+     * enrollment connection; a label, address or native handle never selects.
+     */
+    fun boundPeerId(): String?
 }
 
 /**
@@ -71,6 +81,9 @@ internal class RejectingPairingConnection : PairingConnection {
     override suspend fun onDisconnect() = Unit
 
     override suspend fun cancel(): List<Outgoing> = emptyList()
+
+    /** This implementation never authenticates a peer identity. */
+    override fun boundPeerId(): String? = null
 }
 
 /**
@@ -127,12 +140,22 @@ class PhonePairingMachine(
     private var holdsOperation = false
     private var lastActivity = 0L
 
+    /**
+     * The authenticated peer this enrollment connection is bound to (design D3), set at the
+     * durable persist and cleared with the enrollment. Volatile because the session host reads
+     * it from another thread while this machine runs under its own mutex.
+     */
+    @Volatile
+    private var boundPeerIdHex: String? = null
+
     @Volatile
     var state: PairingState = PairingState.IDLE
         private set
 
     /** The live enrollment key holder, for the OTP2-CRY-011/019e erasure assertions. */
     internal fun enrollmentKeysForTest(): EnrollmentKeys? = enrollment?.keysForTest
+
+    override fun boundPeerId(): String? = boundPeerIdHex
 
     override suspend fun onFrame(bytes: ByteArray): List<Outgoing> = try {
         mutex.withLock {
@@ -500,6 +523,12 @@ class PhonePairingMachine(
             canonical.fill(0)
         }
         return try {
+            // The client identity is verified and authenticated now, so the connection is bound
+            // to that installation id *before* the suspending persistence: a revocation racing
+            // the persist still selects this connection and cannot release its fence while a
+            // durable write is in flight (design D3/D8). Every failure below ends in
+            // reject()/terminate(), which clears the binding with the enrollment.
+            boundPeerIdHex = TrustEncoding.hex(client.installationId)
             when (session.persist(client, et)) {
                 EnrollmentSession.PersistResult.DUPLICATE -> {
                     val error = try {
@@ -598,6 +627,8 @@ class PhonePairingMachine(
     private fun eraseEnrollment() {
         enrollment?.erase()
         enrollment = null
+        // The connection can no longer be selected by that peer once its enrollment is gone.
+        boundPeerIdHex = null
     }
 
     private fun eraseSecrets() {

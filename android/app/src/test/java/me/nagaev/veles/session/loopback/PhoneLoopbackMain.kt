@@ -436,6 +436,10 @@ private class LoopbackTrustStorage(initial: TrustSnapshot?) : TrustStorage {
         value = next
         return result
     }
+
+    override suspend fun reset() {
+        value = null
+    }
 }
 
 /** Owns the phone's installation key for the loopback; the seed derives it before this runs. */
@@ -445,6 +449,9 @@ private class LoopbackIdentityKeyStore(private val publicKeyHex: String) : Ident
     override fun generate(): String = publicKeyHex
 
     override fun sign(message: ByteArray): ByteArray = ByteArray(0)
+
+    /** The loopback identity is fixed, so the store cannot drop it. */
+    override fun delete() = Unit
 }
 
 /**

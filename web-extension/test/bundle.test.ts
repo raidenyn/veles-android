@@ -142,6 +142,29 @@ describe('guard bundle excludes the debug probe', () => {
         'Cancel pairing',
         'Clear incomplete record',
         'Phone to pair',
+        // OTP-11 D9 peer-management surface. Same rule: the panel chunk is tree-shaken out
+        // of the production build, and these strings prove a regression is caught.
+        'Known peers',
+        'Peer fingerprint:',
+        'full session open',
+        'recovery session open: disconnect and reconnect for mutual removal',
+        'no live session',
+        'disconnect and reconnect for a full session',
+        'Revoke peer',
+        'Mutual remove',
+        'Peer revoked',
+        'Revoke failed: trust store unavailable',
+        'Peer removed on both devices',
+        'No open full session: only local removal is possible. Nothing was deleted.',
+        'No response: the other device may keep its record',
+        'Mutual remove failed',
+        'Reset identity',
+        'Reset is destructive: it deletes every trusted peer and this extension identity.',
+        'Reset not confirmed: nothing was deleted',
+        'Identity reset; pair again to create new trust',
+        'Reset failed: trust store unavailable',
+        'Peers unavailable: trust store unreadable',
+        'Trust:',
     ];
 
     it('is a production-channel build with the expected inventory shape', () => {

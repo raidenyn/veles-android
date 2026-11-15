@@ -6,8 +6,15 @@ import android.provider.Settings
 
 /** Caller supplies the authenticated session's activation verifier (OTP-09/10).
  * There is deliberately no accept-all verifier or UI activation shortcut.
+ *
+ * [onStoreFailure] is the composition root's fail-closed action (OTP-11 design D6): the
+ * repository invokes it once per store-failure episode, whichever caller observed the failure.
  */
-fun createAndroidTrustRepository(context: Context, verifier: ActivationVerifier): TrustRepository = TrustRepository(
+fun createAndroidTrustRepository(
+    context: Context,
+    verifier: ActivationVerifier,
+    onStoreFailure: () -> Unit = {},
+): TrustRepository = TrustRepository(
     RoomTrustStorage(TrustDatabase.open(context)),
     AndroidIdentityKeyStore(),
     SystemClock::elapsedRealtime,
@@ -19,4 +26,5 @@ fun createAndroidTrustRepository(context: Context, verifier: ActivationVerifier)
     },
     System::currentTimeMillis,
     verifier,
+    onStoreFailure,
 )

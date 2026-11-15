@@ -68,6 +68,9 @@ class PhoneSessionEngine(
     private var outboundExhausted = false
     private var inboundExhausted = false
 
+    /** The requester's removal-pending guard (design D4, OTP2-REC-013). */
+    private val removals = RemovalGuard()
+
     /** Pre-teardown counter snapshot, test-only (Task 10 counter observations). */
     private var inboundSequenceAtTeardown: ULong = 0uL
     private var outboundSequenceAtTeardown: ULong = 0uL
@@ -128,6 +131,9 @@ class PhoneSessionEngine(
         if (state != State.OPEN) throw SessionReject()
         expiryFailure()?.let { return terminate(it) }
         if (exhausted()) return terminate(STAGE_SEQUENCE)
+        // OTP2-REC-013: after `removal_request`, any application send fails the session, so no
+        // further record flows while the response is awaited.
+        if (!removals.allowsSend()) return terminate(STAGE_AUTHORIZATION)
         val record = sealApplication(type, body) ?: return emptyList()
         if (type == RecordType.APP_ERROR.wire) {
             teardownInternal()
@@ -135,6 +141,13 @@ class PhoneSessionEngine(
         }
         listOf(SessionEffect.Send(record))
     }
+
+    /**
+     * Sets the requester's removal-pending guard (design D4, OTP2-REC-013). The owner sets it
+     * on this session only, immediately after it sealed `removal_request` and inside the same
+     * serialized step, so no response can be processed before the guard is in place.
+     */
+    fun setRemovalPending(on: Boolean) = removals.setPending(on)
 
     /** Deadlines first, then the 60 s outbound-silence heartbeat (plan heartbeat driver). */
     suspend fun onTick(): List<SessionEffect> = synchronized(finality) {
@@ -152,9 +165,7 @@ class PhoneSessionEngine(
         }
     }
 
-    fun teardown() {
-        teardownInternal()
-    }
+    fun teardown() = teardownInternal()
 
     /**
      * Test-only counter seam (plan Task 10 conformance runner): positions the next expected
@@ -369,6 +380,10 @@ class PhoneSessionEngine(
         if (opened.type == RecordType.APP_HEARTBEAT.wire) {
             return heartbeatReceived(Direction.CLIENT_TO_PHONE, clock())
         }
+        // OTP2-REC-013 requester fencing: while a response is awaited only that response may
+        // arrive (the allowed heartbeat and app_error returned above). Without the mark, a
+        // response is a protocol violation. Either way the session ends and nothing is deleted.
+        if (!removals.accepts(opened.type)) return terminate(STAGE_AUTHORIZATION)
         if (opened.type == RecordType.RECONNECT_CONFIRM.wire) return terminate(STAGE_AUTHORIZATION)
         val cls = fixedClass ?: return terminate(STAGE_AUTHORIZATION)
         if (!RecordPolicy.authorized(opened.type, Direction.CLIENT_TO_PHONE, cls)) {
@@ -378,6 +393,7 @@ class PhoneSessionEngine(
         if (!applicationHandler.handles(opened.type)) return terminateUnhandled()
         val replies = mutableListOf<SessionEffect>()
         var terminalError = false
+        var closeAfterReply = false
         try {
             applicationHandler.handle(opened.type, opened.body) { replyType, replyBody ->
                 if (terminalError) return@handle
@@ -385,6 +401,9 @@ class PhoneSessionEngine(
                 replies += SessionEffect.Send(record)
                 terminalError = replyType == RecordType.APP_ERROR.wire
             }
+            // Design D4: the handler must not tear the session down itself; it asks for the
+            // reply-then-close outcome and the engine performs the terminal transition.
+            closeAfterReply = applicationHandler.closeAfterReply(opened.type)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (_: SessionReject) {
@@ -394,9 +413,9 @@ class PhoneSessionEngine(
         }
         // A handler is suspending: it may return after teardown or after the idle deadline.
         if (state == State.CLOSED) return emptyList()
-        if (terminalError) {
+        if (terminalError || closeAfterReply) {
             teardownInternal()
-            return replies + listOf(SessionEffect.Terminated(STAGE_APP_ERROR), SessionEffect.Close)
+            return replies + listOf(SessionEffect.Terminated(terminalStage(terminalError, opened.type)), SessionEffect.Close)
         }
         expiryFailure()?.let { return terminate(it) }
         return listOf(SessionEffect.Deliver(opened.type, opened.body)) + replies
@@ -730,6 +749,7 @@ class PhoneSessionEngine(
         inboundSequence = 0uL
         outboundExhausted = false
         inboundExhausted = false
+        removals.reset()
         lastActivityAt = 0L
         lastOutboundAt = 0L
         lastHeartbeatSentAt = null
@@ -740,32 +760,51 @@ class PhoneSessionEngine(
 
     private enum class State { AWAITING_CLIENT_HELLO, AWAITING_CLIENT_SIGNATURE, AWAITING_PEER_CONFIRM, OPEN, CLOSED }
 
-    private companion object {
-        /** Plan heartbeat driver: emit `app_heartbeat` after 60 s with no outbound record. */
-        const val HEARTBEAT_SILENCE_MS = 60_000L
-        const val CONFIRM_BODY_BYTES = 33
-        const val HASH_BYTES = 32
-        const val COORDINATE_BYTES = 32
-        const val POINT_BYTES = 65
-        const val SESSION_PREFIX_BYTES = 8
-        const val UNCOMPRESSED_TAG = 0x04
-        const val U8_MASK = 0xFF
-        const val PEER_STATE_ACTIVE = 0x01
-        const val PEER_STATE_BELOW_ACTIVE = 0x02
-        const val CONFIRM_SEQUENCE: ULong = 0uL
+    companion object {
+        /**
+         * The terminal stage reported when a removal record ended the session (design D4, ruling
+         * R6). The session host maps exactly this stage to the removal outcome `REMOVED`.
+         */
+        const val STAGE_REMOVAL = "removal"
 
-        const val STAGE_UNEXPECTED_FRAME = "unexpected_frame"
-        const val STAGE_RECORD_INVALID = "record_invalid"
-        const val STAGE_CONFIRM_REQUIRED = "confirm_required"
-        const val STAGE_CONFIRM_INVALID = "confirm_invalid"
-        const val STAGE_SEND_FAILED = "send_failed"
-        const val STAGE_HANDSHAKE_TIMEOUT = "handshake_timeout"
-        const val STAGE_IDLE = "idle"
-        const val STAGE_HEARTBEAT = "heartbeat"
-        const val STAGE_APP_ERROR = "app_error"
-        const val STAGE_AUTHORIZATION = "authorization"
-        const val STAGE_UNHANDLED = "unhandled"
-        const val STAGE_SEQUENCE = "sequence"
-        const val STAGE_DEPENDENCY = "dependency"
+        /** Plan heartbeat driver: emit `app_heartbeat` after 60 s with no outbound record. */
+        private const val HEARTBEAT_SILENCE_MS = 60_000L
+        private const val CONFIRM_BODY_BYTES = 33
+        private const val HASH_BYTES = 32
+        private const val COORDINATE_BYTES = 32
+        private const val POINT_BYTES = 65
+        private const val SESSION_PREFIX_BYTES = 8
+        private const val UNCOMPRESSED_TAG = 0x04
+        private const val U8_MASK = 0xFF
+        private const val PEER_STATE_ACTIVE = 0x01
+        private const val PEER_STATE_BELOW_ACTIVE = 0x02
+        private const val CONFIRM_SEQUENCE: ULong = 0uL
+
+        private const val STAGE_UNEXPECTED_FRAME = "unexpected_frame"
+        private const val STAGE_RECORD_INVALID = "record_invalid"
+        private const val STAGE_CONFIRM_REQUIRED = "confirm_required"
+        private const val STAGE_CONFIRM_INVALID = "confirm_invalid"
+        private const val STAGE_SEND_FAILED = "send_failed"
+        private const val STAGE_HANDSHAKE_TIMEOUT = "handshake_timeout"
+        private const val STAGE_IDLE = "idle"
+        private const val STAGE_HEARTBEAT = "heartbeat"
+        private const val STAGE_APP_ERROR = "app_error"
+        private const val STAGE_AUTHORIZATION = "authorization"
+        private const val STAGE_UNHANDLED = "unhandled"
+        private const val STAGE_SEQUENCE = "sequence"
+        private const val STAGE_DEPENDENCY = "dependency"
+
+        /** The handler asked for the reply-then-close outcome (design D4). */
+        private const val STAGE_CLOSE_AFTER_REPLY = "close_after_reply"
+
+        /**
+         * Design D4/R6: a removal record type has its own terminal stage, so the owner can tell
+         * a mutual removal from any other close-after-reply handler.
+         */
+        private fun terminalStage(terminalError: Boolean, type: Int): String = when {
+            terminalError -> STAGE_APP_ERROR
+            isRemovalRecord(type) -> STAGE_REMOVAL
+            else -> STAGE_CLOSE_AFTER_REPLY
+        }
     }
 }

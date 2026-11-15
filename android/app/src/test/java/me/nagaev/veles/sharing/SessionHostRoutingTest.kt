@@ -102,6 +102,8 @@ class SessionHostRoutingTest {
     private class RecordingPairingConnection : PairingConnection {
         val frames = mutableListOf<ByteArray>()
 
+        override fun boundPeerId(): String? = null
+
         override suspend fun onFrame(bytes: ByteArray): List<Outgoing> {
             frames += bytes.copyOf()
             return listOf(Outgoing.Frame(byteArrayOf(PAIRING_MARKER.toByte())), Outgoing.Disconnect)
@@ -369,10 +371,14 @@ class SessionHostRoutingTest {
         override suspend fun addPending(peer: PendingPeer) = error("not used")
         override suspend fun confirm(peerId: String, step: ActivationStep, proof: ByteArray) = error("not used")
         override suspend fun revoke(peerId: String) = error("not used")
+        override suspend fun beginRevocation(peerId: String) = error("not used")
+        override suspend fun endRevocation(peerId: String) = error("not used")
 
         // The routing tests authenticate a known peer: the mark is the one trust write the
         // host performs, and reconnect routing is what they assert, so it is a no-op here.
         override suspend fun markAuthenticated(peerId: String) = Unit
+
+        override suspend fun resetIdentity() = error("not used")
     }
 
     private companion object {

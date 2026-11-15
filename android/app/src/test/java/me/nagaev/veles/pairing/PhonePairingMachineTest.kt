@@ -506,7 +506,10 @@ class PhonePairingMachineTest : PairingTestBase() {
         override suspend fun addPending(peer: PendingPeer) = error("enrollment is not under test")
         override suspend fun confirm(peerId: String, step: ActivationStep, proof: ByteArray) = error("enrollment is not under test")
         override suspend fun revoke(peerId: String) = error("enrollment is not under test")
+        override suspend fun beginRevocation(peerId: String) = error("enrollment is not under test")
+        override suspend fun endRevocation(peerId: String) = error("enrollment is not under test")
         override suspend fun markAuthenticated(peerId: String) = error("enrollment is not under test")
+        override suspend fun resetIdentity() = error("enrollment is not under test")
     }
 
     private companion object {

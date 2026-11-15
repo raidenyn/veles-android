@@ -442,7 +442,13 @@ private class ClientTrust(private val identity: IdentityMaterial) : Installation
         peers.removeAll { it.installationId == peerId }
     }
 
+    override suspend fun beginRevocation(peerId: String) = Unit
+
+    override suspend fun endRevocation(peerId: String) = Unit
+
     override suspend fun markAuthenticated(peerId: String) = Unit
+
+    override suspend fun resetIdentity() = error("reset is not part of the enrollment fixture")
 }
 
 private class MemoryStorage(initial: TrustSnapshot) : TrustStorage {
@@ -453,6 +459,10 @@ private class MemoryStorage(initial: TrustSnapshot) : TrustStorage {
         value = next
         return result
     }
+
+    override suspend fun reset() {
+        value = null
+    }
 }
 
 private class FixedKeyStore(private val publicKeyHex: String) : IdentityKeyStore {
@@ -461,6 +471,9 @@ private class FixedKeyStore(private val publicKeyHex: String) : IdentityKeyStore
     override fun generate(): String = publicKeyHex
 
     override fun sign(message: ByteArray): ByteArray = ByteArray(0)
+
+    /** The enrollment fixture identity is fixed, so the store cannot drop it. */
+    override fun delete() = Unit
 }
 
 /** Every four-byte draw is the code value 42 (`000042`); longer draws are deterministic ids. */

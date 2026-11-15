@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import { IndexedDbIdentityStore, validateIdentity } from '../src/trust/identity';
 import { ChromeTrustRepository } from '../src/trust/repository';
-import type { TrustSnapshot } from '../src/trust/model';
+import { TrustStoreError, type TrustSnapshot } from '../src/trust/model';
 import { ChromeLocalStore, TRUST_STORAGE_KEY } from '../src/trust/storage';
 import { vi } from 'vitest';
 
@@ -115,13 +115,13 @@ describe('Chrome trust repository', () => {
         expect(await repo.peers()).toEqual([]);
     });
 
-    it('reports transient storage errors as retryable without requesting destructive re-pairing', async () => {
+    it('classifies a failing durable write as a store failure with the re-pair text', async () => {
         const s = setup();
         const repo = s.make();
         await repo.identity();
         s.fail();
-        await expect(repo.peers()).rejects.toThrow('unavailable');
-        await expect(repo.peers()).rejects.not.toThrow('re-pair');
+        await expect(repo.peers()).rejects.toBeInstanceOf(TrustStoreError);
+        await expect(repo.peers()).rejects.toThrow('re-pair');
     });
     it('fails closed on unknown fields, unsupported versions, invalid timestamps and duplicate stored peers', async () => {
         const s = setup();

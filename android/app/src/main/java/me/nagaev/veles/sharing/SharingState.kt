@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import me.nagaev.veles.trust.TrustStatus
 
 internal enum class SharingAvailability {
     Disabled,
@@ -23,6 +24,10 @@ internal object SharingState {
     val availability = mutable.asStateFlow()
     private val enabledMutable = MutableStateFlow(false)
     val enabled = enabledMutable.asStateFlow()
+
+    /** The coordinator's status sink (OTP-11 design D6): one value, never a second message. */
+    private val trustStatusMutable = MutableStateFlow(TrustStatus.OK)
+    val trustStatus = trustStatusMutable.asStateFlow()
     fun load(context: Context) {
         enabledMutable.value = context.getSharedPreferences("sharing", Context.MODE_PRIVATE).getBoolean("enabled", false)
     }
@@ -32,6 +37,9 @@ internal object SharingState {
     }
     fun update(value: SharingAvailability) {
         mutable.value = value
+    }
+    fun updateTrustStatus(value: TrustStatus) {
+        trustStatusMutable.value = value
     }
 
     fun prerequisite(context: Context): SharingAvailability? {

@@ -1,5 +1,9 @@
 package me.nagaev.veles.trust
 
+import androidx.annotation.VisibleForTesting
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -9,7 +13,10 @@ internal const val HASH_BYTES = 32
 private const val PENDING_LIFETIME_MILLIS = 86_400_000L
 private const val MAX_LABEL_BYTES = 32
 
-class TrustException : IllegalStateException("Trust unavailable; re-pairing required")
+open class TrustException : IllegalStateException("Trust unavailable; re-pairing required")
+
+/** A failure to read, validate or persist the trust store; the user-facing text is unchanged. */
+class TrustStoreException : TrustException()
 
 @Serializable
 data class InstallationIdentity(val installationId: String, val publicKey: String)
@@ -54,11 +61,17 @@ interface IdentityKeyStore {
     fun publicKey(): String?
     fun generate(): String
     fun sign(message: ByteArray): ByteArray
+
+    /** Removes the installation key; a missing key is not an error, so a repeat is safe. */
+    fun delete()
 }
 
 interface TrustStorage {
     /** Read, validate and replace occur in one durable transaction; exceptions roll back. */
     suspend fun <T> transaction(block: (TrustSnapshot?) -> Pair<TrustSnapshot, T>): T
+
+    /** Deletes the stored trust without reading or decoding it; a repeat is safe. */
+    suspend fun reset()
 }
 
 /** Supplied by the authenticated protocol session, never by a UI or a persisted flag.
@@ -77,14 +90,31 @@ interface InstallationTrustRepository {
     suspend fun revoke(peerId: String)
 
     /**
+     * Fences [peerId] against [addPending] until the matching [endRevocation]; reference-counted
+     * per id and in memory only. While fenced, [addPending] for the id is a peer rejection.
+     */
+    suspend fun beginRevocation(peerId: String)
+
+    /** Releases one [beginRevocation] for [peerId]; the fence lifts only after the last one. */
+    suspend fun endRevocation(peerId: String)
+
+    /**
      * Records a successful authenticated reconnect (veles-v1.md §11.3). Applies to any existing,
      * validated record that can authenticate — `ACTIVE`, `PENDING` or `COMMITTED_WAITING_ACK` —
      * and never changes the state, its transition time or a pending record's lifetime. An
      * unknown, expired or deleted id throws [TrustException].
      */
     suspend fun markAuthenticated(peerId: String)
+
+    /**
+     * The explicit, user-initiated identity reset: deletes the stored trust without decoding it,
+     * then deletes the installation key. It is idempotent, leaves the store fail-closed if it is
+     * interrupted after either deletion, and is never invoked by a failure path.
+     */
+    suspend fun resetIdentity()
 }
 
+@Suppress("TooManyFunctions") // Implements the whole InstallationTrustRepository surface.
 class TrustRepository(
     private val storage: TrustStorage,
     private val keys: IdentityKeyStore,
@@ -92,20 +122,44 @@ class TrustRepository(
     private val bootToken: () -> String,
     private val wallMillis: () -> Long,
     private val activationVerifier: ActivationVerifier,
+    private val onStoreFailure: () -> Unit = {},
 ) : InstallationTrustRepository {
+    private val fenceLock = Any()
+    private val fencedPeers = mutableMapOf<String, Int>()
+    private val storeLock = Mutex()
+    private val episodeLock = Any()
+    private var storeFailureReported = false
+
     override suspend fun identity(): InstallationIdentity = update { it to it.identity }
     override suspend fun peers(): List<TrustedPeer> = update { it to it.peers.toList() }
     override suspend fun activePeers(): List<TrustedPeer> = peers().filter { it.state == TrustState.ACTIVE }
 
+    override suspend fun beginRevocation(peerId: String) {
+        synchronized(fenceLock) { fencedPeers[peerId] = (fencedPeers[peerId] ?: 0) + 1 }
+    }
+
+    override suspend fun endRevocation(peerId: String) {
+        synchronized(fenceLock) {
+            val remaining = (fencedPeers[peerId] ?: return) - 1
+            if (remaining <= 0) fencedPeers.remove(peerId) else fencedPeers[peerId] = remaining
+        }
+    }
+
+    private fun isRevocationFenced(peerId: String): Boolean = synchronized(fenceLock) { fencedPeers.containsKey(peerId) }
+
     override suspend fun addPending(peer: PendingPeer) = update { snapshot ->
+        checkTrust(!isRevocationFenced(peer.installationId))
         checkTrust(snapshot.peers.none { it.installationId == peer.installationId })
         val createdAt = wallMillis()
+        // The fingerprint is computed from caller-supplied hex, so a malformed key is a store
+        // failure here and not a peer rejection.
+        val fingerprint = storeValue { peerFingerprint(snapshot.identity.publicKey, peer.publicKey) }
         val record = TrustedPeer(
             peer.installationId, peer.publicKey, peer.label, peer.deviceType, peer.enrollmentTranscript,
-            peerFingerprint(snapshot.identity.publicKey, peer.publicKey), TrustState.PENDING,
+            fingerprint, TrustState.PENDING,
             createdAt, null, elapsedMillis(), snapshot.continuityToken, createdAt,
         )
-        validatePeer(record, snapshot.identity)
+        // The resulting snapshot is validated after the operation, so a bad record is a store failure.
         snapshot.copy(peers = snapshot.peers + record) to Unit
     }
 
@@ -140,52 +194,208 @@ class TrustRepository(
         snapshot.copy(peers = snapshot.peers.map { if (it == peer) it.copy(lastSeenMillis = now) else it }) to Unit
     }
 
-    private suspend fun <T> update(block: (TrustSnapshot) -> Pair<TrustSnapshot, T>): T = storage.transaction { stored ->
-        val snapshot = stored ?: run {
-            // A surviving key without its installation metadata is not a fresh installation.
-            checkTrust(keys.publicKey() == null)
-            TrustSnapshot(
-                InstallationIdentity(
-                    TrustEncoding.hex(ByteArray(INSTALLATION_ID_BYTES).also(SecureRandom()::nextBytes)),
-                    keys.generate(),
-                ),
-            )
+    /**
+     * The only path that discards trust and the installation key, and it decodes nothing, so it
+     * works on an undecodable payload. The trust row goes first, then the key: an interruption
+     * after either deletion still fails closed, and a repeated call completes it. It shares
+     * [storeLock] with transactions so no use can recreate a snapshot between the two deletions,
+     * and a completed reset ends the failure episode.
+     */
+    override suspend fun resetIdentity() {
+        storeLock.withLock {
+            try {
+                storage.reset()
+                keys.delete()
+                endStoreFailureEpisode()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // No reset step is a peer-level check, and a reset failure never opens a store
+                // failure episode: only an explicit user action reaches this path.
+                throw TrustStoreException()
+            }
         }
-        checkTrust(snapshot.identity.publicKey == keys.publicKey())
-        if (stored != null) {
+    }
+
+    /**
+     * One transaction and its failure-episode transition share the same critical section, so a
+     * success can only clear the episode, or a failure start one, in transaction order.
+     *
+     * Failures are classified at this one choke point by *what* failed (design D6): only the
+     * caller's own operation — its explicit peer-level checks and the revocation fence — keeps a
+     * plain rejection. Everything before it (storage read, identity read, continuity/boot
+     * validation) and after it (result validation and the durable write) is a store failure.
+     */
+    private suspend fun <T> update(block: (TrustSnapshot) -> Pair<TrustSnapshot, T>): T {
+        var report = false
+        val phase = StorePhase()
+        try {
+            val result = storeLock.withLock {
+                when (
+                    val outcome = storeTransaction(phase) { stored ->
+                        val snapshot = stored ?: run {
+                            // A surviving key without its installation metadata is not a fresh installation.
+                            storeTrust(readIdentityKey(keys) == null)
+                            TrustSnapshot(
+                                InstallationIdentity(
+                                    TrustEncoding.hex(ByteArray(INSTALLATION_ID_BYTES).also(SecureRandom()::nextBytes)),
+                                    generateIdentityKey(keys),
+                                ),
+                            )
+                        }
+                        validateSnapshot(snapshot, stored != null)
+                        storeTrust(snapshot.identity.publicKey == readIdentityKey(keys))
+                        val now = elapsedMillis()
+                        val boot = bootToken()
+                        storeTrust(now >= 0 && boot.isNotEmpty())
+                        val token = if (snapshot.bootMarker == boot) {
+                            storeCheck { TrustEncoding.requireHex(snapshot.continuityToken, HASH_BYTES) }
+                            snapshot.continuityToken
+                        } else {
+                            TrustEncoding.hex(ByteArray(HASH_BYTES).also(SecureRandom()::nextBytes))
+                        }
+                        // The operation's own checks and the fence run here; only what they raise
+                        // keeps its peer-rejection classification.
+                        phase.inOperation = true
+                        val (next, value) = block(
+                            snapshot.copy(
+                                bootMarker = boot,
+                                continuityToken = token,
+                                peers = snapshot.peers.filter {
+                                    it.state == TrustState.ACTIVE ||
+                                        (
+                                            it.bootToken == token &&
+                                                now >= it.createdElapsedMillis &&
+                                                now - it.createdElapsedMillis < PENDING_LIFETIME_MILLIS
+                                            )
+                                },
+                            ),
+                        )
+                        phase.inOperation = false
+                        // Failures after the operation returned — validating its result and the durable
+                        // write in [TrustStorage.transaction] — are store failures too.
+                        validateSnapshot(next, stored = false)
+                        next to value
+                    }
+                ) {
+                    is StoreTransaction.Committed -> {
+                        endStoreFailureEpisode()
+                        outcome.value
+                    }
+                    is StoreTransaction.Failed -> {
+                        report = outcome.failure is TrustStoreException && beginStoreFailureEpisode()
+                        throw outcome.failure
+                    }
+                }
+            }
+            return result
+        } finally {
+            if (report) onStoreFailure()
+        }
+    }
+
+    /**
+     * Runs one storage transaction and classifies its failure, without throwing. A plain
+     * [TrustException] is a peer rejection only while the caller's operation is running; any
+     * other failure becomes [TrustStoreException]. Cancellation is returned untouched so it is
+     * never reported.
+     */
+    private suspend fun <T> storeTransaction(
+        phase: StorePhase,
+        block: (TrustSnapshot?) -> Pair<TrustSnapshot, T>,
+    ): StoreTransaction<T> = try {
+        StoreTransaction.Committed(storage.transaction(block))
+    } catch (cancelled: CancellationException) {
+        StoreTransaction.Failed(cancelled)
+    } catch (failure: TrustStoreException) {
+        // Already a store failure; the operation's phase cannot reclassify it.
+        StoreTransaction.Failed(failure)
+    } catch (failure: TrustException) {
+        // A peer-level rejection raised by the operation's own checks or the fence keeps its own
+        // classification; an infrastructure failure before or after it is normalized.
+        StoreTransaction.Failed(if (phase.inOperation) failure else TrustStoreException())
+    } catch (_: Exception) {
+        StoreTransaction.Failed(TrustStoreException())
+    }
+
+    /** Ends the current store-failure episode; a later store failure reports again. */
+    @VisibleForTesting
+    internal fun endStoreFailureEpisode() {
+        synchronized(episodeLock) { storeFailureReported = false }
+    }
+
+    /** Starts an episode, returning true only for the failure that opened it. */
+    private fun beginStoreFailureEpisode(): Boolean = synchronized(episodeLock) {
+        if (storeFailureReported) {
+            false
+        } else {
+            storeFailureReported = true
+            true
+        }
+    }
+}
+
+private sealed interface StoreTransaction<out T> {
+    class Committed<T>(val value: T) : StoreTransaction<T>
+
+    class Failed(val failure: Exception) : StoreTransaction<Nothing>
+}
+
+/**
+ * Which part of a transaction is running (design D6). It is true only inside the caller's own
+ * operation, so a plain rejection raised there — and nowhere else — stays a peer rejection.
+ */
+private class StorePhase {
+    var inOperation = false
+}
+
+private fun readIdentityKey(keys: IdentityKeyStore): String? = try {
+    keys.publicKey()
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (_: Exception) {
+    throw TrustStoreException()
+}
+
+private fun generateIdentityKey(keys: IdentityKeyStore): String = try {
+    keys.generate()
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (_: Exception) {
+    throw TrustStoreException()
+}
+
+private fun storeTrust(value: Boolean) {
+    if (!value) throw TrustStoreException()
+}
+
+/** Normalizes any trust-validation failure into a store failure. */
+private inline fun <T> storeValue(block: () -> T): T = try {
+    block()
+} catch (_: TrustException) {
+    throw TrustStoreException()
+}
+
+private inline fun storeCheck(block: () -> Unit) {
+    storeValue(block)
+}
+
+private fun validateSnapshot(snapshot: TrustSnapshot, stored: Boolean) {
+    storeCheck {
+        if (stored) {
             checkTrust(snapshot.bootMarker.isNotEmpty())
             TrustEncoding.requireHex(snapshot.continuityToken, HASH_BYTES)
         }
         TrustEncoding.requireHex(snapshot.identity.installationId, INSTALLATION_ID_BYTES)
         TrustEncoding.validatePublicKey(snapshot.identity.publicKey)
         checkTrust(snapshot.peers.map { it.installationId }.distinct().size == snapshot.peers.size)
-        snapshot.peers.forEach { validatePeer(it, snapshot.identity) }
-        val now = elapsedMillis()
-        val boot = bootToken()
-        checkTrust(now >= 0 && boot.isNotEmpty())
-        val token = if (snapshot.bootMarker == boot) {
-            TrustEncoding.requireHex(snapshot.continuityToken, HASH_BYTES)
-            snapshot.continuityToken
-        } else {
-            TrustEncoding.hex(ByteArray(HASH_BYTES).also(SecureRandom()::nextBytes))
-        }
-        block(
-            snapshot.copy(
-                bootMarker = boot,
-                continuityToken = token,
-                peers = snapshot.peers.filter {
-                    it.state == TrustState.ACTIVE ||
-                        (
-                            it.bootToken == token &&
-                                now >= it.createdElapsedMillis &&
-                                now - it.createdElapsedMillis < PENDING_LIFETIME_MILLIS
-                            )
-                },
-            ),
-        )
     }
+    snapshot.peers.forEach { validatePeer(it, snapshot.identity) }
+}
 
-    private fun validatePeer(peer: TrustedPeer, identity: InstallationIdentity) {
+/** Per-peer validation is a store failure, whether it runs before or after the operation. */
+private fun validatePeer(peer: TrustedPeer, identity: InstallationIdentity) {
+    storeCheck {
         TrustEncoding.requireHex(peer.installationId, INSTALLATION_ID_BYTES)
         TrustEncoding.requireHex(peer.enrollmentTranscript, HASH_BYTES)
         TrustEncoding.validatePublicKey(peer.publicKey)

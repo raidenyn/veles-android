@@ -606,6 +606,9 @@ class ActivationInterruptionTest {
             }
 
             override fun sign(message: ByteArray): ByteArray = ByteArray(0)
+            override fun delete() {
+                generated = false
+            }
         }
 
         fun repository(boot: String): TrustRepository = TrustRepository(
@@ -874,5 +877,9 @@ private class InterruptionTrustStorage : TrustStorage {
         val (next, result) = block(value)
         value = next
         return result
+    }
+
+    override suspend fun reset() {
+        value = null
     }
 }

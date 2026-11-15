@@ -211,6 +211,35 @@ val releaseHookForbidden = listOf(
     "Pairing id:",
     "Pairing fingerprint",
     "Start Bluetooth sharing first",
+    // OTP-11 D9 debug peer-management surface: the peer list, its actions, the confirmed
+    // endpoint-wide reset and the one trust status. Same rule as above: every value of every
+    // new `pairing_debug_*` string is named here, and `ReleaseGuardStringsTest` keeps the two
+    // lists in sync.
+    "Pairing peers",
+    "Peer fingerprint: %1\$s",
+    "Peer connected",
+    "Peer disconnected",
+    "Revoke peer",
+    "Mutual remove",
+    "Peer revoked",
+    "Revoke failed: trust store unavailable",
+    "Peer removed on both devices",
+    "No open full session: only local removal is possible. Nothing was deleted.",
+    "No response: the other device may keep its record",
+    "Mutual remove failed",
+    "Reset identity",
+    "Reset is destructive: it deletes every trust record and the phone identity.",
+    "Confirm reset",
+    "Cancel reset",
+    "Identity reset; pairing again creates new trust",
+    "Reset failed",
+    "Nothing deleted: confirm the destructive reset first",
+    "Trust status: %1\$s",
+    "Trust OK",
+    "Re-pair required",
+    "Peers unavailable: trust store unreadable",
+    "No trusted peers",
+    "Sharing service is not running; the coordinator is unavailable",
 )
 
 /** First byte offset of [needle] in this array, or -1. */

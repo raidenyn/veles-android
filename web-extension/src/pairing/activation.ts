@@ -232,6 +232,17 @@ class CompositeHandler implements ApplicationHandler {
         return this.#sessionHandlers.some((handler) => handler.handles(type));
     }
 
+    /**
+     * Design D4: forward the reply-then-close outcome from the child that handled
+     * `type`. A missed forward would silently disable it, so composition is covered by
+     * its own test.
+     */
+    closeAfterReply(type: number): boolean {
+        return this.#sessionHandlers.some(
+            (handler) => handler.handles(type) && handler.closeAfterReply?.(type) === true,
+        );
+    }
+
     async handle(
         type: number,
         body: Uint8Array,

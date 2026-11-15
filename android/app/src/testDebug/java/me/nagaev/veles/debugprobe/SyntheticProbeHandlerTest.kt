@@ -31,6 +31,7 @@ import me.nagaev.veles.trust.ActivationStep
 import me.nagaev.veles.trust.IdentityKeyStore
 import me.nagaev.veles.trust.InstallationIdentity
 import me.nagaev.veles.trust.InstallationTrustRepository
+import me.nagaev.veles.trust.PeerRevocationCoordinator
 import me.nagaev.veles.trust.PendingPeer
 import me.nagaev.veles.trust.TrustEncoding
 import me.nagaev.veles.trust.TrustRepository
@@ -86,6 +87,7 @@ class SyntheticProbeHandlerTest {
         sessions: ProbeSessions,
         repository: InstallationTrustRepository = RecordingTrust(),
         log: (String) -> Unit = { transport.log += it },
+        revocation: PeerManagement? = null,
     ): ProbeCommands = ProbeCommands(
         sessions = sessions,
         repository = repository,
@@ -96,6 +98,7 @@ class SyntheticProbeHandlerTest {
         ),
         handler = handler(log),
         log = log,
+        revocation = revocation,
     )
 
     private fun TestScope.authenticate(
@@ -497,23 +500,30 @@ class SyntheticProbeHandlerTest {
     }
 
     @Test
-    fun revokeRefusedWhileSessionOpen() = runTest {
+    fun clearTerminatesAnOpenSessionThroughTheCoordinator() = runTest {
         val repository = RecordingTrust()
         val client = TestClient()
         val host = host(repository) { engine(client) }
         val gen = connectFull(host, "aa", 1, client)
-        val refused = commands(SessionProbeSessions(host), repository)
         val peerId = TrustEncoding.hex(client.installationId)
+        val coordinator = PeerRevocationCoordinator(repository, host, backgroundScope)
+        val commands = commands(
+            SessionProbeSessions(host),
+            repository,
+            revocation = CoordinatorPeerManagement(coordinator),
+        )
 
-        refused.revokePeer(peerId)
+        assertTrue("the peer has an authenticated full session", host.hasOpenSession(peerId))
 
-        assertTrue("an open session blocks the debug revocation", repository.revoked.isEmpty())
-        assertTrue("the refusal is logged", refusedLog().contains("refused"))
+        assertTrue("the clear succeeds instead of being refused", commands.revokePeer(peerId))
 
-        // A different, never connected peer is revocable.
-        val absent = TrustEncoding.hex(ByteArray(16) { 0x7f })
-        refused.revokePeer(absent)
-        assertEquals(listOf(absent), repository.revoked)
+        assertEquals(
+            "the record is deleted (delete) and swept (final delete)",
+            listOf(peerId, peerId),
+            repository.revoked,
+        )
+        assertFalse("the open session is terminated", host.hasOpenSession(peerId))
+        assertFalse("no refusal is logged", transport.log.any { it.contains("refused") })
 
         host.onDisconnected(gen)
         runCurrent()
@@ -605,8 +615,6 @@ class SyntheticProbeHandlerTest {
 
     private fun admission(): RecordAdmission = RecordAdmission { }
 
-    private fun refusedLog(): String = transport.log.joinToString("\n")
-
     private fun emptySnapshot(): TrustSnapshot = TrustSnapshot(
         identity = InstallationIdentity("11".repeat(16), "04" + "22".repeat(64)),
         bootMarker = "bb".repeat(32),
@@ -620,12 +628,19 @@ class SyntheticProbeHandlerTest {
             snapshot = next
             return result
         }
+
+        override suspend fun reset() {
+            snapshot = null
+        }
     }
 
     private class FixedKeys(private val key: String) : IdentityKeyStore {
         override fun publicKey(): String = key
         override fun generate(): String = error("unused")
         override fun sign(message: ByteArray): ByteArray = error("unused")
+
+        /** The fixture identity is fixed, so the store cannot drop it. */
+        override fun delete() = Unit
     }
 
     private class RecordingTrust : InstallationTrustRepository {
@@ -639,9 +654,13 @@ class SyntheticProbeHandlerTest {
         override suspend fun revoke(peerId: String) {
             revoked += peerId
         }
+        override suspend fun beginRevocation(peerId: String) = Unit
+        override suspend fun endRevocation(peerId: String) = Unit
         override suspend fun markAuthenticated(peerId: String) {
             marked += peerId
         }
+
+        override suspend fun resetIdentity() = error("reset is not part of the probe fixture")
     }
 
     private class RecordingTransport : SessionTransport {

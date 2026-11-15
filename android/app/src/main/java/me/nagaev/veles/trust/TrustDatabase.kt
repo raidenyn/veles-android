@@ -25,6 +25,9 @@ interface TrustDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun put(row: TrustRow)
+
+    @Query("DELETE FROM trust_snapshot")
+    suspend fun delete()
 }
 
 @Database(entities = [TrustRow::class], version = 1, exportSchema = false)
@@ -54,7 +57,7 @@ class RoomTrustStorage(private val database: TrustDatabase) : TrustStorage {
         try {
             return database.withTransaction {
                 val rows = database.trustDao().rows()
-                checkTrust(rows.size <= 1 && rows.all { it.id == 1 })
+                if (!(rows.size <= 1 && rows.all { it.id == 1 })) throw TrustStoreException()
                 val previous = rows.singleOrNull()?.let { json.decodeFromString<TrustSnapshot>(it.payload) }
                 val (next, result) = block(previous)
                 database.trustDao().put(TrustRow(payload = json.encodeToString(next)))
@@ -62,9 +65,27 @@ class RoomTrustStorage(private val database: TrustDatabase) : TrustStorage {
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
+        } catch (failure: TrustException) {
+            // A peer rejection raised by the block keeps its own classification.
+            throw failure
         } catch (_: Exception) {
-            // Do not propagate database payloads, parser messages, peer identifiers or key details.
-            throw TrustException()
+            // Read, decode, validation and the durable write are all store failures. Do not
+            // propagate database payloads, parser messages, peer identifiers or key details.
+            throw TrustStoreException()
+        }
+    }
+
+    /**
+     * Deletes the trust row without reading or decoding it, so a corrupt payload is no obstacle.
+     * Deleting an absent row is a no-op, which makes an interrupted or repeated reset safe.
+     */
+    override suspend fun reset() {
+        try {
+            database.trustDao().delete()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            throw TrustStoreException()
         }
     }
 }

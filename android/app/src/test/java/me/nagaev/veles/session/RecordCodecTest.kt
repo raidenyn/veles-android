@@ -1,6 +1,7 @@
 package me.nagaev.veles.session
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -199,6 +200,68 @@ class RecordCodecTest {
         assertThrows(SessionReject::class.java) { vector.open(ack, 0UL) }
     }
 
+    /**
+     * OTP2-REC-013: the shared body-encoding fixtures for the mutual-removal records, executed
+     * against the production codec in both directions. The two empty bodies must seal and open
+     * as zero-length bodies, and the trailing-byte negative must be refused by the open path as
+     * well as by seal — a peer can put any plaintext into a valid AEAD record.
+     */
+    @Test fun removalBodyFixturesSealAndOpenInBothDirections() {
+        val removal = SessionFixtures.encoding.filter {
+            SessionFixtures.str(it.getValue("input").jsonObject, "layout") in REMOVAL_LAYOUTS
+        }
+        assertEquals(
+            "the shared encoding fixture set must keep covering the removal bodies",
+            setOf(
+                "enc-body-removal-request-empty",
+                "enc-body-removal-response-empty",
+                "enc-body-removal-request-trailing",
+            ),
+            removal.map { SessionFixtures.str(it, "id") }.toSet(),
+        )
+        for (fixture in removal) {
+            val id = SessionFixtures.str(fixture, "id")
+            val input = fixture.getValue("input").jsonObject
+            val type = REMOVAL_LAYOUTS.getValue(SessionFixtures.str(input, "layout"))
+            val expected = fixture.getValue("expected").jsonObject
+            val body = SessionFixtures.bytes(input, "bytes")
+            val accepted = SessionFixtures.str(expected, "accepted") == "true"
+            for (direction in Direction.entries) {
+                val vector = vector(direction)
+                if (accepted) {
+                    assertArrayEquals("$id must stay an empty body", ByteArray(0), body)
+                    val sealed = vector.sealWith(type, 0UL, body)
+                    val opened = vector.open(sealed, 0UL)
+                    assertEquals("$id ${direction.name} type", type, opened.type)
+                    assertArrayEquals("$id ${direction.name} body", body, opened.body)
+                } else {
+                    assertEquals("$id is the trailing-byte negative", "trailing", SessionFixtures.str(expected, "stage"))
+                    assertThrows(
+                        "$id ${direction.name} seal must refuse a trailing byte",
+                        SessionReject::class.java,
+                    ) { vector.sealWith(type, 0UL, body) }
+                    assertThrows(
+                        "$id ${direction.name} open must refuse a trailing byte",
+                        SessionReject::class.java,
+                    ) { vector.open(vector.rawSeal(type, 0UL, body), 0UL) }
+                }
+            }
+        }
+        // Only `removal_request` has a shared trailing-byte negative, so the §7.3 empty-body
+        // rule of the response is pinned directly on both the seal and the open path.
+        for (type in REMOVAL_LAYOUTS.values) {
+            for (direction in Direction.entries) {
+                val vector = vector(direction)
+                assertThrows("type $type ${direction.name} seal", SessionReject::class.java) {
+                    vector.sealWith(type, 0UL, TRAILING_BYTE)
+                }
+                assertThrows("type $type ${direction.name} open", SessionReject::class.java) {
+                    vector.open(vector.rawSeal(type, 0UL, TRAILING_BYTE), 0UL)
+                }
+            }
+        }
+    }
+
     private data class Vector(
         val key: ByteArray,
         val prefix: ByteArray,
@@ -258,6 +321,15 @@ class RecordCodecTest {
         )
     }
 
+    /** A session vector per direction; the removal records are direction-symmetric (OTP2-REC-013). */
+    private fun vector(direction: Direction): Vector {
+        val id = when (direction) {
+            Direction.CLIENT_TO_PHONE -> confirm
+            Direction.PHONE_TO_CLIENT -> push
+        }
+        return vector(id).also { assertEquals("$id fixture direction", direction, it.direction) }
+    }
+
     private fun bytes(source: JsonObject, key: String): ByteArray = SessionFixtures.bytes(source, key)
 
     private companion object {
@@ -265,5 +337,10 @@ class RecordCodecTest {
         const val SEQUENCE_OFFSET = 5
         const val LENGTH_OFFSET = 13
         const val SESSION_OFFSET = 15
+        val REMOVAL_LAYOUTS = mapOf(
+            "removal_request" to RecordType.REMOVAL_REQUEST.wire,
+            "removal_response" to RecordType.REMOVAL_RESPONSE.wire,
+        )
+        val TRAILING_BYTE = byteArrayOf(0xAA.toByte())
     }
 }

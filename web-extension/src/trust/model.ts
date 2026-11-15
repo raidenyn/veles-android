@@ -36,6 +36,14 @@ export class TrustError extends Error {
     }
 }
 
+/** A failure to read, validate or persist the trust store; the user-facing text is unchanged. */
+export class TrustStoreError extends TrustError {
+    constructor() {
+        super();
+        this.name = 'TrustStoreError';
+    }
+}
+
 /** Infrastructure failures are fail-closed but must never suggest erasing trust. */
 export class TrustUnavailableError extends Error {
     constructor() {

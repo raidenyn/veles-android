@@ -8,7 +8,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 
 /**
- * Test-only reader for the shared `protocol/v1/fixtures/crypto.json`.
+ * Test-only reader for the shared `protocol/v1/fixtures/crypto.json` and
+ * `protocol/v1/fixtures/encoding.json` fixtures.
  *
  * The unit-test source set maps the repository's single `protocol/v1` fixture root; this helper
  * never copies or rewrites fixture truth.
@@ -18,13 +19,18 @@ internal object SessionFixtures {
     const val RECORD_CONFIRM = "veles-record-reconnect-confirm"
     const val RECORD_PUSH = "veles-record-push-event"
 
-    private val all: List<JsonObject> by lazy {
-        val stream = checkNotNull(SessionFixtures::class.java.getResourceAsStream("/fixtures/crypto.json")) {
-            "missing fixture resource /fixtures/crypto.json"
+    private fun fixtures(name: String): List<JsonObject> {
+        val stream = checkNotNull(SessionFixtures::class.java.getResourceAsStream("/fixtures/$name")) {
+            "missing fixture resource /fixtures/$name"
         }
         val text = stream.use { it.readBytes().decodeToString() }
-        Json.parseToJsonElement(text).jsonObject.getValue("fixtures").jsonArray.map { it.jsonObject }
+        return Json.parseToJsonElement(text).jsonObject.getValue("fixtures").jsonArray.map { it.jsonObject }
     }
+
+    private val all: List<JsonObject> by lazy { fixtures("crypto.json") }
+
+    /** The shared body-encoding fixtures (the `enc-*` ids). */
+    val encoding: List<JsonObject> by lazy { fixtures("encoding.json") }
 
     fun ids(prefix: String): List<String> = all.map { str(it, "id") }.filter { it.startsWith(prefix) }
 

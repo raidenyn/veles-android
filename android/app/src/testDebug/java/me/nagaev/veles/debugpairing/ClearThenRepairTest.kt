@@ -2,6 +2,7 @@ package me.nagaev.veles.debugpairing
 
 import kotlinx.coroutines.runBlocking
 import me.nagaev.veles.debugprobe.DebugTrustInjector
+import me.nagaev.veles.debugprobe.PeerManagement
 import me.nagaev.veles.debugprobe.ProbeCommands
 import me.nagaev.veles.debugprobe.ProbeEventSource
 import me.nagaev.veles.debugprobe.ProbeSession
@@ -22,8 +23,10 @@ import me.nagaev.veles.session.P256
 import me.nagaev.veles.session.Role
 import me.nagaev.veles.session.TestIdentity
 import me.nagaev.veles.sharing.ConnectionGeneration
+import me.nagaev.veles.sharing.RemovalResult
 import me.nagaev.veles.trust.ActivationVerifier
 import me.nagaev.veles.trust.IdentityKeyStore
+import me.nagaev.veles.trust.PeerSummary
 import me.nagaev.veles.trust.PendingPeer
 import me.nagaev.veles.trust.TrustEncoding
 import me.nagaev.veles.trust.TrustRepository
@@ -36,10 +39,12 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 /**
- * The debug Clear control reuses the existing `REVOKE_PEER` implementation through the
- * screen helper. A stranded or injected pending record blocks a fresh pairing
- * (OTP2-STA-012 duplicate refusal); clearing it must delete the record so the same client
- * can re-pair without the OTP-11 revocation protocol.
+ * The debug Clear control (OTP-11 "Clear incomplete record") deletes through the revocation
+ * coordinator, so the shared `REVOKE_PEER` entry point no longer refuses while a session of
+ * that peer is open: the coordinator deletes the record and terminates the session.
+ *
+ * A stranded or injected pending record blocks a fresh pairing (OTP2-STA-012 duplicate
+ * refusal); clearing it must delete the record so the same client can re-pair.
  */
 class ClearThenRepairTest {
     private val identity = TestIdentity.generate()
@@ -56,6 +61,10 @@ class ClearThenRepairTest {
         }
 
         override fun sign(message: ByteArray): ByteArray = runBlocking { identity.signer.signDer(message) }
+
+        override fun delete() {
+            publicKey = null
+        }
     }
     private val repository = TrustRepository(
         storage = storage,
@@ -80,10 +89,16 @@ class ClearThenRepairTest {
         assertDuplicateRefused()
 
         val logs = mutableListOf<String>()
-        val commands = commands(ClosedSessions, logs)
+        val management = RecordingManagement()
+        val commands = commands(management, logs)
         assertTrue(
             "the screen Clear helper reports success",
             clearIncompleteRecord(peer.installationId) { commands },
+        )
+        assertEquals(
+            "the clear goes through the coordinator, never the repository refusal path",
+            listOf(peer.installationId),
+            management.revoked,
         )
         assertTrue("the stranded record is gone", repository.peers().isEmpty())
         assertTrue(
@@ -112,29 +127,81 @@ class ClearThenRepairTest {
     }
 
     @Test
-    fun clear_refused_while_authenticated_session_open() = runBlocking {
+    fun clear_without_a_coordinator_reports_unavailable_and_deletes_nothing() = runBlocking {
         repository.identity()
         repository.addPending(peer)
         val logs = mutableListOf<String>()
-        val commands = commands(OpenSessions, logs)
+        val commands = commands(null, logs)
 
         assertFalse(
-            "the REVOKE_PEER refusal is visible to the screen",
+            "a clear without a running coordinator is refused, never a direct trust-store write",
             clearIncompleteRecord(peer.installationId) { commands },
         )
-        assertEquals("the open session keeps its record", 1, repository.peers().size)
+        assertEquals(
+            "the stranded record is untouched",
+            listOf(peer.installationId),
+            repository.peers().map { it.installationId },
+        )
         assertTrue(
-            "the refusal is logged like the broadcast path",
-            logs.any { it.contains("session_open=true") },
+            "the unavailable path is logged",
+            logs.any { it == "revoke unavailable peer=${peer.installationId.take(8)}" },
         )
     }
 
-    private fun commands(sessions: ProbeSessions, logs: MutableList<String>): ProbeCommands = ProbeCommands(
-        sessions = sessions,
+    @Test
+    fun clear_with_an_open_session_deletes_instead_of_refusing() = runBlocking {
+        repository.identity()
+        repository.addPending(peer)
+        val logs = mutableListOf<String>()
+        val management = RecordingManagement()
+        val commands = commands(management, logs)
+
+        assertTrue(
+            "the coordinator-backed clear succeeds while a session is open",
+            clearIncompleteRecord(peer.installationId) { commands },
+        )
+        assertEquals("the record is deleted", emptyList<String>(), repository.peers().map { it.installationId })
+        assertEquals("the delete went through the coordinator", listOf(peer.installationId), management.revoked)
+        assertTrue("no refusal is logged", logs.none { it.contains("session_open=true") })
+    }
+
+    /** Records the coordinator call and performs the coordinator's local delete. */
+    private inner class RecordingManagement : PeerManagement {
+        val revoked = mutableListOf<String>()
+
+        override suspend fun peers(): List<PeerSummary> = repository.peers().map {
+            PeerSummary(
+                installationId = it.installationId,
+                label = it.label,
+                fingerprint = it.fingerprint,
+                deviceType = it.deviceType,
+                state = it.state,
+                createdAtMillis = it.createdAtMillis,
+                lastSeenMillis = it.lastSeenMillis,
+                connected = false,
+            )
+        }
+
+        override suspend fun revoke(peerId: String) {
+            revoked += peerId
+            repository.revoke(peerId)
+        }
+
+        override suspend fun removeMutually(peerId: String): RemovalResult = RemovalResult.KEPT_NOT_CONNECTED
+
+        override suspend fun reset() = error("reset is not part of the clear fixture")
+    }
+
+    private fun commands(
+        management: PeerManagement?,
+        logs: MutableList<String>,
+    ): ProbeCommands = ProbeCommands(
+        sessions = NoSessions,
         repository = repository,
         injector = DebugTrustInjector(storage, elapsedMillis = { 1_000L }, wallMillis = { 1_000L }),
         handler = ProbeEventSource { SyntheticEvent("", ByteArray(0), ByteArray(0)) },
         log = { logs += it },
+        revocation = management,
     )
 
     private suspend fun assertDuplicateRefused() {
@@ -173,18 +240,8 @@ class ClearThenRepairTest {
         return PairingFrames.encode(PairingFrameType.REQUEST, payload)
     }
 
-    private object ClosedSessions : ProbeSessions {
+    private object NoSessions : ProbeSessions {
         override fun openFullSessions(): List<ProbeSession> = emptyList()
-
-        override fun hasOpenSession(peerId: String): Boolean = false
-
-        override suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean = false
-    }
-
-    private object OpenSessions : ProbeSessions {
-        override fun openFullSessions(): List<ProbeSession> = emptyList()
-
-        override fun hasOpenSession(peerId: String): Boolean = true
 
         override suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean = false
     }
@@ -196,6 +253,10 @@ class ClearThenRepairTest {
             val (next, result) = block(value)
             value = next
             return result
+        }
+
+        override suspend fun reset() {
+            value = null
         }
     }
 

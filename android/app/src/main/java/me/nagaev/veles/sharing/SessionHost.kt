@@ -16,6 +16,7 @@ import me.nagaev.veles.pairing.Outgoing
 import me.nagaev.veles.pairing.PairingConnection
 import me.nagaev.veles.pairing.RejectingPairingConnection
 import me.nagaev.veles.session.PhoneSessionEngine
+import me.nagaev.veles.session.RecordType
 import me.nagaev.veles.session.SessionClass
 import me.nagaev.veles.session.SessionEffect
 import me.nagaev.veles.session.SessionReject
@@ -40,6 +41,22 @@ class AuthenticatedSession(
     val peerId: String,
     val sessionIdPrefix: ByteArray,
 )
+
+/**
+ * The requester's mutual-removal outcome (design D4, OTP2-REC-013).
+ *
+ * [REMOVED] means a valid `removal_response` deleted the local record; [KEPT_NOT_CONNECTED]
+ * means there was no FULL session of that peer to ask; [KEPT_NO_RESPONSE] means the exchange
+ * produced no valid response — a lost response, a disconnect, the deadline or a protocol
+ * violation — so the local record is kept and the other endpoint may keep its own.
+ */
+enum class RemovalResult { REMOVED, KEPT_NOT_CONNECTED, KEPT_NO_RESPONSE }
+
+/**
+ * The requester's `removal_response` deadline (design call, not a protocol value; design D4).
+ * It is measured on the host's injected clock and checked on the existing 1 000 ms tick.
+ */
+const val REMOVAL_RESPONSE_TIMEOUT_MS = 10_000L
 
 /**
  * Bounded admission of exactly one inbound record. The callee owns it until it erases the
@@ -76,6 +93,53 @@ interface SessionTransport {
 }
 
 /**
+ * The session side of a trust-changing operation (design D1/D2/D3/D6). Selection is by the
+ * authenticated installation id only; a label, native handle or platform hint is never an input.
+ * [SessionHost] is the production implementation; a conformance runner can bind its own live
+ * engine through this surface without a transport.
+ */
+interface PeerSessions {
+    /** True when an authenticated session of [peerId] (the trust installation id, hex) is live. */
+    fun hasOpenSession(peerId: String): Boolean
+
+    /** Terminates every generation bound to [peerIdHex] and awaits each one's end. */
+    suspend fun closePeer(peerIdHex: String)
+
+    /** Terminates every generation, non-destructively; durable enrollment records are kept. */
+    suspend fun closeAll()
+
+    /** Asks the peer's full session to remove this endpoint's record (OTP2-REC-013). */
+    suspend fun requestRemoval(peerIdHex: String): RemovalResult
+
+    /**
+     * Closes admission for one reset *before* it takes its snapshot (design D6): a connection that
+     * arrives later is refused instead of being admitted outside the snapshot, where the reset
+     * could delete trust and refresh the identity without terminating it.
+     *
+     * Every call owns one hold on the barrier and must be given back by exactly one [endReset], so
+     * overlapping resets share it: an earlier reset's completion says nothing about the store a
+     * still-active reset has yet to discard and refresh, so it never reopens admission.
+     *
+     * Taking the hold is a plain, non-suspending call that has no cancellation window: it either
+     * returns with the hold taken or it does not run at all, never suspending in between. The
+     * caller therefore takes the hold inside a `try` whose `finally` releases it, and a
+     * cancellation after this call can no longer lose the hold.
+     */
+    fun beginReset()
+
+    /**
+     * Releases this reset's hold and publishes its outcome. [completed] is `true` only when the
+     * body ran and its deletions and identity refresh returned, `false` when it began discarding
+     * the store and did not finish, and `null` when the request never reached the store — then
+     * nothing is published and the most recently completed body's outcome stands.
+     *
+     * The coordinator calls this while the serialized reset section is still held, so the outcome
+     * of the last body to run is the one admission reflects.
+     */
+    fun endReset(completed: Boolean?)
+}
+
+/**
  * OTP-06 plaintext echo switch. The echo may only be selected while this is true, and it is
  * mutually exclusive with [SessionHost]: the sharing service installs exactly one listener.
  */
@@ -97,7 +161,7 @@ internal object TransportMode {
  * [SessionEffect.Authenticated] effect, still under the mutex, after re-checking that the
  * generation is current and the engine is open.
  */
-@Suppress("TooManyFunctions") // Lifecycle callbacks, three public queries, worker and effect applier.
+@Suppress("TooManyFunctions") // Lifecycle callbacks, five queries/commands, worker and effect applier.
 class SessionHost(
     private val scope: CoroutineScope,
     private val transport: SessionTransport,
@@ -112,14 +176,25 @@ class SessionHost(
     private val pairingFactory: (ConnectionGeneration) -> PairingConnection = { RejectingPairingConnection() },
     /** Session-bound proof cleanup when a generation is torn down (OTP-10 plan 9d). */
     private val onSessionClosed: (String) -> Unit = {},
-) : ConnectionListener {
+) : ConnectionListener,
+    PeerSessions {
     private class OwnedRecord(val bytes: ByteArray, val admission: RecordAdmission)
+
+    /**
+     * One requester removal exchange (design D4). The owner awaits [result]; [deadlineAt] is
+     * compared with the injected clock on each existing tick.
+     */
+    private class RemovalWait(val result: CompletableDeferred<RemovalResult>) {
+        /** `Long.MAX_VALUE` until the request is sealed, so an unarmed wait can never expire. */
+        @Volatile var deadlineAt = Long.MAX_VALUE
+    }
 
     private sealed interface Step {
         class Inbound(val record: OwnedRecord) : Step
         class Completion(val token: Long, val ok: Boolean) : Step
         data object Tick : Step
         class Application(val type: Int, val body: ByteArray, val result: CompletableDeferred<Boolean>) : Step
+        class RemovalStart(val wait: RemovalWait) : Step
         data object Teardown : Step
     }
 
@@ -164,21 +239,92 @@ class SessionHost(
         @Volatile var peerId: ByteArray? = null
 
         @Volatile var sessionIdPrefix: ByteArray? = null
+
+        /**
+         * Completes when [teardownLocked] has erased this generation (design D8). A peer
+         * termination awaits it, so "the call returned" means "the generation ended".
+         */
+        val endedSignal = CompletableDeferred<Unit>()
+
+        /**
+         * The requester's in-flight removal exchange (design D4), or null. Written under
+         * [registry] by [requestRemoval], [settleRemoval] and [teardownLocked].
+         */
+        @Volatile var removal: RemovalWait? = null
+
+        /** True when this generation is bound to [peerIdHex]; never by a label or address. */
+        fun isBoundTo(peerIdHex: String): Boolean {
+            val authenticated = peerId?.let(TrustEncoding::hex)
+            return authenticated == peerIdHex || pairing?.boundPeerId() == peerIdHex
+        }
     }
 
     private val registry = Any()
     private val sessions = LinkedHashMap<ConnectionGeneration, Live>()
     private val all = LinkedHashSet<Live>()
 
+    /**
+     * The reset-wide admission barrier (design D6). Guarded by [registry] and closed by the first
+     * [beginReset] before a reset snapshots its generations, so no connection can be admitted —
+     * and no identity read or handshake can start — while the store is being discarded. It is
+     * released only by the [endReset] of the last active reset, and its value is the outcome the
+     * most recently completed reset body published.
+     */
+    private var admitting = true
+
+    /**
+     * How many resets currently hold admission closed. Guarded by [registry]. Per-reset ownership
+     * is what keeps overlapping resets safe: the first one to complete deletion and cache refresh
+     * must not reopen admission for a reset that has not even taken its snapshot yet.
+     */
+    private var resets = 0
+
+    /**
+     * Set by the most recently completed reset body when the store did not confirm it: every later
+     * connection is then refused until a later reset succeeds, because the store may still hold the
+     * identity it could not discard. Guarded by [registry].
+     */
+    private var resetRefused = false
+
     override fun onConnected(gen: ConnectionGeneration) {
         val live = Live(gen)
-        live.engine = engineFactory(gen)
-        synchronized(registry) {
-            sessions[gen] = live
-            all += live
+        if (!admit(live)) {
+            // A reset owns the store: the connection is never registered, builds no engine (so it
+            // reads no identity) and its transport is refused.
+            scope.launch { transport.close(gen) }
+            return
         }
+        live.engine = engineFactory(gen)
         live.tick = scope.launch { runTicks(live) }
         scope.launch { for (step in live.queue) handleStep(live, step) }
+    }
+
+    /** Registers [live] only while admission is open; the check and the registration are atomic. */
+    private fun admit(live: Live): Boolean = synchronized(registry) {
+        if (!admitting) return false
+        sessions[live.gen] = live
+        all += live
+        true
+    }
+
+    override fun beginReset() {
+        // One non-suspending critical section: the hold is taken and admission is closed before
+        // this call returns, so a cancelled request cannot lose the hold between the two.
+        synchronized(registry) {
+            admitting = false
+            resets += 1
+        }
+    }
+
+    override fun endReset(completed: Boolean?) {
+        synchronized(registry) {
+            // Only a body that reached the store publishes an outcome; a request that never got
+            // there releases its hold and leaves the most recently completed body's outcome.
+            if (completed != null) resetRefused = !completed
+            resets = (resets - 1).coerceAtLeast(0)
+            if (resets > 0) return
+            admitting = !resetRefused
+        }
     }
 
     override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray, admission: RecordAdmission) {
@@ -241,7 +387,7 @@ class SessionHost(
     }
 
     /** True when an open session of [peerId] (the trust installation id, hex) is live. */
-    fun hasOpenSession(peerId: String): Boolean {
+    override fun hasOpenSession(peerId: String): Boolean {
         val raw = runCatching { TrustEncoding.bytes(peerId) }.getOrNull() ?: return false
         return synchronized(registry) {
             sessions.values.any { !it.ended && it.sessionClass != null && it.peerId?.contentEquals(raw) == true }
@@ -277,6 +423,102 @@ class SessionHost(
         } finally {
             synchronized(registry) { live.applications -= step }
         }
+    }
+
+    /**
+     * Asks the peer to remove this endpoint's record (OTP2-REC-013, design D4).
+     *
+     * The request runs on the serialized queue of the peer's FULL generation: the engine
+     * seals `removal_request`, then the removal-pending guard is set on that session only, and
+     * the response deadline is armed on the injected clock. The host never deletes anything
+     * itself; the removal handler does that inside the validated response's step.
+     *
+     * [RemovalResult.REMOVED] is returned only when the generation ended through the engine's
+     * removal stage. Every other end — a lost response, a disconnect, [REMOVAL_RESPONSE_TIMEOUT_MS]
+     * or a protocol violation — returns [RemovalResult.KEPT_NO_RESPONSE]; without a live FULL
+     * session of [peerIdHex] the call returns [RemovalResult.KEPT_NOT_CONNECTED]. A second
+     * request while one is already awaiting a response returns [RemovalResult.KEPT_NO_RESPONSE]
+     * without sending anything.
+     */
+    @Suppress("ReturnCount") // Not connected, already awaiting, refused admission and the settle are distinct outcomes.
+    override suspend fun requestRemoval(peerIdHex: String): RemovalResult {
+        val wait = RemovalWait(CompletableDeferred())
+        synchronized(registry) {
+            val live = sessions.values.firstOrNull {
+                !it.ended && it.sessionClass == SessionClass.FULL && it.peerId?.let(TrustEncoding::hex) == peerIdHex
+            } ?: return RemovalResult.KEPT_NOT_CONNECTED
+            if (live.removal != null) return RemovalResult.KEPT_NO_RESPONSE
+            // Registered before the step can run, so a disconnect or teardown always settles it.
+            live.removal = wait
+            if (!live.queue.trySend(Step.RemovalStart(wait)).isSuccess) {
+                live.removal = null
+                return RemovalResult.KEPT_NO_RESPONSE
+            }
+        }
+        return wait.result.await()
+    }
+
+    /**
+     * Seals the requester's `removal_request` under the generation's mutex and arms the guard
+     * and the deadline in the same serialized step. The request is sealed before the guard is
+     * set, so the request itself is never rejected by it.
+     */
+    @Suppress("TooGenericExceptionCaught") // An engine rejection fails the generation like any other step.
+    private suspend fun startRemovalLocked(live: Live, wait: RemovalWait) {
+        val engine = live.engine
+        if (!isCurrent(live) || engine == null || !engine.isOpen) {
+            settleRemoval(live, RemovalResult.KEPT_NO_RESPONSE)
+            return
+        }
+        try {
+            val effects = engine.sendApplication(RecordType.REMOVAL_REQUEST.wire, ByteArray(0))
+            engine.setRemovalPending(true)
+            wait.deadlineAt = clock() + REMOVAL_RESPONSE_TIMEOUT_MS
+            apply(live, effects)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            failedLocked(live)
+        }
+    }
+
+    /**
+     * Design D4 deadline: compared with the injected clock on each existing 1 000 ms tick,
+     * never by a sleep. An expired exchange keeps the record and fails the session.
+     */
+    private suspend fun expireRemoval(live: Live): Boolean {
+        val wait = synchronized(registry) { live.removal } ?: return false
+        if (clock() < wait.deadlineAt) return false
+        settleRemoval(live, RemovalResult.KEPT_NO_RESPONSE)
+        failedLocked(live)
+        return true
+    }
+
+    /**
+     * Settles an exchange from a sealed terminal effect that can no longer be applied because
+     * the generation ended first (design D4). The engine reports the removal stage only after
+     * the handler returned, so the stage proves the local record was deleted even though the
+     * terminal pair never reached the transport; any other terminal stage produced no valid
+     * response. Nothing in [effects] is used for anything else.
+     */
+    private fun settleTerminalFrom(live: Live, effects: List<SessionEffect>, from: Int) {
+        val reason = effects.drop(from).filterIsInstance<SessionEffect.Terminated>().lastOrNull()?.reason ?: return
+        settleRemoval(live, settlementOf(reason))
+    }
+
+    /** The removal outcome of a terminal stage: only a removal stage deleted the record. */
+    private fun settlementOf(reason: String): RemovalResult = when (reason) {
+        PhoneSessionEngine.STAGE_REMOVAL -> RemovalResult.REMOVED
+        else -> RemovalResult.KEPT_NO_RESPONSE
+    }
+
+    /**
+     * Settles the generation's in-flight removal exchange exactly once (design D4): the first
+     * outcome wins, so a disconnect racing a delivered response keeps whichever ended first.
+     */
+    private fun settleRemoval(live: Live, outcome: RemovalResult) {
+        val wait = synchronized(registry) { live.removal.also { live.removal = null } } ?: return
+        wait.result.complete(outcome)
     }
 
     /**
@@ -338,6 +580,83 @@ class SessionHost(
 
     private fun enqueue(live: Live, step: Step): Boolean = !live.ended && live.queue.trySend(step).isSuccess
 
+    /**
+     * Terminates every generation bound to [peerIdHex] and returns only after each of them has
+     * ended (design D3). A generation is selected by its authenticated peer id or by the peer
+     * its live enrollment connection is bound to; connections of other peers, enrollments not
+     * yet bound to a peer, and address-based reconnects are never selected, and a label, native
+     * handle or hint is never an input.
+     *
+     * Each match runs the teardown and the transport close under that generation's own mutex,
+     * so this waits behind an in-flight step — including a handler's reply sends and close
+     * effects — and the reply is delivered first. A handler must never call this on its own
+     * generation: the call would wait for the step it is running inside.
+     */
+    override suspend fun closePeer(peerIdHex: String) {
+        val lives = synchronized(registry) { all.filter { it.isBoundTo(peerIdHex) } }
+        endAll(lives)
+    }
+
+    /**
+     * Non-destructive teardown of every generation (design D6): keys are erased and the
+     * transport is closed, while every durable enrollment record and pairing state is kept.
+     * Distinct from [cancelPairings], the destructive path that deletes the incomplete records
+     * of live enrollments; fail-closed recovery and identity reset use this one.
+     */
+    override suspend fun closeAll() {
+        val lives = synchronized(registry) { all.toList() }
+        endAll(lives)
+    }
+
+    /**
+     * Ends every generation in [lives], continuing across failures (design D2): a best-effort
+     * transport disconnect that fails for one generation must never abort the logical termination
+     * of another, so every selected generation is torn down before the first failure is reported,
+     * with the remaining failures attached to it.
+     */
+    @Suppress("TooGenericExceptionCaught") // A disconnect failure of one generation never aborts another.
+    private suspend fun endAll(lives: List<Live>) {
+        var failure: Exception? = null
+        for (live in lives) {
+            try {
+                endGeneration(live)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
+                if (failure == null) {
+                    failure = error
+                } else {
+                    failure.addSuppressed(error)
+                }
+            }
+        }
+        if (failure != null) throw failure
+    }
+
+    /**
+     * Tears [live] down and closes its transport when it is still admitted, then awaits the end
+     * signal: the teardown is authoritative, the disconnect is best-effort and its failure is
+     * reported only after the logical termination is complete (design D2).
+     */
+    private suspend fun endGeneration(live: Live) {
+        val failure = live.mutex.withLock {
+            val admitted = isCurrent(live)
+            teardownLocked(live)
+            if (admitted) closeTransport(live) else null
+        }
+        live.endedSignal.await()
+        if (failure != null) throw failure
+    }
+
+    /** The best-effort disconnect; a failure is reported once the generation has ended. */
+    @Suppress("TooGenericExceptionCaught") // The transport is not allowed to keep authorization alive.
+    private fun closeTransport(live: Live): Exception? = try {
+        transport.close(live.gen)
+        null
+    } catch (error: Exception) {
+        error
+    }
+
     private suspend fun runTicks(live: Live) {
         var last = clock()
         while (true) {
@@ -380,6 +699,7 @@ class SessionHost(
                 live.tickQueued.set(false)
                 live.mutex.withLock {
                     if (!isCurrent(live)) return@withLock
+                    if (expireRemoval(live)) return@withLock
                     val pairing = live.pairing
                     if (pairing != null) {
                         runPairing(live) { pairing.onTick() }
@@ -389,6 +709,7 @@ class SessionHost(
                     }
                 }
             }
+            is Step.RemovalStart -> live.mutex.withLock { startRemovalLocked(live, step.wait) }
             is Step.Application -> {
                 val result = live.mutex.withLock {
                     val engine = live.engine
@@ -429,6 +750,11 @@ class SessionHost(
         var sent = false
         for ((index, effect) in effects.withIndex()) {
             if (!isCurrent(live)) {
+                // Design D4: a sealed terminal outcome is logical state, not transport admission.
+                // A disconnect can end the generation while a removal handler is still deleting;
+                // the deletion that already completed must still settle the exchange, while no
+                // send may reach the transport of an ended generation.
+                settleTerminalFrom(live, effects, index)
                 eraseSends(effects, index)
                 return false
             }
@@ -454,7 +780,7 @@ class SessionHost(
                     // it handled the gate, never from inside the handler's context hook.
                     if (!sendUnprompted(live, effect.unprompted)) return false
                 }
-                is SessionEffect.Terminated -> Unit
+                is SessionEffect.Terminated -> settleRemoval(live, settlementOf(effect.reason))
                 is SessionEffect.Deliver -> Unit // OTP-09 has no application consumer; OTP-10 adds one.
                 SessionEffect.Close -> {
                     teardownLocked(live)
@@ -689,6 +1015,9 @@ class SessionHost(
         // worker never processes its queued step (shutdown, cancellation).
         val applications = synchronized(registry) { live.applications.toList().also { live.applications.clear() } }
         applications.forEach { it.result.complete(false) }
+        // Design D4: an exchange still awaiting a response keeps the record, including when its
+        // start step never ran (shutdown, cancellation).
+        settleRemoval(live, RemovalResult.KEPT_NO_RESPONSE)
         live.pairing?.onDisconnect()
         live.pairing = null
         live.engine?.teardown()
@@ -703,6 +1032,9 @@ class SessionHost(
             if (sessions[live.gen] === live) sessions.remove(live.gen)
             all.remove(live)
         }
+        // Design D8: a peer termination awaits this signal, so it completes only after the
+        // generation's keys, records and host state are all gone.
+        live.endedSignal.complete(Unit)
     }
 
     private fun isCurrent(live: Live): Boolean = !live.ended && synchronized(registry) { sessions[live.gen] === live }

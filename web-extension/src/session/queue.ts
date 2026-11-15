@@ -38,6 +38,15 @@ export class SerialQueue {
     }
 
     /**
+     * Resolves once every job submitted so far has settled. It takes no admission slot, so an
+     * owner that must wait for in-flight work (for example a removal handler that is deleting)
+     * can still observe the outcome when the queue is saturated.
+     */
+    drained(): Promise<void> {
+        return this.tail;
+    }
+
+    /**
      * Submits one job. A job starts only after the previous job settled; a
      * rejected job does not break the chain, so the caller alone decides what
      * a failure means.

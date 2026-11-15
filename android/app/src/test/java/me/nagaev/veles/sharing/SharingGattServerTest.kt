@@ -1080,5 +1080,8 @@ private object NoTrust : InstallationTrustRepository {
     override suspend fun addPending(peer: PendingPeer) = error("no trust in this fixture")
     override suspend fun confirm(peerId: String, step: ActivationStep, proof: ByteArray) = error("no trust in this fixture")
     override suspend fun revoke(peerId: String) = error("no trust in this fixture")
+    override suspend fun beginRevocation(peerId: String) = error("no trust in this fixture")
+    override suspend fun endRevocation(peerId: String) = error("no trust in this fixture")
     override suspend fun markAuthenticated(peerId: String) = Unit
+    override suspend fun resetIdentity() = error("no trust in this fixture")
 }

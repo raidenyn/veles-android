@@ -337,8 +337,8 @@ export function createDevelopmentProbe(
         sessionOptions(base) {
             makeRepository = base.createRepository;
             return {
-                createRepository(verifier, proofs) {
-                    return base.createRepository(verifier, proofs);
+                createRepository(verifier, proofs, onStoreFailure) {
+                    return base.createRepository(verifier, proofs, onStoreFailure);
                 },
                 createEngineDeps(handle, peerId, localInstallationId, repository, proofs) {
                     const baseDeps = base.createEngineDeps(

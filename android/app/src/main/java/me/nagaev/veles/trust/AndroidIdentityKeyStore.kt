@@ -44,6 +44,11 @@ class AndroidIdentityKeyStore : IdentityKeyStore {
         }
     }
 
+    /** Removes the alias; deleting a missing alias is a no-op, so a repeated reset is safe. */
+    override fun delete() = guarded {
+        store().deleteEntry(ALIAS)
+    }
+
     private fun <T> guarded(block: () -> T): T = try {
         block()
     } catch (_: Exception) {

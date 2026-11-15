@@ -49,10 +49,10 @@
   "st-rec-phone-full-on-first-reconnect-peer-active": "execute",
   "st-rec-client-activation-pending-upgrades-on-phone-proof": "execute",
   "st-rec-revocation-is-generic-preauth-failure": "execute",
-  "st-rec-revoke-disconnects-connected-peer": "deferred:OTP-11",
+  "st-rec-revoke-disconnects-connected-peer": "execute",
   "st-rec-authentication-without-authorization": "execute",
   "st-rec-replay-of-prior-session-rejected": "execute",
-  "st-rec-removal-mutual-authenticated": "deferred:OTP-11",
+  "st-rec-removal-mutual-authenticated": "execute",
   "st-neg-secret-in-persisted-state": {
     "engine-effect": {
       "terminate": false,

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
     RECORD_HEADER_BYTES,
     RECORD_MAX_CIPHERTEXT_BYTES,
@@ -19,6 +21,7 @@ import {
     RECORD_PUSH,
     bytes,
     deviation,
+    hex,
     ids,
     input,
     outputs,
@@ -31,6 +34,31 @@ const TYPE_OFFSET = 3;
 const SEQUENCE_OFFSET = 5;
 const LENGTH_OFFSET = 13;
 const SESSION_OFFSET = 15;
+const PROTOCOL_ROOT = resolve(import.meta.dirname, '../../../protocol/v1');
+/** OTP2-REC-013: the §7.3 removal bodies, both empty and direction symmetric. */
+const REMOVAL_LAYOUTS = new Map<string, number>([
+    ['removal_request', RecordType.REMOVAL_REQUEST],
+    ['removal_response', RecordType.REMOVAL_RESPONSE],
+]);
+const TRAILING_BYTE = Uint8Array.of(0xaa);
+const DIRECTIONS: { direction: Direction; name: string }[] = [
+    { direction: Direction.CLIENT_TO_PHONE, name: 'client->phone' },
+    { direction: Direction.PHONE_TO_CLIENT, name: 'phone->client' },
+];
+
+interface BodyFixture {
+    id: string;
+    input: { layout: string; bytes: string };
+    expected: { accepted: boolean; stage?: string };
+}
+
+/** The shared `encoding.json` body fixtures, read from the repository's single fixture root. */
+function bodyFixtures(): BodyFixture[] {
+    const document = JSON.parse(
+        readFileSync(resolve(PROTOCOL_ROOT, 'fixtures/encoding.json'), 'utf8'),
+    ) as { fixtures: BodyFixture[] };
+    return document.fixtures;
+}
 
 interface Vector {
     key: CryptoKey;
@@ -93,6 +121,13 @@ function seal(
 
 function open(v: Vector, record: Uint8Array, expected: bigint = v.sequence) {
     return openRecord(v.key, v.prefix, v.sid, v.direction, expected, record);
+}
+
+/** A session vector for one direction; the removal records are direction symmetric. */
+async function vectorFor(direction: Direction): Promise<Vector> {
+    const v = await vector(direction === Direction.CLIENT_TO_PHONE ? RECORD_CONFIRM : RECORD_PUSH);
+    expect(v.direction, 'fixture direction').toBe(direction);
+    return v;
 }
 
 /** A valid AEAD record whose plaintext body bypasses the §7.3 body rules. */
@@ -369,5 +404,94 @@ describe('protected records', () => {
         expect(
             (await openRecord(v.key, v.prefix, v.sid, v.direction, 0n, validRecord)).body,
         ).toEqual(validBody);
+    });
+});
+
+// OTP2-REC-013 (OTP-11 "Removal conformance"): the shared body-encoding fixtures for the mutual
+// removal records, executed against the production codec in both directions. The two empty bodies
+// must seal and open as zero-length bodies, and the trailing-byte negative must be refused by the
+// open path as well as by seal, because a peer can place any plaintext into a valid AEAD record.
+describe('removal body fixtures', () => {
+    it('executes the shared empty bodies and the trailing-byte negative in both directions', async () => {
+        const removal = bodyFixtures().filter((fixture) =>
+            REMOVAL_LAYOUTS.has(fixture.input.layout),
+        );
+        expect(
+            removal.map((fixture) => fixture.id).sort(),
+            'the shared encoding fixture set must keep covering the removal bodies',
+        ).toEqual([
+            'enc-body-removal-request-empty',
+            'enc-body-removal-request-trailing',
+            'enc-body-removal-response-empty',
+        ]);
+        for (const fixture of removal) {
+            const type = REMOVAL_LAYOUTS.get(fixture.input.layout);
+            if (type === undefined) throw new Error(`unknown layout in ${fixture.id}`);
+            const body = hex(fixture.input.bytes);
+            for (const { direction, name } of DIRECTIONS) {
+                const v = await vectorFor(direction);
+                if (fixture.expected.accepted) {
+                    expect(body.length, `${fixture.id} must stay an empty body`).toBe(0);
+                    const sealed = await sealRecord(
+                        v.key,
+                        v.prefix,
+                        v.sid,
+                        v.direction,
+                        type,
+                        0n,
+                        body,
+                    );
+                    const opened = await openRecord(
+                        v.key,
+                        v.prefix,
+                        v.sid,
+                        v.direction,
+                        0n,
+                        sealed,
+                    );
+                    expect(opened.type, `${fixture.id} ${name} type`).toBe(type);
+                    expect(opened.body, `${fixture.id} ${name} body`).toEqual(body);
+                } else {
+                    expect(fixture.expected.stage, `${fixture.id} stage`).toBe('trailing');
+                    await expect(
+                        sealRecord(v.key, v.prefix, v.sid, v.direction, type, 0n, body),
+                        `${fixture.id} ${name} seal must refuse a trailing byte`,
+                    ).rejects.toBeInstanceOf(SessionReject);
+                    await expect(
+                        openRecord(
+                            v.key,
+                            v.prefix,
+                            v.sid,
+                            v.direction,
+                            0n,
+                            await sealRaw(v, type, body),
+                        ),
+                        `${fixture.id} ${name} open must refuse a trailing byte`,
+                    ).rejects.toBeInstanceOf(SessionReject);
+                }
+            }
+        }
+        // Only `removal_request` has a shared trailing-byte negative, so the §7.3 empty-body rule
+        // of the response is pinned directly on both the seal and the open path.
+        for (const type of REMOVAL_LAYOUTS.values()) {
+            for (const { direction, name } of DIRECTIONS) {
+                const v = await vectorFor(direction);
+                await expect(
+                    sealRecord(v.key, v.prefix, v.sid, v.direction, type, 0n, TRAILING_BYTE),
+                    `${name} seal ${type}`,
+                ).rejects.toBeInstanceOf(SessionReject);
+                await expect(
+                    openRecord(
+                        v.key,
+                        v.prefix,
+                        v.sid,
+                        v.direction,
+                        0n,
+                        await sealRaw(v, type, TRAILING_BYTE),
+                    ),
+                    `${name} open ${type}`,
+                ).rejects.toBeInstanceOf(SessionReject);
+            }
+        }
     });
 });
