@@ -29,6 +29,7 @@ commands and rules; this file intentionally holds no node detail.
 
 Repo-wide rules in `.agents/rules/` are always on and each holds one concern:
 `.agents/rules/repo-conventional-commits.md`,
+`.agents/rules/repo-real-device-testing.md`,
 `.agents/rules/repo-no-time-based-tests.md`,
 `.agents/rules/repo-pre-push-checks.md`,
 `.agents/rules/repo-review-models.md`,
