@@ -6,12 +6,14 @@ import kotlinx.coroutines.runBlocking
 import me.nagaev.veles.debugpairing.PairingDebugHooks
 import me.nagaev.veles.debugprobe.DebugProbeEntryPoint
 import me.nagaev.veles.debugprobe.DebugProbeRuntime
+import me.nagaev.veles.debugprobe.DebugRevocationRuntime
 import me.nagaev.veles.debugprobe.PROBE_TAG
 import me.nagaev.veles.debugprobe.ProbeReceiver
 import me.nagaev.veles.debugprobe.SyntheticProbeHandler
 import me.nagaev.veles.sharing.PairingEndpoint
 import me.nagaev.veles.sharing.SessionHost
 import me.nagaev.veles.trust.ActivationVerifier
+import me.nagaev.veles.trust.PeerRevocationCoordinator
 import me.nagaev.veles.trust.TrustEncoding
 import me.nagaev.veles.trust.createAndroidTrustRepository
 
@@ -46,6 +48,19 @@ object BuildSessionExtensions {
 
     fun attach(host: SessionHost) {
         DebugProbeRuntime.host = host
+    }
+
+    /**
+     * OTP-11 D9: hand the running coordinator to the debug peer-management controls. They drive
+     * the coordinator's own operations, so a debug Revoke, Mutual remove, Reset or Clear behaves
+     * exactly like the production path.
+     */
+    internal fun attachRevocation(coordinator: PeerRevocationCoordinator) {
+        DebugRevocationRuntime.attach(coordinator)
+    }
+
+    internal fun detachRevocation() {
+        DebugRevocationRuntime.detach()
     }
 
     /** OTP-10 D5: expose the production window and its cancel to the debug surface. */

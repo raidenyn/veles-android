@@ -108,8 +108,6 @@ class ProbeCommandsTest {
     private object NoSessions : ProbeSessions {
         override fun openFullSessions(): List<ProbeSession> = emptyList()
 
-        override fun hasOpenSession(peerId: String): Boolean = false
-
         override suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean {
             check(type != RecordType.PUSH_EVENT.wire)
             return false

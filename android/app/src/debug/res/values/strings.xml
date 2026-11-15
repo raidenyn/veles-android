@@ -15,4 +15,31 @@
     <string name="pairing_debug_cleared">Record cleared</string>
     <string name="pairing_debug_clear_failed">Clear failed or refused</string>
     <string name="pairing_debug_service_off">Start Bluetooth sharing first; the window belongs to the running service.</string>
+
+    <!-- OTP-11 D9 debug-only peer management. Every value is a forbidden release string. -->
+    <string name="pairing_debug_peers_title">Pairing peers</string>
+    <string name="pairing_debug_peer_fingerprint">Peer fingerprint: %1$s</string>
+    <string name="pairing_debug_peer_connected">Peer connected</string>
+    <string name="pairing_debug_peer_disconnected">Peer disconnected</string>
+    <string name="pairing_debug_revoke">Revoke peer</string>
+    <string name="pairing_debug_mutual_remove">Mutual remove</string>
+    <string name="pairing_debug_peer_revoked">Peer revoked</string>
+    <string name="pairing_debug_revoke_failed">Revoke failed: trust store unavailable</string>
+    <string name="pairing_debug_mutual_removed">Peer removed on both devices</string>
+    <string name="pairing_debug_mutual_local_only">No open full session: only local removal is possible. Nothing was deleted.</string>
+    <string name="pairing_debug_mutual_no_response">No response: the other device may keep its record</string>
+    <string name="pairing_debug_mutual_failed">Mutual remove failed</string>
+    <string name="pairing_debug_reset">Reset identity</string>
+    <string name="pairing_debug_reset_warning">Reset is destructive: it deletes every trust record and the phone identity.</string>
+    <string name="pairing_debug_reset_confirm">Confirm reset</string>
+    <string name="pairing_debug_reset_cancel">Cancel reset</string>
+    <string name="pairing_debug_reset_done">Identity reset; pairing again creates new trust</string>
+    <string name="pairing_debug_reset_failed">Reset failed</string>
+    <string name="pairing_debug_confirmation_required">Nothing deleted: confirm the destructive reset first</string>
+    <string name="pairing_debug_trust_status">Trust status: %1$s</string>
+    <string name="pairing_debug_trust_ok">Trust OK</string>
+    <string name="pairing_debug_trust_re_pair">Re-pair required</string>
+    <string name="pairing_debug_peers_failed">Peers unavailable: trust store unreadable</string>
+    <string name="pairing_debug_no_peers">No trusted peers</string>
+    <string name="pairing_debug_unavailable">Sharing service is not running; the coordinator is unavailable</string>
 </resources>

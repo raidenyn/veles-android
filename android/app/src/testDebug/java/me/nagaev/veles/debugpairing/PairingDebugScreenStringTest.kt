@@ -1,6 +1,7 @@
 package me.nagaev.veles.debugpairing
 
 import me.nagaev.veles.R
+import me.nagaev.veles.trust.TrustStatus
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -21,5 +22,50 @@ class PairingDebugScreenStringTest {
         val rendered = RuntimeEnvironment.getApplication().getString(R.string.pairing_debug_fingerprint, "ABCD EF01 2345")
 
         assertEquals("Pairing fingerprint: ABCD EF01 2345", rendered)
+    }
+
+    /** OTP-11 D6: the one status a surface may show, including the fail-closed value. */
+    @Test
+    fun trust_status_labels_render_both_values() {
+        val context = RuntimeEnvironment.getApplication()
+
+        assertEquals(
+            "Trust status: Trust OK",
+            context.getString(R.string.pairing_debug_trust_status, context.getString(trustStatusLabel(TrustStatus.OK))),
+        )
+        assertEquals(
+            "Trust status: Re-pair required",
+            context.getString(
+                R.string.pairing_debug_trust_status,
+                context.getString(trustStatusLabel(TrustStatus.RE_PAIR_REQUIRED)),
+            ),
+        )
+    }
+
+    /** OTP-11 D9: the reset control is labelled destructive and asks for confirmation. */
+    @Test
+    fun reset_strings_are_destructive_and_confirmed() {
+        val context = RuntimeEnvironment.getApplication()
+
+        assertEquals("Reset identity", context.getString(R.string.pairing_debug_reset))
+        assertEquals("Confirm reset", context.getString(R.string.pairing_debug_reset_confirm))
+        assertEquals("Cancel reset", context.getString(R.string.pairing_debug_reset_cancel))
+        assertEquals(
+            "Reset is destructive: it deletes every trust record and the phone identity.",
+            context.getString(R.string.pairing_debug_reset_warning),
+        )
+    }
+
+    /** The spec's mutual-removal copy: local only, and nothing deleted. */
+    @Test
+    fun mutual_remove_without_a_session_says_nothing_was_deleted() {
+        val context = RuntimeEnvironment.getApplication()
+
+        val rendered = context.getString(R.string.pairing_debug_mutual_local_only)
+
+        assertEquals(
+            "No open full session: only local removal is possible. Nothing was deleted.",
+            rendered,
+        )
     }
 }

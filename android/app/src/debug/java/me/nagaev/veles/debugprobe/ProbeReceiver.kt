@@ -36,8 +36,6 @@ internal class ProbeSession(
 internal interface ProbeSessions {
     fun openFullSessions(): List<ProbeSession>
 
-    fun hasOpenSession(peerId: String): Boolean
-
     suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean
 }
 
@@ -46,15 +44,11 @@ internal class SessionProbeSessions(private val host: SessionHost) : ProbeSessio
         .filter { it.sessionClass == SessionClass.FULL }
         .map { ProbeSession(it.generation, it.sessionIdPrefix) }
 
-    override fun hasOpenSession(peerId: String): Boolean = host.hasOpenSession(peerId)
-
     override suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean = host.sendApplication(gen, type, body)
 }
 
 private object NoSessions : ProbeSessions {
     override fun openFullSessions(): List<ProbeSession> = emptyList()
-
-    override fun hasOpenSession(peerId: String): Boolean = false
 
     override suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean = false
 }
@@ -80,6 +74,12 @@ internal class ProbeCommands(
     private val log: (String) -> Unit,
     /** Shell-only structured result channel (`am broadcast` prints the ordered result data). */
     private val result: (String) -> Unit = {},
+    /**
+     * OTP-11: the coordinator the debug Clear goes through, so clearing a stranded or injected
+     * record also terminates that peer's open sessions instead of being refused. `null` when no
+     * sharing service is running (then no session can exist and the repository delete is enough).
+     */
+    private val revocation: PeerManagement? = null,
 ) {
     suspend fun exportIdentity() {
         try {
@@ -117,20 +117,20 @@ internal class ProbeCommands(
         }
     }
 
-    suspend fun revokePeer(id: String): Boolean {
-        if (sessions.hasOpenSession(id)) {
-            // Never the OTP-11 live revocation: refusal is the debug contract.
-            log("revoke refused peer=${id.take(LOG_PREFIX_CHARS)} session_open=true")
-            return false
-        }
-        return try {
-            repository.revoke(id)
-            log("revoked peer=${id.take(LOG_PREFIX_CHARS)}")
-            true
-        } catch (_: TrustException) {
-            log("revoke refused peer=${id.take(LOG_PREFIX_CHARS)}")
-            false
-        }
+    /**
+     * OTP-11 "Clear incomplete record": the clear goes through the revocation coordinator, so a
+     * record that is cleared while an authenticated session of that peer is open deletes the
+     * record and terminates the session instead of refusing. With no running service the
+     * repository delete is the same clear, because no session can exist without one.
+     */
+    suspend fun revokePeer(id: String): Boolean = try {
+        val coordinator = revocation
+        if (coordinator == null) repository.revoke(id) else coordinator.revoke(id)
+        log("revoked peer=${id.take(LOG_PREFIX_CHARS)}")
+        true
+    } catch (_: TrustException) {
+        log("revoke refused peer=${id.take(LOG_PREFIX_CHARS)}")
+        false
     }
 
     private companion object {
@@ -164,6 +164,7 @@ internal fun debugProbeCommands(
     handler = DebugProbeRuntime.eventSource ?: ProbeReceiver.EMPTY_EVENT_SOURCE,
     log = log,
     result = result,
+    revocation = DebugRevocationRuntime.management(),
 )
 
 class ProbeReceiver : BroadcastReceiver() {

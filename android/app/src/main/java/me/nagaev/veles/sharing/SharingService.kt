@@ -216,6 +216,7 @@ internal class SharingService : Service() {
         this.pairing = pairing
         this.host = host
         BuildSessionExtensions.attach(host)
+        BuildSessionExtensions.attachRevocation(coordinator)
         BuildSessionExtensions.attachPairing(pairing) {
             scope.launch { host.cancelPairings() }
         }
@@ -240,6 +241,7 @@ internal class SharingService : Service() {
         // The host closes every live pairing execution; the window then erases the code.
         host?.let { runBlocking { it.shutdown() } }
         host = null
+        BuildSessionExtensions.detachRevocation()
         BuildSessionExtensions.detachPairing()
         pairing?.shutdown()
         pairing = null
