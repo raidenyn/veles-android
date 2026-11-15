@@ -19,6 +19,15 @@ schema: superspec
 #     tasks:
 #       - Break tasks into chunks of max 2 hours
 
+# Every planning artifact goes through the review gate before anything reads it.
+rules:
+  brainstorm: ["After writing it, run the review gate in .agents/rules/repo-superspec-review-gate.md."]
+  proposal: ["After writing it, run the review gate in .agents/rules/repo-superspec-review-gate.md."]
+  design: ["After writing it, run the review gate in .agents/rules/repo-superspec-review-gate.md."]
+  specs: ["After writing it, run the review gate in .agents/rules/repo-superspec-review-gate.md."]
+  tasks: ["After writing it, run the review gate in .agents/rules/repo-superspec-review-gate.md."]
+  plan: ["After writing it, run the review gate in .agents/rules/repo-superspec-review-gate.md."]
+
 # Per-operation guidance (optional)
 # Add advisory guidance for how apply and archive work should be conducted.
 # This is separate from artifact rules above.
@@ -30,3 +39,7 @@ schema: superspec
 #     archive:
 #       guidance:
 #         - Summarize the archive outcome before finishing
+
+operations:
+  apply: { guidance: ["Do not start until the review gate's apply stop in .agents/rules/repo-superspec-review-gate.md is satisfied."] }
+  archive: { guidance: ["Archive runs once, in the closeout; see .agents/rules/repo-superspec-closeout.md."] }

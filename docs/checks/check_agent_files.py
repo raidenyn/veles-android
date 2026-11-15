@@ -60,7 +60,15 @@ PLUGIN_NAME = "opencode-rules"
 PLUGIN_OPTION_DIRS = "additionalRuleDirectories"
 
 CODEOWNERS = ".github/CODEOWNERS"
-CODEOWNER_PATTERNS = ("/opencode.json", "/.claude/", "/.agents/", "**/AGENTS.md")
+CODEOWNER_PATTERNS = (
+    "/opencode.json",
+    "/.claude/",
+    "/.agents/",
+    "**/AGENTS.md",
+    "/docs/superspec-workflow.md",
+    "/openspec/config.yaml",
+    "/openspec/schemas/",
+)
 CODEOWNER_MCP_PATTERN = "/.mcp.json"
 MCP_JSON = ".mcp.json"
 # One representative path per required pattern, used to apply GitHub's last-match rule.
@@ -70,6 +78,9 @@ CODEOWNER_SAMPLE_PATHS = (
     ("/.agents/", ".agents/rules/repo-conventional-commits.md"),
     ("**/AGENTS.md", "android/AGENTS.md"),
     ("**/AGENTS.md", "native-bridge/host/AGENTS.md"),
+    ("/docs/superspec-workflow.md", "docs/superspec-workflow.md"),
+    ("/openspec/config.yaml", "openspec/config.yaml"),
+    ("/openspec/schemas/", "openspec/schemas/superspec/schema.yaml"),
 )
 
 PLUGIN_MENTION_FILES = (ROOT_AGENTS, "CONTRIBUTING.md")
@@ -86,6 +97,9 @@ LEGACY_PATHS = (".opencode/", ".claude/commands/")
 
 RULES_DIR = ".agents/rules"
 RULE_SIZE_MAX = 24000
+# A `repo-*` rule is always on, so the whole rule sits in every session's context: its cap is the
+# always-on context budget, not the node-rule cap.
+REPO_RULE_SIZE_MAX = 4096
 RULE_KEYS = ("trigger", "globs", "paths")
 
 # Scope -> folder pattern. `repo` rules are always on and so have no pattern.
@@ -580,16 +594,17 @@ def check_rules(root, files):
             )
             continue
         rules[path] = scope
+        cap = REPO_RULE_SIZE_MAX if scope == "repo" else RULE_SIZE_MAX
         try:
             size = os.path.getsize(os.path.join(root, path))
         except OSError:
             size = None
-        if size is not None and size > RULE_SIZE_MAX:
+        if size is not None and size > cap:
             findings.append(
                 Finding(
                     "error",
                     path,
-                    "is %d bytes; the rule size cap is %d bytes" % (size, RULE_SIZE_MAX),
+                    "is %d bytes; the rule size cap is %d bytes" % (size, cap),
                 )
             )
             # Do not read a file that already failed the cap: parsing it is wasted work at best

@@ -1,5 +1,5 @@
 name: SuperSpec
-version: 4
+version: 5
 description: >
   Spec-driven workflow integrated with Superpowers skills.
   brainstorm → proposal → specs → tasks → plan → apply → verify → finalize.
@@ -20,15 +20,23 @@ description: >
   fallback for platforms without subagent support. v3 (historical):
   finalize was promoted from a manual post-verify step to a real DAG
   artifact, with its instruction invoking
-  superpowers:finishing-a-development-branch. v4 (current): finalize's
-  instruction is rewritten to execute the git-side closeout directly;
+  superpowers:finishing-a-development-branch. v4 (historical):
+  finalize's instruction is rewritten to execute the git-side
+  closeout directly;
   the skill is retained as a manual escape hatch for non-canonical flows
   (solo merge-to-main, brand-new PR via the skill, keep-as-is,
   discard — note that "no pre-review PR" is handled by the
   canonical closeout, not the escape hatch). Apply step 0
   wording is also updated to recommend a user-created feature branch
   as the canonical starting state (previously the schema recommended
-  starting on the integration branch).
+  starting on the integration branch). v5 (current): finalize
+  confirms the open pull request (`gh pr view`), records it in
+  tracker.md for tracked work (committed and pushed as part of the
+  PR), sets the card In Review and hands off to the closeout rule,
+  which monitors to green, syncs and archives once, reviews the
+  docs, pushes, waits for approval and merges. Verify and finalize
+  no longer send the agent straight to archive; archive runs once,
+  inside the closeout, when the required checks are green.
 
 artifacts:
   - id: brainstorm
@@ -244,14 +252,29 @@ artifacts:
          committed (no unstaged files in the worktree). Cite the
          commit range if known.
 
+      6. **Review records**: Audit every planning file against its
+         records in the change's `reviews/`, per the *Revision
+         binding* audit checklist in `docs/superspec-workflow.md`
+         and `.agents/rules/repo-superspec-review-gate.md`: every
+         planning file has an approved record from every reviewer
+         the record header's preset lists, the file's own hash and
+         every recorded upstream hash recompute with the documented
+         hash command to the values on disk, the recorded upstream
+         set is the full upstream set, and no critical or high
+         finding is open. Missing records, stale hashes, a smaller
+         upstream set, a missing reviewer and unresolved critical
+         or high findings are FAIL.
+
       Recommended convergence loop:
       - PASS → /openspec-continue-change advances to the finalize artifact, which
         executes the git-side closeout directly (merge worktree →
         feature branch, push the branch, update the PR if one exists,
-        post code-reviewer comment if a PR is present). The skill
+        post code-reviewer comment if a PR is present) and hands off to
+        the closeout rule. The skill
         superpowers:finishing-a-development-branch is retained as a
-        manual escape hatch for non-canonical flows. /openspec-archive-change
-        runs once finalize.md exists.
+        manual escape hatch for non-canonical flows. The closeout runs
+        /openspec-archive-change exactly once, when every required check
+        is green — never from verify.
       - PASS_WITH_WARNINGS → same path as PASS; warnings are recorded
         but do not block.
       - FAIL with code-fixable items → return to apply, re-run, re-verify.
@@ -262,7 +285,7 @@ artifacts:
       See docs/workflow-details.md for the full convergence pattern.
 
       If `openspec-verify-change` skill is unavailable, fall back to
-      running the 5 checks manually and recording results in verify.md.
+      running the 6 checks manually and recording results in verify.md.
     requires:
       - apply
 
@@ -389,8 +412,10 @@ artifacts:
          - PR comment status: filled in by step 12 below (or by
            step 11 if the user declines the PR-creation prompt /
            the session is non-interactive)
-         - Next step: per templates/finalize.md `pr-updated` bullet
-           (archive → push → merge sequence).
+         - Next step: per templates/finalize.md's bullet for the
+           recorded outcome — for `pr-created` and `pr-updated`,
+           monitor to green, sync and archive once in the closeout,
+           review the docs, push, wait for approval and merge.
 
       9. Commit the receipt on the feature branch:
 
@@ -472,6 +497,44 @@ artifacts:
           and amend the receipt commit (or add a follow-up commit
           and push) so finalize.md is accurate. Non-blocking — on
           subroutine failure, record `failed: <reason>` and continue.
+
+      13. Confirm the pull request and hand off to the closeout.
+          The receipt's outcome decides the branch:
+
+          - `pr-created` and `pr-updated`: confirm the PR is open
+            with `gh pr view "$FEATURE_BRANCH" --json
+            state,url,number`. A missing or non-open PR is an error:
+            report it and stop instead of recording the outcome. For
+            tracked work, record the PR in `tracker.md` as the
+            tracker capability specifies, commit that edit and push
+            it as part of the PR, then set the item to In Review
+            (matched by name; stop and ask when the field or an
+            option is missing). Then hand off to
+            `.agents/rules/repo-superspec-closeout.md` and stay in
+            monitoring mode. Before acting, read the *Closeout* and
+            *Monitoring* sections of `docs/superspec-workflow.md` as
+            the rule instructs. Monitoring, the sync and the archive
+            belong to the closeout: archive runs exactly once, when
+            every required check is green — never from finalize.
+
+          - `merge-locally`: after the local merge run the same sync,
+            archive (once) and doc review on the default branch.
+            Ask the user before any push to the default branch. For
+            tracked work, close the issue and set Done only after
+            that push succeeds. If the push is rejected (for example
+            by branch protection), report it, never retry and never
+            bypass the protection, offer a follow-up pull request,
+            and leave the issue open and the card In Progress. If the
+            user declines the push, leave the issue open and the card
+            In Progress and offer the same follow-up pull request; a
+            follow-up PR then runs the normal closeout, with sync,
+            archive and doc review counted as already done.
+
+          - `discarded`: report the outcome and ask the user what the
+            status becomes; write nothing to the board.
+
+          - `kept-as-is`: leave the card In Progress and say the work
+            resumes when the user re-enters finalize.
 
       Recommended (non-blocking): before step 8, write a short
       retrospective.md in the change directory. Six suggested
@@ -624,14 +687,21 @@ artifacts:
          which option ran. It self-skips when no PR exists
          (Options 1, 3, 4) and posts/edits when a PR exists
          (Option 2 or an earlier git-side closeout run left one).
+      4. Hand off per step 13's outcome branch. A `pr-created` or
+         `pr-updated` outcome starts the closeout; `merge-locally`,
+         `discarded` and `kept-as-is` follow their bullets there.
 
       This step 3 is the explicit guarantee that the code-reviewer
       comment exists on any PR that exists at finalize completion,
       even outside the canonical automation.
 
-      Once finalize.md exists, the change is git-clean and ready
-      for /openspec-archive-change. See docs/workflow-details.md Phase 6
-      (Archival) for the golden path.
+      Once finalize.md exists, follow step 13. For `pr-created` and
+      `pr-updated` the closeout rule owns the rest of the flow and
+      archive runs once inside it; for `merge-locally` archive runs
+      once on the default branch after the local merge, behind the
+      push guard above. Verify and finalize never run archive
+      themselves. See docs/superspec-workflow.md *Closeout* and
+      *Monitoring* for the order.
     requires:
       - verify
 
@@ -640,6 +710,38 @@ apply:
   tracks: tasks.md
   instruction: |
     Before implementing, set up an isolated workspace and executor:
+
+    0a. **Review pre-flight — the review gate must be satisfied**:
+
+       Read `.agents/rules/repo-superspec-review-gate.md` and the
+       *Revision binding* section of `docs/superspec-workflow.md`
+       (including its audit checklist) before this step. Refuse to
+       start apply unless all three conditions below hold. If one
+       fails, stop, name the condition and the file or record that
+       fails it, and do not create the worktree or dispatch an
+       executor.
+
+       a. **Approved from every reviewer**: the plan has an
+          approved record in the change's `reviews/` from every
+          reviewer the record header's preset lists — not only the
+          first one. A missing reviewer refuses the start.
+
+       b. **The approval is current**: recompute the plan's own
+          hash and every upstream hash recorded in the approval
+          with the hash command in *Revision binding* of
+          `docs/superspec-workflow.md`, and require each value to
+          match the file on disk. The recorded upstream set must be
+          the full upstream set — every earlier planning file:
+          brainstorm, proposal, design, specs, tasks. A stale hash
+          or a smaller set refuses the start: the plan must be
+          revalidated before apply, and a recorded hash is never
+          rewritten to make it match.
+
+       c. **A coding model is confirmed**: the user confirmed that
+          this session runs on a coding model. A fresh session in
+          which the user starts apply and says they are on a
+          coding model counts as that confirmation; otherwise ask
+          once and wait for the answer.
 
     0. **Pre-flight — commit change artifacts to feature branch**:
 
@@ -759,10 +861,12 @@ apply:
          finalize artifact, which executes the git-side closeout
          directly (merge worktree → feature branch, push the branch,
          update the PR if one exists, post code-reviewer comment if a
-         PR is present) and writes finalize.md. The skill
+         PR is present) and writes finalize.md, then hands off to the
+         closeout rule. The skill
          superpowers:finishing-a-development-branch is retained as a
-         manual escape hatch for non-canonical flows. /openspec-archive-change
-         runs once finalize.md exists.
+         manual escape hatch for non-canonical flows. The closeout runs
+         /openspec-archive-change exactly once, when every required
+         check is green — never from apply or verify.
        - FAIL with code-fixable items → return to step 2 (Executor),
          re-run with the same iteration mechanics (apply.md is
          overwritten, iteration counter increments), then re-run verify.
