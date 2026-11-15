@@ -16,6 +16,7 @@ import me.nagaev.veles.pairing.Outgoing
 import me.nagaev.veles.pairing.PairingConnection
 import me.nagaev.veles.pairing.RejectingPairingConnection
 import me.nagaev.veles.session.PhoneSessionEngine
+import me.nagaev.veles.session.RecordType
 import me.nagaev.veles.session.SessionClass
 import me.nagaev.veles.session.SessionEffect
 import me.nagaev.veles.session.SessionReject
@@ -40,6 +41,22 @@ class AuthenticatedSession(
     val peerId: String,
     val sessionIdPrefix: ByteArray,
 )
+
+/**
+ * The requester's mutual-removal outcome (design D4, OTP2-REC-013).
+ *
+ * [REMOVED] means a valid `removal_response` deleted the local record; [KEPT_NOT_CONNECTED]
+ * means there was no FULL session of that peer to ask; [KEPT_NO_RESPONSE] means the exchange
+ * produced no valid response — a lost response, a disconnect, the deadline or a protocol
+ * violation — so the local record is kept and the other endpoint may keep its own.
+ */
+enum class RemovalResult { REMOVED, KEPT_NOT_CONNECTED, KEPT_NO_RESPONSE }
+
+/**
+ * The requester's `removal_response` deadline (design call, not a protocol value; design D4).
+ * It is measured on the host's injected clock and checked on the existing 1 000 ms tick.
+ */
+const val REMOVAL_RESPONSE_TIMEOUT_MS = 10_000L
 
 /**
  * Bounded admission of exactly one inbound record. The callee owns it until it erases the
@@ -115,11 +132,21 @@ class SessionHost(
 ) : ConnectionListener {
     private class OwnedRecord(val bytes: ByteArray, val admission: RecordAdmission)
 
+    /**
+     * One requester removal exchange (design D4). The owner awaits [result]; [deadlineAt] is
+     * compared with the injected clock on each existing tick.
+     */
+    private class RemovalWait(val result: CompletableDeferred<RemovalResult>) {
+        /** `Long.MAX_VALUE` until the request is sealed, so an unarmed wait can never expire. */
+        @Volatile var deadlineAt = Long.MAX_VALUE
+    }
+
     private sealed interface Step {
         class Inbound(val record: OwnedRecord) : Step
         class Completion(val token: Long, val ok: Boolean) : Step
         data object Tick : Step
         class Application(val type: Int, val body: ByteArray, val result: CompletableDeferred<Boolean>) : Step
+        class RemovalStart(val wait: RemovalWait) : Step
         data object Teardown : Step
     }
 
@@ -170,6 +197,12 @@ class SessionHost(
          * termination awaits it, so "the call returned" means "the generation ended".
          */
         val endedSignal = CompletableDeferred<Unit>()
+
+        /**
+         * The requester's in-flight removal exchange (design D4), or null. Written under
+         * [registry] by [requestRemoval], [settleRemoval] and [teardownLocked].
+         */
+        @Volatile var removal: RemovalWait? = null
 
         /** True when this generation is bound to [peerIdHex]; never by a label or address. */
         fun isBoundTo(peerIdHex: String): Boolean {
@@ -289,6 +322,84 @@ class SessionHost(
         } finally {
             synchronized(registry) { live.applications -= step }
         }
+    }
+
+    /**
+     * Asks the peer to remove this endpoint's record (OTP2-REC-013, design D4).
+     *
+     * The request runs on the serialized queue of the peer's FULL generation: the engine
+     * seals `removal_request`, then the removal-pending guard is set on that session only, and
+     * the response deadline is armed on the injected clock. The host never deletes anything
+     * itself; the removal handler does that inside the validated response's step.
+     *
+     * [RemovalResult.REMOVED] is returned only when the generation ended through the engine's
+     * removal stage. Every other end — a lost response, a disconnect, [REMOVAL_RESPONSE_TIMEOUT_MS]
+     * or a protocol violation — returns [RemovalResult.KEPT_NO_RESPONSE]; without a live FULL
+     * session of [peerIdHex] the call returns [RemovalResult.KEPT_NOT_CONNECTED]. A second
+     * request while one is already awaiting a response returns [RemovalResult.KEPT_NO_RESPONSE]
+     * without sending anything.
+     */
+    @Suppress("ReturnCount") // Not connected, already awaiting, refused admission and the settle are distinct outcomes.
+    suspend fun requestRemoval(peerIdHex: String): RemovalResult {
+        val wait = RemovalWait(CompletableDeferred())
+        synchronized(registry) {
+            val live = sessions.values.firstOrNull {
+                !it.ended && it.sessionClass == SessionClass.FULL && it.peerId?.let(TrustEncoding::hex) == peerIdHex
+            } ?: return RemovalResult.KEPT_NOT_CONNECTED
+            if (live.removal != null) return RemovalResult.KEPT_NO_RESPONSE
+            // Registered before the step can run, so a disconnect or teardown always settles it.
+            live.removal = wait
+            if (!live.queue.trySend(Step.RemovalStart(wait)).isSuccess) {
+                live.removal = null
+                return RemovalResult.KEPT_NO_RESPONSE
+            }
+        }
+        return wait.result.await()
+    }
+
+    /**
+     * Seals the requester's `removal_request` under the generation's mutex and arms the guard
+     * and the deadline in the same serialized step. The request is sealed before the guard is
+     * set, so the request itself is never rejected by it.
+     */
+    @Suppress("TooGenericExceptionCaught") // An engine rejection fails the generation like any other step.
+    private suspend fun startRemovalLocked(live: Live, wait: RemovalWait) {
+        val engine = live.engine
+        if (!isCurrent(live) || engine == null || !engine.isOpen) {
+            settleRemoval(live, RemovalResult.KEPT_NO_RESPONSE)
+            return
+        }
+        try {
+            val effects = engine.sendApplication(RecordType.REMOVAL_REQUEST.wire, ByteArray(0))
+            engine.setRemovalPending(true)
+            wait.deadlineAt = clock() + REMOVAL_RESPONSE_TIMEOUT_MS
+            apply(live, effects)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            failedLocked(live)
+        }
+    }
+
+    /**
+     * Design D4 deadline: compared with the injected clock on each existing 1 000 ms tick,
+     * never by a sleep. An expired exchange keeps the record and fails the session.
+     */
+    private suspend fun expireRemoval(live: Live): Boolean {
+        val wait = synchronized(registry) { live.removal } ?: return false
+        if (clock() < wait.deadlineAt) return false
+        settleRemoval(live, RemovalResult.KEPT_NO_RESPONSE)
+        failedLocked(live)
+        return true
+    }
+
+    /**
+     * Settles the generation's in-flight removal exchange exactly once (design D4): the first
+     * outcome wins, so a disconnect racing a delivered response keeps whichever ended first.
+     */
+    private fun settleRemoval(live: Live, outcome: RemovalResult) {
+        val wait = synchronized(registry) { live.removal.also { live.removal = null } } ?: return
+        wait.result.complete(outcome)
     }
 
     /**
@@ -469,6 +580,7 @@ class SessionHost(
                 live.tickQueued.set(false)
                 live.mutex.withLock {
                     if (!isCurrent(live)) return@withLock
+                    if (expireRemoval(live)) return@withLock
                     val pairing = live.pairing
                     if (pairing != null) {
                         runPairing(live) { pairing.onTick() }
@@ -478,6 +590,7 @@ class SessionHost(
                     }
                 }
             }
+            is Step.RemovalStart -> live.mutex.withLock { startRemovalLocked(live, step.wait) }
             is Step.Application -> {
                 val result = live.mutex.withLock {
                     val engine = live.engine
@@ -543,7 +656,15 @@ class SessionHost(
                     // it handled the gate, never from inside the handler's context hook.
                     if (!sendUnprompted(live, effect.unprompted)) return false
                 }
-                is SessionEffect.Terminated -> Unit
+                is SessionEffect.Terminated -> settleRemoval(
+                    live,
+                    if (effect.reason == PhoneSessionEngine.STAGE_REMOVAL) {
+                        RemovalResult.REMOVED
+                    } else {
+                        // Any other end of an awaiting session produced no valid response.
+                        RemovalResult.KEPT_NO_RESPONSE
+                    },
+                )
                 is SessionEffect.Deliver -> Unit // OTP-09 has no application consumer; OTP-10 adds one.
                 SessionEffect.Close -> {
                     teardownLocked(live)
@@ -778,6 +899,9 @@ class SessionHost(
         // worker never processes its queued step (shutdown, cancellation).
         val applications = synchronized(registry) { live.applications.toList().also { live.applications.clear() } }
         applications.forEach { it.result.complete(false) }
+        // Design D4: an exchange still awaiting a response keeps the record, including when its
+        // start step never ran (shutdown, cancellation).
+        settleRemoval(live, RemovalResult.KEPT_NO_RESPONSE)
         live.pairing?.onDisconnect()
         live.pairing = null
         live.engine?.teardown()
