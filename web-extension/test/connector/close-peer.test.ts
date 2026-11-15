@@ -221,6 +221,32 @@ class FakeTransport implements PairingTransport {
     onRecord(): () => void {
         return () => undefined;
     }
+
+    private readonly closeListeners = new Map<string, Set<() => void>>();
+    private open = true;
+
+    onConnectionClosed(handle: string, listener: () => void): () => void {
+        if (!this.open) {
+            listener();
+            return () => undefined;
+        }
+        let listeners = this.closeListeners.get(handle);
+        if (listeners === undefined) {
+            listeners = new Set<() => void>();
+            this.closeListeners.set(handle, listeners);
+        }
+        listeners.add(listener);
+        return () => {
+            listeners?.delete(listener);
+        };
+    }
+
+    closeHandle(handle: string): void {
+        this.open = false;
+        const listeners = this.closeListeners.get(handle);
+        this.closeListeners.delete(handle);
+        for (const listener of [...(listeners ?? [])]) listener();
+    }
 }
 
 /**

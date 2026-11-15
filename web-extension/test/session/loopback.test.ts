@@ -826,6 +826,31 @@ class LoopbackPairingTransport implements PairingTransport {
         };
     }
 
+    private readonly closeListeners = new Map<string, Set<() => void>>();
+
+    onConnectionClosed(handle: string, listener: () => void): () => void {
+        if (!this.running) {
+            listener();
+            return () => undefined;
+        }
+        let listeners = this.closeListeners.get(handle);
+        if (listeners === undefined) {
+            listeners = new Set<() => void>();
+            this.closeListeners.set(handle, listeners);
+        }
+        listeners.add(listener);
+        return () => {
+            listeners?.delete(listener);
+        };
+    }
+
+    closeHandle(handle: string): void {
+        this.running = false;
+        const listeners = this.closeListeners.get(handle);
+        this.closeListeners.delete(handle);
+        for (const listener of [...(listeners ?? [])]) listener();
+    }
+
     /** Stops dispatching; a pending read never steals a later inbound frame. */
     close(): void {
         this.running = false;
@@ -1177,6 +1202,8 @@ if (CLASSPATH === '' && REQUIRED) {
                         deviceHandle: 'loopback-phone',
                         clock: clock.now,
                         tickIntervalMs: 0,
+                        setTimeout: clock.setTimeout,
+                        clearTimeout: clock.clearTimeout,
                         init: async () => undefined,
                         core: PairingExecution,
                     });
@@ -1196,6 +1223,11 @@ if (CLASSPATH === '' && REQUIRED) {
                         /^[0-9A-F]{4} [0-9A-F]{4} [0-9A-F]{4}$/,
                     );
                     expect(await phonePairingState(phone)).toBe('ACTIVE');
+                    // The phone ends the enrollment connection after verifying the ack; the link
+                    // finishes on that close, so no hold timer may be left for the reconnect.
+                    transport.closeHandle(transport.connectionHandle);
+                    await link.settled();
+                    expect(clock.pendingTimers).toBe(0);
                     await assertMatchingRecords(
                         await phoneTrust(phone),
                         trust,

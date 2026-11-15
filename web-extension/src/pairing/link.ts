@@ -20,6 +20,14 @@ import type { WireEvent } from '../connector/protocol';
 
 const DEFAULT_TICK_MS = 1000;
 
+/**
+ * How long the link stays open after the activation ack is sent, waiting for the phone to end the
+ * enrollment connection. The phone closes it as its last act after verifying the ack
+ * (OTP2-STA-010b), so the wait ends there in the normal case; the bound only covers a lost ack and
+ * sits well below the phone's 30-second request-inactivity limit.
+ */
+export const ACTIVATION_HOLD_MS = 5_000;
+
 type ConnectedEvent = Extract<WireEvent, { type: 'connected' }>;
 type SentEvent = Extract<WireEvent, { type: 'sent' }>;
 type DisconnectedEvent = Extract<WireEvent, { type: 'disconnected' }>;
@@ -35,6 +43,11 @@ export interface PairingTransport {
     onRecord(
         listener: (record: { connectionHandle: string; bytes: Uint8Array }) => void,
     ): () => void;
+    /**
+     * Called once when this connection leaves the transport's snapshot, whatever removed it. A
+     * handle the transport no longer holds calls the listener immediately.
+     */
+    onConnectionClosed(connectionHandle: string, listener: () => void): () => void;
 }
 
 export interface PairingLinkDeps {
@@ -54,6 +67,8 @@ export interface PairingLinkDeps {
     tickIntervalMs?: number;
     setInterval?: (fn: () => void, ms: number) => unknown;
     clearInterval?: (handle: unknown) => void;
+    setTimeout?: (fn: () => void, ms: number) => unknown;
+    clearTimeout?: (handle: unknown) => void;
     init?: () => Promise<void>;
     /**
      * Startup cancellation, owned by the connector's attempt generation. `start`
@@ -107,11 +122,21 @@ export class PairingLink {
 
     private readonly controller: PairingTransport;
     private readonly clearIntervalFn: (handle: unknown) => void;
+    private readonly setTimeoutFn: (fn: () => void, ms: number) => unknown;
+    private readonly clearTimeoutFn: (handle: unknown) => void;
     private readonly onEnded: (() => void) | undefined;
     private readonly isCancelled: () => boolean;
     private readonly isAborted: () => boolean;
     private unsubscribe: (() => void) | null = null;
+    private unsubscribeClose: (() => void) | null = null;
     private timer: unknown = null;
+    private holdTimer: unknown = null;
+    /** The link is holding after the ack: no records are processed until it finishes. */
+    private draining = false;
+    /** The transport reported this connection closed. */
+    private peerClosed = false;
+    /** The authenticated peer id, kept past activation so revocation can still select the link. */
+    private rememberedPeerId: string | null = null;
     private disposed = false;
     private stopped = false;
     private ended = false;
@@ -124,6 +149,8 @@ export class PairingLink {
         connectionHandle: string,
         machine: ClientMachine,
         clearIntervalFn: (handle: unknown) => void,
+        setTimeoutFn: (fn: () => void, ms: number) => unknown,
+        clearTimeoutFn: (handle: unknown) => void,
         onEnded: (() => void) | undefined,
         isCancelled: () => boolean,
         isAborted: () => boolean,
@@ -132,6 +159,8 @@ export class PairingLink {
         this.connectionHandle = connectionHandle;
         this.machine = machine;
         this.clearIntervalFn = clearIntervalFn;
+        this.setTimeoutFn = setTimeoutFn;
+        this.clearTimeoutFn = clearTimeoutFn;
         this.onEnded = onEnded;
         this.isCancelled = isCancelled;
         this.isAborted = isAborted;
@@ -180,6 +209,8 @@ export class PairingLink {
             handle,
             machine,
             deps.clearInterval ?? ((timer) => globalThis.clearInterval(timer as never)),
+            deps.setTimeout ?? ((fn, ms) => globalThis.setTimeout(fn, ms)),
+            deps.clearTimeout ?? ((timer) => globalThis.clearTimeout(timer as never)),
             deps.onEnded,
             isCancelled,
             isAborted,
@@ -196,6 +227,12 @@ export class PairingLink {
             await link.dispose();
             throw new PairingCancelled();
         }
+        // Subscribe the close signal before the first send: the phone can end the connection
+        // before the activation ack's send resolves, and the hold must already know.
+        link.unsubscribeClose = deps.controller.onConnectionClosed(handle, () => {
+            link.peerClosed = true;
+            if (link.draining) void link.finishHold(false);
+        });
         link.unsubscribe = deps.controller.onRecord((record) => {
             if (record.connectionHandle !== handle) return;
             // `receive` drops the record and tears the link down when the attempt
@@ -247,13 +284,26 @@ export class PairingLink {
      * link for a peer revocation (design D3).
      */
     boundPeerId(): string | undefined {
-        return this.machine.boundPeerId();
+        const current = this.machine.boundPeerId();
+        if (current !== undefined) return current;
+        // Activation erases the machine's binding; a held link must stay selectable by a peer
+        // revocation until it finishes.
+        if (!this.activationCompleted() || this.stopped) return undefined;
+        return this.rememberedPeerId ?? undefined;
+    }
+
+    /** Keeps the last authenticated peer id; activation clears the machine's own copy. */
+    private rememberPeerId(): void {
+        const peerId = this.machine.boundPeerId();
+        if (peerId !== undefined) this.rememberedPeerId = peerId;
     }
 
     /** Processes one record or pairing frame from this link's connection. */
     receive(bytes: Uint8Array): Promise<void> {
         const next = this.queue.then(async () => {
-            if (this.disposed || this.stopped) return;
+            // A held link processes nothing: the phone answers a rejected ack with a reject frame
+            // and a disconnect, and that must not re-classify a confirmed activation.
+            if (this.disposed || this.stopped || this.draining) return;
             if (this.isAborted()) {
                 // The trust teardown owns the attempt: erase the machine and close the handle
                 // without touching this enrollment's durable record.
@@ -269,6 +319,7 @@ export class PairingLink {
             }
             try {
                 const frames = await this.machine.onFrame(bytes);
+                this.rememberPeerId();
                 if (this.isAborted()) {
                     this.abortInFlight();
                     return;
@@ -292,8 +343,12 @@ export class PairingLink {
                         return;
                     }
                     await this.send(await this.machine.commit());
+                    this.rememberPeerId();
                 }
-                if (this.machine.closed || this.machine.failed) await this.stop();
+                if (this.machine.closed || this.machine.failed) {
+                    if (this.activationCompleted()) this.armHold();
+                    else await this.stop();
+                }
             } catch {
                 if (this.isAborted()) {
                     this.abortInFlight();
@@ -307,8 +362,9 @@ export class PairingLink {
                     return;
                 }
                 // A transport failure tears the link down; erasure keeps any durable
-                // pending record for the recovery path, exactly like link loss.
-                await this.machine.onDisconnect();
+                // pending record for the recovery path, exactly like link loss. A completed
+                // activation is terminal: there is nothing live to erase and no failure to report.
+                if (!this.activationCompleted()) await this.machine.onDisconnect();
                 await this.stop();
             }
         });
@@ -345,7 +401,7 @@ export class PairingLink {
         if (this.disposed) return;
         this.disposed = true;
         this.stopped = true;
-        this.clearTimer();
+        this.clearTimers();
         this.unsubscribe?.();
         this.unsubscribe = null;
         // Even after `abandon()` closed a dead link, tab teardown still deletes the
@@ -371,11 +427,11 @@ export class PairingLink {
         // finish before the keys are erased and the handle closes, so a record sealed
         // just before the teardown cannot cross the bridge after it (design D8).
         this.stopped = true;
-        this.clearTimer();
+        this.clearTimers();
         this.unsubscribe?.();
         this.unsubscribe = null;
         const task = this.queue.then(async () => {
-            await this.machine.onDisconnect();
+            if (!this.activationCompleted()) await this.machine.onDisconnect();
             await this.stop();
         });
         this.queue = task.then(
@@ -409,16 +465,55 @@ export class PairingLink {
         if (!result.ok) throw new Error('pairing send failed');
     }
 
-    private async stop(): Promise<void> {
-        this.clearTimer();
+    private async stop(disconnect = true): Promise<void> {
+        this.stopped = true;
+        this.clearTimers();
+        // Unsubscribe before the request: the `disconnected` reply to our own disconnect must not
+        // re-enter the peer-close path.
         this.unsubscribe?.();
         this.unsubscribe = null;
-        try {
-            await this.controller.disconnect(this.connectionHandle);
-        } catch {
-            // A dead port has already ended the link; nothing is left to close.
+        this.unsubscribeClose?.();
+        this.unsubscribeClose = null;
+        if (disconnect) {
+            try {
+                await this.controller.disconnect(this.connectionHandle);
+            } catch {
+                // A dead port has already ended the link; nothing is left to close.
+            }
         }
         this.notifyEnded();
+    }
+
+    /** True once the enrollment completed on the client: the record is active and keys are gone. */
+    private activationCompleted(): boolean {
+        return this.machine.closed && this.machine.state === 'active' && !this.machine.failed;
+    }
+
+    /**
+     * Holds the link open after the activation ack: the phone ends the connection as its last act,
+     * so its close is the delivery evidence. The wait lives outside the frame queue, so
+     * `terminate()` is never delayed by it.
+     */
+    private armHold(): void {
+        if (this.stopped || this.disposed || this.draining) return;
+        this.draining = true;
+        this.unsubscribe?.();
+        this.unsubscribe = null;
+        if (this.peerClosed) {
+            void this.finishHold(false);
+            return;
+        }
+        this.holdTimer = this.setTimeoutFn(() => void this.finishHold(true), ACTIVATION_HOLD_MS);
+    }
+
+    /**
+     * Ends the hold: a peer close sends no disconnect request, the bound expiring sends exactly
+     * one. Either way the machine stays `active` — a completed activation is terminal.
+     */
+    private async finishHold(disconnect: boolean): Promise<void> {
+        if (this.stopped || this.disposed) return;
+        this.clearTimers();
+        await this.stop(disconnect);
     }
 
     private notifyEnded(): void {
@@ -431,9 +526,14 @@ export class PairingLink {
         }
     }
 
-    private clearTimer(): void {
-        if (this.timer === null) return;
-        this.clearIntervalFn(this.timer);
-        this.timer = null;
+    private clearTimers(): void {
+        if (this.timer !== null) {
+            this.clearIntervalFn(this.timer);
+            this.timer = null;
+        }
+        if (this.holdTimer !== null) {
+            this.clearTimeoutFn(this.holdTimer);
+            this.holdTimer = null;
+        }
     }
 }

@@ -70,6 +70,7 @@ export interface SessionController {
     ): Promise<ConnectorResult<Extract<WireEvent, { type: 'disconnected' }>>>;
     onRecord(listener: (record: SessionRecord) => void): () => void;
     onChange(listener: (snapshot: ConnectorSnapshot) => void): () => void;
+    onConnectionClosed(connectionHandle: string, listener: () => void): () => void;
     onClose(listener: (close: ConnectorClose) => void): () => void;
     isOpen(): boolean;
     snapshot(): ConnectorSnapshot;

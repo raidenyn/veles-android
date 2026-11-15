@@ -19,6 +19,7 @@ import {
     scanStartedEvent,
     scanStoppedEvent,
     sentEvent,
+    unknownHandleError,
     wireErrorEvent,
 } from './fixtures';
 
@@ -937,5 +938,64 @@ describe('ConnectorController — operational routing', () => {
             error: { code: 'cap_exceeded' },
         });
         expect(context.mock.posted).toHaveLength(beforeConnect);
+    });
+});
+
+describe('connector controller: connection-closed notification', () => {
+    it('notifies a connection-closed listener when the peer disconnects', async () => {
+        const context = await ready();
+        await connect(context, HANDLE_DEVICE, HANDLE_CONNECTION);
+        const seen: string[] = [];
+        context.controller.onConnectionClosed(HANDLE_CONNECTION, () => seen.push('closed'));
+        await context.mock.emit(
+            disconnectedEvent({ request_id: undefined, connection_handle: HANDLE_CONNECTION }),
+        );
+        expect(seen).toEqual(['closed']);
+    });
+
+    it('notifies a connection-closed listener when a live send is answered unknown_handle', async () => {
+        const context = await ready();
+        await connect(context, HANDLE_DEVICE, HANDLE_CONNECTION);
+        const seen: string[] = [];
+        context.controller.onConnectionClosed(HANDLE_CONNECTION, () => seen.push('closed'));
+        const send = context.controller.send(HANDLE_CONNECTION, bytes([1, 2, 3]));
+        const posted = await context.mock.nextPosted();
+        await context.mock.emit(unknownHandleError({ request_id: posted.request_id as string }));
+        await send;
+        expect(seen).toEqual(['closed']);
+    });
+
+    it('notifies a connection-closed listener for every open handle when the port disconnects', async () => {
+        const context = await ready();
+        await connect(context, HANDLE_DEVICE, HANDLE_CONNECTION);
+        const seen: string[] = [];
+        context.controller.onConnectionClosed(HANDLE_CONNECTION, () => seen.push('closed'));
+        await context.mock.disconnect();
+        expect(seen).toEqual(['closed']);
+    });
+
+    it('fires a connection-closed listener immediately for a handle it does not hold', () => {
+        const context = setup();
+        let calls = 0;
+        const unsubscribe = context.controller.onConnectionClosed(HANDLE_CONNECTION_2, () => {
+            calls += 1;
+        });
+        expect(calls).toBe(1);
+        unsubscribe();
+        expect(calls).toBe(1);
+    });
+
+    it('stops notifying a connection-closed listener after unsubscribe', async () => {
+        const context = await ready();
+        await connect(context, HANDLE_DEVICE, HANDLE_CONNECTION);
+        const seen: string[] = [];
+        const unsubscribe = context.controller.onConnectionClosed(HANDLE_CONNECTION, () =>
+            seen.push('closed'),
+        );
+        unsubscribe();
+        await context.mock.emit(
+            disconnectedEvent({ request_id: undefined, connection_handle: HANDLE_CONNECTION }),
+        );
+        expect(seen).toEqual([]);
     });
 });

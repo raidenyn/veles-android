@@ -248,6 +248,32 @@ class FakeTransport implements PairingTransport {
     emit(bytes: Uint8Array): void {
         for (const listener of this.listeners) listener({ connectionHandle: 'c1', bytes });
     }
+
+    private readonly closeListeners = new Map<string, Set<() => void>>();
+    private open = true;
+
+    onConnectionClosed(handle: string, listener: () => void): () => void {
+        if (!this.open) {
+            listener();
+            return () => undefined;
+        }
+        let listeners = this.closeListeners.get(handle);
+        if (listeners === undefined) {
+            listeners = new Set<() => void>();
+            this.closeListeners.set(handle, listeners);
+        }
+        listeners.add(listener);
+        return () => {
+            listeners?.delete(listener);
+        };
+    }
+
+    closeHandle(handle: string): void {
+        this.open = false;
+        const listeners = this.closeListeners.get(handle);
+        this.closeListeners.delete(handle);
+        for (const listener of [...(listeners ?? [])]) listener();
+    }
 }
 
 type ConnectedEvent = Extract<WireEvent, { type: 'connected' }>;
@@ -286,10 +312,13 @@ class DeferredPairingController implements ConnectorControllerLike {
     portGeneration = 0;
     private nextHandle = 1;
     private deferNextSend = false;
+    private readonly openHandles = new Set<string>();
+    private readonly connectionClosedListeners = new Map<string, Set<() => void>>();
 
     connect(): Promise<ConnectorResult<ConnectedEvent>> {
         const handle = `link-${this.nextHandle}`;
         this.nextHandle += 1;
+        this.openHandles.add(handle);
         return new Promise<ConnectorResult<ConnectedEvent>>((resolve) => {
             this.connects.push({ handle, resolve });
         });
@@ -359,6 +388,7 @@ class DeferredPairingController implements ConnectorControllerLike {
 
     async disconnect(handle: string): Promise<ConnectorResult<DisconnectedEvent>> {
         this.disconnected.push(handle);
+        this.openHandles.delete(handle);
         return {
             ok: true,
             event: {
@@ -380,6 +410,29 @@ class DeferredPairingController implements ConnectorControllerLike {
     }
     onChange(): () => void {
         return () => undefined;
+    }
+    onConnectionClosed(_connectionHandle: string, listener: () => void): () => void {
+        if (!this.openHandles.has(_connectionHandle)) {
+            listener();
+            return () => undefined;
+        }
+        let listeners = this.connectionClosedListeners.get(_connectionHandle);
+        if (listeners === undefined) {
+            listeners = new Set<() => void>();
+            this.connectionClosedListeners.set(_connectionHandle, listeners);
+        }
+        listeners.add(listener);
+        return () => {
+            listeners?.delete(listener);
+        };
+    }
+
+    /** Removes a handle from this fake's snapshot and fires its close listeners. */
+    closeHandle(handle: string): void {
+        this.openHandles.delete(handle);
+        const listeners = this.connectionClosedListeners.get(handle);
+        this.connectionClosedListeners.delete(handle);
+        for (const listener of [...(listeners ?? [])]) listener();
     }
     onClose(): () => void {
         return () => undefined;

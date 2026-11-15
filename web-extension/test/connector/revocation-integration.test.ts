@@ -12,8 +12,8 @@ import { SessionManager } from '../../src/connector/sessions';
 import { ActivationEngine, composeHandlers } from '../../src/pairing/activation';
 import { initPairingCore } from '../../src/pairing/core';
 import { fingerprintDisplay } from '../../src/pairing/enrollment';
-import { PairingFrameType, encodePairingFrame } from '../../src/pairing/frames';
-import { PairingLink, type PairingTransport } from '../../src/pairing/link';
+import { PairingFrameType, encodePairingFrame, preauthReject } from '../../src/pairing/frames';
+import { ACTIVATION_HOLD_MS, PairingLink, type PairingTransport } from '../../src/pairing/link';
 import { ProofRegistry } from '../../src/pairing/proofs';
 import { normalizeLowS } from '../../src/session/ecdsa';
 import type { ApplicationHandler, ClientEngineDeps } from '../../src/session/engine';
@@ -41,6 +41,7 @@ import {
     HANDLE_DEVICE,
     HANDLE_DEVICE_2,
     connectedEvent,
+    disconnectedEvent,
     readyEvent,
 } from './fixtures';
 import type { MockNativePort } from './mock-port';
@@ -414,6 +415,9 @@ async function openSession(
 class FakeTransport implements PairingTransport {
     readonly sent: Uint8Array[] = [];
     disconnectCount = 0;
+    sendGate: Promise<void> | null = null;
+    failNextSend = false;
+    private sendEntered: (() => void) | null = null;
 
     async connect(target: { deviceHandle: string }) {
         return {
@@ -429,6 +433,13 @@ class FakeTransport implements PairingTransport {
     }
 
     async send(handle: string, record: Uint8Array) {
+        this.sendEntered?.();
+        this.sendEntered = null;
+        if (this.failNextSend) {
+            this.failNextSend = false;
+            throw new Error('send failed');
+        }
+        if (this.sendGate !== null) await this.sendGate;
         this.sent.push(record.slice());
         return {
             ok: true as const,
@@ -458,6 +469,39 @@ class FakeTransport implements PairingTransport {
     onRecord(): () => void {
         return () => undefined;
     }
+
+    private readonly closeListeners = new Map<string, Set<() => void>>();
+    private open = true;
+
+    /** Resolves when the next `send` is entered, before it waits on the gate. */
+    nextSendEntered(): Promise<void> {
+        return new Promise<void>((resolve) => {
+            this.sendEntered = resolve;
+        });
+    }
+
+    onConnectionClosed(handle: string, listener: () => void): () => void {
+        if (!this.open) {
+            listener();
+            return () => undefined;
+        }
+        let listeners = this.closeListeners.get(handle);
+        if (listeners === undefined) {
+            listeners = new Set<() => void>();
+            this.closeListeners.set(handle, listeners);
+        }
+        listeners.add(listener);
+        return () => {
+            listeners?.delete(listener);
+        };
+    }
+
+    closeHandle(handle: string): void {
+        this.open = false;
+        const listeners = this.closeListeners.get(handle);
+        this.closeListeners.delete(handle);
+        for (const listener of [...(listeners ?? [])]) listener();
+    }
 }
 
 async function startLink(
@@ -478,6 +522,8 @@ async function startLink(
         clock: stack.clock.now,
         deviceHandle: options.deviceHandle ?? 'device-link',
         tickIntervalMs: 0,
+        setTimeout: stack.clock.setTimeout,
+        clearTimeout: stack.clock.clearTimeout,
         ...(options.isAborted === undefined ? {} : { isAborted: options.isAborted }),
     });
     // The coordinator selects a live enrollment link by its bound peer id; the manager's
@@ -515,10 +561,15 @@ async function driveToActive(
     link: PairingLink,
     transport: FakeTransport,
     phone: PhonePeer,
+    options: { close?: boolean } = {},
 ): Promise<void> {
     await driveToPending(link, transport, phone);
     await link.receive(await phone.prepareFrame());
     await link.receive(await phone.completeFrame());
+    if (options.close === false) return;
+    // The phone ends the enrollment connection as its last act after verifying the ack.
+    transport.closeHandle(link.connectionHandle);
+    await link.settled();
 }
 
 describe('revocation integration: store failures fail closed', () => {
@@ -1413,6 +1464,7 @@ async function pairThroughApp(
     fixture: AppFixture,
     phone: PhonePeer,
     deviceHandle: string,
+    options: { close?: boolean } = {},
 ): Promise<void> {
     const port = fixture.controller.currentPort();
     const pairing = fixture.app.startPairing(deviceHandle, CODE);
@@ -1452,9 +1504,13 @@ async function pairThroughApp(
     const ack = await nextSend(port);
     await ackSend(port, ack);
     await expect(pairing).resolves.toBe(true);
-    // The activation end posts the link's terminal disconnect; answer it so the next
-    // request this test issues is the real one.
-    await ackDisconnect(port, PAIR_HANDLE);
+    if (options.close === false) {
+        // The link is still held; the caller ends it when its test needs to.
+        await flush();
+        return;
+    }
+    // The phone ends the enrollment connection as its last act after verifying the ack.
+    await port.emit(disconnectedEvent({ request_id: undefined, connection_handle: PAIR_HANDLE }));
     await flush();
 }
 
@@ -1935,7 +1991,13 @@ describe('revocation integration: connector wiring', () => {
         const ack = await nextSend(port);
         await ackSend(port, ack);
         await expect(pairing).resolves.toBe(true);
-        await ackDisconnect(port, PAIR_HANDLE);
+        // The link is held until the phone closes: the enrollment has finished even though the
+        // attempt has not ended yet.
+        expect(fixture.app.pairingState.finished).toBe(true);
+        expect(fixture.app.pairingFinished).toBe(false);
+        await port.emit(
+            disconnectedEvent({ request_id: undefined, connection_handle: PAIR_HANDLE }),
+        );
         await flush();
 
         // The enrollment persisted one record under the fresh identity, never the deleted one.
@@ -2009,5 +2071,304 @@ describe('revocation integration: connector wiring', () => {
         expect(hex(used)).toBe(refreshed.installationId);
         expect(hex(used)).not.toBe(originalHex);
         expect(fixture.app.sessions?.authenticatedSessions()).toHaveLength(1);
+    });
+});
+
+describe('completion hold', () => {
+    it('finishes without a disconnect when the phone closes after the ack', async () => {
+        const stack = await createStack();
+        const { link, transport } = await startLink(stack);
+        const phone = await PhonePeer.create({ code: CODE });
+        try {
+            await driveToActive(link, transport, phone, { close: false });
+            expect(transport.disconnectCount).toBe(0);
+            transport.closeHandle(link.connectionHandle);
+            await link.settled();
+            expect(transport.disconnectCount).toBe(0);
+            expect(link.machine.state).toBe('active');
+            expect(link.machine.failed).toBe(false);
+            expect(stack.clock.pendingTimers).toBe(0);
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('issues exactly one disconnect when the hold bound expires', async () => {
+        const stack = await createStack();
+        const { link, transport } = await startLink(stack);
+        const phone = await PhonePeer.create({ code: CODE });
+        try {
+            await driveToActive(link, transport, phone, { close: false });
+            expect(transport.disconnectCount).toBe(0);
+            stack.clock.advance(ACTIVATION_HOLD_MS);
+            await link.settled();
+            expect(transport.disconnectCount).toBe(1);
+            expect(link.machine.state).toBe('active');
+            expect(link.machine.failed).toBe(false);
+            expect((await stack.repository.peers()).length).toBe(1);
+            expect(link.machine.fingerprint()).toBeDefined();
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('drops a reject record that arrives during the hold', async () => {
+        const stack = await createStack();
+        const { link, transport } = await startLink(stack);
+        const phone = await PhonePeer.create({ code: CODE });
+        try {
+            await driveToActive(link, transport, phone, { close: false });
+            const written = transport.sent.length;
+            await link.receive(preauthReject());
+            expect(link.machine.state).toBe('active');
+            expect(link.machine.failed).toBe(false);
+            expect(transport.sent.length).toBe(written);
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('has already erased the enrollment material when the hold starts', async () => {
+        const stack = await createStack();
+        const { link, transport } = await startLink(stack);
+        const phone = await PhonePeer.create({ code: CODE });
+        try {
+            await driveToActive(link, transport, phone, { close: false });
+            expect(link.machine.enrollmentKeysForTest()).toBeNull();
+            expect(link.machine.closed).toBe(true);
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('finishes at once when the close was seen before the ack send resolved', async () => {
+        const stack = await createStack();
+        const { link, transport } = await startLink(stack);
+        const phone = await PhonePeer.create({ code: CODE });
+        try {
+            await driveToPending(link, transport, phone);
+            await link.receive(await phone.prepareFrame());
+            let release!: () => void;
+            transport.sendGate = new Promise<void>((resolve) => {
+                release = resolve;
+            });
+            const entered = transport.nextSendEntered();
+            const acking = link.receive(await phone.completeFrame());
+            await entered;
+            transport.closeHandle(link.connectionHandle);
+            release();
+            await acking;
+            await link.settled();
+            expect(transport.disconnectCount).toBe(0);
+            expect(stack.clock.pendingTimers).toBe(0);
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('leaves the machine active when the ack send fails', async () => {
+        const stack = await createStack();
+        const { link, transport } = await startLink(stack);
+        const phone = await PhonePeer.create({ code: CODE });
+        try {
+            await driveToPending(link, transport, phone);
+            await link.receive(await phone.prepareFrame());
+            transport.failNextSend = true;
+            await link.receive(await phone.completeFrame());
+            expect(link.machine.state).toBe('active');
+            expect(link.machine.failed).toBe(false);
+            expect(transport.disconnectCount).toBe(1);
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('closes on terminate during the hold without failing the machine', async () => {
+        const stack = await createStack();
+        const { link, transport } = await startLink(stack);
+        const phone = await PhonePeer.create({ code: CODE });
+        try {
+            await driveToActive(link, transport, phone, { close: false });
+            await link.terminate();
+            expect(link.machine.state).toBe('active');
+            expect(link.machine.failed).toBe(false);
+            expect(transport.disconnectCount).toBe(1);
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('cancel and dispose during the hold end idle with the record kept', async () => {
+        for (const finish of ['cancel', 'dispose'] as const) {
+            const stack = await createStack();
+            const { link, transport } = await startLink(stack);
+            const phone = await PhonePeer.create({ code: CODE });
+            try {
+                await driveToActive(link, transport, phone, { close: false });
+                if (finish === 'cancel') await link.cancel();
+                else await link.dispose();
+                expect(link.machine.state).toBe('idle');
+                expect(link.machine.failed).toBe(false);
+                expect(transport.disconnectCount).toBe(1);
+                expect((await stack.repository.peers()).length).toBe(1);
+            } finally {
+                phone.close();
+            }
+        }
+    });
+});
+
+describe('completion hold: connector teardown', () => {
+    it('closes a held link on a reset and leaves the machine active', async () => {
+        const fixture = createAppFixture();
+        await startApp(fixture);
+        const port = fixture.controller.currentPort();
+        const phone = await PhonePeer.create({ code: CODE });
+        try {
+            await pairThroughApp(fixture, phone, PAIR_DEVICE, { close: false });
+            const resetting = fixture.app.resetTrust();
+            await ackDisconnect(port, PAIR_HANDLE);
+            await resetting;
+            await flush();
+            expect(postsOf(port, 'disconnect')).toHaveLength(1);
+            expect(fixture.app.pairingState).toMatchObject({ phase: 'active', finished: true });
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('closes a held link when the port dies, with no disconnect request', async () => {
+        const fixture = createAppFixture();
+        await startApp(fixture);
+        const port = fixture.controller.currentPort();
+        const phone = await PhonePeer.create({ code: CODE });
+        try {
+            await pairThroughApp(fixture, phone, PAIR_DEVICE, { close: false });
+            await port.disconnect();
+            await flush();
+            expect(fixture.app.pairingState).toMatchObject({ phase: 'active', finished: true });
+            expect(postsOf(port, 'disconnect')).toHaveLength(0);
+            expect((await requireRepository(fixture).peers()).length).toBe(1);
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('closes a held link during a fail-closed recovery', async () => {
+        const fixture = createAppFixture();
+        await startApp(fixture);
+        const port = fixture.controller.currentPort();
+        const phone = await PhonePeer.create({ code: CODE });
+        try {
+            await pairThroughApp(fixture, phone, PAIR_DEVICE, { close: false });
+            fixture.app.failClosed();
+            await ackDisconnect(port, PAIR_HANDLE);
+            await flush();
+            expect(postsOf(port, 'disconnect')).toHaveLength(1);
+            expect(fixture.app.pairingState).toMatchObject({ phase: 'active', finished: true });
+            // Fail-closed is non-destructive: the link deleted no record.
+            expect((await requireRepository(fixture).peers()).length).toBe(1);
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('schedules no recovery and shows no failure when the phone closes a held link', async () => {
+        const fixture = createAppFixture();
+        await startApp(fixture);
+        const port = fixture.controller.currentPort();
+        const phone = await PhonePeer.create({ code: CODE });
+        try {
+            await pairThroughApp(fixture, phone, PAIR_DEVICE, { close: false });
+            await port.emit(
+                disconnectedEvent({ request_id: undefined, connection_handle: PAIR_HANDLE }),
+            );
+            await flush();
+            expect(fixture.app.pairingState).toMatchObject({ phase: 'active', finished: true });
+            expect(fixture.controller.controller.snapshot().connections).toEqual([]);
+            // No client disconnect, no timer left pending, and no reconnect even after the
+            // clock moves far past any reconnect delay. The machine staying `active` is the
+            // failure-notice proof: a reported failure would end it `idle` with `failed: true`.
+            expect(postsOf(port, 'disconnect')).toHaveLength(0);
+            expect(fixture.controller.clock.pendingTimers).toBe(0);
+            fixture.controller.clock.advance(60_000);
+            await flush();
+            expect(postsOf(port, 'connect')).toHaveLength(1);
+            expect((await requireRepository(fixture).peers()).length).toBe(1);
+        } finally {
+            phone.close();
+        }
+    });
+});
+
+describe('completion hold: revocation reachability', () => {
+    it('answers the bound peer id during the hold after the machine erased it', async () => {
+        const stack = await createStack();
+        const { link, transport } = await startLink(stack);
+        const phone = await PhonePeer.create({ code: CODE });
+        try {
+            await driveToActive(link, transport, phone, { close: false });
+            expect(link.machine.boundPeerId()).toBeUndefined();
+            expect(link.boundPeerId()).toBe(hexOf(phone.installationId));
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('stops answering the bound peer id after the held link finishes', async () => {
+        const stack = await createStack();
+        const { link, transport } = await startLink(stack);
+        const phone = await PhonePeer.create({ code: CODE });
+        try {
+            await driveToActive(link, transport, phone, { close: false });
+            transport.closeHandle(link.connectionHandle);
+            await link.settled();
+            expect(link.boundPeerId()).toBeUndefined();
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('closes a held link on peer revocation and deletes only through the revocation', async () => {
+        const stack = await createStack();
+        const { link, transport } = await startLink(stack);
+        const phone = await PhonePeer.create({ code: CODE });
+        try {
+            await driveToActive(link, transport, phone, { close: false });
+            expect((await stack.repository.peers()).length).toBe(1);
+            await stack.coordinator.revoke(hexOf(phone.installationId));
+            expect(transport.disconnectCount).toBe(1);
+            expect((await stack.repository.peers()).length).toBe(0);
+        } finally {
+            phone.close();
+        }
+    });
+
+    it('lets a revocation select the link while the ack send is pending', async () => {
+        const stack = await createStack();
+        const { link, transport } = await startLink(stack);
+        const phone = await PhonePeer.create({ code: CODE });
+        try {
+            await driveToPending(link, transport, phone);
+            await link.receive(await phone.prepareFrame());
+            let release!: () => void;
+            transport.sendGate = new Promise<void>((resolve) => {
+                release = resolve;
+            });
+            const entered = transport.nextSendEntered();
+            const acking = link.receive(await phone.completeFrame());
+            await entered;
+            // Not awaited yet: `terminate()` waits on the link queue, which is blocked on the gate.
+            const revoking = stack.coordinator.revoke(hexOf(phone.installationId));
+            await microFlush();
+            release();
+            await acking;
+            await revoking;
+            await link.settled();
+            expect(transport.disconnectCount).toBe(1);
+            expect((await stack.repository.peers()).length).toBe(0);
+        } finally {
+            phone.close();
+        }
     });
 });
