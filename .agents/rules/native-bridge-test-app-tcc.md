@@ -2,8 +2,10 @@
 trigger: glob
 globs:
   - "native-bridge/installer/macos/**"
+  - "native-bridge/host/**"
 paths:
   - "native-bridge/installer/macos/**"
+  - "native-bridge/host/**"
 ---
 
 # macOS test apps: one identity, one Bluetooth grant

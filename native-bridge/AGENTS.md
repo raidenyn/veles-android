@@ -37,6 +37,7 @@ crate **dependencies** are pinned by `native-bridge/src-tauri/Cargo.toml` plus t
 
 ## Rules
 
-None.
+- `.agents/rules/native-bridge-test-app-tcc.md` — one fixed macOS test-app identity and the reusable
+  Bluetooth grant for real E2E runs under this node.
 
 > **Run your agent from the repository root.** Scoped rules in `.agents/rules/` load only from there; if you started in this folder, read this folder's rule files listed below by hand.
