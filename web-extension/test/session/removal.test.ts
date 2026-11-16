@@ -273,7 +273,11 @@ describe('removal handler', () => {
         const response = await harness.openClientApplication(sendBytes(effects), 1n);
         expect(response.type).toBe(RecordType.REMOVAL_RESPONSE);
         expect(response.body).toEqual(EMPTY);
-        expect(effects[1]).toEqual({ kind: 'terminated', reason: 'removal' });
+        expect(effects[1]).toEqual({
+            kind: 'terminated',
+            reason: 'removal',
+            holdForDelivery: true,
+        });
         expect(effects[2]).toEqual({ kind: 'close' });
         expect(effects.filter((effect) => effect.kind === 'send')).toHaveLength(1);
         expect(effects.some((effect) => effect.kind === 'deliver')).toBe(false);
@@ -282,6 +286,62 @@ describe('removal handler', () => {
         expect(
             await harness.engine.onInbound(await harness.phoneRecord(RecordType.APP_HEARTBEAT, 2n)),
         ).toEqual([]);
+    });
+
+    it('reports the removal stage without deferring delivery for the requester', async () => {
+        const ops = new RecordingOperations();
+        const harness = await PhoneHarness.create({ handler: createRemovalHandler(ops) });
+        await harness.openSession();
+        harness.engine.setRemovalPending(true);
+
+        const effects = await harness.engine.onInbound(
+            await harness.phoneRecord(RecordType.REMOVAL_RESPONSE, 1n),
+        );
+
+        expect(ops.deleted).toEqual([harness.peerId]);
+        expect(effects).toHaveLength(2);
+        expect(effects[0]).toEqual({ kind: 'terminated', reason: 'removal' });
+        expect(effects[1]).toEqual({ kind: 'close' });
+        expect(harness.engine.isOpen).toBe(false);
+    });
+
+    it('keeps the app_error terminal effect unflagged when the handler replies with it', async () => {
+        const handler = {
+            handles: (type: number) => type === RecordType.REMOVAL_REQUEST,
+            async handle(
+                _type: number,
+                _body: Uint8Array,
+                reply: (type: number, body: Uint8Array) => Promise<void>,
+            ): Promise<void> {
+                await reply(RecordType.APP_ERROR, appErrorBody(AppErrorCode.PROTOCOL_VIOLATION));
+            },
+        };
+        const harness = await PhoneHarness.create({ handler });
+        await harness.openSession();
+
+        const effects = await harness.engine.onInbound(
+            await harness.phoneRecord(RecordType.REMOVAL_REQUEST, 1n),
+        );
+
+        expect(effects[1]).toEqual({ kind: 'terminated', reason: 'app_error' });
+        expect(effects[2]).toEqual({ kind: 'close' });
+        expect(harness.engine.isOpen).toBe(false);
+    });
+
+    it('keeps the authorization terminal effect unflagged on a request while awaiting', async () => {
+        const ops = new RecordingOperations();
+        const harness = await PhoneHarness.create({ handler: createRemovalHandler(ops) });
+        await harness.openSession();
+        harness.engine.setRemovalPending(true);
+
+        const effects = await harness.engine.onInbound(
+            await harness.phoneRecord(RecordType.REMOVAL_REQUEST, 1n),
+        );
+
+        expect(effects[0]).toEqual({ kind: 'terminated', reason: 'authorization' });
+        expect(effects.some((effect) => effect.kind === 'deliver')).toBe(false);
+        expect(harness.engine.isOpen).toBe(false);
+        expect(ops.deleted).toEqual([]);
     });
 
     it('ends the session without a reply when the deletion fails', async () => {
@@ -296,6 +356,7 @@ describe('removal handler', () => {
         expect(ops.storeFailures).toEqual(['re-pair required']);
         expect(ops.deleted).toEqual([]);
         expect(terminatedReason(effects)).toBe('dependency');
+        expect(effects[0]).toEqual({ kind: 'terminated', reason: 'dependency' });
         expect(effects.some((effect) => effect.kind === 'send')).toBe(false);
         expect(harness.engine.isOpen).toBe(false);
     });
