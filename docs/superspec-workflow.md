@@ -493,8 +493,8 @@ Then stay in monitoring mode as *Monitoring* describes.
 3. Review the documentation produced by the sync and archive (below).
 4. Push the sync, archive and doc fixes.
 5. Babysit again until green.
-6. Answer comments and wait for approval and merge (below and *Monitoring*); never merge unless the user asks.
-7. Update the issue and the board, Done last (below).
+6. Answer comments and monitor to merge (below and *Monitoring*); meet the repository's merge requirements, such as a required update from master, and return to babysitting after any push; never merge unless the user asks.
+7. Do the applicable follow-ups for merged work: update the issue and the board, Done last (below).
 
 A push at any step returns to babysitting. Every push runs the repository's pre-push checks.
 
@@ -605,10 +605,7 @@ issue and no board write.
 
 ### Entering monitoring mode
 
-Say what is being waited for — checks, review, approval, new comments, the merge — and that the user can tell
-the agent to stop. Then watch, and keep waiting until the pull request is merged or closed or the user says
-stop; do not stop on your own because nobody has reviewed yet. Never merge the pull request unless the user
-asks.
+Say what is being waited for — checks, review, approval, comments, the repository's merge requirements, the merge — and that the user can tell the agent to stop. Then watch, and keep waiting until the pull request is merged or closed or the user says stop; do not stop on your own because nobody has reviewed yet. Never merge the pull request unless the user asks.
 
 Prefer the tool's event-driven pull-request watch, which ends the turn and wakes the agent on pull-request
 events. Without one, poll at a coarse interval with backoff and report **only state changes** — a new review
@@ -621,7 +618,7 @@ A cycle is a set of reads, not one command:
 
 | Read | Supplies |
 |---|---|
-| `gh pr view <number> --json state,headRefOid,statusCheckRollup,reviewDecision,reviews,comments` | lifecycle (`OPEN`, `MERGED`, `CLOSED`), the current head commit, every check's name and conclusion, the review decision, reviews with their author and the commit they saw, conversation comments |
+| `gh pr view <number> --json state,mergeStateStatus,headRefOid,statusCheckRollup,reviewDecision,reviews,comments` | lifecycle (`OPEN`, `MERGED`, `CLOSED`), merge state (`BEHIND`, `DIRTY`, `BLOCKED`, `CLEAN`, `UNKNOWN`), the current head commit, every check's name and conclusion, the review decision, reviews with their author and the commit they saw, conversation comments |
 | `gh api repos/<owner>/<repository>/pulls/<number>/comments --paginate` | inline code-review comments with file, line and body |
 | GraphQL `reviewThreads`, then each thread's comments | each thread's id, `isResolved` and `isOutdated`, its file, line and its comments; both connections are paged |
 | `gh api repos/<owner>/<repository>/rules/branches/<base>` and the classic protection endpoint | each source's required check contexts, combined into one required set; read once per base branch |
@@ -681,9 +678,9 @@ true or a count is short. A truncated read is not complete.
 - **Checks:** all required checks successful on the current head commit means green; act per the *Closeout*
   checklist. A failure is handled by its bounded fixing. A missing, pending or unknown required check is not
   green.
+- **Merge requirements:** `BEHIND` means the branch must be updated from the base; update it (`gh pr update-branch`, or merge the base branch and push), then return to babysitting. A blocker the agent cannot resolve — including conflicts, a missing or unreadable merge state, or `UNKNOWN` — is reported to the user; do not wait on it silently.
 - **Comments:** apply the *Closeout* trust rules, then fix and push or reply.
-- **Merged:** after a completed closeout, do the Done writes; if the merge came before sync, archive and doc
-  review, report it and mark nothing Done.
+- **Merged:** after a completed closeout, do the applicable follow-ups; if the merge came before sync, archive and doc review, report it and mark nothing Done.
 - **Closed without merging:** report it and mark nothing Done.
 
 ### When the user stops
