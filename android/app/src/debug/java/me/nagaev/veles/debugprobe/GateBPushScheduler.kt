@@ -103,8 +103,8 @@ internal class GateBPushScheduler(
     }
 
     /** Cancels the pending schedule (only detach, disarm, explicit cancel and replacement do). */
-    fun cancel(reason: String) {
-        synchronized(lock) { current?.let { retireLocked(it, reason) } }
+    fun cancel(reason: String): Boolean = synchronized(lock) {
+        current?.let { retireLocked(it, reason) } ?: false
     }
 
     /**
@@ -192,13 +192,17 @@ internal class GateBPushScheduler(
         return job
     }
 
-    /** Marks the attempt dead and releases only the wake lock that attempt actually owns. */
-    private fun retireLocked(attempt: Attempt, reason: String, releaseWake: Boolean = true) {
-        if (!attempt.active) return
+    /**
+     * Marks the attempt dead, releases only the wake lock that attempt actually owns, and returns
+     * true when the attempt was live and its `cancelled` line was written.
+     */
+    private fun retireLocked(attempt: Attempt, reason: String, releaseWake: Boolean = true): Boolean {
+        if (!attempt.active) return false
         attempt.active = false
         log(line("cancelled reason=$reason pid=$processId"))
         if (releaseWake) releaseWakeLocked(attempt)
         attempt.job?.cancel()
+        return true
     }
 
     private fun acquireWakeLocked(attempt: Attempt, timeoutMillis: Long) {

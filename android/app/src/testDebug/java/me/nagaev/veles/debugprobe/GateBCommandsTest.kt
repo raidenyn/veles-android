@@ -22,10 +22,10 @@ import java.io.File
  * The Gate B adb command surface (OTP-12 design D3/D4, spec "Debug-only five-record fixture" and
  * "Scheduled synthetic push"): the command layer only parses the `lifetimes` and `delay` extras
  * and forwards to the controller, so the fixture and the scheduler keep their own validation
- * messages. Every command returns one bounded structured result through the shell result channel;
- * only a refusal the command layer alone detects (no service, malformed extra) is also logged, so
- * an outcome the owning component logs is never written twice. Nothing here sleeps or reads a
- * wall clock.
+ * messages. Every command returns one bounded structured result through the shell result channel
+ * and writes exactly one bounded outcome line: the owning component's line for a real transition,
+ * otherwise the command's own refusal or no-op line (never zero, never two from this layer).
+ * Nothing here sleeps or reads a wall clock.
  */
 class GateBCommandsTest {
     private val installationId = ByteArray(16) { (0x10 + it).toByte() }
@@ -261,6 +261,63 @@ class GateBCommandsTest {
         assertTrue("the explicit cancellation is logged", runtimeLines.any { it.endsWith("cancelled reason=explicit pid=$PROCESS_ID") })
         assertTrue("cancel does not disarm the fixture", fixture.armed)
         assertTrue("the command writes no outcome line for owner-handled outcomes", logs.isEmpty())
+    }
+
+    @Test
+    fun repeated_disarm_logs_one_outcome_each_time() {
+        val fixture = fixture()
+        val commands = commands(controller(fixture))
+
+        assertTrue(commands.gateBSeed("60,120,180,240,300"))
+        val seeded = fixture.pullBody()
+
+        commands.gateBDisarm()
+
+        assertFalse("the real disarm returns answering to the probe", fixture.armed)
+        assertTrue("the fixture owns the real disarm line", logs.isEmpty())
+        assertEquals("the fixture logs disarmed once", 1, runtimeLines.count { it.endsWith(" disarmed") })
+
+        val afterDisarm = fixture.pullBody()
+        assertArrayEquals("the history is still the seeded one", seeded, afterDisarm)
+
+        commands.gateBDisarm()
+
+        assertFalse("a repeated disarm changes no state", fixture.armed)
+        assertArrayEquals("a no-op disarm does not disturb the fixture history", afterDisarm, fixture.pullBody())
+        assertEquals(
+            "the no-op disarm is the one observable line",
+            listOf("elapsed=$COMMAND_ELAPSED gate-b disarm no-op"),
+            logs,
+        )
+        assertEquals("a no-op disarm writes no fixture line", 1, runtimeLines.count { it.endsWith(" disarmed") })
+        assertEquals(
+            "both disarms still report the same result",
+            listOf("gate-b seed ok lifetimes=60,120,180,240,300", "gate-b disarm ok", "gate-b disarm ok"),
+            results,
+        )
+    }
+
+    @Test
+    fun cancel_without_pending_schedule_logs_one_outcome_each_time() {
+        val fixture = fixture()
+        val commands = commands(controller(fixture))
+
+        commands.gateBCancelPush()
+
+        assertEquals(listOf("gate-b cancel ok"), results)
+        assertEquals(listOf("elapsed=$COMMAND_ELAPSED gate-b cancel no-op"), logs)
+        assertTrue("no scheduler cancellation is logged", runtimeLines.none { it.contains("cancelled") })
+
+        commands.gateBCancelPush()
+
+        assertEquals(
+            "each no-op cancel is exactly one line",
+            List(2) { "elapsed=$COMMAND_ELAPSED gate-b cancel no-op" },
+            logs,
+        )
+        assertEquals(listOf("gate-b cancel ok", "gate-b cancel ok"), results)
+        assertTrue("still no scheduler cancellation", runtimeLines.none { it.contains("cancelled") })
+        assertFalse("cancel does not arm the fixture", fixture.armed)
     }
 
     @Test

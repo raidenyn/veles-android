@@ -89,11 +89,13 @@ internal class GateBFixture(
         return true
     }
 
+    /** Returns true when an owner line was written (the fixture was armed). */
     @Synchronized
-    fun disarm() {
-        if (!armed) return
+    fun disarm(): Boolean {
+        if (!armed) return false
         armed = false
         log("elapsed=${elapsed.elapsedMillis()} disarmed")
+        return true
     }
 
     /**

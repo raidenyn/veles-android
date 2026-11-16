@@ -12,14 +12,16 @@ internal class GateBController(
 ) {
     fun seed(lifetimes: List<Int>): Boolean = fixture.seed(lifetimes)
 
-    fun disarm() {
-        fixture.disarm()
-        scheduler.cancel(GateBPushScheduler.REASON_DISARM)
+    /** Returns true when an owner line was written; the command logs only a silent no-op. */
+    fun disarm(): Boolean {
+        val disarmed = fixture.disarm()
+        val cancelled = scheduler.cancel(GateBPushScheduler.REASON_DISARM)
+        return disarmed || cancelled
     }
 
     fun schedule(delaySeconds: Long): Boolean = scheduler.schedule(delaySeconds)
 
-    fun cancel() = scheduler.cancel(GateBPushScheduler.REASON_EXPLICIT)
+    fun cancel(): Boolean = scheduler.cancel(GateBPushScheduler.REASON_EXPLICIT)
 
     /** Service teardown: detach the fixture (which disarms it) and cancel/join the scheduler. */
     fun detach() {

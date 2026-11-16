@@ -95,10 +95,10 @@ internal object DebugProbeRuntime {
  *
  * The Gate B commands parse only their extras and forward to [gateB]: the fixture and the
  * scheduler keep their own validation rules and messages, so an out-of-range delay or a bad
- * lifetime list is refused by the component that owns the rule. Every command reports one bounded
- * structured result; only a refusal the command layer alone detects (no running service, a
- * malformed extra) is also logged, so the owning component's single outcome line is never
- * duplicated.
+ * lifetime list is refused by the component that owns the rule. Every command writes exactly one
+ * bounded outcome line: the owning component's line when it handled a real transition (seeded,
+ * refused seed, scheduled, refused schedule, disarmed, cancelled), otherwise the command's own
+ * refusal or no-op line. No line is ever duplicated.
  */
 internal class ProbeCommands(
     private val sessions: ProbeSessions,
@@ -219,7 +219,8 @@ internal class ProbeCommands(
             refuse("disarm", REASON_HOST)
             return
         }
-        controller.disarm()
+        // A real disarm already logged by the fixture or scheduler; a no-op is logged here.
+        if (!controller.disarm()) noop("disarm")
         result("gate-b disarm ok")
     }
 
@@ -246,8 +247,14 @@ internal class ProbeCommands(
             refuse("cancel", REASON_HOST)
             return
         }
-        controller.cancel()
+        // A pending schedule already logged its cancellation; a no-op is logged here.
+        if (!controller.cancel()) noop("cancel")
         result("gate-b cancel ok")
+    }
+
+    /** A silent no-op still leaves exactly one observable outcome line. */
+    private fun noop(command: String) {
+        log("elapsed=${elapsed.elapsedMillis()} gate-b $command no-op")
     }
 
     /**
