@@ -40,15 +40,19 @@ Each of `android/`, `web-extension/`, `rust/`, `protocol/`, `native-bridge/`, `n
 - **THEN** the agent-file check fails and names it
 
 ### Requirement: Platform facts live in one canonical folder
-macOS signing identity and TCC rules SHALL live only in `native-bridge/installer/macos/AGENTS.md`, Windows facts only in `native-bridge/installer/windows/AGENTS.md`, and Android signing and architecture only in `android/AGENTS.md`. Cross-platform nodes such as `native-bridge/host/` MUST point to the platform file instead of copying it, and MAY keep the CI artifact names the build-contract gate requires.
+macOS signing identity and TCC rules SHALL live only in the macOS node: `native-bridge/installer/macos/AGENTS.md` and the `.agents/rules/macos-*` rule files that file lists. Windows facts SHALL live only in `native-bridge/installer/windows/AGENTS.md`, and Android signing and architecture only in `android/AGENTS.md`. Cross-platform nodes such as `native-bridge/host/` MUST point to the platform file instead of copying it, and MAY keep the CI artifact names the build-contract gate requires. When a macOS rule is path-scoped and therefore does not load in a cross-platform node that consumes it, that node's `AGENTS.md` MUST tell the agent to read the rule by hand before the relevant run.
 
 #### Scenario: Host pointer
 - **WHEN** `native-bridge/host/AGENTS.md` mentions macOS signing
-- **THEN** it is a one-line pointer to `native-bridge/installer/macos/AGENTS.md`, not a copy
+- **THEN** it is a one-line pointer to `native-bridge/installer/macos/AGENTS.md` and, for a macOS Bluetooth E2E run, an instruction to read `.agents/rules/macos-test-app-tcc.md` by hand; the rule text is not copied
 
 #### Scenario: Script citation
 - **WHEN** `native-bridge/host/scripts/macos-test-bundle.sh` cites its signing rules
 - **THEN** it cites `native-bridge/installer/macos/AGENTS.md`
+
+#### Scenario: macOS rule lives in the node
+- **WHEN** a macOS TCC rule file is added
+- **THEN** it is named `macos-<topic>.md`, scoped to `native-bridge/installer/macos/**` and listed by that node's `AGENTS.md`, and the root rules gain no macOS content
 
 ### Requirement: Legacy agent files do not exist
 The repository SHALL NOT contain `CONTRIBUTION.md`, `.opencode/` or `.claude/commands/`, and MUST NOT contain a `CLAUDE.md`, `CLAUDE.local.md` or `.claude/CLAUDE.md` anywhere, because any of them hides `AGENTS.md` from Claude Code. `CONTRIBUTING.md` MUST remain the single contribution guide.
