@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 
@@ -213,20 +214,40 @@ def _is_text(value):
     return isinstance(value, str) and value.strip() != ""
 
 
+def _is_meaningful(value):
+    """A meaningful evidence value, recursively.
+
+    A non-empty string, a finite number, or a non-empty list or object whose every element or
+    value is itself meaningful. Booleans, nulls, empty strings, empty lists, empty objects and
+    containers holding only placeholders are not evidence.
+    """
+    if isinstance(value, str):
+        return value.strip() != ""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, (list, tuple)):
+        return len(value) > 0 and all(_is_meaningful(item) for item in value)
+    if isinstance(value, dict):
+        return len(value) > 0 and all(_is_meaningful(item) for item in value.values())
+    return False
+
+
 def _is_text_or_list(value):
-    """A non-empty string or a non-empty list (hashes, identities, return codes, ...)."""
+    """A non-empty string, or a non-empty list of meaningful values."""
     if _is_text(value):
         return True
-    return isinstance(value, list) and len(value) > 0
+    if not isinstance(value, list) or not value:
+        return False
+    return all(_is_meaningful(item) for item in value)
 
 
 def _has_content(value):
-    """Non-empty content, never a boolean: captures, catalogues, logs, repetitions, actions."""
-    if isinstance(value, str):
-        return value.strip() != ""
-    if isinstance(value, (list, tuple, dict)):
-        return len(value) > 0
-    return False
+    """Non-empty content, never a bare boolean: captures, catalogues, logs, actions, ..."""
+    return _is_meaningful(value)
 
 
 def validate(matrix, journey_ids):

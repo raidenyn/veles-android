@@ -274,18 +274,11 @@ class GateBMatrixTest(unittest.TestCase):
                     self.assertIn("evidence", row, row["id"])
 
     def test_later_evidence_state_is_not_pinned(self):
-        # The committed matrix stays pinned; a later commit releases the pin in place.
-        with open(MATRIX_PATH, encoding="utf-8") as handle:
-            committed = json.load(handle)
-        self.assertIs(committed["initial_state"], True)
-        released = copy.deepcopy(committed)
+        # A later evidence commit releases the pin in place. This test builds its own copy and
+        # does not assume anything about what the committed matrix's current state is.
+        released = copy.deepcopy(initial_matrix())
         released["initial_state"] = False
         self.assertEqual(self.findings(released), [])
-
-        # Releasing the pin does not by itself make a matrix valid: the invariants still apply.
-        later = initial_matrix()
-        later["initial_state"] = False
-        self.assertEqual(self.findings(later), [])
 
         # A valid later-state matrix with all rows PASS and full evidence validates.
         accepted = accepted_matrix()
@@ -578,6 +571,51 @@ class GateBMatrixTest(unittest.TestCase):
         row_of(matrix, "windows.A.push")["evidence"]["exemption_absent"] = "yes"
         self.assert_finding(self.findings(matrix), "exemption_absent")
 
+    def test_nested_placeholder_evidence_rejected(self):
+        # A container is evidence only when every element is meaningful; "" inside a list,
+        # null, false, an empty object, an empty list or a nested empty object is a placeholder.
+        for field, value, label in (
+            ("hashes", [""], "a list with an empty string"),
+            ("identities", [], "an empty list"),
+            ("models", {}, "an empty object"),
+            ("raw_captures", [None], "a list with null"),
+            ("actions", [False], "a list with false"),
+            ("checksum_catalog", [{}], "a list with an empty object"),
+            ("host_process_queue", {"host": {}}, "a nested empty object"),
+            ("redacted_logs", {"line": [None]}, "a nested null"),
+            ("repetitions", [[""]], "a nested empty string in a nested list"),
+        ):
+            with self.subTest(label=label):
+                matrix = verdict_matrix("PASS")
+                row_of(matrix, "windows.A.push")["evidence"][field] = value
+                self.assert_finding(self.findings(matrix), field)
+
+        # Case assertions need real content too, not placeholders of any shape.
+        for field, row_id, value in (
+            ("forced_trace", "windows.A.forced-freeze", [False]),
+            ("tabs_observations", "windows.A.forced-freeze", [None]),
+            ("badge_clear", "windows.A.forced-freeze", [""]),
+            ("port_generation_invalidated", "windows.A.forced-freeze", {}),
+            ("old_port_closed_no_host", "windows.A.forced-freeze", [{}]),
+            ("repull_retained_expired", "windows.A.forced-freeze", []),
+            ("fresh_keys", "windows.A.connector-restart", [False]),
+            ("fresh_handles", "windows.A.connector-restart", [""]),
+            ("no_host_process", "windows.A.host-closure", [None]),
+            ("clipboard_transition", "windows.A.offscreen-copy", {}),
+        ):
+            with self.subTest(case_field=field):
+                matrix = verdict_matrix("PASS", row_id)
+                row_of(matrix, row_id)["evidence"][field] = value
+                self.assert_finding(self.findings(matrix), field)
+
+        # Real nested content passes, so the recursive rule does not reject honest evidence.
+        matrix = verdict_matrix("PASS", "windows.A.forced-freeze")
+        record = row_of(matrix, "windows.A.forced-freeze")["evidence"]
+        record["forced_trace"] = [{"step": "freeze", "at": 420}]
+        record["tabs_observations"] = ["frozen"]
+        record["checksum_catalog"] = ["sha256:abc"]
+        self.assertEqual(self.findings(matrix), [])
+
     def test_evidence_type_categories_cover_every_field(self):
         categorised = set(TEXT_EVIDENCE_FIELDS) | set(TEXT_OR_LIST_EVIDENCE_FIELDS)
         categorised |= set(CONTENT_EVIDENCE_FIELDS) | set(AFFIRMATIVE_EVIDENCE_FIELDS)
@@ -678,6 +716,11 @@ class GateBMatrixTest(unittest.TestCase):
         # procedure must lock first, remove the task while locked, and pull after minute 15.
         locked = "\n".join(sections["locked-phone-20min"]).lower()
         self.assertIn("lock the screen first", locked)
+        self.assertNotIn(
+            "every later step",
+            locked,
+            "the lock requirement covers only the waiting interval, not the later unlock",
+        )
         self.assertLess(
             locked.index("lock the screen first"),
             locked.index("remove the app task"),

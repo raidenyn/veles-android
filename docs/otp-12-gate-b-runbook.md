@@ -405,14 +405,15 @@ explicit statement that neither trust nor session state was shared between the p
 2. Seed the fixture. 3. Schedule a 1200-second push and read the fixture's `scheduled` line; the
 controller clock reading of that line is minute 0, and the phone `elapsed=` value plus the
 latency estimate is the offset method. 4. Lock the screen first and confirm the phone is asleep
-(`mWakefulness=Asleep`); every later step happens with the screen locked. 5. With the screen
-locked, remove the app task from Recents without force-stopping it and record the task-removal
-controller time; the phone must already be locked at task removal. 6. Keep the phone locked for
-at least 15 minutes after task removal, sampling the foreground indication. 7. Read the `fired`
-line and the connector's receipt: the arrival must be within minute 19 to minute 21 inclusive.
-8. Confirm the phone was locked at task removal and was not unlocked before 15 minutes after it.
-9. After minute 15, unlock, open the connector, reseed, and pull; the pull must be strictly after
-minute 15. 10. Evaluate `twenty_minute_ok` on the recorded integers.
+(`mWakefulness=Asleep`). 5. With the screen still locked, remove the app task from Recents
+without force-stopping it and record the task-removal controller time; the phone must already be
+locked at task removal. 6. Keep the phone locked from task removal until at least 15 minutes
+after it, sampling the foreground indication; that interval is the required waiting period and
+no unlock may interrupt it. 7. Read the `fired` line and the connector's receipt: the arrival
+must be within minute 19 to minute 21 inclusive. 8. Confirm the phone was locked at task removal
+and was not unlocked before 15 minutes after it. 9. After minute 15, unlock, open the connector,
+reseed, and pull; the pull must be strictly after minute 15. 10. Evaluate `twenty_minute_ok` on
+the recorded integers.
 
 **Commands.** Schedule the push before locking: `adb shell am broadcast -a
 me.nagaev.veles.debug.GATE_B_SCHEDULE_PUSH -n "$R" --es delay 1200`. Lock the screen:
