@@ -25,6 +25,9 @@ Android and macOS identities are separate.
 - Signing and notarization run only in the owner-only `publish-release.yml` (`sign-macos` under the
   `native-release` environment), never in the unsigned input producers.
 
+Real macOS Bluetooth E2E runs follow `.agents/rules/macos-test-app-tcc.md`: one fixed bundle
+identifier and signing identity, a LaunchServices or Chrome launch, and no TCC reset.
+
 ## Build & Test
 
 From the repository root:
@@ -41,6 +44,7 @@ BLOCKED, never as passes.
 
 ## Rules
 
-None.
+- `.agents/rules/macos-test-app-tcc.md` — the fixed macOS test-app identity and the one-time
+  Bluetooth grant for real E2E runs.
 
 > **Run your agent from the repository root.** Scoped rules in `.agents/rules/` load only from there; if you started in this folder, read this folder's rule files listed below by hand.
