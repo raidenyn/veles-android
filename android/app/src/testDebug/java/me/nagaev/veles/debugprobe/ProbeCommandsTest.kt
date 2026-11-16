@@ -58,6 +58,34 @@ class ProbeCommandsTest {
         revocation = revocation,
     )
 
+    @Test
+    fun push_while_armed_sends_nothing_and_logs() = runTest {
+        val logs = mutableListOf<String>()
+        val sessions = RecordingSessions(ProbeSession(ConnectionGeneration("aa", 1), ByteArray(8)))
+        var issued = 0
+        val commands = ProbeCommands(
+            sessions = sessions,
+            repository = IdentityRepository(localIdentity),
+            injector = DebugTrustInjector(
+                storage = MemoryStorage(snapshot()),
+                elapsedMillis = { 0 },
+                wallMillis = { 0 },
+            ),
+            handler = ProbeEventSource {
+                issued += 1
+                SyntheticEvent("VAAAAA", ByteArray(16), ByteArray(0))
+            },
+            log = { logs += it },
+            gateBArmed = { true },
+        )
+
+        commands.push()
+
+        assertTrue("the fixture owns pushes while armed", sessions.sends.isEmpty())
+        assertEquals("no synthetic event is issued", 0, issued)
+        assertEquals("the refusal is logged", listOf("fixture owns pushes"), logs)
+    }
+
     private fun snapshot(): TrustSnapshot = TrustSnapshot(
         identity = localIdentity,
         bootMarker = "bb".repeat(32),
@@ -132,6 +160,18 @@ class ProbeCommandsTest {
         override suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean {
             check(type != RecordType.PUSH_EVENT.wire)
             return false
+        }
+    }
+
+    /** One open full session that records every send a push would make. */
+    private class RecordingSessions(private val session: ProbeSession) : ProbeSessions {
+        val sends = mutableListOf<Pair<Int, ByteArray>>()
+
+        override fun openFullSessions(): List<ProbeSession> = listOf(session)
+
+        override suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean {
+            sends += type to body
+            return true
         }
     }
 

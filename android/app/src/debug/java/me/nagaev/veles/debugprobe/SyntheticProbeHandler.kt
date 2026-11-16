@@ -41,6 +41,21 @@ internal fun interface ProbeEventSource {
 }
 
 /**
+ * §8.1/event_ack shape and installation-id check, shared by the probe and the Gate B pull
+ * router so neither can weaken the other: the body is exactly
+ * `phone_installation_id || event_id`, and a wrong shape or a foreign installation id fails
+ * closed with [SessionReject]. Returns the 16-byte event id. An unknown event id is not an
+ * error here; the owner treats it as the OTP2-REC-032a no-op.
+ */
+internal fun validateAck(body: ByteArray, installationId: ByteArray): ByteArray {
+    if (body.size != EVENT_ACK_BYTES) throw SessionReject()
+    if (!body.copyOfRange(0, INSTALLATION_ID_BYTES).contentEquals(installationId)) {
+        throw SessionReject()
+    }
+    return body.copyOfRange(INSTALLATION_ID_BYTES, EVENT_ACK_BYTES)
+}
+
+/**
  * Bounded memory of synthetic events this debug process issued. An acknowledgement for an
  * issued event settles exactly one event and duplicates are idempotent; an unknown event id is
  * the OTP2-REC-032a semantic no-op (the caller ignores the result).
@@ -143,11 +158,7 @@ internal class SyntheticProbeHandler private constructor(
      * (authenticated, well-formed, settles nothing, mutates nothing, not an error).
      */
     private fun acknowledge(body: ByteArray) {
-        if (body.size != EVENT_ACK_BYTES) throw SessionReject()
-        if (!body.copyOfRange(0, INSTALLATION_ID_BYTES).contentEquals(localInstallationId)) {
-            throw SessionReject()
-        }
-        ledger.acknowledge(body.copyOfRange(INSTALLATION_ID_BYTES, EVENT_ACK_BYTES))
+        ledger.acknowledge(validateAck(body, localInstallationId))
     }
 
     private companion object {

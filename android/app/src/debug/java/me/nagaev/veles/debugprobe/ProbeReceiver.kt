@@ -60,6 +60,17 @@ internal object DebugProbeRuntime {
 
     @Volatile
     var eventSource: ProbeEventSource? = null
+
+    /** The Gate B fixture, built beside the probe when the installation identity is available (OTP-12). */
+    @Volatile
+    var fixture: GateBFixture? = null
+
+    /**
+     * The application context the fixture's adb commands run from. Set by the debug session
+     * extension so a later schedule command cannot hold an activity or receiver context.
+     */
+    @Volatile
+    var applicationContext: Context? = null
 }
 
 /**
@@ -74,6 +85,11 @@ internal class ProbeCommands(
     private val log: (String) -> Unit,
     /** Shell-only structured result channel (`am broadcast` prints the ordered result data). */
     private val result: (String) -> Unit = {},
+    /**
+     * OTP-12: while the Gate B fixture is armed it owns synthetic pushes, so the adb push is
+     * refused and logged instead of sending a probe event. Task 3 keeps this beside its `gateB`.
+     */
+    private val gateBArmed: () -> Boolean = { false },
     /**
      * OTP-11: the coordinator the debug Clear goes through, so clearing a stranded or injected
      * record also terminates that peer's open sessions instead of being refused. `null` when no
@@ -106,6 +122,12 @@ internal class ProbeCommands(
     }
 
     suspend fun push() {
+        // Gate B owns synthetic pushes while its fixture is armed; a probe push here would
+        // bypass the fixture's schedule and history (refusal outcome, design D6).
+        if (gateBArmed()) {
+            log("fixture owns pushes")
+            return
+        }
         val open = sessions.openFullSessions()
         if (open.isEmpty()) return
         // One fresh event per destination, logged with that destination's own session prefix.
@@ -171,6 +193,7 @@ internal fun debugProbeCommands(
     handler = DebugProbeRuntime.eventSource ?: ProbeReceiver.EMPTY_EVENT_SOURCE,
     log = log,
     result = result,
+    gateBArmed = { DebugProbeRuntime.fixture?.armed == true },
     revocation = DebugRevocationRuntime.management(),
 )
 

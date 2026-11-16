@@ -126,6 +126,13 @@ internal class GateBFixture(
         return owned
     }
 
+    /**
+     * The installation id every record and acknowledgement is bound to. The pull router needs
+     * it to run the probe's own §8.1 ack shape and installation-id check before it decides
+     * which component owns an id.
+     */
+    internal fun installationId(): ByteArray = localInstallationId.copyOf()
+
     /** One fresh event for a scheduled push; only its id is remembered, never the record. */
     @Synchronized
     fun nextPush(): SyntheticEvent {
