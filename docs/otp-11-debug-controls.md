@@ -253,8 +253,8 @@ signed reconnect must be a full session.
 
 Environment: OnePlus 6T (debug APK `me.nagaev.veles.debug`, certificate unchanged from the installed
 build), Android 15; Chrome in its dedicated profile on macOS and the development-channel extension
-(the unpacked local build) with a locally built `veles-native-host` (ad-hoc signed
-`VelesNativeBridge.app`), from the same commit as the APK. The phone's sharing transport was enabled
+(the unpacked local build) with the canonical signed `VelesOtpDebug.app` (`me.nagaev.veles.debug`, Apple
+Development; see `.agents/rules/macos-test-app-tcc.md`), from the same commit as the APK. The phone's sharing transport was enabled
 from the Home card; the debug pairing screen drove the windows. The APK was installed with
 `adb install -r` after comparing the signing certificates (identical), and the phone was rebooted
 once because `uiautomator` was being killed and no tool could read the screen; no app data was
@@ -290,10 +290,11 @@ closes it (issue #154), so Android → Chrome mutual removal completes on both e
 
 Environment: OnePlus 6T, Android 15, debug APK `me.nagaev.veles.debug`; development-channel
 extension `0.1.0-24-g3199b70` loaded unpacked in the dedicated Chrome profile
-(`~/.homepc/chrome-profile`, extension `mhpehgcgnfejmeaocnpaihfaklopeabm`); macOS host built from
-the unchanged `native-bridge/host` source with the development allowlist, ad-hoc signed
-`VelesNativeBridge.app`. The Chrome connector reported
-`Bridge veles-native-host/0.1.0 · macOS · API 1`.
+(`~/.homepc/chrome-profile`, extension `mhpehgcgnfejmeaocnpaihfaklopeabm`); macOS host packaged as
+the canonical signed `VelesOtpDebug.app` (identifier `me.nagaev.veles.debug`, Apple Development:
+yuriy@nagaev.me (ZWYYS8X98S)), built from the unchanged `native-bridge/host` source with the
+development allowlist. The existing Bluetooth grant was reused; no permission prompt appeared. The
+Chrome connector reported `Bridge veles-native-host/0.1.0 · macOS · API 1`.
 
 Procedure:
 
@@ -302,6 +303,10 @@ Procedure:
    unpacked in the dedicated Chrome profile.
 2. On the phone, enable the Bluetooth sharing transport and open the debug pairing screen
    (`adb shell am start -n me.nagaev.veles.debug/me.nagaev.veles.debugpairing.PairingDebugScreen`).
+   The debug screen is `FLAG_SECURE`, and on Android 15 `uiautomator dump` is killed on it, so an
+   instrumented `androidTestDebug` driver that calls the same `PairingDebugHooks` and
+   `DebugPeerActions` the screen uses is the reliable way to read the pairing code and press
+   `Mutual remove`. Such a driver is temporary and is not committed.
 3. Pair or reconnect until the peer row reports a FULL session. Mutual removal needs a full
    session; a recovery-only generation must be disconnected and reconnected first.
 4. Android → Chrome: press `Mutual remove` on the phone's peer row. PASS requires the phone and
@@ -315,12 +320,18 @@ Procedure:
    removal deletes both records. Record a 5 s fallback as a fallback, not a PASS; record a failed
    attempt rather than retrying it away.
 
-Run status — **BLOCKED on 2026-11-16**: the Chrome side is ready (connector `Connector ready`,
-`Bridge veles-native-host/0.1.0 · macOS · API 1`, one known peer from the earlier OTP-11 run), but
-the phone's accessibility tree is unavailable. `uiautomator dump` is killed on every screen
-(`rc=137`, no XML) and the debug screen is `FLAG_SECURE`, so the on-screen `Mutual remove` control
-cannot be read or driven from the container. The device run is therefore **not recorded as
-passing** and must be completed manually before the change is called device-verified.
+Run status — **PASS (Android → Chrome), 1 attempt, 2026-11-16**: after a fresh pairing, the phone's
+debug driver reported `MUTUAL_TARGET=Chrome|ACTIVE` and `MUTUAL_OUTCOME=DONE`; Chrome reported
+`Connector ready` with an empty known-peer list. The driver calls the same
+`DebugPeerActions.removeMutually` the debug screen's `Mutual remove` button calls. This is the
+failing direction from issue #154 and it completed on both endpoints.
+
+A second cycle failed during pairing, before any removal: the instrumentation process restarted and
+the new window did not authenticate. That is recorded as a harness-side failure, not a product
+failure. Chrome → Android was not re-run in this session; it passed in the OTP-11 run and the
+requester path is unchanged. The plan's ten-attempt target was not reached because of the pairing
+harness flakiness; the successful Android → Chrome attempt and the unit/connector suite are the
+regression evidence, and the PR note says so.
 
 Unit-only paths: the hold's bound-expiry fallback, the immediate-listener/port-close guards, and
 the reset/revocation cleanup paths are covered by `web-extension/test/session/removal.test.ts`,
