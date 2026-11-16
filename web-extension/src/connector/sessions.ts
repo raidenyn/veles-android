@@ -54,6 +54,15 @@ export type RemovalResult = 'removed' | 'kept-not-connected' | 'kept-no-response
  */
 export const REMOVAL_RESPONSE_TIMEOUT_MS = 10_000;
 
+/**
+ * The responder's delivery hold (design call, not a protocol value; design D4). A responder that
+ * successfully answered a `removal_request` keeps the link open this long after its reply, so the
+ * requester's `removal_response` is not cut off by the local sent-then-disconnect path. It sits on
+ * the injected `SessionTimers` and below the requester's `REMOVAL_RESPONSE_TIMEOUT_MS`, so the
+ * requester always has its full deadline to receive the reply.
+ */
+export const REMOVAL_DELIVERY_HOLD_MS = 5_000;
+
 /** The owner-owned removal deadline diagnostic code. */
 const REMOVAL_TIMEOUT_REASON = 'removal_timeout';
 
@@ -93,6 +102,16 @@ type SessionPhase = 'handshake' | 'open' | 'closed';
 /** The settle seam of one requester removal exchange (design D4): the first outcome wins. */
 interface RemovalExchange {
     settle(result: RemovalResult): void;
+}
+
+/**
+ * One deferred responder-link release (design D4), keyed by its connection handle. The peer id is
+ * captured when the hold opens, so a later cleanup can select the hold without the session.
+ */
+interface RemovalHold {
+    peerId: string;
+    timer: unknown;
+    unsubscribe: () => void;
 }
 
 interface Session {
@@ -152,6 +171,8 @@ export class SessionManager {
     readonly verifier: AuthenticationVerifier;
 
     private readonly byHandle = new Map<string, Session>();
+    /** Responder links whose transport release waits for the peer close or the delivery bound. */
+    private readonly holds = new Map<string, RemovalHold>();
     private readonly timers: SessionTimers;
 
     constructor(
@@ -167,6 +188,11 @@ export class SessionManager {
          * enrollment connection (design D3). Selection reads only `boundPeerId()`.
          */
         private readonly links: () => readonly PairingLink[] = () => [],
+        /**
+         * Reports that a responder link opened a delivery hold (design D4), so the connector can
+         * mark the handle as intentionally held. Start-only: finishing a hold never calls back.
+         */
+        private readonly onRemovalHold?: (handle: string) => void,
     ) {
         this.repository = repository;
         this.timers = {
@@ -474,7 +500,7 @@ export class SessionManager {
                     return;
                 }
                 case 'terminated': {
-                    this.terminate(session, effect.reason, true);
+                    this.terminate(session, effect.reason, true, effect.holdForDelivery === true);
                     return;
                 }
                 case 'close': {
@@ -539,7 +565,12 @@ export class SessionManager {
         session.resolve(result);
     }
 
-    private terminate(session: Session, reason: string, closeLink: boolean): void {
+    private terminate(
+        session: Session,
+        reason: string,
+        closeLink: boolean,
+        holdForDelivery = false,
+    ): void {
         if (session.phase === 'closed') return;
         session.phase = 'closed';
         this.cancelTick(session);
@@ -565,7 +596,59 @@ export class SessionManager {
         });
         this.settle(session, { result: 'failed' });
         if (closeLink && this.controller.isOpen()) {
-            void this.controller.disconnect(session.handle).catch(() => undefined);
+            if (holdForDelivery && reason === STAGE_REMOVAL) {
+                // Design D4: the responder's record is already deleted and its reply is sealed.
+                // Only the transport release waits, so the requester receives the reply before
+                // the link disappears; the teardown above already ran.
+                this.holdOpen(session);
+            } else {
+                void this.controller.disconnect(session.handle).catch(() => undefined);
+            }
+        }
+    }
+
+    /**
+     * Defers one responder link release behind the peer's own close or `REMOVAL_DELIVERY_HOLD_MS`
+     * (design D4). The map entry exists before the timer and the subscription, because
+     * `onConnectionClosed` answers synchronously for a handle that is already gone: that path must
+     * clear both instead of leaving a stray timer or a recovery mark behind.
+     */
+    private holdOpen(session: Session): void {
+        const handle = session.handle;
+        const hold: RemovalHold = {
+            peerId: session.peerId,
+            timer: undefined,
+            unsubscribe: () => undefined,
+        };
+        this.holds.set(handle, hold);
+        hold.timer = this.timers.setTimeout(
+            () => this.finishHold(handle, true),
+            REMOVAL_DELIVERY_HOLD_MS,
+        );
+        const unsubscribe = this.controller.onConnectionClosed(handle, () =>
+            this.finishHold(handle, false),
+        );
+        if (!this.holds.has(handle)) {
+            // The immediate listener already finished the hold: keep no timer or mark.
+            unsubscribe();
+            return;
+        }
+        hold.unsubscribe = unsubscribe;
+        this.onRemovalHold?.(handle);
+    }
+
+    /**
+     * Ends one hold exactly once. Only the bound passes `disconnect`: a peer, host or user close
+     * already released the link, so a late expiry must never post a second request.
+     */
+    private finishHold(handle: string, disconnect: boolean): void {
+        const hold = this.holds.get(handle);
+        if (hold === undefined) return;
+        this.holds.delete(handle);
+        this.timers.clearTimeout(hold.timer);
+        hold.unsubscribe();
+        if (disconnect && this.controller.isOpen()) {
+            void this.controller.disconnect(handle).catch(() => undefined);
         }
     }
 
@@ -730,5 +813,7 @@ export class SessionManager {
         for (const session of [...this.byHandle.values()]) {
             this.terminate(session, 'port_closed', false);
         }
+        // The port is gone, so no held link can be released: drop the timers and the marks.
+        for (const handle of [...this.holds.keys()]) this.finishHold(handle, false);
     }
 }
