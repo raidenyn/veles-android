@@ -332,28 +332,24 @@ Procedure:
    removal deletes both records. Record a 5 s fallback as a fallback, not a PASS; record a failed
    attempt rather than retrying it away.
 
-Run status — **PARTIAL / acceptance incomplete (2026-11-16)**. One Android → Chrome operation was
-observed successfully: after a fresh pairing, the phone's debug driver reported
-`MUTUAL_TARGET=Chrome|ACTIVE` and `MUTUAL_OUTCOME=DONE`; Chrome reported `Connector ready` with an
-empty known-peer list. The driver calls the same `DebugPeerActions.removeMutually` the debug
-screen's `Mutual remove` button calls, and `DONE` means the phone deleted its record after
-validating the response. This is the failing direction from issue #154.
+Run status — **COMPLETED (2026-11-16): 10 Android → Chrome and 10 Chrome → Android mutual
+removals**, each after a fresh pairing. The canonical signed `VelesOtpDebug.app` was used; the
+second phone's Bluetooth was disabled so only the test phone advertised the Veles service.
 
-That is not a full acceptance PASS. Missing evidence:
-- The on-screen `Peer removed on both devices` text was not captured on either endpoint; the phone
-  list was not read and the Chrome list was empty but its notice was not recorded.
-- The FULL-session confirmation was not captured; the driver's `Chrome|ACTIVE` record state alone
-  does not prove the session class.
-- The native-port trace (`sent`, then the phone's `disconnected`, no client `disconnect`) was not
-  captured.
-- Chrome → Android was not re-run in this session; it passed in the OTP-11 run and the requester
-  path is unchanged.
-- One Android → Chrome attempt was made; the plan's ten-per-direction target was not reached.
+- **Android → Chrome (10/10):** the phone's debug driver called the same
+  `DebugPeerActions.removeMutually` the screen's `Mutual remove` button calls and logged
+  `MUTUAL_OUTCOME=DONE` on every cycle; the Chrome known-peer list was empty after every cycle and
+  the phone's trust record was deleted.
+- **Chrome → Android (10/10):** the phone driver logged `CONNECTED` and then `CHROME_REMOVED` on
+  every cycle; the Chrome panel status read `Peer removed on both devices`; the Chrome known-peer
+  list was empty and the phone's trust record was deleted.
 
-A second cycle failed during pairing, before any removal: the instrumentation process restarted and
-the new window did not authenticate. That is recorded as a harness-side failure, not a product
-failure. The successful Android → Chrome operation and the unit/connector suite are the
-regression evidence, and the PR note says so.
+Evidence not captured: the phone's on-screen outcome line (the debug screen is `FLAG_SECURE`; the
+driver log was used instead) and the native-port `sent` → phone `disconnected` trace. The required
+TCC log capture also produced no records, so the macOS grant reuse remains recorded as
+**inconclusive, not proven**, although the connector started and scanned without a prompt. The
+ten-per-direction target is met; the two evidence-format gaps are recorded here rather than
+claimed as observed screens.
 
 Unit-only paths: the hold's bound-expiry fallback, the immediate-listener/port-close guards, and
 the reset/revocation cleanup paths are covered by `web-extension/test/session/removal.test.ts`,

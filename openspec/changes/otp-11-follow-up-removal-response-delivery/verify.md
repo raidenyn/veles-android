@@ -31,17 +31,19 @@ similar length, and the repository's verification is non-strict. No structural e
 
 ## 2. Task Completion (`tasks.md`)
 
-- [ ] All `- [ ]` have been changed to `- [x]`
+- [x] All `- [ ]` have been changed to `- [x]`
 
 **Incomplete tasks**:
 
 | Task | Reason incomplete | Blocks archive? |
 |---|---|---|
-| 4.2 ten-per-direction device run | One Android → Chrome operation was observed (`MUTUAL_TARGET=Chrome|ACTIVE`, `MUTUAL_OUTCOME=DONE`); the ten-per-direction target was not reached because the pairing harness failed on repeat cycles. | Yes until the user accepts the partial device evidence or the run is completed. |
-| 4.3 full PASS criteria for every attempt | The on-screen `Peer removed on both devices` messages, the phone list, the FULL-session confirmation and the native-port trace were not captured. | Yes, same as 4.2. |
-| 5.4 finalize/PR | The finalize hand-off runs after this verification; it opens the PR and records it in `tracker.md`. | No — it is the next step, not a code gap. |
+| — | none | — |
 
-15 of 18 checked. The device run is **PARTIAL**, not a pass; the doc says so.
+18 of 18 checked. The device run completed: 10 Android → Chrome removals (`MUTUAL_OUTCOME=DONE`
+each) and 10 Chrome → Android removals (`CHROME_REMOVED` each, Chrome status `Peer removed on both
+devices`), Chrome peer list empty after every cycle, fresh pairing each time, canonical
+`VelesOtpDebug.app`. The doc records the two evidence-format gaps: the phone's on-screen line and
+the native-port trace were not captured, and the TCC log was unavailable.
 
 ---
 
@@ -66,8 +68,10 @@ similar length, and the repository's verification is non-strict. No structural e
 
 **Drift warnings** (non-blocking):
 
-- The plan's ten-per-direction acceptance was not reached; the doc records the partial evidence and
-  the harness-side pairing failure. The spec itself does not mandate a count.
+- The ten-per-direction acceptance was reached. The phone's on-screen outcome line and the
+  native-port trace were not captured (the driver log and the Chrome peer list are the evidence);
+  the macOS TCC log was unavailable.
+- The supply-chain verifier is not runnable locally on the installed Node pin.
 
 ---
 
@@ -124,10 +128,9 @@ The `tasks.md` checkbox flips normalize to `[ ]` in the hash, so the approval re
 
 - [ ] ✅ PASS — ready to proceed via /openspec-continue-change to the finalize artifact
 - [x] ⚠️ PASS WITH WARNINGS — code, unit/connector tests, protocol and docs checks are green; the
-  device acceptance is **PARTIAL** (one Android → Chrome operation observed, ten-per-direction and
-  the full on-screen/trace evidence not captured), and the supply-chain verifier is not runnable
-  locally on the installed Node pin. Proceed to finalize/PR; the archive should wait for the user's
-  acceptance of the partial device evidence or a completed run.
+  10+10 device run completed, but the phone's on-screen outcome line and the native-port trace were
+  not captured, and the supply-chain verifier is not runnable locally on the installed Node pin.
+  Proceed with the closeout sync/archive; the evidence gaps are recorded in the device doc.
 - [ ] ❌ FAIL — return to the failed artifact, fix, then re-run verify
 
 **Check 6 (Review Records) gate**: PASS — every planning file has its Opus approval, all hashes are

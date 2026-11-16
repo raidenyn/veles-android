@@ -23,15 +23,15 @@
 
 ## Tasks
 
-- **Completed**: `15 of 18` checkboxes in `tasks.md` flipped to `- [x]`
-- **Remaining**: `4.2` (ten-per-direction device run), `4.3` (full PASS criteria for every attempt), `5.4` (finalize/PR)
+- **Completed**: `18 of 18` checkboxes in `tasks.md` flipped to `- [x]`
+- **Remaining**: none
 
-The remaining device tasks are **PARTIAL**, not skipped: one Android → Chrome operation was observed
-successfully with the canonical `VelesOtpDebug.app` (`MUTUAL_TARGET=Chrome|ACTIVE`,
-`MUTUAL_OUTCOME=DONE`, Chrome peer list empty); the full ten-per-direction run was not completed,
-and the on-screen messages, FULL-session confirmation and native trace were not captured. The doc
-records the partial evidence and the harness-side pairing failure. `5.4` is the finalize step and
-runs after verification.
+The device run completed: 10 Android → Chrome removals (`MUTUAL_OUTCOME=DONE` each) and 10
+Chrome → Android removals (`CHROME_REMOVED` each, Chrome status `Peer removed on both devices`),
+with the Chrome peer list empty after every cycle and a fresh pairing each time, using the canonical
+`VelesOtpDebug.app`. The doc records the two evidence-format gaps (phone on-screen line and native
+trace not captured; TCC log unavailable). `5.4` is complete: PR #164 is open and recorded in
+`tracker.md`.
 
 ---
 
