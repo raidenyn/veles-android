@@ -80,7 +80,8 @@ Scenarios in `specs/*.md`:
 
 Audit every planning file against `.agents/rules/repo-superspec-review-gate.md` and the
 *Revision binding* audit checklist in `docs/superspec-workflow.md`. Recompute hashes with the
-documented hash command; never rewrite a recorded hash. One row per artifact and listed reviewer:
+documented hash command; a changed hash must carry its note; never rewrite a hash to hide a
+triggering edit. One row per artifact and listed reviewer:
 
 | Artifact | Reviewer | Hash state | Open critical or high findings |
 |---|---|---|---|
@@ -88,6 +89,7 @@ documented hash command; never rewrite a recorded hash. One row per artifact and
 
 - [ ] Every planning file has an approved record from every reviewer the record header lists
 - [ ] Every recorded hash — the file's own and each upstream file's — matches the file on disk
+- [ ] Every changed hash carries the note for its non-triggering edit
 - [ ] The recorded upstream set is the full upstream set
 - [ ] No critical or high finding is open
 

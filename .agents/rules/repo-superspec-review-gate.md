@@ -11,7 +11,7 @@ Before reviewing, verifying or applying in a superspec change, read the sections
 - **Findings:** fix or rebut every critical and high finding; record a disposition for medium and low.
 - **Caps:** at most 5 rounds per reviewer per pass; at a cap, stop and explain in plain language (the *Escalation* section), then wait.
 - **Records:** live in the change's `reviews/`; an approval is bound to the file's hash.
-- **Any edit** reopens review.
+- **Re-review:** only a critical or high fix or rebuttal, more than 5 minor findings (medium, low, cosmetic) fixed since the last completed review, or a normative edit that is not a finding fix, reopens review. Up to 5 minor fixes and cosmetic edits are recorded and the approval hash re-pointed with a note.
 - **The audit** runs whenever verification runs, however it is invoked, using the *Revision binding* audit checklist; any failure is FAIL.
 - **Escalation** from a single-reviewer choice to a two-reviewer preset is allowed, never a downgrade.
 - **The apply stop:** after the plan is approved, stop and ask the user to switch to a coding model; ff and propose end at the plan.

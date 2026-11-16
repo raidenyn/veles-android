@@ -265,7 +265,10 @@ artifacts:
          set is the full upstream set, and no critical or high
          finding is open. Missing records, stale hashes, a smaller
          upstream set, a missing reviewer and unresolved critical
-         or high findings are FAIL.
+         or high findings are FAIL. A hash re-pointed after a
+         non-triggering edit must carry its note; a re-point
+         without that note, or a triggering edit that was not
+         re-reviewed, is FAIL.
 
       Recommended convergence loop:
       - PASS → /openspec-continue-change advances to the finalize artifact, which
@@ -726,8 +729,9 @@ apply:
           the full upstream set — every earlier planning file:
           brainstorm, proposal, design, specs, tasks. A stale hash
           or a smaller set refuses the start: the plan must be
-          revalidated before apply, and a recorded hash is never
-          rewritten to make it match.
+          revalidated before apply. A hash re-pointed for a
+          non-triggering edit must carry its note; a triggering
+          edit that was not re-reviewed refuses the start.
 
        c. **A coding model is confirmed**: the user confirmed that
           this session runs on a coding model. A fresh session in

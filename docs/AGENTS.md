@@ -89,10 +89,13 @@ A reinstall also drops the fork's own edits, so re-apply each divergence as well
 
 1. **Apply pre-flight**: the `apply:` instruction's step 0a review pre-flight — refuse to start
    unless the plan has an approved record from every reviewer its preset lists, every recorded
-   hash is current, the upstream set is complete and a coding model is confirmed.
+   hash is current (note condition: a hash re-pointed for a non-triggering edit must carry its
+   note; a triggering edit that was not re-reviewed refuses the start), the upstream set is
+   complete and a coding model is confirmed.
 2. **Sixth verify check**: the review-records audit in the `verify` instruction, its "6. Review
    records" section in `templates/verify.md`, and the six-check counts in `README.md` and
-   `INTEGRATION.md`.
+   `INTEGRATION.md`. The same note condition: a hash re-pointed after a non-triggering edit must
+   carry its note, and a re-point without it or a triggering edit that was not re-reviewed is FAIL.
 3. **Finalize hand-off**: the `finalize` instruction's always-create PR step (no prompt, no skip), the
    open-PR confirmation and the fail-closed stop, the receipt written only after confirmation, the
    `tracker.md` record (committed and pushed as part of the PR) and the In Review step, the per-outcome
