@@ -282,3 +282,47 @@ Unit-only paths in this run: the hold's bound-expiry fallback (a phone that neve
 failed send of the ack, and a cancel or tab close exactly inside the hold were covered by the
 unit/integration tests only (`web-extension/test/connector/revocation-integration.test.ts`), plus
 `./gradlew sessionLoopbackCheck`. The same sentence must appear in the pull-request note.
+
+## Follow-up run — 2026-11-16, removal response delivery hold
+
+Purpose: verify that the Chrome responder keeps the removal link until the Android requester
+closes it (issue #154), so Android → Chrome mutual removal completes on both endpoints.
+
+Environment: OnePlus 6T, Android 15, debug APK `me.nagaev.veles.debug`; development-channel
+extension `0.1.0-24-g3199b70` loaded unpacked in the dedicated Chrome profile
+(`~/.homepc/chrome-profile`, extension `mhpehgcgnfejmeaocnpaihfaklopeabm`); macOS host built from
+the unchanged `native-bridge/host` source with the development allowlist, ad-hoc signed
+`VelesNativeBridge.app`. The Chrome connector reported
+`Bridge veles-native-host/0.1.0 · macOS · API 1`.
+
+Procedure:
+
+1. Build the debug APK and the development extension from the branch under test, install the APK
+   with `adb install -r` after comparing the signing certificate, and load `web-extension/dist`
+   unpacked in the dedicated Chrome profile.
+2. On the phone, enable the Bluetooth sharing transport and open the debug pairing screen
+   (`adb shell am start -n me.nagaev.veles.debug/me.nagaev.veles.debugpairing.PairingDebugScreen`).
+3. Pair or reconnect until the peer row reports a FULL session. Mutual removal needs a full
+   session; a recovery-only generation must be disconnected and reconnected first.
+4. Android → Chrome: press `Mutual remove` on the phone's peer row. PASS requires the phone and
+   Chrome to both report `Peer removed on both devices`, both peer lists empty, and the
+   native-port trace to show the response's `sent`, then the phone's `disconnected`, with no
+   client `disconnect` request in between.
+5. Chrome → Android: press `Mutual remove` in the Chrome debug panel. PASS requires both screens to
+   report `Peer removed on both devices`, both peer lists empty, and Chrome's disconnect to follow
+   the received `removal_response` (the requester path has no hold).
+6. Repeat both directions at least ten times, re-pairing between attempts because a successful
+   removal deletes both records. Record a 5 s fallback as a fallback, not a PASS; record a failed
+   attempt rather than retrying it away.
+
+Run status — **BLOCKED on 2026-11-16**: the Chrome side is ready (connector `Connector ready`,
+`Bridge veles-native-host/0.1.0 · macOS · API 1`, one known peer from the earlier OTP-11 run), but
+the phone's accessibility tree is unavailable. `uiautomator dump` is killed on every screen
+(`rc=137`, no XML) and the debug screen is `FLAG_SECURE`, so the on-screen `Mutual remove` control
+cannot be read or driven from the container. The device run is therefore **not recorded as
+passing** and must be completed manually before the change is called device-verified.
+
+Unit-only paths: the hold's bound-expiry fallback, the immediate-listener/port-close guards, and
+the reset/revocation cleanup paths are covered by `web-extension/test/session/removal.test.ts`,
+`web-extension/test/connector/connector-app.test.ts` and `web-extension/test/connector/close-peer.test.ts`,
+plus `./gradlew sessionLoopbackCheck`. The same sentence must appear in the pull-request note.
