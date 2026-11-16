@@ -80,20 +80,32 @@ internal class GateBPushScheduler(
             log(line("refused schedule reason=delay pid=$processId"))
             return false
         }
-        if (!fixture.armed) {
-            log(line("refused schedule reason=unarmed pid=$processId"))
-            return false
-        }
         val deadline = clock.elapsedMillis() + delaySeconds * MILLIS_PER_SECOND
         val launched = synchronized(lock) {
             if (detached) {
                 log(line("refused schedule reason=detached pid=$processId"))
                 return false
             }
+            // The armed read shares this critical section with registration, so a concurrent
+            // disarm either lands before it (refused here) or its scheduler.cancel() follows
+            // the registration and retires the attempt; no schedule survives a completed disarm.
+            if (!fixture.armed) {
+                log(line("refused schedule reason=unarmed pid=$processId"))
+                return false
+            }
             current?.let { retireLocked(it, REASON_REPLACED) }
+            current = null
             val attempt = Attempt(deadline)
-            current = attempt
             acquireWakeLocked(attempt, delaySeconds * MILLIS_PER_SECOND + BACKSTOP_MILLIS)
+            // The acquire runs outside the fixture's own lock, so re-check under this one before
+            // publishing the attempt: a disarm that landed meanwhile releases the new wake lock
+            // and leaves nothing scheduled.
+            if (detached || !fixture.armed) {
+                releaseWakeLocked(attempt)
+                log(line("refused schedule reason=${if (detached) "detached" else "unarmed"} pid=$processId"))
+                return false
+            }
+            current = attempt
             log(line("scheduled delay=$delaySeconds deadline=$deadline pid=$processId"))
             registerLocked(attempt)
         }

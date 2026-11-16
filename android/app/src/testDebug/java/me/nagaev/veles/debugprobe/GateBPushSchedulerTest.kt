@@ -280,6 +280,34 @@ class GateBPushSchedulerTest {
     }
 
     @Test
+    fun disarm_during_schedule_registration_leaves_no_schedule() {
+        val clock = ManualClock()
+        val lines = mutableListOf<String>()
+        val timer = SteppingTimer(clock)
+        val sessions = RecordingSessions(listOf(session(1, 0x40)))
+        val fixture = fixture(clock, lines)
+        lateinit var controller: GateBController
+        // The wake acquire is the window between the in-lock armed read and the registration:
+        // disarming there is the exact interleaving the concurrent adb commands can produce.
+        val wake = RecordingWake(onAcquire = { controller.disarm() })
+        val scheduler = scheduler(fixture, { sessions }, clock, timer, wake, lines)
+        controller = GateBController(fixture, scheduler)
+
+        assertFalse("the schedule is refused once the disarm wins", controller.schedule(1))
+
+        assertFalse("the fixture is disarmed", fixture.armed)
+        assertTrue("the refusal is logged", lines.any { it.contains("refused schedule reason=unarmed") })
+        assertTrue("nothing is scheduled", lines.none { it.contains(" scheduled ") })
+        assertEquals("the acquired lock is released again", 1, wake.releases)
+        assertEquals("no wake lock is held", 0, wake.held)
+
+        timer.step()
+        assertTrue("nothing fires", sessions.sends.isEmpty())
+        assertEquals("no fired outcome", 0, lines.count { it.contains(" fired ") })
+        assertEquals("no skipped outcome", 0, lines.count { it.contains(" skipped") })
+    }
+
+    @Test
     fun wake_resource_released_on_fire_skip_cancel_and_detach() {
         assertEquals("fire releases the wake resource", 1, wakeReleases(fire = true))
         assertEquals("skip releases the wake resource", 1, wakeReleases(fire = false))
@@ -371,7 +399,7 @@ class GateBPushSchedulerTest {
         }
         // detach delivers the scope cancellation before it releases the wake lock, so resolving
         // the admitted send from this hook proves the scheduler kept the result wait alive.
-        val wake = RecordingWake { sendGate.complete(Unit) }
+        val wake = RecordingWake(onRelease = { sendGate.complete(Unit) })
         val scheduler = GateBPushScheduler(
             fixture = fixture,
             sessions = { sessions },
@@ -508,10 +536,12 @@ class GateBPushSchedulerTest {
         }
         var releases = 0
         // The replacement's retirement (release #2) resolves the predecessor's admitted send.
-        val wake = RecordingWake {
-            releases += 1
-            if (releases == 2) sendGate.complete(Unit)
-        }
+        val wake = RecordingWake(
+            onRelease = {
+                releases += 1
+                if (releases == 2) sendGate.complete(Unit)
+            },
+        )
         val scheduler = GateBPushScheduler(
             fixture = fixture,
             sessions = { sessions },
@@ -701,7 +731,10 @@ class GateBPushSchedulerTest {
         fun step()
     }
 
-    private class RecordingWake(private val onRelease: () -> Unit = {}) : WakeResource {
+    private class RecordingWake(
+        private val onAcquire: () -> Unit = {},
+        private val onRelease: () -> Unit = {},
+    ) : WakeResource {
         val acquires = mutableListOf<Long>()
         var releases = 0
         var held = 0
@@ -709,6 +742,7 @@ class GateBPushSchedulerTest {
         override fun acquire(timeoutMillis: Long) {
             acquires += timeoutMillis
             held += 1
+            onAcquire()
         }
 
         override fun release() {

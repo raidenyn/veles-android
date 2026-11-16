@@ -439,16 +439,24 @@ with its classification, never rounded.
 confirm five records with the same ids. 2. Wait 150 seconds (controller clock, no sleeping in a
 test) and pull again; exactly three records remain, with the same ids and remaining lifetimes
 between 150 and 450 seconds. 3. Push after five pulled records to observe the client's eviction
-of one record. 4. Stop and restart the app process; the fixture returns to probe mode, so a seed
-or pull through the Gate B commands is refused until it is seeded again.
+of one record. 4. Stop the sharing service from the foreground notification's `Stop` action and
+run a seed: with no sharing service running the controller is absent, so the seed is refused and
+logged with `reason=host`. 5. Restart the app process and enable the transport; the fixture is
+unarmed and in probe mode. A pull is then answered by the ordinary probe (`pull answered=probe`)
+instead of the five fixture records, and a `schedule_push` is refused with `reason=unarmed`
+because a schedule requires an armed fixture. 6. Seed again; the seed succeeds and arms the
+fixture, and a pull then returns the five new records.
 
 **Commands.** The seed broadcast with `--es lifetimes 60,120,300,600,600`; `await
-velesDebug.pullAll()`; `adb shell am force-stop "$APP"` and the Home card's `Enable transport`
-to restart; `adb logcat -v time -s VelesProbe` (`seeded`, `expired-omitted`, `refused` lines).
+velesDebug.pullAll()`; `adb shell am broadcast -a me.nagaev.veles.debug.GATE_B_SCHEDULE_PUSH -n
+"$R" --es delay 60`; the notification's `Stop` action; `adb shell am force-stop "$APP"` and the
+Home card's `Enable transport` to restart; `adb logcat -v time -s VelesProbe` (`seeded`,
+`disarmed`, `pull answered=probe`, `refused` lines).
 
 **Record.** Both pull counts, the ids and remaining lifetimes, the expired-omitted count, the
-eviction observation, the post-restart refusal, the controller timestamps, and the raw captures
-with the checksum catalog.
+eviction observation, the no-service seed refusal (`reason=host`), the post-restart probe-answered
+pull and the `reason=unarmed` schedule refusal, the reseed and its pull counts, the controller
+timestamps, and the raw captures with the checksum catalog.
 
 ## Limits
 
