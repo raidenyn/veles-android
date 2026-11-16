@@ -61,5 +61,5 @@
 
 ## 10. Pre-push checks
 
-- [ ] 10.1 Run `python3 -I scripts/components.py changed --base $(git merge-base origin/master HEAD)` and run the checks listed in the `AGENTS.md` of every selected node (including the Android lint rule and `test:bundle`); fix failures
-- [ ] 10.2 Run `openspec validate --all` and the agent-file check
+- [x] 10.1 Run `python3 -I scripts/components.py changed --base $(git merge-base origin/master HEAD)` and run the checks listed in the `AGENTS.md` of every selected node (including the Android lint rule and `test:bundle`); fix failures
+- [x] 10.2 Run `openspec validate --all` and the agent-file check
