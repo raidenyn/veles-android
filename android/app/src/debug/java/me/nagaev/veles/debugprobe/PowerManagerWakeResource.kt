@@ -10,8 +10,10 @@ import android.os.PowerManager
  * timed acquire expired is safe: [PowerManager.WakeLock.isHeld] is false then, and a blind
  * `release()` would be an under-lock.
  *
- * The tag sits under the existing `me.nagaev.veles.debug.` release-guard prefix; the class exists
- * only in the debug source set.
+ * The tag keeps the `me.nagaev.veles.debug` namespace but uses a colon because lint requires the
+ * platform's `prefix:tag` wake-lock convention. That places it outside the dotted
+ * `me.nagaev.veles.debug.` release-guard prefix, so `releaseHookForbidden` names the exact tag.
+ * The class exists only in the debug source set.
  */
 internal class PowerManagerWakeResource internal constructor(
     private val wakeLock: PowerManager.WakeLock,
@@ -36,6 +38,6 @@ internal class PowerManagerWakeResource internal constructor(
     }
 
     internal companion object {
-        internal const val TAG = "me.nagaev.veles.debug.GateBPush"
+        internal const val TAG = "me.nagaev.veles.debug:GateBPush"
     }
 }

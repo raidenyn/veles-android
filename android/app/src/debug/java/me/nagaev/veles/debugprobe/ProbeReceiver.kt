@@ -90,8 +90,13 @@ internal object DebugProbeRuntime {
 }
 
 /**
- * The adb command surface (design D5). Every command is a shell-only broadcast
- * (`android.permission.DUMP`) to the explicit `debugprobe.ProbeReceiver` component.
+ * The adb command surface (design D5, OTP-12 design D3/D4). Every command is a shell-only
+ * broadcast (`android.permission.DUMP`) to the explicit `debugprobe.ProbeReceiver` component.
+ *
+ * The Gate B commands parse only their extras and forward to [gateB]: the fixture and the
+ * scheduler keep their own validation rules and messages, so an out-of-range delay or a bad
+ * lifetime list is refused by the component that owns the rule. Every command reports one bounded
+ * structured result and logs the same outcome with an elapsed-realtime timestamp.
  */
 internal class ProbeCommands(
     private val sessions: ProbeSessions,
@@ -188,9 +193,101 @@ internal class ProbeCommands(
         }
     }
 
+    /**
+     * OTP-12 `GATE_B_SEED`: a missing `lifetimes` extra means the five-600 default; otherwise a
+     * comma list of values that must all be whole integers. The fixture owns the five-value and
+     * 1..600 checks and logs its own refusal reason. Without a running controller (no sharing
+     * service) nothing is armed and the refusal is logged and reported.
+     */
+    fun gateBSeed(lifetimes: String?): Boolean {
+        val controller = gateB
+        if (controller == null) {
+            refuse("seed", REASON_HOST)
+            return false
+        }
+        val parsed = parseLifetimes(lifetimes)
+        if (parsed == null) {
+            refuse("seed", "lifetimes")
+            return false
+        }
+        if (!controller.seed(parsed)) {
+            outcome("gate-b seed refused")
+            return false
+        }
+        outcome("gate-b seed ok lifetimes=${parsed.joinToString(",")}")
+        return true
+    }
+
+    fun gateBDisarm() {
+        val controller = gateB
+        if (controller == null) {
+            refuse("disarm", REASON_HOST)
+            return
+        }
+        controller.disarm()
+        outcome("gate-b disarm ok")
+    }
+
+    /**
+     * OTP-12 `GATE_B_SCHEDULE_PUSH`: the `delay` extra must be present and a whole-second integer.
+     * The scheduler owns the 1..7200 range and the armed requirement, so those values are
+     * forwarded unchanged and refused with its own message.
+     */
+    fun gateBSchedulePush(delay: String?): Boolean {
+        val controller = gateB
+        if (controller == null) {
+            refuse("schedule", REASON_HOST)
+            return false
+        }
+        val seconds = delay?.trim()?.toLongOrNull()
+        if (seconds == null) {
+            refuse("schedule", "delay")
+            return false
+        }
+        if (!controller.schedule(seconds)) {
+            outcome("gate-b schedule refused delay=$seconds")
+            return false
+        }
+        outcome("gate-b schedule ok delay=$seconds")
+        return true
+    }
+
+    fun gateBCancelPush() {
+        val controller = gateB
+        if (controller == null) {
+            refuse("cancel", REASON_HOST)
+            return
+        }
+        controller.cancel()
+        outcome("gate-b cancel ok")
+    }
+
+    /** One structured result plus the same bounded outcome line with the elapsed timestamp. */
+    private fun outcome(line: String) {
+        result(line)
+        log("elapsed=${elapsed.elapsedMillis()} $line")
+    }
+
+    private fun refuse(command: String, reason: String) = outcome("gate-b $command refused reason=$reason")
+
+    /** A missing extra is the five-600 default; a malformed value is refused, never defaulted. */
+    private fun parseLifetimes(raw: String?): List<Int>? {
+        if (raw == null) return List(GATE_B_HISTORY_SIZE) { GATE_B_DEFAULT_LIFETIME_SECONDS }
+        val parts = raw.split(',').map(String::trim)
+        if (parts.any { it.toIntOrNull() == null }) return null
+        return parts.map { it.toInt() }
+    }
+
     private companion object {
         /** Bounded log prefix: enough to correlate two log lines, never a full identifier. */
         private const val LOG_PREFIX_CHARS = 8
+
+        /** The fixture's own history size and default lifetime, forwarded on a bare seed. */
+        private const val GATE_B_HISTORY_SIZE = 5
+        private const val GATE_B_DEFAULT_LIFETIME_SECONDS = 600
+
+        /** No sharing service: the controller is published only while a host is attached. */
+        private const val REASON_HOST = "host"
     }
 }
 
@@ -231,6 +328,8 @@ class ProbeReceiver : BroadcastReceiver() {
         if (context == null) return
         val id = intent.getStringExtra(EXTRA_ID)
         val pub = intent.getStringExtra(EXTRA_PUB)
+        val lifetimes = intent.getStringExtra(EXTRA_LIFETIMES)
+        val delay = intent.getStringExtra(EXTRA_DELAY)
         val application = context.applicationContext
         val pending = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
@@ -238,7 +337,7 @@ class ProbeReceiver : BroadcastReceiver() {
                 // `goAsync()` detaches the pending result from this receiver; the result
                 // callback must go through the PendingResult (the receiver's own
                 // `setResultData` throws "Call while result is not pending").
-                dispatch(application, action, id, pub, pending::setResultData)
+                dispatch(application, action, id, pub, lifetimes, delay, pending::setResultData)
             } finally {
                 pending.finish()
             }
@@ -250,6 +349,8 @@ class ProbeReceiver : BroadcastReceiver() {
         action: String,
         id: String?,
         pub: String?,
+        lifetimes: String?,
+        delay: String?,
         result: (String) -> Unit,
     ) {
         val logger = EntryPointAccessors.fromApplication(context, DebugProbeEntryPoint::class.java).velesLog()
@@ -260,6 +361,10 @@ class ProbeReceiver : BroadcastReceiver() {
             ACTION_INJECT_PEER -> if (id != null && pub != null) commands.injectPeer(id, pub) else log("inject refused")
             ACTION_PUSH -> commands.push()
             ACTION_REVOKE_PEER -> if (id != null) commands.revokePeer(id) else log("revoke refused")
+            ACTION_GATE_B_SEED -> commands.gateBSeed(lifetimes)
+            ACTION_GATE_B_DISARM -> commands.gateBDisarm()
+            ACTION_GATE_B_SCHEDULE_PUSH -> commands.gateBSchedulePush(delay)
+            ACTION_GATE_B_CANCEL_PUSH -> commands.gateBCancelPush()
         }
     }
 
@@ -268,8 +373,21 @@ class ProbeReceiver : BroadcastReceiver() {
         const val ACTION_INJECT_PEER = "me.nagaev.veles.debug.INJECT_PEER"
         const val ACTION_PUSH = "me.nagaev.veles.debug.PUSH"
         const val ACTION_REVOKE_PEER = "me.nagaev.veles.debug.REVOKE_PEER"
+
+        /** OTP-12 Gate B fixture commands: seed, disarm, schedule one push and cancel it. */
+        const val ACTION_GATE_B_SEED = "me.nagaev.veles.debug.GATE_B_SEED"
+        const val ACTION_GATE_B_DISARM = "me.nagaev.veles.debug.GATE_B_DISARM"
+        const val ACTION_GATE_B_SCHEDULE_PUSH = "me.nagaev.veles.debug.GATE_B_SCHEDULE_PUSH"
+        const val ACTION_GATE_B_CANCEL_PUSH = "me.nagaev.veles.debug.GATE_B_CANCEL_PUSH"
+
         const val EXTRA_ID = "id"
         const val EXTRA_PUB = "pub"
+
+        /** Comma list of five lifetimes in 1..600; absent means five values of 600. */
+        const val EXTRA_LIFETIMES = "lifetimes"
+
+        /** Whole-second delay in 1..7200 for the one scheduled push. */
+        const val EXTRA_DELAY = "delay"
 
         internal val EMPTY_EVENT_SOURCE = ProbeEventSource { _ ->
             SyntheticEvent(code = "", eventId = ByteArray(0), body = ByteArray(0))

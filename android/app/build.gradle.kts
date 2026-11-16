@@ -192,6 +192,9 @@ val releaseHookForbidden = listOf(
     "VelesProbe",
     "Veles synthetic",
     "me.nagaev.veles.debug.",
+    // OTP-12 Gate B: lint requires the platform wake-lock `prefix:tag` form, so the scheduler's
+    // tag is outside the dotted prefix and is named here (and in GateBCommandsTest).
+    "me.nagaev.veles.debug:GateBPush",
     "INJECT_PEER",
     "REVOKE_PEER",
     // OTP-10 D5 debug pairing surface: the package path survives R8 renaming in the DEX
