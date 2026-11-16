@@ -73,8 +73,8 @@ No `design.md`: the schema marks design optional and the brainstorm records the 
 - [x] No unstaged files in the worktree
 - [ ] All related commits have been pushed — deferred to finalize
 
-**Commit range** (if known): `302df46..0bd4bce` (implementation `463a86b`, review-fix `0bd4bce`,
-  receipts `986b5d5` and `79f1f42`, verify `d016710`)
+**Commit range** (if known): `302df46..4347ec3` (implementation `463a86b`, review fixes `0bd4bce` and
+  `4347ec3`, receipts `986b5d5`, `79f1f42` and `d016710`)
 
 ---
 
@@ -82,47 +82,50 @@ No `design.md`: the schema marks design optional and the brainstorm records the 
 
 The user explicitly directed: "No intermediate review needed, just the final whole PR one with Sol."
 No per-artifact review records were produced, and none are fabricated here. The single whole-PR Sol
-review was attempted after finalize but the model was unavailable (ChatGPT usage limit); the user's
-PR review comments drove iteration 2. The Sol pass still runs once the model is available.
+review replaced the per-artifact gate: round 1 at `0ce0e85` returned changes-required (one high
+containment bug and two stale plan lines), round 2 at `4347ec3` approved with no open findings. The
+record is `reviews/whole-pr-sol.md`; it is not a per-artifact audit.
 
 | Artifact | Reviewer | Hash state | Open critical or high findings |
 |---|---|---|---|
-| brainstorm.md | Sol | no record (waived) | none recorded |
-| proposal.md | Sol | no record (waived) | none recorded |
-| specs/agent-guidance-layout/spec.md | Sol | no record (waived) | none recorded |
-| tasks.md | Sol | no record (waived) | none recorded |
-| plan.md | Sol | no record (waived) | none recorded |
+| whole PR (brainstorm, proposal, specs, tasks, plan, implementation, receipts) | Sol | approved at `4347ec3` | none |
+| brainstorm.md | Sol | covered by the whole-PR record | none |
+| proposal.md | Sol | covered by the whole-PR record | none |
+| specs/agent-guidance-layout/spec.md | Sol | covered by the whole-PR record | none |
+| tasks.md | Sol | covered by the whole-PR record | none |
+| plan.md | Sol | covered by the whole-PR record | none |
 
-- [ ] Every planning file has an approved record from every reviewer the record header lists — waived
-- [ ] Every recorded hash — the file's own and each upstream file's — matches the file on disk — N/A, no records
-- [ ] Every changed hash carries the note for its non-triggering edit — N/A, no records
-- [ ] The recorded upstream set is the full upstream set — N/A, no records
-- [x] No critical or high finding is open — the only review is the final whole-PR Sol pass
+- [ ] Every planning file has an approved record from every reviewer the record header lists — waived; one whole-PR record replaces the per-artifact records
+- [ ] Every recorded hash — the file's own and each upstream file's — matches the file on disk — N/A, the whole-PR record binds to the head commit
+- [ ] Every changed hash carries the note for its non-triggering edit — N/A
+- [ ] The recorded upstream set is the full upstream set — N/A
+- [x] No critical or high finding is open — Sol approved at `4347ec3`
 
 **Failed items** (FAIL if any):
 
 | Artifact | Failure |
 |---|---|
-| all planning files | no per-artifact review record — explicit user waiver, replaced by the final whole-PR Sol review |
+| all planning files | no per-artifact review record — explicit user waiver, replaced by the approved whole-PR Sol record |
 
 ---
 
 ## Overall Decision
 
 - [ ] ✅ PASS — ready to proceed via /openspec-continue-change to the finalize artifact, whose hand-off starts the closeout; the closeout runs /openspec-archive-change exactly once, when every required check is green
-- [x] ⚠️ PASS WITH WARNINGS — can proceed but note: the review-records gate is waived by the user's
-  explicit instruction; there are no per-artifact records, and the single whole-PR Sol review is the
-  agreed substitute, still pending because the model was unavailable
+- [x] ⚠️ PASS WITH WARNINGS — can proceed but note: the per-artifact review gate is waived by the
+  user's explicit instruction and replaced by the approved whole-PR Sol record; the literal
+  per-artifact audit was not run
 - [ ] ❌ FAIL — return to the failed artifact, fix, then re-run verify
 
 **Check 6 (Review Records) gate**: under the gate as normally applied this is a FAIL because the
-per-artifact records are missing. This run records the FAIL honestly and proceeds only because the
-user's instruction replaces the per-artifact pass with one whole-PR review.
+per-artifact records are missing. This run records that honestly; the user's instruction replaces the
+per-artifact pass with one whole-PR review, which approved at `4347ec3`.
 
 **Next step**:
 
-Push the review fix, run the docs and native-host checks, then run the whole-PR Sol review when the
-model is available. Sync and archive stay in the closeout, once the required checks are green.
+Push the approval record and the refreshed receipts, then run the closeout: babysit the required
+checks to green, sync and archive once, confirm the synced main spec against the approved delta with
+the same Sol pass, push, and monitor to merge. Never merge unless the user asks.
 
 > **Convergence loop reminder**:
 > - PASS / PASS_WITH_WARNINGS → `/openspec-continue-change` advances to the finalize

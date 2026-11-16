@@ -8,7 +8,8 @@
 > This session applied directly on the feature branch in the harness worktree, so there was no
 > separate worktree branch to merge; the push and PR creation are the substance of the git-side
 > closeout. The PR received human review comments after the first push; iteration 2 addresses them
-> without changing the outcome or re-entering finalize.
+> without changing the outcome or re-entering finalize. The single whole-PR Sol review approved the
+> head at `4347ec3` and is recorded in `reviews/whole-pr-sol.md`.
 
 ---
 
@@ -39,7 +40,7 @@
 - **Baseline status at finish**: `passing`
 
 - `python3 docs/checks/check_agent_files.py --root .` — exit 0
-- `python3 -m unittest discover -s docs/checks -p 'test_*.py' -v` — 81 tests, OK
+- `python3 -m unittest discover -s docs/checks -p 'test_*.py' -v` — 82 tests, OK
 - `openspec validate --all` — 23 passed, 0 failed
 - `./gradlew bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint bridgeHostTest` — BUILD SUCCESSFUL
 - `./gradlew bridgeHostBuild` — BUILD SUCCESSFUL
