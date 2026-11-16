@@ -183,7 +183,8 @@ export interface LoopbackProcess {
     child: ChildProcessWithoutNullStreams;
     send(kind: number, payload: Uint8Array): void;
     next(match: (message: PhoneMessage) => boolean): Promise<PhoneMessage>;
-    waitForStderr(fragment: string): Promise<void>;
+    /** Waits for a match at or after `from`; pass a cursor taken before the action. */
+    waitForStderr(fragment: string, from?: number): Promise<void>;
     stderr(): string;
     stop(): Promise<void>;
 }
@@ -203,9 +204,15 @@ interface MessageWaiter {
 
 interface StderrWaiter {
     fragment: string;
+    from: number;
     resolve: () => void;
     reject: (error: Error) => void;
     timer: ReturnType<typeof setTimeout>;
+}
+
+/** True when `fragment` occurs in stderr at or after the cursor `from`. */
+export function stderrHasMatch(stderr: string, fragment: string, from: number): boolean {
+    return stderr.indexOf(fragment, from) >= 0;
 }
 
 function watchdog(callback: () => void): ReturnType<typeof setTimeout> {
@@ -272,7 +279,7 @@ export function startPhone(options: StartPhoneOptions): LoopbackProcess {
         for (let index = 0; index < stderrWaiters.length; ) {
             const waiter = stderrWaiters[index];
             if (waiter === undefined) break;
-            if (!stderr.includes(waiter.fragment)) {
+            if (!stderrHasMatch(stderr, waiter.fragment, waiter.from)) {
                 index += 1;
                 continue;
             }
@@ -344,8 +351,8 @@ export function startPhone(options: StartPhoneOptions): LoopbackProcess {
                 flushMessages();
             });
         },
-        waitForStderr(fragment: string): Promise<void> {
-            if (stderr.includes(fragment)) return Promise.resolve();
+        waitForStderr(fragment: string, from = 0): Promise<void> {
+            if (stderrHasMatch(stderr, fragment, from)) return Promise.resolve();
             if (exitDescription !== null) {
                 return Promise.reject(
                     new Error(`loopback exited before stderr '${fragment}'; ${exitDescription}`),
@@ -354,6 +361,7 @@ export function startPhone(options: StartPhoneOptions): LoopbackProcess {
             return new Promise<void>((resolve, reject) => {
                 const waiter: StderrWaiter = {
                     fragment,
+                    from,
                     resolve,
                     reject,
                     timer: watchdog(() => {

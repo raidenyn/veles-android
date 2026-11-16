@@ -23,6 +23,7 @@ import {
     runJourney,
     sendEffects,
     startPhone,
+    stderrHasMatch,
     type JourneyStep,
     type PulledEvent,
     type StepResult,
@@ -141,9 +142,20 @@ class ProtectedRecordsDriver {
         const body = new Uint8Array(32);
         body.set(this.phoneInstallationId, 0);
         body.set(pushed.idBytes, 16);
+        const line = `ack event=${pushed.id}`;
+        // Capture the cursor before sending: the fixture logs only acknowledgements it owns,
+        // and the wait must see a line at or after the send, never an older identical one.
+        const firstCursor = this.phone.stderr().length;
         await this.#send(RecordType.EVENT_ACK, body);
-        // The fixture logs only acknowledgements it owns; wait for that exact event id.
-        await this.phone.waitForStderr(`ack event=${pushed.id}`);
+        await this.phone.waitForStderr(line, firstCursor);
+        // Replay the same event id through a second acknowledgement. The fixture logs once per
+        // owned ack, so the second wait must require a fresh line after the first one.
+        const secondCursor = this.phone.stderr().length;
+        await this.#send(RecordType.EVENT_ACK, body);
+        await this.phone.waitForStderr(line, secondCursor);
+        if (!this.phone.stderr().slice(secondCursor).includes(line)) {
+            throw new Error('the second acknowledgement produced no fresh ack line');
+        }
         return {};
     }
 
@@ -197,6 +209,16 @@ class ProtectedRecordsDriver {
         sendEffects(this.phone, await this.engine.sendApplication(type, body));
     }
 }
+
+describe('gate-b stderr cursor', () => {
+    it('does not match an acknowledgement line before the cursor', () => {
+        const earlier = 'gate-b: elapsed=1 ack event=0011\n';
+        expect(stderrHasMatch(earlier, 'ack event=0011', 0)).toBe(true);
+        expect(stderrHasMatch(earlier, 'ack event=0011', earlier.length)).toBe(false);
+        const appended = `${earlier}gate-b: elapsed=2 ack event=0011\n`;
+        expect(stderrHasMatch(appended, 'ack event=0011', earlier.length)).toBe(true);
+    });
+});
 
 if (CLASSPATH === '' && REQUIRED) {
     describe('gate-b protected-records journey', () => {
