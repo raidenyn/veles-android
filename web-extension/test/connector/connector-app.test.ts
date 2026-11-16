@@ -3,10 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { ConnectorApp, type ConnectorAction, type ConnectorView } from '../../src/connector';
 import type { PeerHint } from '../../src/connector/hints';
 import type { ConnectorViewModel } from '../../src/connector/view-model';
+import { RecordType } from '../../src/session/wire';
 import {
     HANDLE_CONNECTION,
     HANDLE_CONNECTION_2,
     HANDLE_DEVICE,
+    HANDLE_DEVICE_2,
     HANDLE_SCAN,
     HANDLE_SCAN_2,
     connectedEvent,
@@ -18,11 +20,16 @@ import {
     shutdownCompleteEvent,
     wireErrorEvent,
 } from './fixtures';
+import type { MockNativePort } from './mock-port';
 import {
+    type PhoneSide,
+    type PostedSend,
+    ackSend,
     answerHandshake,
     createTestController,
     createTestTrust,
     deferred,
+    emitRecord,
     flush as sessionFlush,
     sessionEngineDeps,
 } from './session-harness';
@@ -479,6 +486,328 @@ describe('connector app shutdown and stale work', () => {
         await generic;
         await flush();
         expect(context.view.last.guidance?.kind).not.toBe('macos_permission');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Removal delivery hold
+// ---------------------------------------------------------------------------
+
+/**
+ * The connector's private recovery marks for held removal links. Production wires them through
+ * `SessionManager.onRemovalHold`; these tests read the set to pin its lifecycle.
+ */
+function holdMarks(app: ConnectorApp): Set<string> {
+    const marks = (app as unknown as { removalHoldHandles?: Set<string> }).removalHoldHandles;
+    if (marks === undefined) throw new Error('ConnectorApp.removalHoldHandles is not wired');
+    return marks;
+}
+
+/** Waits for the next posted send of one handle, skipping unrelated posts. */
+async function nextSendFor(port: MockNativePort, handle: string): Promise<PostedSend> {
+    for (;;) {
+        const message = await port.nextPosted();
+        if (message.type !== 'send' || message.connection_handle !== handle) continue;
+        return {
+            requestId: message.request_id as string,
+            handle,
+            bytes: Uint8Array.from(Buffer.from(message.record_base64 as string, 'base64')),
+        };
+    }
+}
+
+/** Waits for the next posted disconnect request of one handle. */
+async function nextDisconnectFor(
+    port: MockNativePort,
+    handle: string,
+): Promise<Record<string, unknown>> {
+    for (;;) {
+        const message = await port.nextPosted();
+        if (message.type === 'disconnect' && message.connection_handle === handle) return message;
+    }
+}
+
+function disconnects(port: MockNativePort, handle: string): Record<string, unknown>[] {
+    return port.posted.filter(
+        (message): message is Record<string, unknown> =>
+            typeof message === 'object' &&
+            message !== null &&
+            (message as { type?: unknown }).type === 'disconnect' &&
+            (message as { connection_handle?: unknown }).connection_handle === handle,
+    );
+}
+
+/** Posts of one type the connector made after `from`, for "nothing was scheduled" assertions. */
+function postsOfType(port: MockNativePort, from: number, type: string): Record<string, unknown>[] {
+    return port.posted
+        .slice(from)
+        .filter(
+            (message): message is Record<string, unknown> =>
+                typeof message === 'object' &&
+                message !== null &&
+                (message as { type?: unknown }).type === type,
+        );
+}
+
+/** Opens one authenticated session through the connector's own connect action. */
+async function connectPhone(
+    context: AppContext,
+    options: {
+        phone?: TestPhone;
+        peerId?: string;
+        connectionHandle?: string;
+        deviceHandle?: string;
+    } = {},
+): Promise<PhoneSide> {
+    const connectionHandle = options.connectionHandle ?? HANDLE_CONNECTION;
+    const deviceHandle = options.deviceHandle ?? HANDLE_DEVICE;
+    const connect = context.app.handleAction({
+        type: 'connect',
+        deviceHandle,
+        ...(options.peerId === undefined ? {} : { peerId: options.peerId }),
+    });
+    const posted = await context.currentPort().nextPosted();
+    await context.currentPort().emit(
+        connectedEvent({
+            request_id: posted.request_id as string,
+            connection_handle: connectionHandle,
+        }),
+    );
+    const side = await answerHandshake(context, {
+        phone: options.phone ?? context.phone,
+        connectionHandle,
+    });
+    await connect;
+    await flush();
+    return side;
+}
+
+/**
+ * Emits the phone's `removal_request` and acks the sealed `removal_response`, so the responder's
+ * delivery hold is open. The reply is returned for the response assertions.
+ */
+async function openRemovalHold(
+    context: AppContext,
+    side: PhoneSide,
+    connectionHandle: string = HANDLE_CONNECTION,
+): Promise<PostedSend> {
+    const port = context.currentPort();
+    await emitRecord(
+        port,
+        connectionHandle,
+        await side.applicationFrame(RecordType.REMOVAL_REQUEST, 1n),
+    );
+    const reply = await nextSendFor(port, connectionHandle);
+    await ackSend(port, reply);
+    await flush();
+    return reply;
+}
+
+describe('connector app removal delivery hold', () => {
+    it('holds the response link and schedules no recovery when the phone closes it', async () => {
+        const context = await startReady(await setup());
+        const side = await connectPhone(context);
+        const port = context.currentPort();
+
+        const reply = await openRemovalHold(context, side);
+        expect((await side.openClientRecord(reply.bytes, 1n)).type).toBe(
+            RecordType.REMOVAL_RESPONSE,
+        );
+        // `sent` is only local submission: the link stays held, with no disconnect request.
+        expect(disconnects(port, HANDLE_CONNECTION)).toHaveLength(0);
+
+        const before = port.posted.length;
+        await port.emit(
+            disconnectedEvent({ request_id: undefined, connection_handle: HANDLE_CONNECTION }),
+        );
+        await flush();
+        context.clock.advance(1_000);
+        await flush();
+
+        // The removed handle must not be reconnected or re-scanned for.
+        expect(postsOfType(port, before, 'start_scan')).toEqual([]);
+        expect(postsOfType(port, before, 'connect')).toEqual([]);
+        // The peer close finished the hold locally: no disconnect and no lingering mark.
+        expect(disconnects(port, HANDLE_CONNECTION)).toHaveLength(0);
+        expect(holdMarks(context.app).has(HANDLE_CONNECTION)).toBe(false);
+        expect(context.controller.snapshot().connections).toHaveLength(0);
+    });
+
+    it('finishes the held link on a reset without scheduling recovery', async () => {
+        const context = await startReady(await setup());
+        const side = await connectPhone(context);
+        const port = context.currentPort();
+        await openRemovalHold(context, side);
+        expect(holdMarks(context.app).has(HANDLE_CONNECTION)).toBe(true);
+
+        const before = port.posted.length;
+        const reset = context.app.resetTrust();
+        await flush();
+        const disconnect = await nextDisconnectFor(port, HANDLE_CONNECTION);
+        await reset;
+        await flush();
+
+        // The reset completed and released the hold exactly once at its snapshot.
+        expect(context.app.trustStatus).toBe('ok');
+        expect(await context.trust.repository.peers()).toEqual([]);
+        expect(disconnects(port, HANDLE_CONNECTION)).toHaveLength(1);
+
+        await port.emit(
+            disconnectedEvent({
+                request_id: disconnect.request_id as string,
+                connection_handle: HANDLE_CONNECTION,
+            }),
+        );
+        await flush();
+        context.clock.advance(1_000);
+        await flush();
+
+        expect(postsOfType(port, before, 'start_scan')).toEqual([]);
+        expect(postsOfType(port, before, 'connect')).toEqual([]);
+        expect(holdMarks(context.app).has(HANDLE_CONNECTION)).toBe(false);
+    });
+
+    it('keeps a hold created after the reset snapshot and skips its recovery', async () => {
+        const context = await startReady(await setup());
+        const side = await connectPhone(context);
+        const port = context.currentPort();
+        const repository = context.trust.repository;
+
+        const gate = deferred();
+        const entered = deferred();
+        const deletePeer = repository.revoke.bind(repository);
+        let calls = 0;
+        const revoke = vi.spyOn(repository, 'revoke').mockImplementation(async (peerId) => {
+            calls += 1;
+            if (calls === 1) {
+                // Only the handler's delete is suspended; the later sweep must proceed.
+                entered.resolve();
+                await gate.promise;
+            }
+            return deletePeer(peerId);
+        });
+
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.applicationFrame(RecordType.REMOVAL_REQUEST, 1n),
+        );
+        await entered.promise;
+
+        // The reset starts while the removal step is still in flight, so its closeAll snapshot
+        // runs before this step opens its hold.
+        const before = port.posted.length;
+        const reset = context.app.resetTrust();
+        await flush();
+        expect(disconnects(port, HANDLE_CONNECTION)).toHaveLength(0);
+
+        gate.resolve();
+        const reply = await nextSendFor(port, HANDLE_CONNECTION);
+        await ackSend(port, reply);
+        await reset;
+        await flush();
+
+        // The hold was created after the snapshot: the reset released nothing and the handler's
+        // delete plus its later sweep both ran against the repository.
+        expect(revoke).toHaveBeenCalledTimes(2);
+        expect(await repository.peers()).toEqual([]);
+        expect(disconnects(port, HANDLE_CONNECTION)).toHaveLength(0);
+        expect(holdMarks(context.app).has(HANDLE_CONNECTION)).toBe(true);
+
+        await port.emit(
+            disconnectedEvent({ request_id: undefined, connection_handle: HANDLE_CONNECTION }),
+        );
+        await flush();
+        context.clock.advance(1_000);
+        await flush();
+
+        expect(postsOfType(port, before, 'start_scan')).toEqual([]);
+        expect(postsOfType(port, before, 'connect')).toEqual([]);
+        expect(holdMarks(context.app).has(HANDLE_CONNECTION)).toBe(false);
+    });
+
+    it('finishes the held link and every other session on fail-closed', async () => {
+        const context = await startReady(await setup({ extraPeers: 1 }));
+        const second = context.others[0];
+        const side = await connectPhone(context, { peerId: context.peerId });
+        await connectPhone(context, {
+            phone: second.phone,
+            peerId: second.peerId,
+            connectionHandle: HANDLE_CONNECTION_2,
+            deviceHandle: HANDLE_DEVICE_2,
+        });
+        const port = context.currentPort();
+        await openRemovalHold(context, side);
+        expect(holdMarks(context.app).has(HANDLE_CONNECTION)).toBe(true);
+        expect(context.app.sessions?.authenticatedSessions()).toHaveLength(1);
+
+        context.app.failClosed();
+        // The coordinator defers its teardown by one microtask.
+        await Promise.resolve();
+
+        // The held link's snapshot release is exactly one disconnect; the unrelated session is
+        // terminated by the same closeAll (a live pairing link shares that path, pinned by
+        // revocation-integration.test.ts).
+        expect(disconnects(port, HANDLE_CONNECTION)).toHaveLength(1);
+        await flush();
+        expect(disconnects(port, HANDLE_CONNECTION)).toHaveLength(1);
+        expect(disconnects(port, HANDLE_CONNECTION_2)).toHaveLength(1);
+        expect(context.app.sessions?.authenticatedSessions()).toEqual([]);
+        expect(context.app.trustStatus).toBe('re-pair-required');
+    });
+
+    it('clears the hold mark when the port closes', async () => {
+        const context = await startReady(await setup());
+        const side = await connectPhone(context);
+        const port = context.currentPort();
+        await openRemovalHold(context, side);
+        expect(holdMarks(context.app).has(HANDLE_CONNECTION)).toBe(true);
+
+        const before = port.posted.length;
+        await port.disconnect();
+        await flush();
+
+        expect(holdMarks(context.app).size).toBe(0);
+        expect(disconnects(port, HANDLE_CONNECTION)).toHaveLength(0);
+        expect(
+            postsOfType(port, before, 'send').filter(
+                (message) => message.connection_handle === HANDLE_CONNECTION,
+            ),
+        ).toEqual([]);
+    });
+
+    it('prunes a mark whose handle already left the tracked connections', async () => {
+        const context = await startReady(await setup());
+        await connectPhone(context);
+        // A user disconnect takes the handle out of `trackedConnections` with no hold to skip.
+        const disconnect = context.app.handleAction({
+            type: 'disconnect',
+            connectionHandle: HANDLE_CONNECTION,
+        });
+        const disconnectPosted = await context.currentPort().nextPosted();
+        await context.currentPort().emit(
+            disconnectedEvent({
+                request_id: disconnectPosted.request_id as string,
+                connection_handle: HANDLE_CONNECTION,
+            }),
+        );
+        await disconnect;
+        await flush();
+        expect(context.controller.snapshot().connections).toHaveLength(0);
+
+        // A mark recorded now is late: no tracked connection can consume it.
+        holdMarks(context.app).add(HANDLE_CONNECTION);
+
+        // Any later connector change prunes it instead of leaving it until a port close.
+        const search = context.app.handleAction({ type: 'search' });
+        const posted = await context.currentPort().nextPosted();
+        await context
+            .currentPort()
+            .emit(scanStartedEvent({ request_id: posted.request_id as string }));
+        await search;
+        await flush();
+
+        expect(holdMarks(context.app).size).toBe(0);
     });
 });
 

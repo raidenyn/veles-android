@@ -156,7 +156,12 @@ export type SessionEffect =
           unprompted?: UnpromptedApplication[];
       }
     | { kind: 'deliver'; type: number; body: Uint8Array }
-    | { kind: 'terminated'; reason: string }
+    /**
+     * The terminal stage. `holdForDelivery` is set only when this effect ends a successful
+     * `removal_request` reply-then-close: the engine has already torn its state down, so the
+     * owner needs the mark to defer just the transport release of the delivery (design D4).
+     */
+    | { kind: 'terminated'; reason: string; holdForDelivery?: true }
     | { kind: 'close' };
 
 /** Everything the client engine reads or writes outside its own state. */
@@ -1106,6 +1111,12 @@ export class ClientSessionEngine {
                 {
                     kind: 'terminated',
                     reason: terminalStage(terminalError, opened.type),
+                    // A successful removal_request close is the only terminal effect whose
+                    // reply the owner must still deliver: the responder's record is already
+                    // deleted, so only the transport release may be deferred (design D4).
+                    ...(!terminalError && opened.type === RecordType.REMOVAL_REQUEST
+                        ? { holdForDelivery: true as const }
+                        : {}),
                 },
                 { kind: 'close' },
             ];

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { SessionManager } from '../../src/connector/sessions';
+import { REMOVAL_DELIVERY_HOLD_MS, SessionManager } from '../../src/connector/sessions';
 import { composeHandlers } from '../../src/pairing/activation';
 import { initPairingCore } from '../../src/pairing/core';
 import { encodePairingFrame, PairingFrameType } from '../../src/pairing/frames';
@@ -25,6 +25,7 @@ import {
     createTestTrust,
     deferred,
     emitRecord,
+    flush,
     negotiateHost,
     nextSend,
     sessionEngineDeps,
@@ -543,7 +544,7 @@ describe('close after reply', () => {
         expect(disconnectIndex).toBeGreaterThan(replyIndex);
     });
 
-    it('sends the reply then closes when the handler asks for close after reply', async () => {
+    it('delivers the reply and holds the link until the bound expires', async () => {
         const fixture = await createFixture({
             handler: composeHandlers(noopHandler(), removalHandler({ close: true })),
         });
@@ -557,14 +558,21 @@ describe('close after reply', () => {
         );
         const reply = await nextSendFor(port, HANDLE_CONNECTION);
         await ackSend(port, reply);
-        // The terminal effects run after the acknowledged reply send.
-        await nextDisconnectFor(port, HANDLE_CONNECTION);
+        await flush();
 
         const opened = await side.openClientRecord(reply.bytes, 1n);
         expect(opened.type).toBe(RecordType.REMOVAL_RESPONSE);
         // Ruling R6: a removal record type has its own terminal stage, so the requester's owner
         // can tell a mutual removal from any other close-after-reply handler.
         expect(terminations(fixture.context, HANDLE_CONNECTION)).toEqual(['removal']);
+        // A responder that successfully answered a removal request holds the link: the reply's
+        // delivery is not cut off by the local sent-then-disconnect path.
+        expect(disconnects(port, HANDLE_CONNECTION)).toHaveLength(0);
+
+        // The 5 000 ms bound releases the link when the requester never closes it.
+        fixture.context.clock.advance(REMOVAL_DELIVERY_HOLD_MS);
+        await flush();
+        await nextDisconnectFor(port, HANDLE_CONNECTION);
 
         const replyIndex = postedIndex(port, (message) => message.request_id === reply.requestId);
         const disconnectIndex = postedIndex(

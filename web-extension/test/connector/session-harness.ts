@@ -126,8 +126,10 @@ export interface TestTrust {
 interface TrustStorage {
     keys: IndexedDbIdentityStore;
     identity: StoredIdentity;
-    read(): TrustSnapshot;
+    read(): TrustSnapshot | undefined;
     write(snapshot: TrustSnapshot): Promise<void>;
+    /** Drops the durable snapshot, exactly like the production store's `remove` on a reset. */
+    clear(): Promise<void>;
     readonly lock: <T>(operation: () => Promise<T>) => Promise<T>;
     readonly clock: { now(): number };
 }
@@ -135,7 +137,7 @@ interface TrustStorage {
 async function createTrustStorage(clock: { now(): number }): Promise<TrustStorage> {
     const keys = new IndexedDbIdentityStore(new IDBFactory());
     const identity = await keys.create();
-    let snapshot: TrustSnapshot = {
+    let snapshot: TrustSnapshot | undefined = {
         version: 1,
         identity: { installationId: identity.installationId, publicKey: identity.publicKey },
         peers: [],
@@ -145,9 +147,12 @@ async function createTrustStorage(clock: { now(): number }): Promise<TrustStorag
         keys,
         identity,
         clock,
-        read: () => structuredClone(snapshot),
+        read: () => (snapshot === undefined ? undefined : structuredClone(snapshot)),
         async write(next) {
             snapshot = structuredClone(next);
+        },
+        async clear() {
+            snapshot = undefined;
         },
         lock: async <T>(operation: () => Promise<T>): Promise<T> => {
             const result = chain.then(operation);
@@ -168,16 +173,7 @@ function buildTrust(storage: TrustStorage): TestTrust {
         restrict: async (): Promise<void> => undefined,
         read: async (): Promise<unknown> => storage.read(),
         write: async (next: TrustSnapshot): Promise<void> => storage.write(next),
-        clear: async (): Promise<void> => {
-            await storage.write({
-                version: 1,
-                identity: {
-                    installationId: storage.identity.installationId,
-                    publicKey: storage.identity.publicKey,
-                },
-                peers: [],
-            });
-        },
+        clear: (): Promise<void> => storage.clear(),
     };
     const repository = new ChromeTrustRepository(
         storage.keys,
@@ -198,6 +194,7 @@ function buildTrust(storage: TrustStorage): TestTrust {
         async addPeer(phone, options = {}) {
             const peerId = hexOf(phone.installationId);
             const snapshot = storage.read();
+            if (snapshot === undefined) throw new Error('trust store was reset');
             snapshot.peers.push({
                 installationId: peerId,
                 publicKey: hex(phone.publicKey),

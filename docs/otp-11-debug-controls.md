@@ -260,6 +260,11 @@ from the Home card; the debug pairing screen drove the windows. The APK was inst
 once because `uiautomator` was being killed and no tool could read the screen; no app data was
 cleared and no uninstall was performed.
 
+Procedure correction (2026-11-16): current macOS test runs use the canonical signed
+`VelesOtpDebug.app` (`me.nagaev.veles.debug`, Apple Development) per
+`.agents/rules/macos-test-app-tcc.md`; the ad-hoc bundle above is the historical observation of the
+OTP-10 follow-up run. The removal-response run below uses the canonical app.
+
 | Procedure | Result | Observed control response |
 | --- | --- | --- |
 | Enrollment (code read from the debug screen, entered in the Chrome panel) | PASS | Chrome `State: active · Fingerprint: F846 83EA 0DB8 · finished`, peer `active_activation_pending`; the phone row read `Chrome · ACTIVE` **immediately after the enrollment**, with the same fingerprint — not `COMMITTED_WAITING_ACK` |
@@ -282,3 +287,73 @@ Unit-only paths in this run: the hold's bound-expiry fallback (a phone that neve
 failed send of the ack, and a cancel or tab close exactly inside the hold were covered by the
 unit/integration tests only (`web-extension/test/connector/revocation-integration.test.ts`), plus
 `./gradlew sessionLoopbackCheck`. The same sentence must appear in the pull-request note.
+
+## Follow-up run — 2026-11-16, removal response delivery hold
+
+Purpose: verify that the Chrome responder keeps the removal link until the Android requester
+closes it (the removal-response delivery follow-up), so Android → Chrome mutual removal completes on
+both endpoints.
+
+Environment: OnePlus 6T, Android 15, debug APK `me.nagaev.veles.debug`; development-channel
+extension `0.1.0-24-g3199b70` loaded unpacked in the dedicated Chrome profile; macOS host packaged
+as the canonical signed `VelesOtpDebug.app` (the canonical test identity in
+`.agents/rules/macos-test-app-tcc.md`), built from the unchanged `native-bridge/host` source with the
+development allowlist. No permission prompt appeared while the connector started and scanned, but
+the required TCC log capture (`log show` with the bundle-id and `kTCCServiceBluetoothAlways`
+predicate) produced no records in this session; grant reuse is therefore recorded as
+**inconclusive, not proven**. The Chrome connector reported
+`Bridge veles-native-host/0.1.0 · macOS · API 1`.
+
+Procedure:
+
+1. Build the debug APK and the development extension from the branch under test, install the APK
+   with `adb install -r` after comparing the signing certificate, and load `web-extension/dist`
+   unpacked in the dedicated Chrome profile. Build and package the macOS host **from the same commit under test** as
+   `VelesOtpDebug.app` with `native-bridge/host/scripts/macos-test-bundle.sh` from the logged-in GUI
+   session, and register the native-messaging manifest's `path` at that bundle. If the phone, the Mac
+   or the development Chrome profile is unavailable, stop, report and ask; do not record a run as
+   tested.
+2. On the phone, enable the Bluetooth sharing transport and open the debug pairing screen
+   (`adb shell am start -n me.nagaev.veles.debug/me.nagaev.veles.debugpairing.PairingDebugScreen`).
+   The debug screen is `FLAG_SECURE`, and on Android 15 `uiautomator dump` is killed on it, so an
+   instrumented `androidTestDebug` driver that calls the same `PairingDebugHooks` and
+   `DebugPeerActions` the screen uses is the reliable way to read the pairing code and press
+   `Mutual remove`. Such a driver is temporary and is not committed.
+3. Pair or reconnect until the peer row reports a FULL session. Mutual removal needs a full
+   session; a recovery-only generation must be disconnected and reconnected first.
+4. Android → Chrome: press `Mutual remove` on the phone's peer row. PASS requires the phone and
+   Chrome to both report `Peer removed on both devices`, both peer lists empty, and the
+   native-port trace to show the response's `sent`, then the phone's `disconnected`, with no
+   client `disconnect` request in between.
+5. Chrome → Android: press `Mutual remove` in the Chrome debug panel. PASS requires both screens to
+   report `Peer removed on both devices`, both peer lists empty, and Chrome's disconnect to follow
+   the received `removal_response` (the requester path has no hold).
+6. Repeat both directions at least ten times, re-pairing between attempts because a successful
+   removal deletes both records. Record a 5 s fallback as a fallback, not a PASS; record a failed
+   attempt rather than retrying it away.
+
+Run status — **COMPLETED (2026-11-16): 10 Android → Chrome and 10 Chrome → Android mutual
+removals**, each after a fresh pairing. The canonical signed `VelesOtpDebug.app` was used; the
+second phone's Bluetooth was disabled so only the test phone advertised the Veles service.
+
+- **Android → Chrome (10/10):** the phone's debug driver called the same
+  `DebugPeerActions.removeMutually` the screen's `Mutual remove` button calls and logged
+  `MUTUAL_OUTCOME=DONE` on every cycle; the Chrome known-peer list was empty after every cycle and
+  the phone's trust record was deleted.
+- **Chrome → Android (10/10):** the phone driver logged `CONNECTED` and then `CHROME_REMOVED` on
+  every cycle; the Chrome panel status read `Peer removed on both devices`; the Chrome known-peer
+  list was empty and the phone's trust record was deleted.
+
+Evidence not captured: the phone's on-screen outcome line (the debug screen is `FLAG_SECURE`; the
+driver log was used instead) and the native-port `sent` → phone `disconnected` trace. Without that
+trace the ten Android → Chrome cycles confirm completion on both endpoints but cannot distinguish a
+normal close from the 5 s fallback; a fallback could still show `DONE` if the response reached the
+phone. For Chrome → Android the phone's on-screen line was not captured; the driver's
+`CHROME_REMOVED` and the empty trust store stood in for it. The TCC log capture also produced no
+records, so grant reuse remains **inconclusive, not proven**. The ten-per-direction target is met;
+these evidence gaps are recorded here rather than claimed as observed screens.
+
+Unit-only paths: the hold's bound-expiry fallback, the immediate-listener/port-close guards, and
+the reset/revocation cleanup paths are covered by `web-extension/test/session/removal.test.ts`,
+`web-extension/test/connector/connector-app.test.ts` and `web-extension/test/connector/close-peer.test.ts`,
+plus `./gradlew sessionLoopbackCheck`. The same sentence must appear in the pull-request note.

@@ -20,6 +20,12 @@ builds, not production artifacts.
 | macOS extension id | `mhpehgcgnfejmeaocnpaihfaklopeabm` |
 | Native host | `veles-native-host/0.1.0`, built locally from `native-bridge/host` at `1b740a9`; unsigned on Windows, ad-hoc signed app bundle on macOS; not the production host |
 
+Procedure correction (2026-11-16): current macOS Bluetooth test runs use the canonical signed
+`VelesOtpDebug.app` (`me.nagaev.veles.debug`, Apple Development) built by
+`native-bridge/host/scripts/macos-test-bundle.sh`, per `.agents/rules/macos-test-app-tcc.md`, so one
+Bluetooth grant is reused across runs. The ad-hoc bundle above is the historical observation of the
+2026-11-13 run, not the current procedure.
+
 The phone is the repository's OTP-23 fixture build (`applicationIdSuffix = ".otp23"` via
 `config/android_keys/fixture-signing.gradle`). The debug pairing controls are
 `me.nagaev.veles.debugpairing.{START,CANCEL}` and the screen
