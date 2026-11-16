@@ -500,26 +500,23 @@ A push at any step returns to babysitting. Every push runs the repository's pre-
 
 ### Required checks and green
 
-Discover the required checks of the pull request's base branch from **every source that can apply to it**, and
-combine them:
+The ruleset response for the pull request's base branch is the whole inventory of required checks:
 
 ```bash
-# Rulesets
 gh api repos/<owner>/<repository>/rules/branches/<base>
-
-# Classic branch protection
-gh api repos/<owner>/<repository>/branches/<base>/protection/required_status_checks
 ```
 
-Rulesets and classic branch protection can coexist and both are enforced, so a successful rulesets response
-does not establish that classic protection adds no check. The required set is the **union** of the check
-contexts every source reports: the `required_status_checks` rule's contexts from the rulesets response, and the
-`contexts` from the classic response. Neither source may be skipped or assumed empty.
+The required set is the **union** of the `required_status_checks` contexts every applicable ruleset reports in
+that response. Read it once per base branch and reuse it across polling cycles.
 
-The classic endpoint returns `404 Not Found` for a token without repository admin, and a 404 does not
-distinguish "no protection" from "no permission". When a source cannot be read, or the sources together cannot
-establish a complete inventory, stop and ask the user; use the answered inventory and do not fall back to the
-readable source alone or treat the missing source as empty. An unestablished inventory is not green.
+Classic branch protection is **ignored** even when it exists, never merged: do not read
+`repos/<owner>/<repository>/branches/<base>/protection` or its `required_status_checks` endpoint. A
+`404 Not Found` from it proves nothing — a token without repository admin gets one that does not distinguish
+"no protection" from "no permission" — and it never adds a required check.
+
+When the response cannot be read, reports no `required_status_checks` rule, or reports an empty context list,
+the inventory is not established: stop and ask the user, use the answered inventory, and never treat the
+missing rule as "nothing is required". An unestablished inventory is not green.
 
 Green is fail-closed: the pull request is green only when **every required check has a successful result for
 the pull request's current head commit**. For the evidence, record the head commit (`headRefOid`) and each
@@ -624,7 +621,7 @@ A cycle is a set of reads, not one command:
 | `gh pr view <number> --json state,headRefOid,statusCheckRollup,reviewDecision,reviews,comments` | lifecycle (`OPEN`, `MERGED`, `CLOSED`), the current head commit, every check's name and conclusion, the review decision, reviews with their author and the commit they saw, conversation comments |
 | `gh api repos/<owner>/<repository>/pulls/<number>/comments --paginate` | inline code-review comments with file, line and body |
 | GraphQL `reviewThreads`, then each thread's comments | each thread's id, `isResolved` and `isOutdated`, its file, line and its comments; both connections are paged |
-| `gh api repos/<owner>/<repository>/rules/branches/<base>` and the classic protection endpoint | each source's required check contexts, combined into one required set; read once per base branch |
+| `gh api repos/<owner>/<repository>/rules/branches/<base>` | the base branch's required check contexts: the ruleset response is the whole inventory, read once per base branch |
 | `gh api repos/<owner>/<repository>/collaborators/<login>/permission` | a commenter's permission for the trust filter |
 
 ```bash
