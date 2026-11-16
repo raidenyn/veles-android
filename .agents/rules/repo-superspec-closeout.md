@@ -7,7 +7,11 @@ Before closing out a pull request, read the sections Closeout and Monitoring of 
 The order is fixed: babysit to green, sync and archive once, review the docs, push, babysit again, answer comments and wait for approval and merge, then the issue and the board.
 
 - **Start:** when finalize confirms an open pull request, tracked or not; the issue, board and `tracker.md` steps apply only to tracked work.
-- **Green is fail-closed:** every required check has a successful result for the current head commit; a missing, pending, unknown or undiscoverable check, an unreadable required list and an empty list are not green.
+- **Green is fail-closed:** the inventory is the base branch's ruleset response
+  (`repos/<owner>/<repository>/rules/branches/<base>`); classic branch protection and its retired contexts
+  (`lint-check`, `unit-tests`, `instrumented-tests`) are ignored. Every required check has a successful result
+  for the current head commit; a missing, pending or unknown check, an unreadable or empty ruleset response,
+  and a missing `required_status_checks` rule are not green.
 - **Bounded fixing:** at most 5 fix attempts per distinct failure, counted across pushes for the whole closeout; then stop and explain the problem to the user in plain language.
 - **Never mask:** a failure that looks unrelated to the change or flaky is reported, never hidden by retries, an empty commit or a weakened check.
 - **Exactly once:** sync and archive run once, when the checks are green, whether approval is pending or already given; after the archive, a push returns only to babysitting and comments.
