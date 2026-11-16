@@ -5,6 +5,7 @@ package me.nagaev.veles.debugprobe
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -71,6 +72,13 @@ internal object DebugProbeRuntime {
      */
     @Volatile
     var applicationContext: Context? = null
+
+    /**
+     * The one elapsed-realtime clock the Gate B fixture is built with; the adb commands log
+     * outcome timestamps from this same instance instead of introducing a second clock.
+     */
+    @Volatile
+    var elapsed: ElapsedClock = ElapsedClock { SystemClock.elapsedRealtime() }
 }
 
 /**
@@ -90,6 +98,11 @@ internal class ProbeCommands(
      * refused and logged instead of sending a probe event. Task 3 keeps this beside its `gateB`.
      */
     private val gateBArmed: () -> Boolean = { false },
+    /**
+     * The same injected elapsed-realtime clock the Gate B fixture uses (design D6): refusal
+     * outcomes carry an elapsed timestamp, never a wall-clock read.
+     */
+    private val elapsed: ElapsedClock = ElapsedClock { SystemClock.elapsedRealtime() },
     /**
      * OTP-11: the coordinator the debug Clear goes through, so clearing a stranded or injected
      * record also terminates that peer's open sessions instead of being refused. `null` when no
@@ -125,7 +138,7 @@ internal class ProbeCommands(
         // Gate B owns synthetic pushes while its fixture is armed; a probe push here would
         // bypass the fixture's schedule and history (refusal outcome, design D6).
         if (gateBArmed()) {
-            log("fixture owns pushes")
+            log("elapsed=${elapsed.elapsedMillis()} fixture owns pushes")
             return
         }
         val open = sessions.openFullSessions()
@@ -194,6 +207,7 @@ internal fun debugProbeCommands(
     log = log,
     result = result,
     gateBArmed = { DebugProbeRuntime.fixture?.armed == true },
+    elapsed = DebugProbeRuntime.elapsed,
     revocation = DebugRevocationRuntime.management(),
 )
 

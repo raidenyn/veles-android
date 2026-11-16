@@ -77,13 +77,14 @@ class ProbeCommandsTest {
             },
             log = { logs += it },
             gateBArmed = { true },
+            elapsed = ElapsedClock { 42L },
         )
 
         commands.push()
 
         assertTrue("the fixture owns pushes while armed", sessions.sends.isEmpty())
         assertEquals("no synthetic event is issued", 0, issued)
-        assertEquals("the refusal is logged", listOf("fixture owns pushes"), logs)
+        assertEquals("the refusal is logged with an elapsed timestamp", listOf("elapsed=42 fixture owns pushes"), logs)
     }
 
     private fun snapshot(): TrustSnapshot = TrustSnapshot(

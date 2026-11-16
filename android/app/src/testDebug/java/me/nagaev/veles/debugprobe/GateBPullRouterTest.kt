@@ -107,26 +107,32 @@ class GateBPullRouterTest {
         assertTrue(fixture.seed(List(5) { 600 }))
         var armed = true
         var reads = 0
-        val router = router(fixture, probe(), mode = {
-            reads++
-            armed
-        })
+        val composed = checkNotNull(
+            composeApplicationHandlers(
+                router(fixture, probe(), mode = {
+                    reads++
+                    armed
+                }),
+                SiblingHandler(),
+            ),
+        )
+        val session = composed.forSession(context(ByteArray(8) { (0x60 + it).toByte() }))
 
-        assertTrue("the router handles the pull in either mode", router.handles(RecordType.PULL_REQUEST.wire))
+        assertTrue("the composed handler handles the pull in either mode", session.handles(RecordType.PULL_REQUEST.wire))
         assertEquals("the handles check does not select a component", 0, reads)
 
         // The engine's handles check has passed; the seam flips the mode before handle runs.
         armed = false
-        var replies = 0
-        var body = ByteArray(0)
-        router.handle(RecordType.PULL_REQUEST.wire, ByteArray(0)) { _, replyBody ->
-            replies += 1
-            body = replyBody
-        }
+        val replies = mutableListOf<Pair<Int, ByteArray>>()
+        val failure = runCatching {
+            session.handle(RecordType.PULL_REQUEST.wire, ByteArray(0)) { type, body -> replies += type to body }
+        }.exceptionOrNull()
 
+        assertNull("the session stays open: the pull is not rejected", failure)
         assertEquals("the mode is read exactly once per pull", 1, reads)
-        assertEquals("the pull is answered exactly once", 1, replies)
-        assertEquals("the single read selected the probe", 1, events(body).size)
+        assertEquals("the pull is answered exactly once", 1, replies.size)
+        assertEquals(RecordType.PULL_EVENTS.wire, replies.single().first)
+        assertEquals("the single read selected the probe", 1, events(replies.single().second).size)
         assertTrue(lines.contains("pull answered=probe"))
         assertFalse("the fixture did not answer", lines.contains("pull answered=fixture"))
     }
@@ -159,7 +165,10 @@ class GateBPullRouterTest {
         assertTrue(fixture.seed(List(5) { 600 }))
         val historyId = events(fixture.pullBody()).first().eventId
         val pushedId = fixture.nextPush().eventId
-        val router = router(fixture)
+        val probe = probe()
+        val counting = CountingProbe(probe)
+        val probeEvent = probe.next(null)
+        val router = GateBPullRouter(probe = counting, fixture = fixture, log = { lines += it })
 
         router.handle(RecordType.EVENT_ACK.wire, installationId + historyId) { _, _ -> }
         router.handle(RecordType.EVENT_ACK.wire, installationId + pushedId) { _, _ -> }
@@ -173,18 +182,36 @@ class GateBPullRouterTest {
             lines.any { it.endsWith("ack event=${hex(pushedId)}") },
         )
 
+        router.handle(RecordType.EVENT_ACK.wire, installationId + probeEvent.eventId) { _, _ -> }
+        assertEquals("a probe-owned id is delegated to the probe", 1, counting.acks)
+        assertTrue(
+            "the fixture never logs a probe-owned ack",
+            lines.none { it.endsWith("ack event=${hex(probeEvent.eventId)}") },
+        )
+
         val unknown = ByteArray(16) { 0x7F }
         router.handle(RecordType.EVENT_ACK.wire, installationId + unknown) { _, _ -> }
         assertTrue(
             "an unknown id is the OTP2-REC-032a no-op and is never logged by the fixture",
             lines.none { it.contains("ack event=${hex(unknown)}") },
         )
+        assertEquals("an unknown id is still delegated to the probe", 2, counting.acks)
+
+        val malformed = ByteArray(31) { 0x01 }
+        val malformedFailure = runCatching {
+            router.handle(RecordType.EVENT_ACK.wire, malformed) { _, _ -> }
+        }.exceptionOrNull()
+        assertTrue("a malformed ack still fails closed", malformedFailure is SessionReject)
 
         val wrongInstallation = ByteArray(16) { 0x01 } + historyId
-        val failure = runCatching {
+        val wrongInstallationFailure = runCatching {
             router.handle(RecordType.EVENT_ACK.wire, wrongInstallation) { _, _ -> }
         }.exceptionOrNull()
-        assertTrue("a wrong installation id still fails closed as the probe does", failure is SessionReject)
+        assertTrue(
+            "a wrong installation id still fails closed as the probe does",
+            wrongInstallationFailure is SessionReject,
+        )
+        assertEquals("a rejected ack never reaches the probe", 2, counting.acks)
     }
 
     @Test
@@ -230,6 +257,20 @@ class GateBPullRouterTest {
         override fun handles(type: Int): Boolean = false
 
         override suspend fun handle(type: Int, body: ByteArray, reply: suspend (Int, ByteArray) -> Unit): Unit = throw SessionReject()
+    }
+
+    /** Observes how many acknowledgements the router actually delegates to the probe. */
+    private class CountingProbe(private val delegate: ApplicationHandler) : ApplicationHandler {
+        var acks = 0
+
+        override fun handles(type: Int): Boolean = delegate.handles(type)
+
+        override suspend fun handle(type: Int, body: ByteArray, reply: suspend (Int, ByteArray) -> Unit) {
+            if (type == RecordType.EVENT_ACK.wire) acks += 1
+            delegate.handle(type, body, reply)
+        }
+
+        override fun forSession(context: SessionContext): ApplicationHandler = CountingProbe(delegate.forSession(context))
     }
 
     private fun events(body: ByteArray): List<DecodedEvent> {

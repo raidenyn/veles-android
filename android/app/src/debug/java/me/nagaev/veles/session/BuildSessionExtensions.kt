@@ -66,6 +66,8 @@ internal fun buildDebugHandler(
     )
     DebugProbeRuntime.eventSource = probe
     DebugProbeRuntime.fixture = fixture
+    // The adb commands log refusal timestamps from this same instance, never a second clock.
+    DebugProbeRuntime.elapsed = elapsed
     return GateBPullRouter(probe = probe, fixture = fixture, log = log)
 }
 
