@@ -1,0 +1,5 @@
+- Repository: raidenyn/veles-android
+- Project: Veles OTP external devices (3)
+- Issue: raidenyn/veles-android#154
+- Source documents: docs/otp-11-debug-controls.md (findings 2 and the Android to Chrome row), protocol/docs/veles-v1.md (OTP2-REC-013, OTP2-BRD-022.5, OTP2-GAT-013), web-extension/src/connector/sessions.ts, web-extension/src/session/engine.ts, native-bridge/host/src/macos.rs, native-bridge/host/src/core.rs, android/app/src/main/java/me/nagaev/veles/sharing/SessionHost.kt
+- Created: 2026-11-16
