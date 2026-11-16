@@ -10,7 +10,7 @@ set -euo pipefail
 BINARY=$1
 TAG=$2
 OUT_ROOT=$3
-APP_NAME=${4:-VelesOtp23PoC.app}
+APP_NAME=${4:-VelesOtpDebug.app}
 EXEC_NAME=${5:-veles-native-host}
 BUNDLE_ID=${6:-me.nagaev.veles.otp23.poc}
 

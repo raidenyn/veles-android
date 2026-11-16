@@ -1,5 +1,9 @@
 # macOS TCC verification harness (evidence only)
 
+The 2026-11-16 raw outputs were produced with the earlier app name `VelesOtp23PoC.app`; the
+canonical name is now `VelesOtpDebug.app`, with the same bundle identifier and designated
+requirement. The examples below use the current name.
+
 These files are the exact harness used for the 2026-11-16 experiment. They are evidence, not
 production tooling: they are not installed, not referenced by the app, and carry only the canonical
 test identity already documented in `native-bridge/installer/macos/AGENTS.md`.
@@ -19,14 +23,14 @@ request.
 
 ```bash
 HERE=<this directory>
-APP=<output>/VelesOtp23PoC.app          # from macos-test-bundle.sh
+APP=<output>/VelesOtpDebug.app          # from macos-test-bundle.sh
 OUT=<a new directory>
 mkdir -p "$OUT/driver-out"
 xcrun swiftc -O -o "$OUT/driver" "$HERE/driver.swift"
 zsh "$HERE/make-driver-bundle.sh" "$OUT/driver" "$APP/Contents/MacOS/veles-native-host" "$APP" \
   "$OUT/driver-bundle"
 open -n --stdout "$OUT/driver-out/stdout.log" --stderr "$OUT/driver-out/stderr.log" \
-  "$OUT/driver-bundle/VelesOtp23PoC.app" \
+  "$OUT/driver-bundle/VelesOtpDebug.app" \
   --args "$APP/Contents/MacOS/veles-native-host" "$OUT/driver-out/result.json" \
   "chrome-extension://abcdefghijklmnopabcdefghijklmnop/"
 ```
@@ -47,10 +51,10 @@ it only to create or inspect a fresh grant; it is not a preflight requirement.
 
 ```bash
 xcrun swiftc -O -o probe-v1 probe.swift
-zsh make-bundle.sh ./probe-v1 v1 "$PWD/out" VelesOtp23PoC.app veles-tcc-probe \
+zsh make-bundle.sh ./probe-v1 v1 "$PWD/out" VelesOtpDebug.app veles-tcc-probe \
   me.nagaev.veles.otp23.poc
 open -n --stdout "$PWD/out/stdout.log" --stderr "$PWD/out/stderr.log" \
-  "$PWD/out/VelesOtp23PoC.app" --args "$PWD/out/grant.json" 600
+  "$PWD/out/VelesOtpDebug.app" --args "$PWD/out/grant.json" 600
 ```
 
 ## Direct-SSH negative control (never a verification route)

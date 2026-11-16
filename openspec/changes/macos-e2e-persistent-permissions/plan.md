@@ -5,9 +5,11 @@
 **Goal:** Add a node-scoped macOS rule so real Bluetooth E2E runs reuse one granted TCC identity
 across rebuilds, binary changes and paths instead of prompting every session.
 
-**Architecture:** Documentation-only. One `macos-*` rule file holds the identity, launch and evidence
+**Architecture:** Documentation and a test-bundle name change. One `macos-*` rule file holds the
+identity, launch and evidence
 procedure; the macOS node lists it; the host node carries a mandatory read-by-hand handoff. Two spec
-deltas encode the layout and testing requirements. No code, CI, credential or signing-identity change.
+deltas encode the layout and testing requirements. No host implementation, CI, credential or
+signing-identity change.
 
 **Tech Stack:** Markdown agent rules, `codesign`, the macOS unified log (`log show`), Chrome Native
 Messaging or LaunchServices, OpenSpec 2.0, the `docs` Python checks.
@@ -23,7 +25,7 @@ in `evidence/logs/`.
   under 24,000 bytes.
 - The rule is listed by `native-bridge/installer/macos/AGENTS.md`; no root `repo-*` rule is added and
   the root `AGENTS.md` is unchanged.
-- Canonical identity: bundle `VelesOtp23PoC.app`, identifier `me.nagaev.veles.otp23.poc`, certificate
+- Canonical identity: bundle `VelesOtpDebug.app`, identifier `me.nagaev.veles.otp23.poc`, certificate
   `Apple Development: yuriy@nagaev.me (ZWYYS8X98S)`, Team `7T39M26Z99`.
 - Accepted designated-requirement baseline, quoted verbatim in the rule:
 
@@ -180,7 +182,7 @@ allowed).
 
 Run: `git diff --stat` and `git status --short`
 Expected: only the rule, the two `AGENTS.md` files and the change directory; no root `AGENTS.md`,
-`.github/components.json`, CI, code or credential change.
+`.github/components.json`, CI, host implementation or credential change.
 
 ### Task 4: Real Mac verification
 
@@ -209,7 +211,7 @@ Use the preserved evidence harness in `evidence/mac-tcc-probe/` (its README has 
 Build the driver with `xcrun swiftc -O -o <out>/driver driver.swift`, package it with
 `zsh make-driver-bundle.sh <out>/driver <app>/Contents/MacOS/veles-native-host <app>
 <out>/driver-bundle` in the GUI session, and launch it through LaunchServices with
-`open -n --stdout ... --stderr ... <out>/driver-bundle/VelesOtp23PoC.app --args
+`open -n --stdout ... --stderr ... <out>/driver-bundle/VelesOtpDebug.app --args
 "<app>/Contents/MacOS/veles-native-host" "<out>/result.json" "<origin>"`. The origin must match the
 host's build-time allowlist: use `chrome-extension://abcdefghijklmnopabcdefghijklmnop/` for a default
 build, or the exact `VELES_ALLOWED_ORIGINS` value. The driver spawns the real host from the signed
@@ -227,9 +229,9 @@ and the scan reports `scan_state started`; otherwise record BLOCKED and do not c
 Append the commands, executable and cdhash values, designated requirement, window bounds, log file
 names and timestamps to `evidence/macos-tcc-reuse-2026-11-16.md`.
 
-### Task 5: Commit
+### Task 5: Commit the rule and evidence
 
-**Files:** all changed files.
+**Files:** the rule, both `AGENTS.md` files and the change directory.
 
 - [x] **Step 1: Review the diff**
 
@@ -243,4 +245,57 @@ Expected: documentation only, no secrets or host-specific paths in the rule.
 git add .agents/rules/macos-test-app-tcc.md native-bridge/installer/macos/AGENTS.md \
   native-bridge/host/AGENTS.md openspec/changes/macos-e2e-persistent-permissions
 git commit -m "docs(rules): reuse one macOS Bluetooth test identity"
+```
+
+### Task 6: Rename the test bundle
+
+**Files:**
+- Modify: `native-bridge/host/scripts/macos-test-bundle.sh`
+- Modify: `native-bridge/host/scripts/test_macos_test_bundle.sh`
+- Modify: `.agents/rules/macos-test-app-tcc.md` and the change artifacts that name the app
+- Read: the evidence record's rename note
+
+**Interfaces:**
+- Consumes: the canonical identity and baseline from Task 1.
+- Produces: the app name `VelesOtpDebug.app` used by the rule and the post-rename verification.
+
+- [x] **Step 1: Rename the produced app and record**
+
+Change `APP_NAME` to `VelesOtpDebug.app`, `RECORD_NAME` to `VelesOtpDebug.identity.txt`, the
+`CFBundleName` to `VelesOtpDebug`, and the header comments. Keep `APPROVED_BUNDLE_ID` exactly
+`me.nagaev.veles.otp23.poc`, so the designated requirement and the existing TCC grant are unchanged.
+
+- [x] **Step 2: Update the shell test expectations and assert `CFBundleName`**
+
+Replace the old app and record names throughout `test_macos_test_bundle.sh`, and add an assertion
+that the Info.plist carries `<string>VelesOtpDebug</string>`.
+
+- [x] **Step 3: Update the acceptance driver contract**
+
+In `native-bridge/host/scripts/accdrv/macid.py`, set `APP_NAME` to `VelesOtpDebug.app` and accept both
+it and the legacy `VelesOtp23PoC.app` in `bundle_executable_ok`; keep the bundle identifier, team,
+authority and Apple-anchor checks unchanged. Add a legacy-acceptance test to
+`test_driver.py` (and update its canonical fixture path). Run:
+`cd native-bridge/host/scripts && python3 -m unittest test_driver.MacIdentityTests -v`
+Expected: PASS, including the new legacy test.
+
+- [x] **Step 4: Run the shell test**
+
+Run: `bash native-bridge/host/scripts/test_macos_test_bundle.sh`
+Expected: PASS (the test mocks `codesign`/`security`; it runs without a Mac).
+
+- [x] **Step 5: Package and verify on the Mac**
+
+Repeat Task 4 with the new name: `macos-test-bundle.sh -b <binary> -o <fresh dir>` produces
+`VelesOtpDebug.app`; `codesign -d -r-` still equals the baseline; the driver scan starts without a
+prompt and the TCC window has coverage with no prompt or grant write.
+
+- [x] **Step 6: Commit**
+
+```bash
+git add native-bridge/host/scripts/macos-test-bundle.sh \
+  native-bridge/host/scripts/test_macos_test_bundle.sh \
+  native-bridge/host/scripts/accdrv/macid.py native-bridge/host/scripts/test_driver.py \
+  .agents/rules/macos-test-app-tcc.md openspec/changes/macos-e2e-persistent-permissions
+git commit -m "docs(test-bundle): rename the macOS test app to VelesOtpDebug"
 ```

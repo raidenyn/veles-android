@@ -5,10 +5,12 @@ permission prompt every session. The rule lives in the repo's macOS node guidanc
 always-on root rules, and prescribes one fixed app identity, one signing identity, one supported
 launch route, and a preflight built from evidence the repository already produces.
 
-The change is documentation-only: a node-scoped rule, its listing in the macOS node `AGENTS.md`, and
-an explicit mandatory handoff in the host node `AGENTS.md` (the Bluetooth test bundle and its
-packaging script live in the host node, but the rule is macOS-scoped and is not auto-delivered
-there). It adds no code, no CI job, no credential and no new probe binary.
+The change is documentation and test-bundle naming: a node-scoped rule, its listing in the macOS node
+`AGENTS.md`, an explicit mandatory handoff in the host node `AGENTS.md` (the Bluetooth test bundle and
+its packaging script live in the host node, but the rule is macOS-scoped and is not auto-delivered
+there), and the app name produced by that script changes from `VelesOtp23PoC.app` to
+`VelesOtpDebug.app` with the same bundle identifier and signing requirement. It adds no host code, no
+CI job, no credential and no new probe binary.
 
 ## Alternatives Considered
 
@@ -54,7 +56,7 @@ consumer is the host node, `native-bridge/host/AGENTS.md` gets an explicit instr
 rule by hand before any macOS Bluetooth E2E run and to treat it as mandatory; the rule text is not
 copied into the host file. The rule states:
 
-1. **One identity.** The canonical Bluetooth test bundle is `VelesOtp23PoC.app`, bundle identifier
+1. **One identity.** The canonical Bluetooth test bundle is `VelesOtpDebug.app`, bundle identifier
    `me.nagaev.veles.otp23.poc`, signed with the node's recorded Apple Development certificate
    (`Apple Development: yuriy@nagaev.me (ZWYYS8X98S)`, Team `7T39M26Z99`); the production host
    executable is embedded in it, as `native-bridge/host/scripts/macos-test-bundle.sh` already does.
@@ -117,7 +119,8 @@ identity/script, not the machine-specific remote-control tooling used to reach a
   one grant, then a different signed binary, a copied path and the real production host all reused it
   with no prompt (the TCC log showed no prompt or grant event after the one-time Allow); ad-hoc builds
   and SSH launches defeated it.
-- **Docs-only change.** The existing packaging script already embeds the production host in the
+- **Documentation and naming change.** The existing packaging script already embeds the production
+  host in the
   canonical identity; the missing piece was guidance, not code.
 
 ## Open Questions

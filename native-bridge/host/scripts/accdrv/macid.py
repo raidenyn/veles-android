@@ -13,7 +13,10 @@ from .errors import Blocked, Refused
 APPROVED_BUNDLE_ID = "me.nagaev.veles.otp23.poc"
 APPROVED_TEAM_ID = "7T39M26Z99"
 APPROVED_AUTHORITY = "Apple Development: yuriy@nagaev.me (ZWYYS8X98S)"
-APP_NAME = "VelesOtp23PoC.app"
+# The canonical test-vehicle app name, plus the legacy OTP-23 name so archived evidence runs and
+# their recorded paths still validate. The bundle identifier and signature checks below are unchanged.
+APP_NAME = "VelesOtpDebug.app"
+APP_NAMES = (APP_NAME, "VelesOtp23PoC.app")
 EXEC_NAME = "veles-native-host"
 
 
@@ -36,11 +39,15 @@ def check_signature_authority(text):
 
 
 def bundle_executable_ok(exe):
-    """The executable must be <...>/VelesOtp23PoC.app/Contents/MacOS/veles-native-host (the approved bundle)."""
+    """The executable must be <...>/<approved app>/Contents/MacOS/veles-native-host.
+
+    Both the canonical `VelesOtpDebug.app` and the legacy `VelesOtp23PoC.app` are accepted; the
+    bundle identifier and signature checks below are unchanged.
+    """
     p = Path(exe)
     parts = p.parts
-    if len(parts) < 4 or parts[-1] != EXEC_NAME or parts[-2] != "MacOS" or parts[-3] != "Contents" or parts[-4] != APP_NAME:
-        raise Refused(f"{exe} is not inside the approved test-vehicle bundle {APP_NAME}/Contents/MacOS/{EXEC_NAME}")
+    if len(parts) < 4 or parts[-1] != EXEC_NAME or parts[-2] != "MacOS" or parts[-3] != "Contents" or parts[-4] not in APP_NAMES:
+        raise Refused(f"{exe} is not inside an approved test-vehicle bundle {' or '.join(APP_NAMES)}/Contents/MacOS/{EXEC_NAME}")
 
 
 def read_signing(exe, run, cert_dir):

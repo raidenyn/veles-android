@@ -20,7 +20,7 @@ Messaging host test bundle in `native-bridge/host/`.
 - Build a real `.app` bundle with `NSBluetoothAlwaysUsageDescription`, and `LSUIElement` for a
   headless host. A bare executable has no bundle identity.
 - Use one fixed bundle identifier and the node's one approved signing identity. For the Bluetooth
-  test vehicle that is `VelesOtp23PoC.app`, identifier `me.nagaev.veles.otp23.poc`, carrying the
+  test vehicle that is `VelesOtpDebug.app`, identifier `me.nagaev.veles.otp23.poc`, carrying the
   production `veles-native-host`, signed with the Apple Development certificate recorded in
   `native-bridge/installer/macos/AGENTS.md`; `native-bridge/host/scripts/macos-test-bundle.sh`
   builds exactly that.

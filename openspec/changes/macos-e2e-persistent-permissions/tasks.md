@@ -2,7 +2,7 @@
 
 - [x] 1.1 Create `.agents/rules/macos-test-app-tcc.md` with frontmatter `trigger: glob`, `globs` and
   `paths` both exactly `native-bridge/installer/macos/**` (no brace expansion).
-- [x] 1.2 Write the "Build the canonical test app" section: bundle `VelesOtp23PoC.app`, identifier
+- [x] 1.2 Write the "Build the canonical test app" section: bundle `VelesOtpDebug.app`, identifier
   `me.nagaev.veles.otp23.poc`, Apple Development `yuriy@nagaev.me (ZWYYS8X98S)`, Team `7T39M26Z99`,
   `native-bridge/host/scripts/macos-test-bundle.sh`, the exact baseline designated requirement,
   GUI-session signing, no ad-hoc, and path independence.
@@ -28,8 +28,8 @@
 
 - [x] 3.1 Check the delivered rule against the two spec deltas: identity and baseline, launch routes,
   log coverage, no reset or unplanned retry, and the planned first-grant exception.
-- [x] 3.2 Confirm that no root `AGENTS.md`, `.github/components.json`, CI, code or platform-identity
-  change is needed; no new node or scope is introduced.
+- [x] 3.2 Confirm that no root `AGENTS.md`, `.github/components.json`, CI, host implementation or
+  platform-identity change is needed; no new node or scope is introduced.
 
 ## 4. Static checks
 
@@ -52,7 +52,20 @@
 - [x] 5.3 Append the run (commands, executable and cdhash values, designated requirement, log files,
   timestamps) to the change evidence.
 
-## 6. Commit
+## 6. Test-bundle rename
 
-- [x] 6.1 Confirm `git diff --stat` is documentation-only and commit as
-  `docs(rules): reuse one macOS Bluetooth test identity`.
+- [x] 6.1 Rename `APP_NAME`, `RECORD_NAME` and `CFBundleName` from `VelesOtp23PoC` to
+  `VelesOtpDebug` in `native-bridge/host/scripts/macos-test-bundle.sh` and update its shell test;
+  keep the bundle identifier and signing requirement unchanged.
+- [x] 6.2 Rebuild and sign `VelesOtpDebug.app` on the Mac, confirm the designated requirement is
+  unchanged, and confirm the existing grant is reused (scan starts, no prompt).
+- [x] 6.3 Update `native-bridge/host/scripts/accdrv/macid.py` to accept both `VelesOtpDebug.app` and
+  the legacy `VelesOtp23PoC.app` while keeping its identifier and signature checks; add the
+  legacy-acceptance test and run `test_driver.MacIdentityTests`.
+
+## 7. Commit
+
+- [x] 7.1 Commit the rule, specs and evidence as `docs(rules): reuse one macOS Bluetooth test
+  identity`.
+- [x] 7.2 Commit the test-bundle rename as `docs(test-bundle): rename the macOS test app to
+  VelesOtpDebug`.

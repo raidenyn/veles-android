@@ -28,7 +28,8 @@ credentials.
 **Non-Goals:**
 
 - No new signing identity or certificate, no key export, no keychain ACL change, no TCC reset.
-- No code, CI, packaging-script or credential change; no new probe or diagnostic command.
+- No host code, CI, credential or signing-identity change; the test-bundle script's app name changes,
+  and no new probe or diagnostic command is added.
 - No change to the production distribution identity (CI credentials, Developer ID, notarization).
 - No root-level (`repo-*`) rule and no Windows guidance.
 
@@ -56,7 +57,7 @@ Windows and Tauri work and contradicts the platform-home spec.
 
 ### D3. One test identity
 
-The canonical Bluetooth test vehicle stays `VelesOtp23PoC.app`, bundle identifier
+The canonical Bluetooth test vehicle stays `VelesOtpDebug.app`, bundle identifier
 `me.nagaev.veles.otp23.poc`, signed with `Apple Development: yuriy@nagaev.me (ZWYYS8X98S)`
 (Team `7T39M26Z99`), carrying the production `veles-native-host` as
 `native-bridge/host/scripts/macos-test-bundle.sh` already does. A fresh output directory per build is
@@ -155,7 +156,9 @@ shows it changed**.
 
 ## Migration Plan
 
-Documentation-only commit: the rule, the two `AGENTS.md` updates and the spec deltas. There is no
+Documentation and test-bundle naming commit: the rule, the two `AGENTS.md` updates, the app-name
+rename in `macos-test-bundle.sh` and its shell test, the `accdrv/macid.py` acceptance of the new and
+legacy names with its test, and the spec deltas. There is no
 deployment, data migration or rollback beyond reverting the commit. Existing Mac test apps remain
 usable; a session that switches to the canonical bundle uses the grant created during the
 investigation, or one new Allow if its identity differs.

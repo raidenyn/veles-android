@@ -44,3 +44,15 @@ remaining ambiguities are deferred to the design, which must specify the exact p
 positive-control records.
 
 Approved content: brainstorm sha256 c23498c533380384c936caba135d106fc980570aec4717aa6f0a0bb3b6034d25
+
+## Pass 2 — rename amendment
+
+### Round 1 — approve
+
+The app-name rename to `VelesOtpDebug.app`, the expanded scope (the test-bundle script and its
+tests) and the unchanged identity/baseline are coherent at the intent level. The downstream
+acceptance-driver consumer had to be covered by the proposal/design/tasks/plan, which it is.
+
+No findings for this artifact.
+
+Approved content: brainstorm sha256 c7826d38283fb95d1e5a1f2d8e6ac45c7e316a27c5582eb64eb54aa95e517903

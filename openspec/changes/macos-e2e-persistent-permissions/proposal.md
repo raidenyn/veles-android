@@ -16,13 +16,18 @@ runs cannot start.
   supported launch route and a validated evidence check, so a one-time grant is reused across
   rebuilds and paths.
 - Reason: removes a manual, per-session prompt and makes unattended macOS E2E possible.
-- Impact: non-breaking, documentation and agent-guidance only; no code, CI, signing or credential
-  change.
+- Impact: non-breaking, documentation, agent guidance and the test-bundle script's app name; no host
+  code, CI, signing or credential change.
 
 **Specific edits**
 - Add `.agents/rules/macos-test-app-tcc.md` (macOS scope) and list it in
   `native-bridge/installer/macos/AGENTS.md`.
 - Add the mandatory read-by-hand handoff in `native-bridge/host/AGENTS.md`.
+- Rename the app produced by `native-bridge/host/scripts/macos-test-bundle.sh` (and its shell test)
+  from `VelesOtp23PoC.app` to `VelesOtpDebug.app`; the bundle identifier and signing requirement stay
+  unchanged, so the existing TCC grant is reused.
+- Accept both the canonical and legacy app names in `native-bridge/host/scripts/accdrv/macid.py`,
+  keeping its bundle-identifier and signature checks, and add a legacy-acceptance test.
 - Update the `agent-guidance-layout` and `real-device-testing` specs.
 
 ## Capabilities
@@ -40,9 +45,12 @@ None.
 
 ## Impact
 
-Docs and agent guidance only: `.agents/rules/macos-test-app-tcc.md`,
-`native-bridge/installer/macos/AGENTS.md`, `native-bridge/host/AGENTS.md`,
-`openspec/specs/agent-guidance-layout/spec.md`, `openspec/specs/real-device-testing/spec.md`. No code,
-API, dependency, CI or credential change. Verification: the agent-file check and its tests, plus the
-recorded Mac experiment in `evidence/macos-tcc-reuse-2026-11-16.md` (one grant reused by a different
-binary, a copied path and the real host; ad-hoc and SSH launches defeated it).
+Documentation, agent guidance and test-bundle naming/path acceptance:
+`.agents/rules/macos-test-app-tcc.md`, `native-bridge/installer/macos/AGENTS.md`,
+`native-bridge/host/AGENTS.md`, `native-bridge/host/scripts/macos-test-bundle.sh` and its shell test,
+`native-bridge/host/scripts/accdrv/macid.py` and its driver test, the two spec deltas, and the change
+directory. No host implementation, API, dependency, CI, signing or credential change. Verification:
+the agent-file check and its tests, the test-bundle shell test, the acceptance-driver unit tests, plus
+the recorded Mac experiment in `evidence/macos-tcc-reuse-2026-11-16.md` (one grant reused by a
+different binary, a copied path, the real host under the old name, and the renamed app; ad-hoc and SSH
+launches defeated it).

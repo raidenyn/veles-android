@@ -10,7 +10,7 @@ TEMPLATE_APP=$3
 OUT=$4
 
 APPROVED_AUTHORITY="Apple Development: yuriy@nagaev.me (ZWYYS8X98S)"
-APP="$OUT/VelesOtp23PoC.app"
+APP="$OUT/VelesOtpDebug.app"
 [[ -f $DRIVER && -f $HOST ]] || { echo "missing driver or host" >&2; exit 1; }
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

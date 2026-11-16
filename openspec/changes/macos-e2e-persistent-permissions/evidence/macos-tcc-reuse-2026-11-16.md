@@ -5,6 +5,11 @@ Purpose: establish whether one Bluetooth grant can be reused across rebuilds and
 launch paths defeat it. Read-only except one person-approved Bluetooth grant; no TCC reset, no
 keychain or ACL change, no key export.
 
+**Name note:** this run used the app name `VelesOtp23PoC.app` (what `macos-test-bundle.sh` produced
+at the time). The canonical name is now `VelesOtpDebug.app`; the bundle identifier and designated
+requirement are unchanged, so the identity results below apply to both names. The post-rename run is
+recorded at the end.
+
 ## Precondition
 
 `tccd` recorded `TCCAccessResetInternal` (a deliberate `tccutil reset BluetoothAlways`) for three
@@ -133,6 +138,26 @@ harness:
   records, with 0 `AUTHREQ_PROMPTING`, 0 `CFUserNotification` and 0 `TCCDEvent` `Create`/`Delete`.
 
 No prompt appeared and no grant was written during the run.
+
+## Rename verification (2026-11-16, 12:18 local)
+
+The test bundle was renamed from `VelesOtp23PoC.app` to `VelesOtpDebug.app` (same bundle identifier,
+same signing identity):
+
+- `macos-test-bundle.sh` now sets `APP_NAME=VelesOtpDebug.app`,
+  `RECORD_NAME=VelesOtpDebug.identity.txt` and `CFBundleName VelesOtpDebug`; its shell test passes
+  (`68 checks, 0 failed`).
+- The same host binary was packaged into `impl-debug/VelesOtpDebug.app`; its `codesign -d -r-` equals
+  the baseline above and `CFBundleName` is `VelesOtpDebug`.
+- The pinned driver launched the real host from that bundle: `ready → scan_state started →
+  scan_state stopped → shutdown_complete`, host exit 0
+  (`evidence/impl-debug-driver-result.json`).
+- The TCC window (`evidence/logs/impl-debug.ndjson`, 45 records) has 4 `AUTHREQ_SUBJECT` records and
+  3 Bluetooth handling records with 0 `AUTHREQ_PROMPTING`, 0 `CFUserNotification` and 0 `TCCDEvent`
+  `Create`/`Delete`.
+
+The rename did not change the designated requirement or create a prompt; the existing grant was
+reused.
 
 ## Limits
 

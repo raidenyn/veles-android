@@ -18,7 +18,8 @@ Android and macOS identities are separate.
   key export, or TCC reset; use the Aqua keychain context when required.
 - Different production signing is a separately planned migration with revalidation. Do not borrow
   debug credentials. Never record fingerprints that were not read from real output.
-- The OTP-23 macOS test bundle (`native-bridge/host/scripts/macos-test-bundle.sh`) selects the
+- The OTP-23 macOS test bundle (`native-bridge/host/scripts/macos-test-bundle.sh`, application
+  `VelesOtpDebug.app`) selects the
   approved Apple Development certificate read-only by its exact recorded name and stops (BLOCKED)
   when it is absent or ambiguous; never add a fallback identity. It is a test vehicle, not the
   production bundle.

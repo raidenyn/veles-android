@@ -73,8 +73,8 @@ case "$1" in
          i=0; while [ "$i" -lt 4000 ]; do echo "Hash choices=sha256 padding-line-$i-0123456789abcdef0123456789abcdef" >&2; i=$((i+1)); done
          # Publication races: something appears in the output dir after the preflight.
          case "$SHIM_RACE" in
-             app) mkdir -p "$SHIM_OUT/VelesOtp23PoC.app"; echo racer > "$SHIM_OUT/VelesOtp23PoC.app/marker" ;;
-             record) echo racer > "$SHIM_OUT/VelesOtp23PoC.identity.txt" ;;
+             app) mkdir -p "$SHIM_OUT/VelesOtpDebug.app"; echo racer > "$SHIM_OUT/VelesOtpDebug.app/marker" ;;
+             record) echo racer > "$SHIM_OUT/VelesOtpDebug.identity.txt" ;;
          esac ;;
 esac
 exit 0
@@ -85,43 +85,44 @@ BIN="$SHIMS/host-bin"; printf 'host-binary-contents' > "$BIN"
 
 run() { # mode identities out [extra args...]
     local mode="$1" ids="$2" out="$3"; shift 3
-    SHIM_RACE="${SHIM_RACE:-}" SHIM_OUT="$out" SHIM_MODE="$mode" SHIM_IDENTITIES="$ids" SHIM_PUBLISHED="$out/VelesOtp23PoC.app" PATH="$SHIMS:$PATH" bash "$SCRIPT" -b "$BIN" -o "$out" "$@" >"$SHIMS/stdout" 2>"$SHIMS/stderr"
+    SHIM_RACE="${SHIM_RACE:-}" SHIM_OUT="$out" SHIM_MODE="$mode" SHIM_IDENTITIES="$ids" SHIM_PUBLISHED="$out/VelesOtpDebug.app" PATH="$SHIMS:$PATH" bash "$SCRIPT" -b "$BIN" -o "$out" "$@" >"$SHIMS/stdout" 2>"$SHIMS/stderr"
 }
 leftovers() { ls -A "$1" | grep -c '^\.staging\.' || true; }
 
 # success: published app + record, staging gone, signed with the selected hash, never ad-hoc
 OUT="$SHIMS/o1"; : > "$LOG"
 if run good one "$OUT"; then ok; else bad "success run exit"; fi
-[ -d "$OUT/VelesOtp23PoC.app/Contents/MacOS" ] && ok || bad "app published"
+[ -d "$OUT/VelesOtpDebug.app/Contents/MacOS" ] && ok || bad "app published"
 [ "$(leftovers "$OUT")" = 0 ] && ok || bad "no staging left after success"
-grep -q "^post_signing_executable_sha256: " "$OUT/VelesOtp23PoC.identity.txt" && grep -q "^source_executable_sha256: " "$OUT/VelesOtp23PoC.identity.txt" && ok || bad "record has separate hashes"
-grep -q "production_identity: UNVALIDATED" "$OUT/VelesOtp23PoC.identity.txt" && ok || bad "record labelled unvalidated"
+grep -q "^post_signing_executable_sha256: " "$OUT/VelesOtpDebug.identity.txt" && grep -q "^source_executable_sha256: " "$OUT/VelesOtpDebug.identity.txt" && ok || bad "record has separate hashes"
+grep -q "production_identity: UNVALIDATED" "$OUT/VelesOtpDebug.identity.txt" && ok || bad "record labelled unvalidated"
 grep -q -- "--sign AAAA1111 " "$LOG" && ! grep -q -- "--sign - " "$LOG" && ok || bad "signed with the selected identity only"
-grep -q "<string>me.nagaev.veles.otp23.poc</string>" "$OUT/VelesOtp23PoC.app/Contents/Info.plist" && ! grep -q "me.nagaev.veles.bridge" "$OUT/VelesOtp23PoC.app/Contents/Info.plist" && ok || bad "approved PoC identifier (not production) in plist"
+grep -q "<string>me.nagaev.veles.otp23.poc</string>" "$OUT/VelesOtpDebug.app/Contents/Info.plist" && ! grep -q "me.nagaev.veles.bridge" "$OUT/VelesOtpDebug.app/Contents/Info.plist" && ok || bad "approved PoC identifier (not production) in plist"
+grep -q "<string>VelesOtpDebug</string>" "$OUT/VelesOtpDebug.app/Contents/Info.plist" && ok || bad "CFBundleName is VelesOtpDebug"
 
 # refuses to touch an existing app or a stale record (nothing deleted, nothing changed)
-OUT="$SHIMS/o2"; mkdir -p "$OUT/VelesOtp23PoC.app"; echo keep > "$OUT/VelesOtp23PoC.app/marker"
+OUT="$SHIMS/o2"; mkdir -p "$OUT/VelesOtpDebug.app"; echo keep > "$OUT/VelesOtpDebug.app/marker"
 if run good one "$OUT"; then bad "existing app must be refused"; else ok; fi
-[ "$(cat "$OUT/VelesOtp23PoC.app/marker")" = keep ] && ok || bad "existing app untouched"
-OUT="$SHIMS/o3"; mkdir -p "$OUT"; echo stale > "$OUT/VelesOtp23PoC.identity.txt"
+[ "$(cat "$OUT/VelesOtpDebug.app/marker")" = keep ] && ok || bad "existing app untouched"
+OUT="$SHIMS/o3"; mkdir -p "$OUT"; echo stale > "$OUT/VelesOtpDebug.identity.txt"
 if run good one "$OUT"; then bad "stale record must be refused"; else ok; fi
-[ "$(cat "$OUT/VelesOtp23PoC.identity.txt")" = stale ] && [ ! -e "$OUT/VelesOtp23PoC.app" ] && ok || bad "stale record untouched, nothing published"
+[ "$(cat "$OUT/VelesOtpDebug.identity.txt")" = stale ] && [ ! -e "$OUT/VelesOtpDebug.app" ] && ok || bad "stale record untouched, nothing published"
 
 # legacy record from the earlier script version is refused, untouched
 OUT="$SHIMS/o4"; mkdir -p "$OUT"; echo old-evidence > "$OUT/identity.txt"
 if run good one "$OUT"; then bad "legacy identity.txt must be refused"; else ok; fi
-[ "$(cat "$OUT/identity.txt")" = old-evidence ] && [ ! -e "$OUT/VelesOtp23PoC.app" ] && [ ! -e "$OUT/VelesOtp23PoC.identity.txt" ] && [ "$(leftovers "$OUT")" = 0 ] && ok || bad "legacy identity.txt untouched, nothing published"
+[ "$(cat "$OUT/identity.txt")" = old-evidence ] && [ ! -e "$OUT/VelesOtpDebug.app" ] && [ ! -e "$OUT/VelesOtpDebug.identity.txt" ] && [ "$(leftovers "$OUT")" = 0 ] && ok || bad "legacy identity.txt untouched, nothing published"
 
 # publication race on the app: a directory appears after preflight -> never replaced, ours set aside
 OUT="$SHIMS/r1"; mkdir -p "$OUT"
 if SHIM_RACE=app run good one "$OUT"; then bad "app race must fail"; else ok; fi
-[ "$(cat "$OUT/VelesOtp23PoC.app/marker")" = racer ] && [ ! -e "$OUT/VelesOtp23PoC.identity.txt" ] && ok || bad "app race: racer untouched, no record"
-ls -A "$OUT" | grep -q '^\.race-nested\.' && [ ! -e "$OUT/VelesOtp23PoC.app/VelesOtp23PoC.app" ] && ok || bad "app race: our bundle set aside, not nested"
+[ "$(cat "$OUT/VelesOtpDebug.app/marker")" = racer ] && [ ! -e "$OUT/VelesOtpDebug.identity.txt" ] && ok || bad "app race: racer untouched, no record"
+ls -A "$OUT" | grep -q '^\.race-nested\.' && [ ! -e "$OUT/VelesOtpDebug.app/VelesOtpDebug.app" ] && ok || bad "app race: our bundle set aside, not nested"
 [ "$(leftovers "$OUT")" = 0 ] && ok || bad "app race left staging"
 # publication race on the record: a record appears after preflight -> not overwritten, bundle set aside, no misleading success
 OUT="$SHIMS/r2"; mkdir -p "$OUT"
 if SHIM_RACE=record run good one "$OUT"; then bad "record race must fail"; else ok; fi
-[ "$(cat "$OUT/VelesOtp23PoC.identity.txt")" = racer ] && [ ! -e "$OUT/VelesOtp23PoC.app" ] && ls -A "$OUT" | grep -q '^\.unrecorded\.' && ok || bad "record race: racer untouched, bundle set aside"
+[ "$(cat "$OUT/VelesOtpDebug.identity.txt")" = racer ] && [ ! -e "$OUT/VelesOtpDebug.app" ] && ls -A "$OUT" | grep -q '^\.unrecorded\.' && ok || bad "record race: racer untouched, bundle set aside"
 grep -q "^packaged:" "$SHIMS/stderr" && bad "record race printed success" || ok
 [ "$(leftovers "$OUT")" = 0 ] && ok || bad "record race left staging"
 
@@ -129,7 +130,7 @@ grep -q "^packaged:" "$SHIMS/stderr" && bad "record race printed success" || ok
 for mode in sign_fail verify_fail wrong_team; do
     OUT="$SHIMS/f-$mode"; mkdir -p "$OUT/sibling.app"; echo keep > "$OUT/sibling.app/m"
     if run "$mode" one "$OUT"; then bad "$mode must fail"; else ok; fi
-    [ ! -e "$OUT/VelesOtp23PoC.app" ] && [ ! -e "$OUT/VelesOtp23PoC.identity.txt" ] && ok || bad "$mode published something"
+    [ ! -e "$OUT/VelesOtpDebug.app" ] && [ ! -e "$OUT/VelesOtpDebug.identity.txt" ] && ok || bad "$mode published something"
     [ "$(leftovers "$OUT")" = 0 ] && ok || bad "$mode left staging"
     [ "$(cat "$OUT/sibling.app/m")" = keep ] && ok || bad "$mode touched a sibling"
 done
@@ -137,7 +138,7 @@ done
 # post-publish verification failure: set aside (not deleted), no record
 OUT="$SHIMS/f-post"; mkdir -p "$OUT"
 if run verify_fail_after_publish one "$OUT"; then bad "post-publish verify failure must fail"; else ok; fi
-[ ! -e "$OUT/VelesOtp23PoC.app" ] && [ ! -e "$OUT/VelesOtp23PoC.identity.txt" ] && ls -A "$OUT" | grep -q '^\.failed-verification\.' && ok || bad "post-publish failure handling"
+[ ! -e "$OUT/VelesOtpDebug.app" ] && [ ! -e "$OUT/VelesOtpDebug.identity.txt" ] && ls -A "$OUT" | grep -q '^\.failed-verification\.' && ok || bad "post-publish failure handling"
 
 # missing / duplicate / foreign identity: BLOCKED, nothing created beyond the empty out dir
 for ids in none two other; do

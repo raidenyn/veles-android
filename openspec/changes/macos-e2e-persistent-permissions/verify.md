@@ -69,7 +69,8 @@ No item failed.
   immediately after)
 - [ ] All related commits have been pushed
 
-**Commit range** (if known): `ab15de4..d2f9d04` (implementation), plus the verification-record commit.
+**Commit range** (if known): `ab15de4..d2f9d04` (rule, specs and evidence), `c9d3ed5` (verification
+record), plus the test-bundle rename commit (`docs(test-bundle): ...`) on the same branch.
 
 The branch `docs/mac-e2e-persistent-permissions` is local; no push or pull request was requested.
 
@@ -79,13 +80,17 @@ The branch `docs/mac-e2e-persistent-permissions` is local; no push or pull reque
 
 | Artifact | Reviewer | Hash state | Open critical or high findings |
 |---|---|---|---|
-| `brainstorm.md` | Sol | current (`c23498c5…`) | none |
-| `proposal.md` | Sol | current (`699bd8c7…`) | none |
-| `design.md` | Sol | current (`5a668ab7…`) | none |
+| `brainstorm.md` | Sol | current (`c7826d38…`) | none |
+| `proposal.md` | Sol | current (`612b4e8b…`) | none |
+| `design.md` | Sol | current (`63d462b3…`) | none |
 | `specs/agent-guidance-layout/spec.md` | Sol | current (`c68d9626…`) | none |
 | `specs/real-device-testing/spec.md` | Sol | current (`9b693d2d…`) | none |
-| `tasks.md` | Sol | current (`04f3f166…`) | none |
-| `plan.md` | Sol | current (`ec6a36f7…`) | none |
+| `tasks.md` | Sol | current (`517090dd…`) | none |
+| `plan.md` | Sol | current (`4d79d2fe…`) | none |
+
+The rename amendment was reviewed in a second pass; the plan's EOF blank-line removal was confirmed
+cosmetic in a third round. The spec content is unchanged; its consistency revalidation was approved
+against the amended design.
 
 - [x] Every planning file has an approved record from every reviewer the record header lists
 - [x] Every recorded hash — the file's own and each upstream file's — matches the file on disk
@@ -107,10 +112,12 @@ The branch `docs/mac-e2e-persistent-permissions` is local; no push or pull reque
 - [ ] ❌ FAIL
 
 Warnings: the delta specs are pending the closeout sync (by design), and the branch is not pushed
-because no pull request or release was requested.
+because no pull request or release was requested. The rename amendment and the acceptance-driver
+legacy-path compatibility are included in the implementation and the checks below.
 
 **Check 6 (Review Records) gate**: PASS — seven approved records, all hashes current, full upstream
-sets, no open critical or high finding.
+sets, no open critical or high finding. The second (rename) pass is approved for every artifact; the
+specs consistency revalidation is approved.
 
 **Next step**: the change is implemented and verified. If a pull request is wanted, push the branch
 and follow the closeout rule (sync and archive once at green); otherwise the work is complete.

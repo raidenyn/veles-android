@@ -894,7 +894,7 @@ GOOD_CODESIGN = "\n".join(["Executable=/x", f"Identifier={macid.APPROVED_BUNDLE_
                            "Signature size=4800", f"Authority={macid.APPROVED_AUTHORITY}",
                            "Authority=Apple Worldwide Developer Relations Certification Authority", "Authority=Apple Root CA",
                            f"TeamIdentifier={macid.APPROVED_TEAM_ID}"])
-BUNDLE = "/Users/u/out/VelesOtp23PoC.app/Contents/MacOS/veles-native-host"
+BUNDLE = "/Users/u/out/VelesOtpDebug.app/Contents/MacOS/veles-native-host"
 
 
 class MacIdentityTests(Tmp):
@@ -950,10 +950,16 @@ class MacIdentityTests(Tmp):
             macid.read_signing(BUNDLE, self.runner_for(extract=False), self.tmp / "c")
 
     def test_executable_must_be_in_the_approved_bundle(self):
-        for bad in ("/tmp/veles-native-host", "/x/Other.app/Contents/MacOS/veles-native-host", "/x/VelesOtp23PoC.app/Contents/Resources/veles-native-host",
-                    "/x/VelesOtp23PoC.app/Contents/MacOS/otp23-host"):
+        for bad in ("/tmp/veles-native-host", "/x/Other.app/Contents/MacOS/veles-native-host", "/x/VelesOtpDebug.app/Contents/Resources/veles-native-host",
+                    "/x/VelesOtpDebug.app/Contents/MacOS/otp23-host"):
             with self.assertRaises(Refused, msg=bad):
                 macid.read_signing(bad, self.runner_for(), self.tmp / "z")
+
+    def test_legacy_otp23_bundle_name_is_still_accepted(self):
+        legacy = "/Users/u/out/VelesOtp23PoC.app/Contents/MacOS/veles-native-host"
+        s = macid.read_signing(legacy, self.runner_for(), self.tmp / "legacy")
+        self.assertEqual(s["bundle_id"], macid.APPROVED_BUNDLE_ID)
+        self.assertIs(s["production_identity_claimed"], False)
 
     def test_no_signing_or_keychain_operations_in_sources(self):
         src = "".join(p.read_text() for p in (HERE / "accdrv").glob("*.py") if p.name != "rig.py") + (HERE / "lifecycle-driver.py").read_text()
@@ -1777,7 +1783,7 @@ class RunnerTests(Tmp):
         self.personal.mkdir(parents=True, exist_ok=True)
         (self.personal / "personal.json").write_text("{}")
         (self.personal.parent / "Local State").write_text("personal browser state")
-        self.host = self.exe(where=self.tmp / "VelesOtp23PoC.app" / "Contents" / "MacOS")
+        self.host = self.exe(where=self.tmp / "VelesOtpDebug.app" / "Contents" / "MacOS")
         self.sessions = []
         test = self
 
@@ -1929,7 +1935,7 @@ class RunnerTests(Tmp):
         def popen(argv, **kw):
             seen.update(kw["env"])
             return subprocess.Popen([sys.executable, "-I", str(script), argv[1], "good"], **kw)
-        self.host = self.exe(where=self.tmp / "VelesOtp23PoC.app" / "Contents" / "MacOS")
+        self.host = self.exe(where=self.tmp / "VelesOtpDebug.app" / "Contents" / "MacOS")
         runner.execute_case(CASES["macos.none.direct-eof-clean"], self.host, "", self.tmp / "direct", self.anchor(self.host), family="macos",
                             run=self.fake_run, popen=popen, home=str(self.home), system_root=str(self.sysroot), env=env,
                             temp_root=str(self.tmp / "tmp"), sleep=lambda s: None, clock=fake_clock(0.001))

@@ -35,8 +35,8 @@
 # replaced (the script refuses; move it away yourself). On any failure only this run's own staging
 # directory is removed, so no stale or half-built evidence can remain.
 #
-# Published: <out>/VelesOtp23PoC.app (Contents/MacOS/veles-native-host) and
-# <out>/VelesOtp23PoC.identity.txt with the source executable hash and the post-signing
+# Published: <out>/VelesOtpDebug.app (Contents/MacOS/veles-native-host) and
+# <out>/VelesOtpDebug.identity.txt with the source executable hash and the post-signing
 # executable identity recorded SEPARATELY (codesign rewrites the Mach-O, so the hashes differ by
 # design; every value is read from real tool output at run time, none is inferred).
 #
@@ -47,8 +47,8 @@ set -euo pipefail
 APPROVED_BUNDLE_ID="me.nagaev.veles.otp23.poc"
 APPROVED_TEAM_ID="7T39M26Z99"
 APPROVED_AUTHORITY="Apple Development: yuriy@nagaev.me (ZWYYS8X98S)"
-APP_NAME="VelesOtp23PoC.app"
-RECORD_NAME="VelesOtp23PoC.identity.txt"
+APP_NAME="VelesOtpDebug.app"
+RECORD_NAME="VelesOtpDebug.identity.txt"
 EXEC_NAME="veles-native-host"
 
 # --- pure helpers (sourced by the shell tests; no macOS tools needed) ---------------------------
@@ -172,7 +172,7 @@ main() {
     <key>CFBundleIdentifier</key>
     <string>$APPROVED_BUNDLE_ID</string>
     <key>CFBundleName</key>
-    <string>VelesOtp23PoC</string>
+    <string>VelesOtpDebug</string>
     <key>CFBundleExecutable</key>
     <string>$EXEC_NAME</string>
     <key>CFBundlePackageType</key>
