@@ -8,9 +8,9 @@
 
 ## 2. Router and composition
 
-- [ ] 2.1 Add `GateBPullRouter` (mode read once per `handle`, always claims `pull_request` and `event_ack`, ack routing by owner using the probe's installation id, logs which component answered) and a shared mode holder in `DebugProbeRuntime` with a test seam; store the application context in `DebugProbeRuntime` from `applicationHandler(context)`
-- [ ] 2.2 Wire the router in the debug `BuildSessionExtensions.applicationHandler` in place of the bare probe (absent when the identity is unavailable); make adb `PUSH` send nothing and log while armed
-- [ ] 2.3 Unit tests: two sessions through `CompositeApplicationHandler` get exactly one reply each, mode flip between the engine's and the router's lookups, ack routing for history/pushed/unknown ids, router absent without identity, unarmed behaviour identical to today's probe tests, adb `PUSH` while armed sends nothing
+- [x] 2.1 Add `GateBPullRouter` (mode read once per `handle`, always claims `pull_request` and `event_ack`, ack routing by owner using the probe's installation id, logs which component answered) and a shared mode holder in `DebugProbeRuntime` with a test seam; store the application context in `DebugProbeRuntime` from `applicationHandler(context)`
+- [x] 2.2 Wire the router in the debug `BuildSessionExtensions.applicationHandler` in place of the bare probe (absent when the identity is unavailable); make adb `PUSH` send nothing and log while armed
+- [x] 2.3 Unit tests: two sessions through `CompositeApplicationHandler` get exactly one reply each, mode flip between the engine's and the router's lookups, ack routing for history/pushed/unknown ids, router absent without identity, unarmed behaviour identical to today's probe tests, adb `PUSH` while armed sends nothing
 
 ## 3. Push scheduler and detach
 
