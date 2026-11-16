@@ -710,14 +710,23 @@ describe('development probe multi-event pull', () => {
         const { side, port } = await openProbedFullSession(fixture);
 
         const pulled = debugHook().pullAll();
-        const sendsAfterRequest = await acknowledgePullRequest(port);
+        const sendsAfterFirstRequest = await acknowledgePullRequest(port);
         await emitPullEvents(port, side, pullEventsBody([]));
 
-        // The promise resolves from the handler only after its ack loop, so no reply can still
-        // be in flight: completion alone proves the empty record sent no acknowledgement.
+        // The handler settles `pullAll()` before the connector applies that step's buffered send
+        // effects, so resolution alone is not a barrier for acknowledgements. A second request
+        // runs on the same serialized session queue, behind the first step's effect application:
+        // seeing its `pull_request` posted (and no ack ahead of it) proves the empty record
+        // produced no send.
         await expect(pulled).resolves.toEqual([]);
-        // No acknowledgement for an empty record: no send follows the pull_request.
-        expect(postedSends(port, HANDLE_CONNECTION)).toHaveLength(sendsAfterRequest);
+        const second = debugHook().pullAll();
+        await acknowledgePullRequest(port);
+        // Answer the queued request with its own empty record so nothing stays pending.
+        await emitPullEvents(port, side, pullEventsBody([]), 2n);
+
+        await expect(second).resolves.toEqual([]);
+        // No acknowledgement for either empty record: no send follows the second request.
+        expect(postedSends(port, HANDLE_CONNECTION)).toHaveLength(sendsAfterFirstRequest + 1);
         expect(readoutText(fixture)).toBe('');
     });
 
