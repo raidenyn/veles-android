@@ -36,12 +36,12 @@
 
 ## 7. Scripted client and loopback
 
-- [ ] 7.1 Add the test-only child-JVM main in `android/app/src/testDebug` with `seed <lifetimes>`, `schedule <delay>`, `advance <seconds>`, `revoke` on a manual clock and a seed-derived `ACTIVE` record; loosen the needed `private` helpers in `PhoneLoopbackMain.kt` to `internal`; confirm release unit tests do not compile it
-- [ ] 7.2 Build the scripted client's own transport glue over the child JVM's stdio and its in-memory trust implementation in `web-extension/test/gate-b/` (no `PairingLink`, no `src/trust/repository.ts`)
-- [ ] 7.3 Implement the `enrollment` journey runner (pairing mode, pairing core and activation engine, reconnect with fresh keys observed as different session key material) and its test
-- [ ] 7.4 Implement the `protected-records` journey runner (seed, pull, schedule_push plus advance_clock, ack, expiry, revoke, reconnect rejected) and its test
-- [ ] 7.5 Add the transitive import-guard test with a negative fixture that imports `src/connector/port.ts` and lives outside the scanned set (under a `fixtures/` folder the guard excludes); fallback allow-list (with `rust-wasm/pkg`) only if the closure cannot be made clean, with the divergence recorded in the guard test's header comment and the apply report
-- [ ] 7.6 Put the import-guard test and the scripted-client tests in the `web-extension/package.json` `test` list (the loopback-dependent ones skip locally without `VELES_LOOPBACK_REQUIRED`, as the existing loopback test does) and in the root `sessionLoopbackCheck` command line, where the variable makes a missing classpath a failure; run `./gradlew sessionLoopbackCheck`
+- [x] 7.1 Add the test-only child-JVM main in `android/app/src/testDebug` with `seed <lifetimes>`, `schedule <delay>`, `advance <seconds>`, `revoke` on a manual clock and a seed-derived `ACTIVE` record; loosen the needed `private` helpers in `PhoneLoopbackMain.kt` to `internal`; confirm release unit tests do not compile it
+- [x] 7.2 Build the scripted client's own transport glue over the child JVM's stdio and its in-memory trust implementation in `web-extension/test/gate-b/` (no `PairingLink`, no `src/trust/repository.ts`)
+- [x] 7.3 Implement the `enrollment` journey runner (pairing mode, pairing core and activation engine, reconnect with fresh keys observed as different session key material) and its test
+- [x] 7.4 Implement the `protected-records` journey runner (seed, pull, schedule_push plus advance_clock, ack, expiry, revoke, reconnect rejected) and its test
+- [x] 7.5 Add the transitive import-guard test with a negative fixture that imports `src/connector/port.ts` and lives outside the scanned set (under a `fixtures/` folder the guard excludes); fallback allow-list (with `rust-wasm/pkg`) only if the closure cannot be made clean, with the divergence recorded in the guard test's header comment and the apply report
+- [x] 7.6 Put the import-guard test and the scripted-client tests in the `web-extension/package.json` `test` list (the loopback-dependent ones skip locally without `VELES_LOOPBACK_REQUIRED`, as the existing loopback test does) and in the root `sessionLoopbackCheck` command line, where the variable makes a missing classpath a failure; run `./gradlew sessionLoopbackCheck`
 
 ## 8. Matrix, validator and runbook
 
