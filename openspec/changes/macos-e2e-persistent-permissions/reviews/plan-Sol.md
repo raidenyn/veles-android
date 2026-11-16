@@ -4,7 +4,7 @@
 - Reviewer: Sol (GPT-6.1-Sol, medium per the roster; executed at the environment's reviewer pin, high effort)
 - Session preset: [Sol]
 - Cap: 5 rounds per reviewer per pass
-- Upstream hashes: brainstorm.md sha256 c7826d38283fb95d1e5a1f2d8e6ac45c7e316a27c5582eb64eb54aa95e517903; proposal.md sha256 612b4e8b99c7f73d262c0cd1278f9f3a7a563c6380e1e966a93513c8012edded; design.md sha256 63d462b356813d730ab0517b6f0cfe5eef19dd57a88c4e53429a9ccc59935349; specs/agent-guidance-layout/spec.md sha256 c68d9626a8f206b93c059e2ef72eecbc258b66b135bac05956d9c4e7b99c4eaf; specs/real-device-testing/spec.md sha256 9b693d2db617e1ceec77b4388d1d90ea8d9d4b15f74568a21776256740d773c3; tasks.md sha256 517090dd135d0d8753b2a987f43963df41450e59f4b7756e58a4e51aa5e6aa40
+- Upstream hashes: brainstorm.md sha256 01670f07cf77f34f048604305d5e26ec96b4867d92a67cdb9f017ef472da6c7d; proposal.md sha256 9e5baea97f5cfed8ce9dfee7d96a3be679c440a109e6b69df6884d0157d52910; design.md sha256 8ef5414d2f8e7699bf1a4288917acbc6307ed6ffb452011c18829b3e369ef145; specs/agent-guidance-layout/spec.md sha256 c68d9626a8f206b93c059e2ef72eecbc258b66b135bac05956d9c4e7b99c4eaf; specs/real-device-testing/spec.md sha256 9b693d2db617e1ceec77b4388d1d90ea8d9d4b15f74568a21776256740d773c3; tasks.md sha256 35cd96bd71f1a1ce9add0c955515acffa38f9fd97fea4a7919c15ba08b2cb530
 
 ## Pass 1
 
@@ -45,3 +45,22 @@ The only edit was the EOF blank line removal; the reviewer confirmed it cosmetic
 `git diff --check` passes.
 
 Approved content: plan sha256 4d79d2fef1065cf9c25ad7908a4fab006c1591da157e71d47dd79559762e322d
+
+## Pass 3 — identifier migration to me.nagaev.veles.debug
+
+### Round 1 — changes-required
+
+| Severity | Finding | Disposition |
+| --- | --- | --- |
+| high | The early Task 4 verification ran against the new baseline before the identifier migration, so a builder could not tell historical work from executable order | fixed: Task 4 is explicitly labelled historical (previous identity), with the new-identity check in Task 6 Step 6 |
+
+### Round 2 — approve
+
+No findings. The migration mechanics are concrete and the historical verification is separated from
+the new-identity sequence.
+
+### Round 3 — approve (consistency)
+
+The amended tasks hash was revalidated; the unchanged plan remains consistent.
+
+Approved content: plan sha256 002f5c78bed665771e809db0318efec9b88b5ce000386df63c730680597b9bf9

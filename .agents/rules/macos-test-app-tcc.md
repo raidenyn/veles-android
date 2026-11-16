@@ -20,7 +20,7 @@ Messaging host test bundle in `native-bridge/host/`.
 - Build a real `.app` bundle with `NSBluetoothAlwaysUsageDescription`, and `LSUIElement` for a
   headless host. A bare executable has no bundle identity.
 - Use one fixed bundle identifier and the node's one approved signing identity. For the Bluetooth
-  test vehicle that is `VelesOtpDebug.app`, identifier `me.nagaev.veles.otp23.poc`, carrying the
+  test vehicle that is `VelesOtpDebug.app`, identifier `me.nagaev.veles.debug`, carrying the
   production `veles-native-host`, signed with the Apple Development certificate recorded in
   `native-bridge/installer/macos/AGENTS.md`; `native-bridge/host/scripts/macos-test-bundle.sh`
   builds exactly that.
@@ -28,7 +28,7 @@ Messaging host test bundle in `native-bridge/host/`.
   infer stability from "not a cdhash":
 
 ```text
-identifier "me.nagaev.veles.otp23.poc" and anchor apple generic and certificate
+identifier "me.nagaev.veles.debug" and anchor apple generic and certificate
 leaf[subject.CN] = "Apple Development: yuriy@nagaev.me (ZWYYS8X98S)" and
 certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */
 ```
@@ -99,6 +99,10 @@ macOS account, an explicit reset, or a replaced/renewed certificate or team **if
 shows it changed**. A planned, attended first-use run may complete its initial grant; record that it
 happened and keep the identity. An unexpected `notDetermined`, `permission_pending` or `denied` during
 a reuse run is not retried: stop, fix the identity or launch path, and then repeat.
+
+The previous test identity `me.nagaev.veles.otp23.poc` is retired. Do not reuse or reset its grant;
+the identifier change to `me.nagaev.veles.debug` is a new identity and needs one person-approved
+grant, after which it is reused like any other identity.
 
 A new certificate, team, bundle id or macOS account can change the identity. Compare the DR before
 and after; if it changed, plan one person-approved grant, revalidate, then reuse that identity for

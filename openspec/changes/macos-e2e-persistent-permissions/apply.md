@@ -16,16 +16,18 @@
   under `native-bridge/host/`.
 - `native-bridge/host/scripts/macos-test-bundle.sh` and `test_macos_test_bundle.sh`: the produced app
   and identity record are renamed from `VelesOtp23PoC.app`/`.identity.txt` to
-  `VelesOtpDebug.app`/`.identity.txt`, and `CFBundleName` is `VelesOtpDebug`. The bundle identifier
-  and signing requirement are unchanged, so the existing TCC grant is reused. The shell test also
-  asserts the new `CFBundleName`.
+  `VelesOtpDebug.app`/`.identity.txt`, `CFBundleName` is `VelesOtpDebug`, and the bundle identifier
+  moves from `me.nagaev.veles.otp23.poc` to `me.nagaev.veles.debug` (a new TCC identity, granted once
+  by the owner). The signing identity/team and the designated-requirement shape stay the same. The
+  shell test also asserts the new `CFBundleName`.
 - `native-bridge/host/scripts/accdrv/macid.py` and `test_driver.py`: the acceptance driver accepts
-  both the canonical `VelesOtpDebug.app` and the legacy `VelesOtp23PoC.app`, keeping the bundle
-  identifier, team, authority and Apple-anchor checks; a legacy-acceptance test was added.
+  both the canonical `VelesOtpDebug.app` and the legacy `VelesOtp23PoC.app`, keeping its single
+  approved identifier (the new one), team, authority and Apple-anchor checks; a legacy-acceptance
+  test was added.
 - `openspec/changes/macos-e2e-persistent-permissions/`: planning artifacts, review records, the
   evidence record, the preserved probe/driver harness and the raw TCC windows.
 
-No host code, CI, credential, signing-identity or signing-requirement change.
+No host code, CI, credential or signing-identity/team change.
 
 ## Task completion
 
@@ -51,15 +53,23 @@ against the rule, and the real-Mac run was recorded.
   from that bundle; the transcript is `ready → scan_state started → stopped → shutdown_complete`
   (exit 0), and the 45-record TCC window has 4 `AUTHREQ_SUBJECT` and 3 Bluetooth handling records
   with 0 `AUTHREQ_PROMPTING`, 0 `CFUserNotification` and 0 `TCCDEvent` `Create`/`Delete`.
+- Real Mac, new identifier `me.nagaev.veles.debug`: packaged `VelesOtpDebug.app` (post-sign
+  `17d0fa87…`, cdhash `bb5a91f6…`); the probe reported `not_determined → allowed_always` after the
+  one owner-approved prompt; the grant window has 1 `AUTHREQ_PROMPTING` and 1 `TCCDEvent Create`
+  (`evidence/logs/grant-debug.ndjson`). The real host then started a scan with no second prompt, and
+  the reuse window has 4 subject and 3 Bluetooth handling records with 0 prompt/grant writes
+  (`evidence/logs/reuse-debug.ndjson`).
 
 ## Deviations
 
 - The Mac verification used the preserved evidence harness (a LaunchServices driver) rather than a
   Chrome Native Messaging run. The rule names Chrome as the primary route and the harness as evidence
   tooling; no product code or identity changed.
-- The test bundle was renamed from `VelesOtp23PoC.app` to `VelesOtpDebug.app` after the first
-  verification. The same host binary was repackaged and re-verified: the designated requirement,
-  scan, and TCC window results are unchanged. The acceptance driver now accepts both names, keeping
-  its signing checks; its full suite passes.
+- The test bundle was renamed from `VelesOtp23PoC.app` to `VelesOtpDebug.app` and its identifier was
+  moved from `me.nagaev.veles.otp23.poc` to `me.nagaev.veles.debug` after the first verification. The
+  same host binary was repackaged and re-verified: the new identity received one owner-approved
+  grant, then the real host scan and a clean TCC window confirmed reuse with no second prompt. The
+  retired identifier's grant was neither reused nor reset. The acceptance driver now accepts both
+  app names, keeping its single approved identifier and signing checks; its full suite passes.
 - The branch was not pushed and no pull request was opened: the request was the rule and its
   verification, not a release.

@@ -57,11 +57,15 @@ Windows and Tauri work and contradicts the platform-home spec.
 
 ### D3. One test identity
 
-The canonical Bluetooth test vehicle stays `VelesOtpDebug.app`, bundle identifier
-`me.nagaev.veles.otp23.poc`, signed with `Apple Development: yuriy@nagaev.me (ZWYYS8X98S)`
+The canonical Bluetooth test vehicle is `VelesOtpDebug.app`, bundle identifier
+`me.nagaev.veles.debug`, signed with `Apple Development: yuriy@nagaev.me (ZWYYS8X98S)`
 (Team `7T39M26Z99`), carrying the production `veles-native-host` as
 `native-bridge/host/scripts/macos-test-bundle.sh` already does. A fresh output directory per build is
 fine; the grant is keyed by identity, not path.
+
+The previous test identity `me.nagaev.veles.otp23.poc` is retired. The identifier change is a new TCC
+identity: the owner accepts one fresh Bluetooth grant, and the retired grant is neither reused nor
+reset. After that grant, rebuilds and path changes reuse the new identity.
 
 A production-shaped bundle identifier (for example `me.nagaev.veles.bridge`) is a second fixed
 identity with its own one-time grant, used only when a run genuinely needs that identifier. The test
@@ -89,7 +93,7 @@ reuse; the first signed build records the baseline once. The current baseline fo
 identity is:
 
 ```text
-identifier "me.nagaev.veles.otp23.poc" and anchor apple generic and certificate
+identifier "me.nagaev.veles.debug" and anchor apple generic and certificate
 leaf[subject.CN] = "Apple Development: yuriy@nagaev.me (ZWYYS8X98S)" and
 certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */
 ```
@@ -141,6 +145,9 @@ shows it changed**.
 
 ## Risks / Trade-offs
 
+- **A changed bundle identifier is a new TCC identity** → the move to `me.nagaev.veles.debug` was
+  accepted by the owner as one fresh grant; the retired `me.nagaev.veles.otp23.poc` grant is left
+  untouched and never reused.
 - **A replaced or renewed Apple Development certificate changes the DR** → compare
   `codesign -d -r-` before and after; if it changed, plan one person-approved grant and revalidate.
 - **A second production-shaped bundle id is a second identity** → prefer the canonical test id; use
@@ -156,12 +163,14 @@ shows it changed**.
 
 ## Migration Plan
 
-Documentation and test-bundle naming commit: the rule, the two `AGENTS.md` updates, the app-name
-rename in `macos-test-bundle.sh` and its shell test, the `accdrv/macid.py` acceptance of the new and
-legacy names with its test, and the spec deltas. There is no
-deployment, data migration or rollback beyond reverting the commit. Existing Mac test apps remain
-usable; a session that switches to the canonical bundle uses the grant created during the
-investigation, or one new Allow if its identity differs.
+Documentation and test-bundle naming commit: the rule, the two `AGENTS.md` updates, the app-name and
+identifier change in `macos-test-bundle.sh` and its shell test, the `accdrv/macid.py` acceptance of
+the new and legacy app names with its test, and the spec deltas. There is no
+deployment, data migration or rollback beyond reverting the commit. App bundles that carry the legacy
+app name with the new identifier remain usable; bundles signed with the retired
+`me.nagaev.veles.otp23.poc` are rejected by the current acceptance driver and are historical evidence
+only. A session that switches to the canonical bundle uses the new identity's one-time grant, and the
+retired grant is left untouched and not reused.
 
 ## Open Questions
 

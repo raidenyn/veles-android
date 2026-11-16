@@ -8,9 +8,11 @@ launch route, and a preflight built from evidence the repository already produce
 The change is documentation and test-bundle naming: a node-scoped rule, its listing in the macOS node
 `AGENTS.md`, an explicit mandatory handoff in the host node `AGENTS.md` (the Bluetooth test bundle and
 its packaging script live in the host node, but the rule is macOS-scoped and is not auto-delivered
-there), and the app name produced by that script changes from `VelesOtp23PoC.app` to
-`VelesOtpDebug.app` with the same bundle identifier and signing requirement. It adds no host code, no
-CI job, no credential and no new probe binary.
+there), and the test identity changes from `VelesOtp23PoC.app` / `me.nagaev.veles.otp23.poc` to
+`VelesOtpDebug.app` / `me.nagaev.veles.debug`. The certificate and team stay; the new identifier is a
+fresh TCC identity, so the retired `me.nagaev.veles.otp23.poc` grant is neither reused nor reset and
+the owner accepts one new grant. It adds no host code, no CI job, no credential and no new probe
+binary.
 
 ## Alternatives Considered
 
@@ -57,7 +59,7 @@ rule by hand before any macOS Bluetooth E2E run and to treat it as mandatory; th
 copied into the host file. The rule states:
 
 1. **One identity.** The canonical Bluetooth test bundle is `VelesOtpDebug.app`, bundle identifier
-   `me.nagaev.veles.otp23.poc`, signed with the node's recorded Apple Development certificate
+   `me.nagaev.veles.debug`, signed with the node's recorded Apple Development certificate
    (`Apple Development: yuriy@nagaev.me (ZWYYS8X98S)`, Team `7T39M26Z99`); the production host
    executable is embedded in it, as `native-bridge/host/scripts/macos-test-bundle.sh` already does.
    This test identity is test-vehicle provenance, not evidence for the production distribution
@@ -110,7 +112,10 @@ identity/script, not the machine-specific remote-control tooling used to reach a
   `native-bridge/installer/macos/AGENTS.md` (the file already declared canonical for macOS signing
   and TCC), with a mandatory read-by-hand instruction in `native-bridge/host/AGENTS.md` because the
   macOS glob does not deliver the rule under `native-bridge/host/`.
-- **Reuse the existing approved identity.** No new certificate, no key export, no keychain changes.
+- **Reuse the approved certificate and team; migrate the identity once.** No new certificate, no key
+  export, no keychain changes. The identifier move to `me.nagaev.veles.debug` is a new TCC identity:
+  the owner accepts one fresh grant, and the retired `me.nagaev.veles.otp23.poc` grant is neither
+  reused nor reset.
 - **No new tool, and no negative claim without coverage.** The preflight is the existing signature
   checks plus a validated unified TCC log window (a positive control proves the capture observed the
   run); an unevidenced or unreadable window is BLOCKED, not "no prompt". The host's own first
@@ -119,9 +124,9 @@ identity/script, not the machine-specific remote-control tooling used to reach a
   one grant, then a different signed binary, a copied path and the real production host all reused it
   with no prompt (the TCC log showed no prompt or grant event after the one-time Allow); ad-hoc builds
   and SSH launches defeated it.
-- **Documentation and naming change.** The existing packaging script already embeds the production
-  host in the
-  canonical identity; the missing piece was guidance, not code.
+- **Documentation, naming and test-tool change.** The packaging script and the acceptance driver
+  change only the app name and identifier; the host implementation and the signing identity/team stay
+  the same. The missing piece for persistent permissions was guidance, not host code.
 
 ## Open Questions
 

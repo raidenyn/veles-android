@@ -4,7 +4,7 @@
 - Reviewer: Sol (GPT-6.1-Sol, medium per the roster; executed at the environment's reviewer pin, high effort)
 - Session preset: [Sol]
 - Cap: 5 rounds per reviewer per pass
-- Upstream hashes: brainstorm.md sha256 c7826d38283fb95d1e5a1f2d8e6ac45c7e316a27c5582eb64eb54aa95e517903
+- Upstream hashes: brainstorm.md sha256 01670f07cf77f34f048604305d5e26ec96b4867d92a67cdb9f017ef472da6c7d
 
 ## Pass 1
 
@@ -45,3 +45,17 @@ No findings. The acceptance-driver compatibility is explicit and the scope no lo
 docs-only.
 
 Approved content: proposal sha256 612b4e8b99c7f73d262c0cd1278f9f3a7a563c6380e1e966a93513c8012edded
+
+## Pass 3 — identifier migration to me.nagaev.veles.debug
+
+### Round 1 — approve
+
+The proposal states the retirement of `me.nagaev.veles.otp23.poc`, the one fresh owner-approved grant
+for `me.nagaev.veles.debug` and the migration scope. No findings.
+
+### Round 2 — approve (consistency)
+
+The brainstorm clarification changed its upstream hash but not the proposal's claims; the consistency
+check found no issue.
+
+Approved content: proposal sha256 9e5baea97f5cfed8ce9dfee7d96a3be679c440a109e6b69df6884d0157d52910

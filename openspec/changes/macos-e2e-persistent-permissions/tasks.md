@@ -3,7 +3,7 @@
 - [x] 1.1 Create `.agents/rules/macos-test-app-tcc.md` with frontmatter `trigger: glob`, `globs` and
   `paths` both exactly `native-bridge/installer/macos/**` (no brace expansion).
 - [x] 1.2 Write the "Build the canonical test app" section: bundle `VelesOtpDebug.app`, identifier
-  `me.nagaev.veles.otp23.poc`, Apple Development `yuriy@nagaev.me (ZWYYS8X98S)`, Team `7T39M26Z99`,
+  `me.nagaev.veles.debug`, Apple Development `yuriy@nagaev.me (ZWYYS8X98S)`, Team `7T39M26Z99`,
   `native-bridge/host/scripts/macos-test-bundle.sh`, the exact baseline designated requirement,
   GUI-session signing, no ad-hoc, and path independence.
 - [x] 1.3 Write the "Launch the way production does" section: Chrome Native Messaging manifest `path`
@@ -29,7 +29,8 @@
 - [x] 3.1 Check the delivered rule against the two spec deltas: identity and baseline, launch routes,
   log coverage, no reset or unplanned retry, and the planned first-grant exception.
 - [x] 3.2 Confirm that no root `AGENTS.md`, `.github/components.json`, CI, host implementation or
-  platform-identity change is needed; no new node or scope is introduced.
+  production/platform identity change is needed; the macOS test identity migration is task 6.4, and
+  no new node or scope is introduced.
 
 ## 4. Static checks
 
@@ -40,6 +41,10 @@
 - [x] 4.4 `wc -c .agents/rules/macos-test-app-tcc.md` is below 24,000 bytes.
 
 ## 5. Real Mac verification
+
+Historical note: this run was performed against `me.nagaev.veles.otp23.poc` before the identifier
+migration. A fresh implementation runs the equivalent verification after 6.4, against
+`me.nagaev.veles.debug`.
 
 - [x] 5.1 On the Mac, build the current `veles-native-host` (its release binary comes from the host
   target directory, e.g. `build/native-bridge/host-target/release/veles-native-host`), then run
@@ -56,12 +61,17 @@
 
 - [x] 6.1 Rename `APP_NAME`, `RECORD_NAME` and `CFBundleName` from `VelesOtp23PoC` to
   `VelesOtpDebug` in `native-bridge/host/scripts/macos-test-bundle.sh` and update its shell test;
-  keep the bundle identifier and signing requirement unchanged.
-- [x] 6.2 Rebuild and sign `VelesOtpDebug.app` on the Mac, confirm the designated requirement is
-  unchanged, and confirm the existing grant is reused (scan starts, no prompt).
+  keep the signing identity and team unchanged.
+- [x] 6.2 Historical app-name-only check (before the identifier migration): rebuild and sign
+  `VelesOtpDebug.app` on the Mac with the then-current `me.nagaev.veles.otp23.poc` identifier,
+  confirm its designated requirement was unchanged, and confirm its grant was reused (scan starts,
+  no prompt). The new identity's fresh grant and post-migration reuse are verified in 6.4.
 - [x] 6.3 Update `native-bridge/host/scripts/accdrv/macid.py` to accept both `VelesOtpDebug.app` and
   the legacy `VelesOtp23PoC.app` while keeping its identifier and signature checks; add the
   legacy-acceptance test and run `test_driver.MacIdentityTests`.
+- [x] 6.4 Change `APPROVED_BUNDLE_ID` to `me.nagaev.veles.debug` in the packaging script and the
+  acceptance driver, update the shell test and the rule baseline, and re-run the Mac check with the
+  one owner-approved grant; the retired `me.nagaev.veles.otp23.poc` is not reused or reset.
 
 ## 7. Commit
 

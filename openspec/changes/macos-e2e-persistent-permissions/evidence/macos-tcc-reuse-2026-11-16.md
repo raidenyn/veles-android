@@ -5,10 +5,11 @@ Purpose: establish whether one Bluetooth grant can be reused across rebuilds and
 launch paths defeat it. Read-only except one person-approved Bluetooth grant; no TCC reset, no
 keychain or ACL change, no key export.
 
-**Name note:** this run used the app name `VelesOtp23PoC.app` (what `macos-test-bundle.sh` produced
-at the time). The canonical name is now `VelesOtpDebug.app`; the bundle identifier and designated
-requirement are unchanged, so the identity results below apply to both names. The post-rename run is
-recorded at the end.
+**Identity note:** this run used `VelesOtp23PoC.app` and identifier `me.nagaev.veles.otp23.poc` (what
+`macos-test-bundle.sh` produced at the time). The canonical identity is now `VelesOtpDebug.app` with
+identifier `me.nagaev.veles.debug`; the previous grant is retired and a fresh one was approved on the
+Mac. The historical results below are for the old identity and demonstrate the mechanism; the
+post-change run is recorded at the end.
 
 ## Precondition
 
@@ -158,6 +159,28 @@ same signing identity):
 
 The rename did not change the designated requirement or create a prompt; the existing grant was
 reused.
+
+## Identifier migration to `me.nagaev.veles.debug` (2026-11-16, 12:35 local)
+
+The test identity moved from `me.nagaev.veles.otp23.poc` to `me.nagaev.veles.debug` (same app name,
+certificate and team; a new TCC identity). The owner accepted one fresh grant.
+
+- Packaging: `VelesOtpDebug.app` with identifier `me.nagaev.veles.debug`; source executable
+  `a1314f77…`, post-sign `17d0fa87…`, cdhash `bb5a91f6…`; `codesign -d -r-` equals the new baseline
+  (`identifier "me.nagaev.veles.debug" and anchor apple generic and certificate
+  leaf[subject.CN] = "Apple Development: yuriy@nagaev.me (ZWYYS8X98S)" and certificate
+  1[field.1.2.840.113635.100.6.2.1] /* exists */`).
+- One-time grant: the probe with the same identity was launched through LaunchServices;
+  `authorization_before = not_determined`, `authorization_after = allowed_always`, waited 22.35 s
+  (`evidence/probe-grant-debug.json`). The grant window has 1 `AUTHREQ_PROMPTING`, 1 `TCCDEvent
+  Create`, 0 `Delete`, 5 `AUTHREQ_SUBJECT` and 4 Bluetooth handling records
+  (`evidence/logs/grant-debug.ndjson`).
+- Reuse: the real host inside the same signed bundle was launched through the pinned driver:
+  `ready → scan_state started → scan_state stopped → shutdown_complete`, exit 0
+  (`evidence/real-host-driver-result-debug.json`). The reuse window has 4 `AUTHREQ_SUBJECT` and 3
+  Bluetooth handling records, with 0 `AUTHREQ_PROMPTING`, 0 `CFUserNotification` and 0 `TCCDEvent`
+  `Create`/`Delete` (`evidence/logs/reuse-debug.ndjson`). No second prompt.
+- The retired `me.nagaev.veles.otp23.poc` grant was neither reused nor reset.
 
 ## Limits
 

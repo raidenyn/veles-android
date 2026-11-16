@@ -12,7 +12,7 @@ bad() { n=$((n+1)); fail=$((fail+1)); echo "FAIL: $1" >&2; }
 expect_ok()   { local d="$1"; shift; if "$@" 2>/dev/null; then ok; else bad "$d"; fi; }
 expect_fail() { local d="$1"; shift; if "$@" 2>/dev/null; then bad "$d"; else ok; fi; }
 
-ID=me.nagaev.veles.otp23.poc; TEAM=7T39M26Z99; AUTH="Apple Development: yuriy@nagaev.me (ZWYYS8X98S)"
+ID=me.nagaev.veles.debug; TEAM=7T39M26Z99; AUTH="Apple Development: yuriy@nagaev.me (ZWYYS8X98S)"
 sig() { # id team leaf [signature-line]
     printf 'Executable=/x/MacOS/veles-native-host\nIdentifier=%s\nFormat=app bundle with Mach-O thin (arm64)\n%s\nAuthority=%s\nAuthority=Apple Worldwide Developer Relations Certification Authority\nAuthority=Apple Root CA\nTeamIdentifier=%s\n' "$1" "${4:-Signature size=4800}" "$3" "$2"
 }
@@ -65,7 +65,7 @@ case "$1" in
               exit 0 ;;
     -dvv) team=7T39M26Z99
           [ "$SHIM_MODE" = wrong_team ] && team=OTHERTEAM1
-          printf 'Identifier=me.nagaev.veles.otp23.poc\nFormat=app bundle\nAuthority=%s\nAuthority=Apple Worldwide Developer Relations Certification Authority\nAuthority=Apple Root CA\nTeamIdentifier=%s\n' "$SHIM_AUTH" "$team" >&2 ;;
+          printf 'Identifier=me.nagaev.veles.debug\nFormat=app bundle\nAuthority=%s\nAuthority=Apple Worldwide Developer Relations Certification Authority\nAuthority=Apple Root CA\nTeamIdentifier=%s\n' "$SHIM_AUTH" "$team" >&2 ;;
     -dv) echo "CDHash=0123456789abcdef" >&2
          # Real `codesign -dv --verbose=4` keeps writing after the CDHash line. Emit far more than a
          # pipe buffer (64 KiB) so a consumer that exits early at CDHash= makes this producer take
@@ -97,7 +97,7 @@ if run good one "$OUT"; then ok; else bad "success run exit"; fi
 grep -q "^post_signing_executable_sha256: " "$OUT/VelesOtpDebug.identity.txt" && grep -q "^source_executable_sha256: " "$OUT/VelesOtpDebug.identity.txt" && ok || bad "record has separate hashes"
 grep -q "production_identity: UNVALIDATED" "$OUT/VelesOtpDebug.identity.txt" && ok || bad "record labelled unvalidated"
 grep -q -- "--sign AAAA1111 " "$LOG" && ! grep -q -- "--sign - " "$LOG" && ok || bad "signed with the selected identity only"
-grep -q "<string>me.nagaev.veles.otp23.poc</string>" "$OUT/VelesOtpDebug.app/Contents/Info.plist" && ! grep -q "me.nagaev.veles.bridge" "$OUT/VelesOtpDebug.app/Contents/Info.plist" && ok || bad "approved PoC identifier (not production) in plist"
+grep -q "<string>me.nagaev.veles.debug</string>" "$OUT/VelesOtpDebug.app/Contents/Info.plist" && ! grep -q "me.nagaev.veles.bridge" "$OUT/VelesOtpDebug.app/Contents/Info.plist" && ok || bad "approved PoC identifier (not production) in plist"
 grep -q "<string>VelesOtpDebug</string>" "$OUT/VelesOtpDebug.app/Contents/Info.plist" && ok || bad "CFBundleName is VelesOtpDebug"
 
 # refuses to touch an existing app or a stale record (nothing deleted, nothing changed)
@@ -150,7 +150,7 @@ done
 # no way to choose another identity
 OUT="$SHIMS/b-arg"
 if run good one "$OUT" -i "Apple Development: x (Y)"; then bad "-i must not exist"; else ok; fi
-if run good one "$OUT" --bundle-id me.nagaev.veles.otp23.poc; then bad "--bundle-id must not exist"; else ok; fi
+if run good one "$OUT" --bundle-id me.nagaev.veles.debug; then bad "--bundle-id must not exist"; else ok; fi
 # not macOS: exit 2
 printf '#!/bin/sh\necho Linux\n' > "$SHIMS/uname"
 SHIM_MODE=good SHIM_IDENTITIES=one PATH="$SHIMS:$PATH" bash "$SCRIPT" -b "$BIN" -o "$SHIMS/o9" >/dev/null 2>&1; [ $? -eq 2 ] && ok || bad "non-macOS exit code"

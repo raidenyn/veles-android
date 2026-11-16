@@ -70,7 +70,7 @@ No item failed.
 - [ ] All related commits have been pushed
 
 **Commit range** (if known): `ab15de4..d2f9d04` (rule, specs and evidence), `c9d3ed5` (verification
-record), plus the test-bundle rename commit (`docs(test-bundle): ...`) on the same branch.
+record), plus the test-bundle rename and identifier-migration commits (`docs(test-bundle): ...`) on the same branch.
 
 The branch `docs/mac-e2e-persistent-permissions` is local; no push or pull request was requested.
 
@@ -80,17 +80,15 @@ The branch `docs/mac-e2e-persistent-permissions` is local; no push or pull reque
 
 | Artifact | Reviewer | Hash state | Open critical or high findings |
 |---|---|---|---|
-| `brainstorm.md` | Sol | current (`c7826d38…`) | none |
-| `proposal.md` | Sol | current (`612b4e8b…`) | none |
-| `design.md` | Sol | current (`63d462b3…`) | none |
+| `brainstorm.md` | Sol | current (`01670f07…`) | none |
+| `proposal.md` | Sol | current (`9e5baea9…`) | none |
+| `design.md` | Sol | current (`8ef5414d…`) | none |
 | `specs/agent-guidance-layout/spec.md` | Sol | current (`c68d9626…`) | none |
 | `specs/real-device-testing/spec.md` | Sol | current (`9b693d2d…`) | none |
-| `tasks.md` | Sol | current (`517090dd…`) | none |
-| `plan.md` | Sol | current (`4d79d2fe…`) | none |
+| `tasks.md` | Sol | current (`35cd96bd…`) | none |
+| `plan.md` | Sol | current (`002f5c78…`) | none |
 
-The rename amendment was reviewed in a second pass; the plan's EOF blank-line removal was confirmed
-cosmetic in a third round. The spec content is unchanged; its consistency revalidation was approved
-against the amended design.
+The rename and identifier amendments were reviewed in later passes; the plan's EOF blank-line removal was confirmed cosmetic. The spec content is unchanged; its consistency revalidations were approved against the amended design.
 
 - [x] Every planning file has an approved record from every reviewer the record header lists
 - [x] Every recorded hash — the file's own and each upstream file's — matches the file on disk
@@ -112,8 +110,8 @@ against the amended design.
 - [ ] ❌ FAIL
 
 Warnings: the delta specs are pending the closeout sync (by design), and the branch is not pushed
-because no pull request or release was requested. The rename amendment and the acceptance-driver
-legacy-path compatibility are included in the implementation and the checks below.
+because no pull request or release was requested. The rename and identifier amendments and the acceptance-driver
+legacy-app-name compatibility are included in the implementation and the checks below. The new identifier `me.nagaev.veles.debug` received one owner-approved grant; the retired identifier is not reused or reset.
 
 **Check 6 (Review Records) gate**: PASS — seven approved records, all hashes current, full upstream
 sets, no open critical or high finding. The second (rename) pass is approved for every artifact; the

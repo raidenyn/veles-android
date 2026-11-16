@@ -4,7 +4,7 @@
 - Reviewer: Sol (GPT-6.1-Sol, medium per the roster; executed at the environment's reviewer pin, high effort)
 - Session preset: [Sol]
 - Cap: 5 rounds per reviewer per pass
-- Upstream hashes: brainstorm.md sha256 c7826d38283fb95d1e5a1f2d8e6ac45c7e316a27c5582eb64eb54aa95e517903; proposal.md sha256 612b4e8b99c7f73d262c0cd1278f9f3a7a563c6380e1e966a93513c8012edded
+- Upstream hashes: brainstorm.md sha256 01670f07cf77f34f048604305d5e26ec96b4867d92a67cdb9f017ef472da6c7d; proposal.md sha256 9e5baea97f5cfed8ce9dfee7d96a3be679c440a109e6b69df6884d0157d52910
 
 ## Pass 1
 
@@ -40,3 +40,17 @@ No findings. The identity, baseline and launch contract remain coherent, and the
 is complete.
 
 Approved content: design sha256 63d462b356813d730ab0517b6f0cfe5eef19dd57a88c4e53429a9ccc59935349
+
+## Pass 3 — identifier migration to me.nagaev.veles.debug
+
+### Round 1 — approve
+
+The new baseline, the retired identifier and the fresh owner-approved grant are explicit. The
+reviewer asked only to clarify which existing bundles remain usable; that clarification was made.
+
+### Round 2 — approve
+
+No findings. The migration distinguishes legacy app names with the new identifier from retired
+identifier bundles, which the current driver rejects.
+
+Approved content: design sha256 8ef5414d2f8e7699bf1a4288917acbc6307ed6ffb452011c18829b3e369ef145

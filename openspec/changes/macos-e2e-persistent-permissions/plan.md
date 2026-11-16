@@ -25,12 +25,12 @@ in `evidence/logs/`.
   under 24,000 bytes.
 - The rule is listed by `native-bridge/installer/macos/AGENTS.md`; no root `repo-*` rule is added and
   the root `AGENTS.md` is unchanged.
-- Canonical identity: bundle `VelesOtpDebug.app`, identifier `me.nagaev.veles.otp23.poc`, certificate
+- Canonical identity: bundle `VelesOtpDebug.app`, identifier `me.nagaev.veles.debug`, certificate
   `Apple Development: yuriy@nagaev.me (ZWYYS8X98S)`, Team `7T39M26Z99`.
 - Accepted designated-requirement baseline, quoted verbatim in the rule:
 
 ```text
-identifier "me.nagaev.veles.otp23.poc" and anchor apple generic and certificate
+identifier "me.nagaev.veles.debug" and anchor apple generic and certificate
 leaf[subject.CN] = "Apple Development: yuriy@nagaev.me (ZWYYS8X98S)" and
 certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */
 ```
@@ -186,6 +186,10 @@ Expected: only the rule, the two `AGENTS.md` files and the change directory; no 
 
 ### Task 4: Real Mac verification
 
+**Historical note:** this verification was performed against `me.nagaev.veles.otp23.poc` before the
+identifier migration. A fresh implementation runs the equivalent check after Task 6 Step 6, against
+`me.nagaev.veles.debug`; do not package the pre-migration script against the new baseline.
+
 **Files:**
 - Append: `openspec/changes/macos-e2e-persistent-permissions/evidence/macos-tcc-reuse-2026-11-16.md`
 - Add: a fresh raw window under `evidence/logs/` if the run is new
@@ -203,7 +207,9 @@ rejects a populated output directory, so use a new one.
 - [x] **Step 2: Verify the signature against the baseline**
 
 Run: `codesign --verify --strict <app> && codesign -dvvv <app> && codesign -d -r- <app>`
-Expected: the approved identifier/team/authority and a designated requirement equal to the baseline.
+Expected: the approved identifier/team/authority and a designated requirement equal to the
+pre-migration `me.nagaev.veles.otp23.poc` baseline; Task 6 Step 6 checks the new
+`me.nagaev.veles.debug` baseline.
 
 - [x] **Step 3: Run the pinned verification harness and capture the window**
 
@@ -247,23 +253,26 @@ git add .agents/rules/macos-test-app-tcc.md native-bridge/installer/macos/AGENTS
 git commit -m "docs(rules): reuse one macOS Bluetooth test identity"
 ```
 
-### Task 6: Rename the test bundle
+### Task 6: Rename the test bundle and change its identifier
 
 **Files:**
 - Modify: `native-bridge/host/scripts/macos-test-bundle.sh`
 - Modify: `native-bridge/host/scripts/test_macos_test_bundle.sh`
-- Modify: `.agents/rules/macos-test-app-tcc.md` and the change artifacts that name the app
-- Read: the evidence record's rename note
+- Modify: `native-bridge/host/scripts/accdrv/macid.py`
+- Modify: `native-bridge/host/scripts/test_driver.py`
+- Modify: `.agents/rules/macos-test-app-tcc.md` and the change artifacts that name the app or identity
+- Read: the evidence record's rename and identifier notes
 
 **Interfaces:**
-- Consumes: the canonical identity and baseline from Task 1.
-- Produces: the app name `VelesOtpDebug.app` used by the rule and the post-rename verification.
+- Consumes: the canonical signing identity and team from Task 1.
+- Produces: the app name `VelesOtpDebug.app` and identifier `me.nagaev.veles.debug` used by the rule
+  and the post-change verification.
 
 - [x] **Step 1: Rename the produced app and record**
 
 Change `APP_NAME` to `VelesOtpDebug.app`, `RECORD_NAME` to `VelesOtpDebug.identity.txt`, the
-`CFBundleName` to `VelesOtpDebug`, and the header comments. Keep `APPROVED_BUNDLE_ID` exactly
-`me.nagaev.veles.otp23.poc`, so the designated requirement and the existing TCC grant are unchanged.
+`CFBundleName` to `VelesOtpDebug`, and the header comments. Keep the signing identity and team
+unchanged.
 
 - [x] **Step 2: Update the shell test expectations and assert `CFBundleName`**
 
@@ -275,27 +284,37 @@ that the Info.plist carries `<string>VelesOtpDebug</string>`.
 In `native-bridge/host/scripts/accdrv/macid.py`, set `APP_NAME` to `VelesOtpDebug.app` and accept both
 it and the legacy `VelesOtp23PoC.app` in `bundle_executable_ok`; keep the bundle identifier, team,
 authority and Apple-anchor checks unchanged. Add a legacy-acceptance test to
-`test_driver.py` (and update its canonical fixture path). Run:
-`cd native-bridge/host/scripts && python3 -m unittest test_driver.MacIdentityTests -v`
-Expected: PASS, including the new legacy test.
+`test_driver.py` (and update its canonical fixture path).
 
-- [x] **Step 4: Run the shell test**
+- [x] **Step 4: Change the bundle identifier**
+
+Set `APPROVED_BUNDLE_ID` to `me.nagaev.veles.debug` in `macos-test-bundle.sh` and
+`accdrv/macid.py`, update the shell-test identifier and mocks, and update the rule's identifier,
+baseline designated requirement and retirement note. The retired `me.nagaev.veles.otp23.poc` grant is
+not reused and not reset; the new identifier is a fresh TCC identity.
+
+- [x] **Step 5: Run the shell test and the acceptance-driver tests**
 
 Run: `bash native-bridge/host/scripts/test_macos_test_bundle.sh`
-Expected: PASS (the test mocks `codesign`/`security`; it runs without a Mac).
+Expected: PASS.
+Run: `cd native-bridge/host/scripts && python3 -m unittest test_driver.MacIdentityTests -v`
+Expected: PASS, including the legacy app-name test.
 
-- [x] **Step 5: Package and verify on the Mac**
+- [x] **Step 6: Package and verify on the Mac**
 
-Repeat Task 4 with the new name: `macos-test-bundle.sh -b <binary> -o <fresh dir>` produces
-`VelesOtpDebug.app`; `codesign -d -r-` still equals the baseline; the driver scan starts without a
-prompt and the TCC window has coverage with no prompt or grant write.
+Run `macos-test-bundle.sh -b <binary> -o <fresh dir>` in the GUI session; `codesign -d -r-` must equal
+the new baseline. Launch the probe or the driver bundle for the new identifier and let the owner
+approve the one Bluetooth prompt; record `AUTHREQ_PROMPTING` and the `TCCDEvent Create` in the grant
+window. Then launch the real host from the signed bundle again: `scan_state started` with no prompt,
+and the reuse window has coverage with no prompt or grant write.
 
-- [x] **Step 6: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add native-bridge/host/scripts/macos-test-bundle.sh \
   native-bridge/host/scripts/test_macos_test_bundle.sh \
   native-bridge/host/scripts/accdrv/macid.py native-bridge/host/scripts/test_driver.py \
-  .agents/rules/macos-test-app-tcc.md openspec/changes/macos-e2e-persistent-permissions
-git commit -m "docs(test-bundle): rename the macOS test app to VelesOtpDebug"
+  .agents/rules/macos-test-app-tcc.md native-bridge/installer/macos/AGENTS.md \
+  openspec/changes/macos-e2e-persistent-permissions
+git commit -m "docs(test-bundle): move the macOS test identity to VelesOtpDebug"
 ```

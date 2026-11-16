@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .errors import Blocked, Refused
 
-APPROVED_BUNDLE_ID = "me.nagaev.veles.otp23.poc"
+APPROVED_BUNDLE_ID = "me.nagaev.veles.debug"
 APPROVED_TEAM_ID = "7T39M26Z99"
 APPROVED_AUTHORITY = "Apple Development: yuriy@nagaev.me (ZWYYS8X98S)"
 # The canonical test-vehicle app name, plus the legacy OTP-23 name so archived evidence runs and

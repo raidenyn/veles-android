@@ -12,7 +12,7 @@ TAG=$2
 OUT_ROOT=$3
 APP_NAME=${4:-VelesOtpDebug.app}
 EXEC_NAME=${5:-veles-native-host}
-BUNDLE_ID=${6:-me.nagaev.veles.otp23.poc}
+BUNDLE_ID=${6:-me.nagaev.veles.debug}
 
 APPROVED_AUTHORITY="Apple Development: yuriy@nagaev.me (ZWYYS8X98S)"
 APPROVED_TEAM_ID="7T39M26Z99"

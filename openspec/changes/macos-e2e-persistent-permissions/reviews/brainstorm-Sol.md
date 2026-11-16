@@ -56,3 +56,18 @@ acceptance-driver consumer had to be covered by the proposal/design/tasks/plan, 
 No findings for this artifact.
 
 Approved content: brainstorm sha256 c7826d38283fb95d1e5a1f2d8e6ac45c7e316a27c5582eb64eb54aa95e517903
+
+## Pass 3 — identifier migration to me.nagaev.veles.debug
+
+### Round 1 — changes-required
+
+| Severity | Finding | Disposition |
+| --- | --- | --- |
+| high | The summary still described an unchanged identifier and signing requirement | fixed: the summary and Key Decisions now state the move from `VelesOtp23PoC.app`/`me.nagaev.veles.otp23.poc` to `VelesOtpDebug.app`/`me.nagaev.veles.debug`, the retirement, the fresh grant and the reused certificate/team |
+
+### Round 2 — approve
+
+No findings. The certificate/team reuse is clearly separated from the identity migration, retirement
+and owner-approved fresh grant.
+
+Approved content: brainstorm sha256 01670f07cf77f34f048604305d5e26ec96b4867d92a67cdb9f017ef472da6c7d

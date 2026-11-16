@@ -16,18 +16,21 @@ runs cannot start.
   supported launch route and a validated evidence check, so a one-time grant is reused across
   rebuilds and paths.
 - Reason: removes a manual, per-session prompt and makes unattended macOS E2E possible.
-- Impact: non-breaking, documentation, agent guidance and the test-bundle script's app name; no host
-  code, CI, signing or credential change.
+- Impact: non-breaking for the production app; documentation, agent guidance and the test bundle's
+  name and identifier; no host code, CI, signing or credential change.
 
 **Specific edits**
 - Add `.agents/rules/macos-test-app-tcc.md` (macOS scope) and list it in
   `native-bridge/installer/macos/AGENTS.md`.
 - Add the mandatory read-by-hand handoff in `native-bridge/host/AGENTS.md`.
 - Rename the app produced by `native-bridge/host/scripts/macos-test-bundle.sh` (and its shell test)
-  from `VelesOtp23PoC.app` to `VelesOtpDebug.app`; the bundle identifier and signing requirement stay
-  unchanged, so the existing TCC grant is reused.
+  from `VelesOtp23PoC.app` to `VelesOtpDebug.app`, and change the test bundle identifier from
+  `me.nagaev.veles.otp23.poc` to `me.nagaev.veles.debug`. The identifier change is a new TCC
+  identity: the owner accepts one fresh Bluetooth grant, and the retired identity is not reused or
+  reset.
 - Accept both the canonical and legacy app names in `native-bridge/host/scripts/accdrv/macid.py`,
-  keeping its bundle-identifier and signature checks, and add a legacy-acceptance test.
+  keeping its single approved bundle-identifier and signature checks, and add a legacy-acceptance
+  test.
 - Update the `agent-guidance-layout` and `real-device-testing` specs.
 
 ## Capabilities
