@@ -27,7 +27,7 @@
 
 ## PR comment
 
-- **Comment status**: `pending (post-orientation)` — updated after the comment subroutine.
+- **Comment status**: `posted` (https://github.com/raidenyn/veles-android/pull/158#issuecomment-6908474731).
 
 ---
 
