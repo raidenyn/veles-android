@@ -1,10 +1,10 @@
 ## 1. Fixture core (Android debug, TDD, injected clocks)
 
-- [ ] 1.1 Add a lifetime parameter (default 600) to `createSyntheticEvent`; keep every existing probe test green
-- [ ] 1.2 Add `GateBFixture` in `debugprobe`: seed with five lifetimes (validation, refusal on a bad list), fixed event ids, receipt epoch from the seed's wall clock, in-memory only, injected elapsed-realtime and wall clocks
-- [ ] 1.3 Add the per-pull encoding: unexpired records in seed order with the same event id and floor remaining seconds, omission below one second, `event_count = 0`, `event_ack` logged and never deleting
-- [ ] 1.4 Add the outcome log vocabulary (seeded, scheduled, fired, skipped, cancelled, disarmed, expired-omitted, refusals) with process id and elapsed-realtime timestamps and no keys or full installation ids
-- [ ] 1.5 Unit tests for 1.2-1.4: every `gate-b-history-fixture` scenario for seed, bad lists, expiry (0.5 s boundary, all expired, retained and expired together), seed order, ack never deletes, restart returns unarmed, log content; no sleeping
+- [x] 1.1 Add a lifetime parameter (default 600) to `createSyntheticEvent`; keep every existing probe test green
+- [x] 1.2 Add `GateBFixture` in `debugprobe`: seed with five lifetimes (validation, refusal on a bad list), fixed event ids, receipt epoch from the seed's wall clock, in-memory only, injected elapsed-realtime and wall clocks
+- [x] 1.3 Add the per-pull encoding: unexpired records in seed order with the same event id and floor remaining seconds, omission below one second, `event_count = 0`, `event_ack` logged and never deleting
+- [x] 1.4 Add the outcome log vocabulary (seeded, scheduled, fired, skipped, cancelled, disarmed, expired-omitted, refusals) with process id and elapsed-realtime timestamps and no keys or full installation ids
+- [x] 1.5 Unit tests for 1.2-1.4: every `gate-b-history-fixture` scenario for seed, bad lists, expiry (0.5 s boundary, all expired, retained and expired together), seed order, ack never deletes, restart returns unarmed, log content; no sleeping
 
 ## 2. Router and composition
 
