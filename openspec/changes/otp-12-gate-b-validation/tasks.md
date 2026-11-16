@@ -14,9 +14,9 @@
 
 ## 3. Push scheduler and detach
 
-- [ ] 3.1 Add the clock, timer and wake-resource interfaces and `GateBPushScheduler`: stepped re-check against elapsed realtime, delay validation 1..7200, refusal while unarmed, backstop delay+60 s, one fresh event per open `full` session, `skipped` when none, replacement and explicit cancel, wake resource released on every exit; pushed events never join the history
-- [ ] 3.2 Add `detach()` to both `BuildSessionExtensions` (release no-op), call detach as the first statement of `SharingService.shutdownSessions()` before `host.shutdown()` (no other production edit; the order is guarded by a source-order unit test and observed on a device in 9.1), and make the debug version disarm, cancel, release and clear `DebugProbeRuntime.host`; create the scheduler's own scope in `attach(host)`
-- [ ] 3.3 Unit tests: not before the deadline, fires at the deadline with a hand-advanced clock, delays 0/-1/7201 refused, unarmed refused, skipped, one `fired` line per destination, session close/reseed/revocation do not cancel, explicit cancel and replacement logged, disarm cancels, detach order (source-order guard test), disarm makes the next pull answered by the probe again, wake resource released on fire/skip/cancel/detach
+- [x] 3.1 Add the clock, timer and wake-resource interfaces and `GateBPushScheduler`: stepped re-check against elapsed realtime, delay validation 1..7200, refusal while unarmed, backstop delay+60 s, one fresh event per open `full` session, `skipped` when none, replacement and explicit cancel, wake resource released on every exit; pushed events never join the history
+- [x] 3.2 Add `detach()` to both `BuildSessionExtensions` (release no-op), call detach as the first statement of `SharingService.shutdownSessions()` before `host.shutdown()` (no other production edit; the order is guarded by a source-order unit test and observed on a device in 9.1), and make the debug version disarm, cancel, release and clear `DebugProbeRuntime.host`; create the scheduler's own scope in `attach(host)`
+- [x] 3.3 Unit tests: not before the deadline, fires at the deadline with a hand-advanced clock, delays 0/-1/7201 refused, unarmed refused, skipped, one `fired` line per destination, session close/reseed/revocation do not cancel, explicit cancel and replacement logged, disarm cancels, detach order (source-order guard test), disarm makes the next pull answered by the probe again, wake resource released on fire/skip/cancel/detach
 
 ## 4. adb surface, manifest and release guard
 
