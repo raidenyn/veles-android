@@ -3,15 +3,18 @@ import { readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { initPairingCore } from '../../src/pairing/core';
-import { RecordType, SessionClass } from '../../src/session/wire';
+import { FrameType, RecordType, SessionClass } from '../../src/session/wire';
 
 import { MemoryTrust } from './trust';
 import {
     command,
     deriveIdentity,
     hexOf,
+    isFrame,
+    isEvent,
     isProtectedRecord,
     loadJourney,
+    EVENT_CLOSED,
     newClientEngine,
     openSession,
     parseEvent,
@@ -139,25 +142,55 @@ class ProtectedRecordsDriver {
         body.set(this.phoneInstallationId, 0);
         body.set(pushed.idBytes, 16);
         await this.#send(RecordType.EVENT_ACK, body);
+        // The fixture logs only acknowledgements it owns; wait for that exact event id.
+        await this.phone.waitForStderr(`ack event=${pushed.id}`);
         return {};
     }
 
     async #revoke(): Promise<Record<string, never>> {
         command(this.phone, 'revoke');
         await this.phone.waitForStderr('revoked');
+        // The revoke command closes the session before it logs; consume that close here so the
+        // rejection check below cannot mistake it for the reconnect outcome.
+        await this.phone.next((candidate) => isEvent(candidate, EVENT_CLOSED));
         return {};
     }
 
+    /**
+     * The revoked reconnect must end in the protocol's generic rejection frame and the session
+     * close, and it must not receive any protected record (no PULL_EVENTS/PUSH_EVENT).
+     */
     async #rejected(): Promise<{ rejected: boolean }> {
         const bundle = await this.buildEngine();
-        const startEffects = await bundle.engine.start();
-        sendEffects(this.phone, startEffects);
-        const message = await this.phone.next((candidate) => candidate.kind === 0);
-        const effects = await bundle.engine.onInbound(message.payload);
-        const rejected =
-            !bundle.engine.isOpen &&
-            effects.some((effect) => effect.kind === 'close' || effect.kind === 'terminated');
-        return { rejected };
+        sendEffects(this.phone, await bundle.engine.start());
+        let sawRejection = false;
+        let clientClosed = false;
+        let closed = false;
+        while (!closed) {
+            const message = await this.phone.next(
+                (candidate) => candidate.kind === 0 || isEvent(candidate, EVENT_CLOSED),
+            );
+            if (isProtectedRecord(message)) {
+                throw new Error('revocation delivered a protected record');
+            }
+            if (isEvent(message, EVENT_CLOSED)) {
+                closed = true;
+                continue;
+            }
+            if (!isFrame(message, FrameType.PREAUTH_REJECT)) {
+                throw new Error('revocation did not answer with the generic rejection frame');
+            }
+            const rejection = message.payload;
+            if (rejection.length !== 3 || rejection[1] !== 0 || rejection[2] !== 0) {
+                throw new Error('the generic rejection frame must have an empty payload');
+            }
+            sawRejection = true;
+            const effects = await bundle.engine.onInbound(message.payload);
+            clientClosed =
+                !bundle.engine.isOpen &&
+                effects.some((effect) => effect.kind === 'close' || effect.kind === 'terminated');
+        }
+        return { rejected: sawRejection && clientClosed };
     }
 
     async #send(type: number, body: Uint8Array): Promise<void> {
@@ -227,7 +260,7 @@ if (CLASSPATH === '' && REQUIRED) {
                     );
                     await runJourney(loadJourney('protected-records'), driver);
                 } finally {
-                    phone.stop();
+                    await phone.stop();
                 }
             },
             TIMEOUT_MS,

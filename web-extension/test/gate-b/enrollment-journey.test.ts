@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 import { beforeAll, describe, expect, it } from 'vitest';
 
+import { ActivationEngine } from '../../src/pairing/activation';
 import { ClientMachine } from '../../src/pairing/client-machine';
 import { initPairingCore, PairingExecution } from '../../src/pairing/core';
 import { ProofRegistry } from '../../src/pairing/proofs';
@@ -175,6 +176,9 @@ class EnrollmentDriver {
             lookupPhone: async (id) => (id === peerId ? peer : undefined),
             upgradeMirror: (id, proof) => this.trust.confirm(id, 'phone_active', proof),
             now: () => 1_000,
+            // The reconnect runs through the production recovery activation handler, exactly
+            // like the existing loopback recovery scenario, not a bare no-op handler.
+            handler: new ActivationEngine({ trust: this.trust, proofs: this.proofs }),
         });
         const session = await openSession(this.phone, bundle, peer.et ?? null);
         const sessionClass = bundle.engine.sessionClass;
@@ -227,7 +231,7 @@ if (CLASSPATH === '' && REQUIRED) {
                     expect(driver.phoneState).toBe('ACTIVE');
                     expect(driver.phoneTrust?.peers[0]?.state).toBe('active');
                 } finally {
-                    phone.stop();
+                    await phone.stop();
                 }
             },
             TIMEOUT_MS,

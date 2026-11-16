@@ -21,8 +21,7 @@ import type { DerivedIdentity } from './trust';
 // messaging in the loop. `runJourney` walks the client-agnostic journey file and
 // checks each step's expectations; drivers supply the protocol actions.
 
-const TIMEOUT_MS = 50_000;
-const POLL_MS = 20;
+const WATCHDOG_MS = 50_000;
 const SESSION_PREFIX_BYTES = 8;
 const CLASS_NAME_SESSION = 'me.nagaev.veles.session.loopback.PhoneLoopbackMainKt';
 const CLASS_NAME_GATE_B = 'me.nagaev.veles.session.GateBLoopbackMainKt';
@@ -186,7 +185,7 @@ export interface LoopbackProcess {
     next(match: (message: PhoneMessage) => boolean): Promise<PhoneMessage>;
     waitForStderr(fragment: string): Promise<void>;
     stderr(): string;
-    stop(): void;
+    stop(): Promise<void>;
 }
 
 export interface StartPhoneOptions {
@@ -195,6 +194,32 @@ export interface StartPhoneOptions {
     mode?: 'pairing';
 }
 
+interface MessageWaiter {
+    match: (message: PhoneMessage) => boolean;
+    resolve: (message: PhoneMessage) => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+}
+
+interface StderrWaiter {
+    fragment: string;
+    resolve: () => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+}
+
+function watchdog(callback: () => void): ReturnType<typeof setTimeout> {
+    const timer = setTimeout(callback, WATCHDOG_MS);
+    // A pending protocol step must never keep the test process alive on its own.
+    timer.unref();
+    return timer;
+}
+
+/**
+ * Spawns the phone child JVM. Frame and stderr waits are event-driven (stdout/stderr data plus
+ * waiter queues), never polled, and every wait carries one cancellable watchdog that is cleared
+ * on completion. Child `error`/`exit` rejects every pending wait with the child's stderr.
+ */
 export function startPhone(options: StartPhoneOptions): LoopbackProcess {
     const classpath = process.env.VELES_LOOPBACK_CLASSPATH ?? '';
     const java = process.env.VELES_LOOPBACK_JAVA ?? 'java';
@@ -209,26 +234,82 @@ export function startPhone(options: StartPhoneOptions): LoopbackProcess {
     }) as ChildProcessWithoutNullStreams;
     let buffered = Buffer.alloc(0);
     const messages: PhoneMessage[] = [];
-    const waiters: (() => void)[] = [];
-    const stderrWaiters: (() => void)[] = [];
+    const messageWaiters: MessageWaiter[] = [];
+    const stderrWaiters: StderrWaiter[] = [];
     let stderr = '';
+    let exitDescription: string | null = null;
+    let finished = false;
+
+    const failAll = (error: Error): void => {
+        for (const waiter of messageWaiters.splice(0)) {
+            clearTimeout(waiter.timer);
+            waiter.reject(error);
+        }
+        for (const waiter of stderrWaiters.splice(0)) {
+            clearTimeout(waiter.timer);
+            waiter.reject(error);
+        }
+    };
+
+    const flushMessages = (): void => {
+        for (let index = 0; index < messageWaiters.length; ) {
+            const waiter = messageWaiters[index];
+            if (waiter === undefined) break;
+            const found = messages.findIndex(waiter.match);
+            if (found < 0) {
+                index += 1;
+                continue;
+            }
+            const message = messages.splice(found, 1)[0];
+            if (message === undefined) break;
+            messageWaiters.splice(index, 1);
+            clearTimeout(waiter.timer);
+            waiter.resolve(message);
+        }
+    };
+
+    const flushStderr = (): void => {
+        for (let index = 0; index < stderrWaiters.length; ) {
+            const waiter = stderrWaiters[index];
+            if (waiter === undefined) break;
+            if (!stderr.includes(waiter.fragment)) {
+                index += 1;
+                continue;
+            }
+            stderrWaiters.splice(index, 1);
+            clearTimeout(waiter.timer);
+            waiter.resolve();
+        }
+    };
+
+    child.stdin.on('error', () => undefined);
     child.stderr.on('data', (chunk: Buffer) => {
         stderr += chunk.toString();
-        stderrWaiters.splice(0).forEach((resolve) => resolve());
+        flushStderr();
     });
     child.stdout.on('data', (chunk: Buffer) => {
         buffered = Buffer.concat([buffered, chunk]);
         for (;;) {
             if (buffered.length < 5) break;
-            const kind = buffered[0];
+            const kind = buffered[0] ?? 0;
             const length = buffered.readUInt32BE(1);
             if (buffered.length < 5 + length) break;
             messages.push({ kind, payload: new Uint8Array(buffered.subarray(5, 5 + length)) });
             buffered = buffered.subarray(5 + length);
-            waiters.splice(0).forEach((resolve) => resolve());
         }
+        flushMessages();
     });
-    child.on('exit', () => waiters.splice(0).forEach((resolve) => resolve()));
+    child.on('error', (error: Error) => {
+        finished = true;
+        exitDescription = `loopback process error: ${error.message}; stderr: ${stderr}`;
+        failAll(new Error(exitDescription));
+    });
+    child.on('exit', (code, signal) => {
+        finished = true;
+        exitDescription = `loopback exit code=${String(code)} signal=${String(signal)}; stderr: ${stderr}`;
+        failAll(new Error(exitDescription));
+    });
+
     return {
         child,
         send(kind: number, payload: Uint8Array): void {
@@ -238,48 +319,66 @@ export function startPhone(options: StartPhoneOptions): LoopbackProcess {
             Buffer.from(payload).copy(frame, 5);
             child.stdin.write(frame);
         },
-        async next(match: (message: PhoneMessage) => boolean): Promise<PhoneMessage> {
-            const deadline = Date.now() + TIMEOUT_MS;
-            for (;;) {
-                const index = messages.findIndex(match);
-                if (index >= 0) return messages.splice(index, 1)[0] as PhoneMessage;
-                if (child.exitCode !== null) {
-                    throw new Error(`loopback exited before a matching message; stderr: ${stderr}`);
-                }
-                if (Date.now() > deadline) {
-                    throw new Error(`loopback timed out; stderr: ${stderr}`);
-                }
-                await new Promise<void>((resolve) => {
-                    waiters.push(resolve);
-                    setTimeout(resolve, POLL_MS);
-                });
+        next(match: (message: PhoneMessage) => boolean): Promise<PhoneMessage> {
+            const existing = messages.findIndex(match);
+            if (existing >= 0) {
+                return Promise.resolve(messages.splice(existing, 1)[0] as PhoneMessage);
             }
+            if (exitDescription !== null) return Promise.reject(new Error(exitDescription));
+            return new Promise<PhoneMessage>((resolve, reject) => {
+                const waiter: MessageWaiter = {
+                    match,
+                    resolve,
+                    reject,
+                    timer: watchdog(() => {
+                        const index = messageWaiters.indexOf(waiter);
+                        if (index >= 0) messageWaiters.splice(index, 1);
+                        reject(
+                            new Error(
+                                `loopback timed out waiting for a message; stderr: ${stderr}`,
+                            ),
+                        );
+                    }),
+                };
+                messageWaiters.push(waiter);
+                flushMessages();
+            });
         },
-        async waitForStderr(fragment: string): Promise<void> {
-            const deadline = Date.now() + TIMEOUT_MS;
-            while (!stderr.includes(fragment)) {
-                if (child.exitCode !== null) {
-                    throw new Error(
-                        `loopback exited before stderr '${fragment}'; stderr: ${stderr}`,
-                    );
-                }
-                if (Date.now() > deadline) {
-                    throw new Error(
-                        `loopback timed out waiting for stderr '${fragment}'; stderr: ${stderr}`,
-                    );
-                }
-                await new Promise<void>((resolve) => {
-                    stderrWaiters.push(resolve);
-                    setTimeout(resolve, POLL_MS);
-                });
+        waitForStderr(fragment: string): Promise<void> {
+            if (stderr.includes(fragment)) return Promise.resolve();
+            if (exitDescription !== null) {
+                return Promise.reject(
+                    new Error(`loopback exited before stderr '${fragment}'; ${exitDescription}`),
+                );
             }
+            return new Promise<void>((resolve, reject) => {
+                const waiter: StderrWaiter = {
+                    fragment,
+                    resolve,
+                    reject,
+                    timer: watchdog(() => {
+                        const index = stderrWaiters.indexOf(waiter);
+                        if (index >= 0) stderrWaiters.splice(index, 1);
+                        reject(
+                            new Error(
+                                `loopback timed out waiting for stderr '${fragment}'; stderr: ${stderr}`,
+                            ),
+                        );
+                    }),
+                };
+                stderrWaiters.push(waiter);
+                flushStderr();
+            });
         },
         stderr(): string {
             return stderr;
         },
-        stop(): void {
+        async stop(): Promise<void> {
+            if (finished || child.exitCode !== null || child.signalCode !== null) return;
+            const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
             child.stdin.end();
             child.kill('SIGKILL');
+            await exited;
         },
     };
 }
@@ -559,6 +658,7 @@ export async function runJourney(steps: JourneyStep[], driver: JourneyDriver): P
         if (step.params['same_ids_as_previous_pull'] === true) {
             assert.ok(previousPullIds !== null, 'there is no previous pull to compare');
             const ids = result.eventIds ?? [];
+            assert.equal(new Set(ids).size, ids.length, 'the second pull repeated an event id');
             for (const id of ids) {
                 assert.ok(previousPullIds.includes(id), `${id} was not in the previous pull`);
             }

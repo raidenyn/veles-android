@@ -1,24 +1,30 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
 // OTP-12 design D8: the scripted client must be a client of the protocol, not a
-// connector. This test computes the transitive relative-import closure of every
-// TypeScript file in `test/gate-b/` (the `fixtures/` directory is excluded; the
-// negative fixture below is scanned explicitly) and fails when the closure reaches
-// a forbidden module or when any reached file mentions a forbidden identifier.
+// connector. This test computes the transitive import closure of every TypeScript
+// file in `test/gate-b/` (the `fixtures/` directory is excluded; the negative
+// fixture below is scanned explicitly) and fails when the closure reaches a
+// forbidden module, when any reached file mentions a forbidden identifier, when a
+// relative import cannot be resolved, or when an unknown package is imported.
 //
-// It runs the direct-closure form, not the allow-list fallback: `src/session`,
-// `src/pairing` (except `link.ts`), `src/trust/model.ts` and `rust-wasm/pkg` all
-// resolve cleanly. If a future production edit makes that impossible, the fallback
-// documented in design D8 is a direct-import allow-list plus this identifier scan,
-// and the divergence must be recorded here and in the apply report.
+// DIVERGENCE RECORDED (design D8 fallback): package specifiers are a closed
+// allow-list (`vitest` and `node:*`) and their internals are not scanned; every
+// relative import in the closure is resolved and an unresolved one fails closed.
+// This is the direct-import allow-list fallback for bare packages, which the spec
+// permits when the full closure cannot be made clean without a production edit.
+// No production edit was needed for the relative closure (`src/session`,
+// `src/pairing` except `link.ts`, `src/trust/model.ts`, `rust-wasm/pkg`).
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB_EXTENSION = resolve(HERE, '../..');
 const REPOSITORY = resolve(WEB_EXTENSION, '..');
+
+const ALLOWED_PACKAGES = ['vitest'];
 
 const FORBIDDEN_PREFIXES = [
     'src/connector/',
@@ -36,6 +42,11 @@ const FORBIDDEN_IDENTIFIERS = ['chrome' + '.', 'device' + 'Handle', 'connection'
 interface ScannedFile {
     path: string;
     text: string | null;
+}
+
+interface Closure {
+    files: Map<string, ScannedFile>;
+    violations: string[];
 }
 
 function isTextFile(path: string): boolean {
@@ -64,8 +75,8 @@ function importSpecifiers(source: string): string[] {
     return specifiers;
 }
 
-function resolveSpecifier(fromFile: string, specifier: string): string | null {
-    if (!specifier.startsWith('.')) return null;
+/** Resolves one relative import to an existing file, or null when it does not resolve. */
+function resolveRelativeSpecifier(fromFile: string, specifier: string): string | null {
     const base = resolve(dirname(fromFile), specifier.split('?')[0] ?? specifier);
     const candidates = [base, `${base}.ts`, `${base}.js`, `${base}.mjs`, join(base, 'index.ts')];
     for (const candidate of candidates) {
@@ -78,37 +89,56 @@ function resolveSpecifier(fromFile: string, specifier: string): string | null {
     return null;
 }
 
-function closureOf(entries: string[]): Map<string, ScannedFile> {
-    const scanned = new Map<string, ScannedFile>();
+function isAllowedPackage(specifier: string): boolean {
+    return ALLOWED_PACKAGES.includes(specifier) || specifier.startsWith('node:');
+}
+
+function inRepository(path: string): string {
+    return relative(REPOSITORY, path).replaceAll('\\', '/');
+}
+
+function closureOf(entries: string[]): Closure {
+    const files = new Map<string, ScannedFile>();
+    const violations: string[] = [];
     const queue = entries.map((entry) => resolve(entry));
     while (queue.length > 0) {
         const path = queue.pop();
-        if (path === undefined || scanned.has(path)) continue;
+        if (path === undefined || files.has(path)) continue;
         const text = readText(path);
-        scanned.set(path, { path, text });
+        files.set(path, { path, text });
         if (text === null) continue;
         for (const specifier of importSpecifiers(text)) {
-            const resolved = resolveSpecifier(path, specifier);
-            if (resolved !== null && !scanned.has(resolved)) queue.push(resolved);
+            if (specifier.startsWith('.')) {
+                const resolved = resolveRelativeSpecifier(path, specifier);
+                if (resolved === null) {
+                    violations.push(`${inRepository(path)}: unresolved import '${specifier}'`);
+                } else if (!files.has(resolved)) {
+                    queue.push(resolved);
+                }
+                continue;
+            }
+            if (!isAllowedPackage(specifier)) {
+                violations.push(`${inRepository(path)}: unknown package '${specifier}'`);
+            }
         }
     }
-    return scanned;
+    return { files, violations };
 }
 
-function violationsOf(scanned: Map<string, ScannedFile>): string[] {
-    const violations: string[] = [];
-    for (const file of scanned.values()) {
+function violationsOf(closure: Closure): string[] {
+    const violations = [...closure.violations];
+    for (const file of closure.files.values()) {
         const inExtension = relative(WEB_EXTENSION, file.path).replaceAll('\\', '/');
-        const inRepository = relative(REPOSITORY, file.path).replaceAll('\\', '/');
+        const repositoryPath = inRepository(file.path);
         const forbiddenPath =
             FORBIDDEN_PREFIXES.some((prefix) => inExtension.startsWith(prefix)) ||
             FORBIDDEN_FILES.includes(inExtension) ||
-            inRepository.startsWith('native-bridge/');
-        if (forbiddenPath) violations.push(`${inRepository}: forbidden module`);
+            repositoryPath.startsWith('native-bridge/');
+        if (forbiddenPath) violations.push(`${repositoryPath}: forbidden module`);
         if (file.text === null) continue;
         for (const identifier of FORBIDDEN_IDENTIFIERS) {
             if (file.text.includes(identifier)) {
-                violations.push(`${inRepository}: mentions ${identifier}`);
+                violations.push(`${repositoryPath}: mentions ${identifier}`);
             }
         }
     }
@@ -123,18 +153,34 @@ function clientEntries(): string[] {
 
 describe('gate-b scripted-client import guard', () => {
     it('closure_of_client_files_avoids_forbidden_modules', () => {
-        const scanned = closureOf(clientEntries());
-        const paths = [...scanned.keys()].map((path) =>
-            relative(REPOSITORY, path).replaceAll('\\', '/'),
-        );
+        const closure = closureOf(clientEntries());
+        const paths = [...closure.files.keys()].map((path) => inRepository(path));
         expect(paths).toContain('web-extension/test/gate-b/transport.ts');
         expect(paths).toContain('web-extension/test/gate-b/trust.ts');
-        expect(violationsOf(scanned)).toEqual([]);
+        expect(paths).toContain('web-extension/src/session/engine.ts');
+        expect(violationsOf(closure)).toEqual([]);
     });
 
     it('negative_fixture_is_detected', () => {
-        const scanned = closureOf([join(HERE, 'fixtures/forbidden-import.ts')]);
-        const violations = violationsOf(scanned);
+        const closure = closureOf([join(HERE, 'fixtures/forbidden-import.ts')]);
+        const violations = violationsOf(closure);
         expect(violations.some((line) => line.includes('src/connector'))).toBe(true);
+    });
+
+    it('unresolved_relative_import_is_detected', () => {
+        const directory = mkdtempSync(join(tmpdir(), 'gate-b-guard-'));
+        try {
+            const entry = join(directory, 'entry.ts');
+            writeFileSync(
+                entry,
+                "import { missing } from './missing';\nexport const value = missing;\n",
+            );
+            const closure = closureOf([entry]);
+            expect(
+                closure.violations.some((line) => line.includes("unresolved import './missing'")),
+            ).toBe(true);
+        } finally {
+            rmSync(directory, { recursive: true, force: true });
+        }
     });
 });

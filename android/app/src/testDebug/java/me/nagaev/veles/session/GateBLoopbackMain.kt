@@ -47,9 +47,10 @@ import kotlin.system.exitProcess
  * - `revoke` — remove the seed-derived `ACTIVE` record so a reconnect is rejected
  *
  * `pull`/`ack` are ordinary session records; `push` is the client expecting a `push_event`
- * after `schedule` plus `advance`. The session engine keeps its own `System.nanoTime()` clock,
- * so a clock advance can never trip a session timeout. No test sleeps: the schedule's [StepTimer]
- * suspends on [ManualStepTimer] until [ManualStepTimer.wake] sees the advanced clock.
+ * after `schedule` plus `advance`. The session engine's clock is deliberately frozen at zero,
+ * separate from the fixture clock, so a clock advance can never trip a session timeout; the
+ * engine's real-time deadlines are covered by its own unit tests. No test sleeps: the schedule's
+ * [StepTimer] suspends on [ManualStepTimer] until `advance` moves the manual clock.
  */
 fun main(args: Array<String>) {
     if (args.size != 1) {
@@ -148,8 +149,8 @@ private class GateBLoopback(
 
     /**
      * The child JVM's first JCA signature and first engine construction can take tens of
-     * seconds on a cold, large classpath. Both happen here, before the real engine's
-     * handshake deadline starts, so protocol timeouts still mean a real silence.
+     * seconds on a cold, large classpath. Both happen here, before the protocol loop starts,
+     * so the first client hello is not delayed by class loading.
      */
     private suspend fun warmUp() {
         phone.signer.signDer(ByteArray(1))
