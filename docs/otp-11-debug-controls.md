@@ -308,10 +308,11 @@ Procedure:
 
 1. Build the debug APK and the development extension from the branch under test, install the APK
    with `adb install -r` after comparing the signing certificate, and load `web-extension/dist`
-   unpacked in the dedicated Chrome profile. Build and package the macOS host as
+   unpacked in the dedicated Chrome profile. Build and package the macOS host **from the same commit under test** as
    `VelesOtpDebug.app` with `native-bridge/host/scripts/macos-test-bundle.sh` from the logged-in GUI
-   session, and register the native-messaging manifest's `path` at that bundle. If the phone or the
-   Mac is unavailable, stop and report; do not record a run as tested.
+   session, and register the native-messaging manifest's `path` at that bundle. If the phone, the Mac
+   or the development Chrome profile is unavailable, stop, report and ask; do not record a run as
+   tested.
 2. On the phone, enable the Bluetooth sharing transport and open the debug pairing screen
    (`adb shell am start -n me.nagaev.veles.debug/me.nagaev.veles.debugpairing.PairingDebugScreen`).
    The debug screen is `FLAG_SECURE`, and on Android 15 `uiautomator dump` is killed on it, so an
@@ -341,6 +342,8 @@ validating the response. This is the failing direction from issue #154.
 That is not a full acceptance PASS. Missing evidence:
 - The on-screen `Peer removed on both devices` text was not captured on either endpoint; the phone
   list was not read and the Chrome list was empty but its notice was not recorded.
+- The FULL-session confirmation was not captured; the driver's `Chrome|ACTIVE` record state alone
+  does not prove the session class.
 - The native-port trace (`sent`, then the phone's `disconnected`, no client `disconnect`) was not
   captured.
 - Chrome → Android was not re-run in this session; it passed in the OTP-11 run and the requester
