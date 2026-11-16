@@ -483,8 +483,11 @@ In each report-only case say what was found and what the user must decide.
 ### When it starts
 
 The closeout starts when the last implementation commit is pushed and finalize has confirmed an open pull
-request, tracked or not. The steps that touch the board, the issue or `tracker.md` apply only to tracked work.
-Then stay in monitoring mode as *Monitoring* describes.
+request, tracked or not. Finalize always creates the pull request when the feature branch has none, reusing an
+existing pre-review PR, and asks nothing; it then writes the receipt with the true `pr-created` or `pr-updated`
+outcome, records the PR in `tracker.md` for tracked work, sets the card In Review and hands off. A pull request
+that cannot be created or confirmed stops finalize with no outcome recorded. The steps that touch the board,
+the issue or `tracker.md` apply only to tracked work. Then stay in monitoring mode as *Monitoring* describes.
 
 ### The ordered checklist
 

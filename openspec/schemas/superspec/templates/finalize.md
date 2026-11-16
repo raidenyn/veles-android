@@ -10,6 +10,10 @@
 **Finalized at**: `YYYY-MM-DD HH:mm`
 **Outcome**: `merge-locally` | `pr-created` | `pr-updated` | `kept-as-is` | `discarded`
 
+> Canonical finalize always leaves an open pull request: record `pr-created` or `pr-updated`.
+> `merge-locally`, `kept-as-is` and `discarded` are explicit non-canonical flows only.
+> Outcome `pr-created` records Final state `pr-open`; `pr-updated` records `pr-updated`.
+
 ---
 
 ## Branch state

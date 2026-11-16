@@ -93,9 +93,10 @@ A reinstall also drops the fork's own edits, so re-apply each divergence as well
 2. **Sixth verify check**: the review-records audit in the `verify` instruction, its "6. Review
    records" section in `templates/verify.md`, and the six-check counts in `README.md` and
    `INTEGRATION.md`.
-3. **Finalize hand-off**: the `finalize` instruction's open-PR confirmation, the `tracker.md`
-   record (committed and pushed as part of the PR) and the In Review step, the per-outcome hand-off
-   to `.agents/rules/repo-superspec-closeout.md`, and the matching "Next step" bullets in
+3. **Finalize hand-off**: the `finalize` instruction's always-create PR step (no prompt, no skip), the
+   open-PR confirmation and the fail-closed stop, the receipt written only after confirmation, the
+   `tracker.md` record (committed and pushed as part of the PR) and the In Review step, the per-outcome
+   hand-off to `.agents/rules/repo-superspec-closeout.md`, and the matching "Next step" bullets in
    `templates/finalize.md`.
 4. **Archive once, in the closeout**: the replaced direct-archive directions in the `verify` and
    `finalize` instructions, `apply:` step 4, `templates/verify.md`'s PASS option and next-step note,
