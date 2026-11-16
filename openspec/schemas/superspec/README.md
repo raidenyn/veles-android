@@ -77,7 +77,7 @@ This is achieved through context injection (appending directives when invoking t
 /openspec-ff-change my-feature    # End-to-end: create directory + brainstorm + proposal + design + specs + tasks + plan
 /openspec-apply-change            # worktree + subagent-driven-development (writes apply.md)
 /openspec-verify-change           # 6 OpenSpec checks (writes verify.md; requires apply.md)
-/openspec-continue-change         # → finalize (the git-side closeout: merges worktree → feature branch, pushes branch, creates the PR when none exists and updates it, writes finalize.md, posts the code-reviewer comment; then hands off to the closeout)
+/openspec-continue-change         # → finalize (the git-side closeout: merges worktree → feature branch, pushes branch, creates the PR when none exists and updates it, confirms it open, posts the code-reviewer comment, writes finalize.md; then hands off to the closeout)
 # archive runs once, inside the closeout, when the required checks are green
 ```
 
@@ -92,7 +92,7 @@ This is achieved through context injection (appending directives when invoking t
 /openspec-continue-change         # → plan
 /openspec-apply-change            # writes apply.md
 /openspec-verify-change           # writes verify.md (requires apply.md)
-/openspec-continue-change         # → finalize (the git-side closeout: merges worktree → feature branch, pushes branch, creates the PR when none exists and updates it, writes finalize.md, posts the code-reviewer comment; then hands off to the closeout)
+/openspec-continue-change         # → finalize (the git-side closeout: merges worktree → feature branch, pushes branch, creates the PR when none exists and updates it, confirms it open, posts the code-reviewer comment, writes finalize.md; then hands off to the closeout)
 # archive runs once, inside the closeout, when the required checks are green
 ```
 

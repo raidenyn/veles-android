@@ -245,7 +245,7 @@ An open spec pre-review PR is **optional at the start of finalize** — recommen
 
 #### 4-2. Escape hatch (manual skill invocation)
 
-If your workflow doesn't match the git-side closeout — e.g. solo merge-to-main (Option 1), brand-new PR from the skill (Option 2), keep worktree alive for iteration (Option 3), or discard (Option 4) — invoke `superpowers:finishing-a-development-branch` directly via the Skill tool, pick the matching option, hand-write `finalize.md` from `templates/finalize.md`, and then run the comment-posting subroutine (defined in the finalize instruction). The subroutine self-skips when there's no PR and posts/edits the orientation comment when one exists. Note: "no pre-review PR opened" is NOT an escape-hatch case — the canonical git-side closeout creates the code-review PR and posts the comment.
+If your workflow doesn't match the git-side closeout — e.g. solo merge-to-main (Option 1), brand-new PR from the skill (Option 2), keep worktree alive for iteration (Option 3), or discard (Option 4) — invoke `superpowers:finishing-a-development-branch` directly via the Skill tool, pick the matching option, hand-write `finalize.md` from `templates/finalize.md`, and then run the comment-posting subroutine (defined in the finalize instruction). The subroutine self-skips when there's no PR and posts/edits the orientation comment when one exists. For a `pr-created` or `pr-updated` outcome the escape hatch must first confirm the PR is open (`gh pr view --json state,url,number`); a missing or non-open PR is reported and stops with no outcome. Note: "no pre-review PR opened" is NOT an escape-hatch case — the canonical git-side closeout creates the code-review PR and posts the comment.
 
 #### 4-3. Retrospective (recommended, non-blocking)
 
@@ -278,11 +278,11 @@ Behavior:
 1. verify completes (verify.md committed on feature branch in the worktree)
 2. finalize (the git-side closeout — schema merges worktree → feature
    branch, pushes, creates the code-review PR when none exists and
-   reuses an existing spec pre-review PR, posts the code-reviewer
-   onboarding comment; finalize.md records the outcome and Final state,
-   worktree is removed during finalize; the open PR is confirmed and,
-   for tracked work, recorded in tracker.md with the card set to In
-   Review; finalize hands off to the closeout)
+   reuses an existing spec pre-review PR, confirms it open, posts the
+   code-reviewer onboarding comment, then finalize.md records the true
+   outcome and Final state; worktree is removed during finalize; for
+   tracked work the PR is recorded in tracker.md and the card set In
+   Review; then finalize hands off to the closeout)
 3. The closeout monitors the PR to green (its required checks on the
    current head commit)
 4. Sync and archive once (openspec-sync-specs, then
