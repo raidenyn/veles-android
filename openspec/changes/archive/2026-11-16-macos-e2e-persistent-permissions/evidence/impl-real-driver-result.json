@@ -1,0 +1,44 @@
+{
+  "bundle_id" : "me.nagaev.veles.otp23.poc",
+  "bundle_path" : "\/Users\/raiden\/homepc\/work\/mac-tcc-probe\/harness-out\/VelesOtp23PoC.app",
+  "finished_utc" : "2026-11-16T04:48:26Z",
+  "host_exit" : 0,
+  "host_path" : "\/Users\/raiden\/homepc\/work\/mac-tcc-probe\/impl-real\/VelesOtp23PoC.app\/Contents\/MacOS\/veles-native-host",
+  "host_stderr" : "",
+  "origin" : "chrome-extension:\/\/abcdefghijklmnopabcdefghijklmnop\/",
+  "transcript" : [
+    {
+      "api_version" : 1,
+      "bridge_version" : "veles-native-host\/0.1.0",
+      "capabilities" : [
+        "veles_record_v1"
+      ],
+      "envelope_version" : 1,
+      "platform" : "macos",
+      "request_id" : "tcc-hello",
+      "type" : "ready"
+    },
+    {
+      "api_version" : 1,
+      "envelope_version" : 1,
+      "request_id" : "tcc-scan",
+      "scan_handle" : "17bb6e0fb9211900",
+      "status" : "started",
+      "type" : "scan_state"
+    },
+    {
+      "api_version" : 1,
+      "envelope_version" : 1,
+      "request_id" : "tcc-stop",
+      "scan_handle" : "17bb6e0fb9211900",
+      "status" : "stopped",
+      "type" : "scan_state"
+    },
+    {
+      "api_version" : 1,
+      "envelope_version" : 1,
+      "request_id" : "tcc-shutdown",
+      "type" : "shutdown_complete"
+    }
+  ]
+}

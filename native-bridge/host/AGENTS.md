@@ -36,7 +36,10 @@ release assets. The `native-host.cdx.json` SBOM is generated and validated by
 
 ## Platform frontends
 
-- macOS installer app and the canonical signing identity: `native-bridge/installer/macos/AGENTS.md`.
+- macOS installer app, the canonical signing identity and the macOS Bluetooth E2E rule:
+  `native-bridge/installer/macos/AGENTS.md`; before any macOS Bluetooth run, read
+  `.agents/rules/macos-test-app-tcc.md` by hand — the macOS scope does not deliver it under
+  `native-bridge/host/`.
 - Windows installer: `native-bridge/installer/windows/AGENTS.md`.
 
 ## Rules

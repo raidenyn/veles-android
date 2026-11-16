@@ -1,0 +1,11 @@
+{
+  "authorization_after" : "allowed_always",
+  "authorization_before" : "allowed_always",
+  "bundle_id" : "me.nagaev.veles.otp23.poc",
+  "bundle_path" : "\/Users\/raiden\/homepc\/work\/mac-tcc-probe\/out2\/VelesOtp23PoC.app",
+  "central_state" : "powered_on",
+  "finished_utc" : "2026-11-16T04:18:20Z",
+  "last_delegate_state" : "powered_on",
+  "probe_version" : "2",
+  "waited_seconds" : 0.26448309421539307
+}
