@@ -224,6 +224,8 @@ export interface ConnectorAppDeps {
     session?: ConnectorSessionOptions;
     setTimeout?: (fn: () => void, ms: number) => unknown;
     clearTimeout?: (handle: unknown) => void;
+    setInterval?: (fn: () => void, ms: number) => unknown;
+    clearInterval?: (handle: unknown) => void;
 }
 
 interface TrackedConnection {
@@ -437,10 +439,22 @@ export class ConnectorApp {
     private portGeneration = 0;
     private ignoreUserClose = 0;
     private readiness: Readiness | null = null;
+    private readonly timers: {
+        setTimeout?: (fn: () => void, ms: number) => unknown;
+        clearTimeout?: (handle: unknown) => void;
+        setInterval?: (fn: () => void, ms: number) => unknown;
+        clearInterval?: (handle: unknown) => void;
+    };
 
     constructor(deps: ConnectorAppDeps) {
         this.controller = deps.controller;
         this.view = deps.view;
+        this.timers = {
+            ...(deps.setTimeout === undefined ? {} : { setTimeout: deps.setTimeout }),
+            ...(deps.clearTimeout === undefined ? {} : { clearTimeout: deps.clearTimeout }),
+            ...(deps.setInterval === undefined ? {} : { setInterval: deps.setInterval }),
+            ...(deps.clearInterval === undefined ? {} : { clearInterval: deps.clearInterval }),
+        };
         const session = deps.session;
         this.proofs = new ProofRegistry();
         // Built before the trust wiring: a store failure observed while the repository or the
@@ -658,6 +672,9 @@ export class ConnectorApp {
                 // A fail-closed recovery or a reset stops the startup without deleting any
                 // durable record; `PairingLink` then terminates instead of disposing.
                 isAborted: aborted,
+                // The link's tick and its post-ack hold run on the app's injected timers, so no
+                // test or production path waits on a wall clock it does not own.
+                ...this.timers,
                 // Register the handle from the connected event, before the first
                 // send: a link lost during start must never look like a session.
                 onConnected: (connectionHandle) => {
@@ -724,7 +741,9 @@ export class ConnectorApp {
         const fingerprint = machine.fingerprint();
         return {
             phase: machine.state,
-            finished: this.pairingEnded,
+            // The machine's terminal state counts: a held link has already finished the
+            // enrollment even though its transport is still open for the phone's close.
+            finished: this.pairingEnded || machine.closed,
             ...(fingerprint === undefined ? {} : { fingerprint }),
         };
     }

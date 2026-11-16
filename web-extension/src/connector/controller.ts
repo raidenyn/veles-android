@@ -160,7 +160,11 @@ export class ConnectorController {
         (event: Extract<WireEvent, { type: 'error' }>) => void
     >();
     private readonly closeListeners = new Set<(close: ConnectorClose) => void>();
+    private readonly connectionClosedListeners = new Map<string, Set<() => void>>();
     private readonly scanTimers = new Map<string, ScanTimer>();
+
+    /** The connection handles the last emitted snapshot held, for the close diff. */
+    private lastHandles = new Set<string>();
 
     private portEpoch = 0;
     private selectedApiVersion: number | null = null;
@@ -403,6 +407,32 @@ export class ConnectorController {
         this.recordListeners.add(listener);
         return () => {
             this.recordListeners.delete(listener);
+        };
+    }
+
+    /**
+     * Notifies once when one connection leaves the snapshot, whatever removed it: the peer's
+     * `disconnected` event, a loss close taken by a send or disconnect reply, an explicit reset or
+     * a port close. A handle the controller no longer holds fires immediately, because a close can
+     * land between the `connected` event and a caller's subscription.
+     */
+    onConnectionClosed(connectionHandle: string, listener: () => void): () => void {
+        if (!this.lastHandles.has(connectionHandle)) {
+            listener();
+            return () => undefined;
+        }
+        let listeners = this.connectionClosedListeners.get(connectionHandle);
+        if (listeners === undefined) {
+            listeners = new Set<() => void>();
+            this.connectionClosedListeners.set(connectionHandle, listeners);
+        }
+        listeners.add(listener);
+        return () => {
+            const current = this.connectionClosedListeners.get(connectionHandle);
+            current?.delete(listener);
+            if (current !== undefined && current.size === 0) {
+                this.connectionClosedListeners.delete(connectionHandle);
+            }
         };
     }
 
@@ -673,6 +703,21 @@ export class ConnectorController {
 
     private emitChange(): void {
         const snapshot = this.state.snapshot();
+        const current = new Set(snapshot.connections.map((connection) => connection.handle));
+        for (const handle of this.lastHandles) {
+            if (current.has(handle)) continue;
+            const listeners = this.connectionClosedListeners.get(handle);
+            if (listeners === undefined) continue;
+            this.connectionClosedListeners.delete(handle);
+            for (const listener of [...listeners]) {
+                try {
+                    listener();
+                } catch {
+                    // A close subscriber must not break routing.
+                }
+            }
+        }
+        this.lastHandles = current;
         for (const listener of [...this.changeListeners]) {
             try {
                 listener(snapshot);

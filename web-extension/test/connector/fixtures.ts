@@ -165,6 +165,11 @@ export function wireErrorEvent(overrides: EventOverrides = {}): Record<string, u
     );
 }
 
+/** The host's answer when a send names a handle it no longer holds. */
+export function unknownHandleError(overrides: EventOverrides = {}): Record<string, unknown> {
+    return wireErrorEvent({ code: 'unknown_handle', stage: 'send', ...overrides });
+}
+
 export interface PendingFixture {
     kind: PendingKind;
     handle?: string;
