@@ -93,6 +93,7 @@ if (!process.argv.includes('--evidence-only')) {
         'protocol/checks/bridge.test.mjs',
         'protocol/checks/state.test.mjs',
         'protocol/checks/crypto.test.mjs',
+        'protocol/checks/gate-b-journeys.test.mjs',
     ]);
     run(process.execPath, ['protocol/tools/check-contract-text.mjs']);
 }
