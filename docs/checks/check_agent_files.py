@@ -539,10 +539,12 @@ def _check_rule_frontmatter(path, scope, frontmatter):
         return findings
     if frontmatter.get("trigger") != "glob":
         findings.append(Finding("error", path, "must have frontmatter `trigger: glob`"))
+    folder = pattern[:-len("**")]
+    values = {}
     for key in ("globs", "paths"):
         if key not in frontmatter:
             findings.append(
-                Finding("error", path, "must set `%s` to the `%s` scope pattern" % (key, scope))
+                Finding("error", path, "must set `%s` to patterns under `%s`" % (key, folder))
             )
             continue
         value = frontmatter[key]
@@ -552,14 +554,20 @@ def _check_rule_frontmatter(path, scope, frontmatter):
         if any("{" in item or "}" in item for item in value):
             findings.append(Finding("error", path, "`%s` must not use brace expansion" % key))
             continue
-        if value != [pattern]:
+        outside = [item for item in value if not item.startswith(folder)]
+        if outside:
             findings.append(
                 Finding(
                     "error",
                     path,
-                    '`%s` must be exactly ["%s"] for scope `%s`' % (key, pattern, scope),
+                    "`%s` must list patterns under `%s`, got %s"
+                    % (key, folder, ", ".join('"%s"' % item for item in outside)),
                 )
             )
+            continue
+        values[key] = value
+    if len(values) == 2 and values["globs"] != values["paths"]:
+        findings.append(Finding("error", path, "`paths` must match `globs`"))
     return findings
 
 

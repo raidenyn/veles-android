@@ -47,16 +47,16 @@ git mv .agents/rules/macos-test-app-tcc.md .agents/rules/native-bridge-test-app-
 
 - [x] **Step 3: Replace the frontmatter patterns**
 
-Set both lists to the single element `"native-bridge/**"`, keeping the `trigger: glob` line and the
-body untouched.
+Set both lists to `"native-bridge/installer/macos/**"` and `"native-bridge/host/**"`, keeping the
+`trigger: glob` line and the body untouched.
 
 - [x] **Step 4: Check the file (green)**
 
 ```bash
-sed -n '1,8p' .agents/rules/native-bridge-test-app-tcc.md
+sed -n '1,10p' .agents/rules/native-bridge-test-app-tcc.md
 ```
 
-Expected: `trigger: glob`, then `globs:` and `paths:` each with only `native-bridge/**`.
+Expected: `trigger: glob`, then `globs:` and `paths:` each with exactly the two consuming patterns.
 
 ---
 
@@ -97,7 +97,43 @@ Expected: the first prints only the not-yet-synced main spec
 
 ---
 
-### Task 3: Verify and commit
+### Task 3: Extend the agent-file check and layout docs
+
+**Files:**
+- Modify: `docs/checks/check_agent_files.py` (`_check_rule_frontmatter`)
+- Modify: `docs/checks/test_check_agent_files.py`
+- Modify: `docs/AGENTS.md` (Adding a rule or a node)
+- Test: `python3 -m unittest discover -s docs/checks -p 'test_*.py' -v`
+
+- [x] **Step 1: Accept exact pattern lists inside the scope**
+
+In `_check_rule_frontmatter`, replace the single-pattern equality check with: `globs` and `paths`
+each a non-empty YAML list, no brace expansion, every pattern starting with the scope folder, and
+`globs` equal to `paths`. Keep the `repo-*` path unchanged.
+
+- [x] **Step 2: Update and add tests**
+
+Update the two changed error-message assertions and add one case that accepts
+`native-bridge/installer/macos/**` plus `native-bridge/host/**` under the `native-bridge` scope and
+one that rejects the host pattern under the `macos` scope.
+
+- [x] **Step 3: Describe multi-node rules in `docs/AGENTS.md`**
+
+State the identical-list rule, the filename as the narrowest common parent, and the exact consuming
+patterns for sibling nodes.
+
+- [x] **Step 4: Run the docs tests (green)**
+
+```bash
+python3 docs/checks/check_agent_files.py --root .
+python3 -m unittest discover -s docs/checks -p 'test_*.py' -v
+```
+
+Expected: exit 0 and all tests pass.
+
+---
+
+### Task 4: Verify and commit
 
 **Files:** none expected.
 
@@ -132,13 +168,16 @@ git status --short
 git diff HEAD --stat
 ```
 
-Expected: the rename, the three `AGENTS.md` files, and the change directory only.
+Expected: the rename, the three `AGENTS.md` files, the check, its tests, `docs/AGENTS.md`, and the
+change directory only.
 
 - [x] **Step 5: Make the single commit**
 
 ```bash
 git add -A .agents/rules native-bridge/AGENTS.md native-bridge/installer/macos/AGENTS.md \
-  native-bridge/host/AGENTS.md openspec/changes/surface-macos-tcc-rule-host
+  native-bridge/host/AGENTS.md docs/checks/check_agent_files.py \
+  docs/checks/test_check_agent_files.py docs/AGENTS.md \
+  openspec/changes/surface-macos-tcc-rule-host
 git commit -m "docs(agents): deliver the macOS TCC rule under host"
 git status --short
 ```

@@ -1,42 +1,41 @@
 ## Design Summary
 
-Make the macOS test-app TCC rule load automatically for `native-bridge/host/` work. Today the rule is
-scoped to `native-bridge/installer/macos/**`, so `native-bridge/host/AGENTS.md` has to tell the agent to
-read it by hand before a macOS Bluetooth run. The chosen fix re-scopes the rule to the parent
-`native-bridge/**` scope, renames it `native-bridge-test-app-tcc.md`, lists it in
-`native-bridge/AGENTS.md`, and drops the by-hand instruction from the host node. The rule text itself is
-unchanged; the `agent-guidance-layout` spec is amended to allow the parent scope for a rule two nodes
-consume.
+Make the macOS test-app TCC rule load automatically for `native-bridge/host/` work without loading
+for unrelated siblings such as the Windows installer. The rule is renamed
+`native-bridge-test-app-tcc.md` (its narrowest common parent scope), its `globs`/`paths` list exactly
+the two consuming folders (`native-bridge/installer/macos/**` and `native-bridge/host/**`), and the
+agent-file check is extended to accept a rule's exact consuming patterns instead of only the single
+scope pattern. The listing moves to `native-bridge/AGENTS.md`, the host node drops its by-hand read
+instruction, and the `agent-guidance-layout` spec is amended for both the rule layout and the
+multi-node case.
 
 ## Alternatives Considered
 
-### Alternative A: Add `native-bridge/host/**` to the existing rule's globs
-- **Approach**: Keep `macos-test-app-tcc.md` and list both `native-bridge/installer/macos/**` and
-  `native-bridge/host/**` under `globs` and `paths`.
-- **Pros**: Smallest textual diff in the rule file.
-- **Cons**: `docs/checks/check_agent_files.py` derives a rule's scope from its filename and requires
-  `globs` and `paths` to be exactly `[<scope pattern>]`; a second pattern fails the check. A `macos-*`
-  file cannot legally carry the host pattern.
-- **Why not chosen**: It cannot pass the repository's agent-file check.
+### Alternative A: Two exact patterns under the parent scope, with a small check extension
+- **Approach**: Rename the rule `native-bridge-test-app-tcc.md`, list
+  `native-bridge/installer/macos/**` and `native-bridge/host/**` in `globs`/`paths`, and extend
+  `check_agent_files.py` to accept identical lists of patterns that each sit under the rule's scope
+  folder. List the rule in `native-bridge/AGENTS.md`.
+- **Pros**: One file, one source of truth, no by-hand read, no load for the Windows installer or the
+  Tauri scaffold, and the filename still names the narrowest common parent for the listing.
+- **Cons**: The check, its tests and the layout spec must be amended; the one-pattern invariant
+  becomes "patterns inside the scope".
+- **Why not chosen**: Chosen.
 
 ### Alternative B: Copy the rule into a second `host-*` file
 - **Approach**: Keep the macOS rule and add a host-scoped copy with the same content.
-- **Pros**: Both scopes load independently and each node lists its own file.
-- **Cons**: Two copies of the identity, designated requirement and launch rules drift; the repository's
-  layout rule is one concern in one file.
+- **Pros**: Both scopes load independently and each node lists its own file; no check change.
+- **Cons**: Two copies of the identity, designated requirement and launch rules drift; the
+  repository's layout rule is one concern in one file.
 - **Why not chosen**: Duplicated normative content is the failure this layout rule exists to prevent.
 
 ### Alternative C: Re-scope the rule to the parent `native-bridge/**`
-- **Approach**: Rename the rule `native-bridge-test-app-tcc.md`, set `globs` and `paths` to
-  `native-bridge/**`, list it in `native-bridge/AGENTS.md`, and keep the macOS node's prose pointer to
-  the canonical identity. Parent scopes are cumulative, so both `native-bridge/installer/macos/` and
-  `native-bridge/host/` receive the rule.
-- **Pros**: One file, one source of truth, no by-hand read, and the agent-file check accepts the exact
-  parent pattern. The macOS-only content simply does not apply under `installer/windows/` or the Tauri
-  scaffold.
-- **Cons**: The rule now also loads for other `native-bridge/` paths, where it is inert; the
-  `agent-guidance-layout` spec's "macOS rule lives in the node" scenario must be amended.
-- **Why not chosen**: Chosen.
+- **Approach**: Rename the rule `native-bridge-test-app-tcc.md` and set `globs`/`paths` to
+  `native-bridge/**`.
+- **Pros**: No check change; parent scopes are already cumulative.
+- **Cons**: It loads the macOS-only rule for `native-bridge/installer/windows/**`, the Tauri scaffold
+  and every other `native-bridge/` path. Review feedback rejected this over-triggering.
+- **Why not chosen**: It is less precise than the rule's actual consumers.
 
 ### Alternative D: Make the rule always on (`repo-*`)
 - **Approach**: Promote the content to an always-on repo rule.
@@ -47,26 +46,29 @@ consume.
 
 ## Agreed Approach
 
-Alternative C. The fix is a scope change, not a content change: the rule keeps its identity, designated
-requirement, launch and grant-reuse instructions verbatim, moves to the parent scope, and is listed by
-the parent node. `native-bridge/installer/macos/AGENTS.md` stays the canonical home of the signing
-identity and points at the rule; `native-bridge/host/AGENTS.md` points at both and no longer claims the
-rule is undelivered.
+Alternative A. The rule keeps its normative content verbatim and moves to the `native-bridge` parent
+scope, but its `globs`/`paths` name only the two nodes that consume it. The agent-file check accepts a
+non-empty list of patterns under the scope folder (identical `globs` and `paths`), so the filename
+still selects the `AGENTS.md` that lists the rule and the list controls delivery. `docs/AGENTS.md`
+and the `agent-guidance-layout` spec (the rule-layout requirement and the canonical-folder
+requirement) describe the multi-node case.
 
 ## Key Decisions
 
-- Rename `.agents/rules/macos-test-app-tcc.md` to `.agents/rules/native-bridge-test-app-tcc.md`; the
-  `native-bridge-` prefix is the longest scope prefix, so the scope is `native-bridge`.
-- Frontmatter `globs` and `paths` are each exactly `["native-bridge/**"]`.
+- Rename to `.agents/rules/native-bridge-test-app-tcc.md`; the `native-bridge-` prefix is the longest
+  scope prefix, so the scope is `native-bridge`.
+- Frontmatter lists exactly `native-bridge/installer/macos/**` and `native-bridge/host/**` in both
+  `globs` and `paths`.
+- `check_agent_files.py` accepts one or more patterns per key, each under the scope folder, and
+  requires `globs` and `paths` to match; brace expansion, non-lists and out-of-scope patterns still
+  fail, with tests for the multi-pattern and out-of-scope cases.
 - `native-bridge/AGENTS.md` lists the rule under `## Rules`; the macOS node keeps a prose pointer and
-  removes the rule from its own `## Rules` list.
-- `native-bridge/host/AGENTS.md` keeps the pointer to `native-bridge/installer/macos/AGENTS.md` and names
-  the rule without the "read it by hand" instruction.
-- The `agent-guidance-layout` delta modifies the canonical-folder requirement: a macOS TCC rule consumed
-  by more than one `native-bridge/` node is scoped to their narrowest common parent and listed by that
-  scope's `AGENTS.md`; the macOS node still owns the identity facts.
-- No change to the rule's normative content, the agent-file check, the scope table or the generated
-  skills.
+  removes the rule from its own `## Rules` list. The listing is required by the check and is the
+  discoverability fallback when the scoped-rule plugin is unavailable; it is not the delivery
+  mechanism.
+- `native-bridge/host/AGENTS.md` keeps the pointer to `native-bridge/installer/macos/AGENTS.md` and
+  names the rule without the by-hand instruction.
+- No change to the rule's normative content, the scope table or the generated skills.
 
 ## Open Questions
 
