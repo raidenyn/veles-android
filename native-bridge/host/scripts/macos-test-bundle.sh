@@ -1,23 +1,24 @@
 #!/bin/bash
-# Embed the freshly built production-source `veles-native-host` into the EXISTING approved OTP-23
-# macOS test identity and sign it with that machine's existing Apple Development certificate, so
-# the Task 7 CoreBluetooth adapter can be exercised under the TCC identity the earlier physical
-# runs used. This is a TEST VEHICLE: it is NOT the production bundle and says nothing about the
-# production identity (CI credentials, notarization, migration) -- that needs a separately
-# planned migration and revalidation.
+# Embed the freshly built production-source `veles-native-host` into the canonical macOS test
+# identity and sign it with that machine's existing Apple Development certificate, so the Task 7
+# CoreBluetooth adapter can be exercised under the TCC identity reused by real E2E runs. This is a
+# TEST VEHICLE: it is NOT the production bundle and says nothing about the production identity (CI
+# credentials, notarization, migration) -- that needs a separately planned migration and
+# revalidation.
 #
 # The ONE approved identity:
-#     bundle identifier  me.nagaev.veles.otp23.poc   (docs/desktop-ble-poc.md: the approved PoC
-#                                                    identity; `me.nagaev.veles.bridge` is the
-#                                                    DIFFERENT production identity and needs a
-#                                                    separately planned migration/revalidation)
+#     bundle identifier  me.nagaev.veles.debug   (the canonical debug/test identity; the previous
+#                                                 test identity `me.nagaev.veles.otp23.poc` is
+#                                                 retired, and `me.nagaev.veles.bridge` is the
+#                                                 DIFFERENT production identity that needs a
+#                                                 separately planned migration/revalidation)
 #     certificate        Apple Development: yuriy@nagaev.me (ZWYYS8X98S)
 #     TeamIdentifier     7T39M26Z99
 # The certificate name and team are copied from real recorded `codesign -dvv` output
 # (native-bridge/feasibility/evidence/investigations-2026-10-27/macos/signed-bundle-readback-2026-10-27.txt,
 # post-grant-2026-10-26/strict-mac-20261027/f2-macos-host-bundle-codesign.txt) -- the machine's one
-# existing Apple Development identity the PoC is documented to be signed with. No recorded output
-# shows the PoC identifier itself under it, so if the certificate is not found on the Mac the
+# existing Apple Development identity the test vehicle is documented to be signed with. No recorded
+# output shows the test identifier itself under it, so if the certificate is not found on the Mac the
 # script STOPS (BLOCKED) rather than choosing anything else. There is no option to choose another
 # identifier, team or certificate.
 #
@@ -35,8 +36,8 @@
 # replaced (the script refuses; move it away yourself). On any failure only this run's own staging
 # directory is removed, so no stale or half-built evidence can remain.
 #
-# Published: <out>/VelesOtp23PoC.app (Contents/MacOS/veles-native-host) and
-# <out>/VelesOtp23PoC.identity.txt with the source executable hash and the post-signing
+# Published: <out>/VelesOtpDebug.app (Contents/MacOS/veles-native-host) and
+# <out>/VelesOtpDebug.identity.txt with the source executable hash and the post-signing
 # executable identity recorded SEPARATELY (codesign rewrites the Mach-O, so the hashes differ by
 # design; every value is read from real tool output at run time, none is inferred).
 #
@@ -44,11 +45,11 @@
 #   scripts/macos-test-bundle.sh [-b target/release/veles-native-host] [-o target/macos-test-bundle]
 set -euo pipefail
 
-APPROVED_BUNDLE_ID="me.nagaev.veles.otp23.poc"
+APPROVED_BUNDLE_ID="me.nagaev.veles.debug"
 APPROVED_TEAM_ID="7T39M26Z99"
 APPROVED_AUTHORITY="Apple Development: yuriy@nagaev.me (ZWYYS8X98S)"
-APP_NAME="VelesOtp23PoC.app"
-RECORD_NAME="VelesOtp23PoC.identity.txt"
+APP_NAME="VelesOtpDebug.app"
+RECORD_NAME="VelesOtpDebug.identity.txt"
 EXEC_NAME="veles-native-host"
 
 # --- pure helpers (sourced by the shell tests; no macOS tools needed) ---------------------------
@@ -172,7 +173,7 @@ main() {
     <key>CFBundleIdentifier</key>
     <string>$APPROVED_BUNDLE_ID</string>
     <key>CFBundleName</key>
-    <string>VelesOtp23PoC</string>
+    <string>VelesOtpDebug</string>
     <key>CFBundleExecutable</key>
     <string>$EXEC_NAME</string>
     <key>CFBundlePackageType</key>
@@ -210,7 +211,7 @@ PLIST
     cdhash="$(awk -F= '/^CDHash=/ {print $2; exit}' <<<"$dv")"
     {
         echo "test_vehicle: true"
-        echo "production_identity: UNVALIDATED (this is the approved OTP-23 test identity, not the production bundle)"
+        echo "production_identity: UNVALIDATED (this is the approved debug test identity, not the production bundle)"
         echo "bundle: $out/$APP_NAME"
         echo "source_executable_sha256: $source_sha"
         echo "post_signing_executable_sha256: $signed_sha"

@@ -18,12 +18,15 @@ Android and macOS identities are separate.
   key export, or TCC reset; use the Aqua keychain context when required.
 - Different production signing is a separately planned migration with revalidation. Do not borrow
   debug credentials. Never record fingerprints that were not read from real output.
-- The OTP-23 macOS test bundle (`native-bridge/host/scripts/macos-test-bundle.sh`) selects the
-  approved Apple Development certificate read-only by its exact recorded name and stops (BLOCKED)
-  when it is absent or ambiguous; never add a fallback identity. It is a test vehicle, not the
-  production bundle.
+- The macOS test bundle (`native-bridge/host/scripts/macos-test-bundle.sh`, application
+  `VelesOtpDebug.app`, identifier `me.nagaev.veles.debug`) selects the approved Apple Development
+  certificate read-only by its exact recorded name and stops (BLOCKED) when it is absent or
+  ambiguous; never add a fallback identity. It is a test vehicle, not the production bundle.
 - Signing and notarization run only in the owner-only `publish-release.yml` (`sign-macos` under the
   `native-release` environment), never in the unsigned input producers.
+
+Real macOS Bluetooth E2E runs follow `.agents/rules/macos-test-app-tcc.md`: one fixed bundle
+identifier and signing identity, a LaunchServices or Chrome launch, and no TCC reset.
 
 ## Build & Test
 
@@ -41,6 +44,7 @@ BLOCKED, never as passes.
 
 ## Rules
 
-None.
+- `.agents/rules/macos-test-app-tcc.md` — the fixed macOS test-app identity and the one-time
+  Bluetooth grant for real E2E runs.
 
 > **Run your agent from the repository root.** Scoped rules in `.agents/rules/` load only from there; if you started in this folder, read this folder's rule files listed below by hand.
