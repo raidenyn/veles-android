@@ -380,10 +380,15 @@ export class SessionManager {
      * and never aborts the termination of another selected session.
      */
     async closePeer(peerId: string): Promise<void> {
+        // The holds are snapshotted before the first await: a responder's own finish starts this
+        // call while its handler step is still running, so its hold does not exist yet and must
+        // survive to its own end conditions.
+        const held = this.takeHolds((hold) => hold.peerId === peerId);
         await this.closeSelected(
             [...this.byHandle.values()].filter((session) => session.peerId === peerId),
             this.links().filter((link) => link.boundPeerId() === peerId),
             'revoked',
+            held,
         );
     }
 
@@ -393,14 +398,21 @@ export class SessionManager {
      * reset, distinct from the destructive pairing `cancel()`.
      */
     async closeAll(): Promise<void> {
-        await this.closeSelected([...this.byHandle.values()], [...this.links()], 'closed');
+        // Snapshotted before the first await, so a hold opened by a handler that is still running
+        // is not selected: it ends at its own close or bound.
+        const held = this.takeHolds(() => true);
+        await this.closeSelected([...this.byHandle.values()], [...this.links()], 'closed', held);
     }
 
     private async closeSelected(
         sessions: readonly Session[],
         links: readonly PairingLink[],
         reason: string,
+        held: readonly string[],
     ): Promise<void> {
+        // The selected holds are released first and never awaited: a failing link close cannot
+        // skip them, and the reset or revocation does not wait for the host's disconnect reply.
+        for (const handle of held) this.releaseHold(handle);
         // Every selected generation is terminated even when one link close fails; the
         // first failure is reported only after all of them settled.
         const results = await Promise.allSettled([
@@ -410,6 +422,31 @@ export class SessionManager {
         for (const result of results) {
             if (result.status === 'rejected') throw result.reason;
         }
+    }
+
+    /**
+     * Removes and returns the handles whose holds match `predicate`, clearing each timer and
+     * subscription exactly once. The caller releases the returned handles.
+     */
+    private takeHolds(predicate: (hold: RemovalHold) => boolean): string[] {
+        const selected: string[] = [];
+        for (const [handle, hold] of [...this.holds]) {
+            if (!predicate(hold)) continue;
+            this.holds.delete(handle);
+            this.timers.clearTimeout(hold.timer);
+            hold.unsubscribe();
+            selected.push(handle);
+        }
+        return selected;
+    }
+
+    /**
+     * Releases one selected hold's link: fire-and-forget, so a reset never waits for the host's
+     * disconnect reply, and a refused close changes nothing that already ended logically.
+     */
+    private releaseHold(handle: string): void {
+        if (!this.controller.isOpen()) return;
+        void this.controller.disconnect(handle).catch(() => undefined);
     }
 
     /**

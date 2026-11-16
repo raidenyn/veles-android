@@ -18,7 +18,9 @@ import { TrustStoreError, bytes, type TrustState } from '../../src/trust/model';
 
 import {
     HANDLE_CONNECTION,
+    HANDLE_CONNECTION_2,
     HANDLE_DEVICE,
+    HANDLE_DEVICE_2,
     disconnectedEvent,
     wireErrorEvent,
 } from '../connector/fixtures';
@@ -84,6 +86,22 @@ class RecordingOperations implements RemovalOperations {
             this.storeFailures.push('re-pair required');
             throw new TrustStoreError();
         }
+        this.deleted.push(peerId);
+    }
+}
+
+/**
+ * A responder deletion that starts the peer close without awaiting it, exactly like
+ * `revocation.ts`'s `deleteFenced`: the finish waits behind the handler's own step, so awaiting
+ * it there would deadlock. The manager reference is filled in after the fixture exists.
+ */
+class FinishingOperations implements RemovalOperations {
+    readonly deleted: string[] = [];
+
+    constructor(private readonly manager: { current?: SessionManager }) {}
+
+    async deleteFenced(peerId: string): Promise<void> {
+        void this.manager.current?.closePeer(peerId);
         this.deleted.push(peerId);
     }
 }
@@ -1296,5 +1314,234 @@ describe('SessionManager removal delivery hold', () => {
         expect(tasks).toHaveLength(1);
         expect(tasks[0]?.cancelled).toBe(true);
         expect(disconnects).toEqual([]);
+    });
+});
+
+// The cleanup snapshot: a reset, a fail-closed or a revocation releases only the holds it selected
+// when it began, and releases them without waiting for the host's disconnect reply. A hold opened
+// after that snapshot — the responder's own finish, or a handler still deleting — survives to its
+// own end conditions.
+
+describe('SessionManager removal hold cleanup', () => {
+    it('releases the held link through closeAll and does not wait for the host reply', async () => {
+        const ops = new RecordingOperations();
+        const fixture = await createFixture({ operations: ops });
+        const side = await openSession(fixture);
+        const port = fixture.currentPort();
+        await respondToRemoval(fixture, side);
+        const task = holdTasks(fixture.timers)[0];
+        expect(task?.cancelled).toBe(false);
+        expect(postedDisconnects(port, HANDLE_CONNECTION)).toEqual([]);
+
+        // The test never answers the disconnect request: the reset must not wait for it.
+        await expect(fixture.manager.closeAll()).resolves.toBeUndefined();
+        await flush();
+
+        expect(task?.cancelled).toBe(true);
+        expect(internals(fixture.manager).holds.size).toBe(0);
+        expect(postedDisconnects(port, HANDLE_CONNECTION)).toHaveLength(1);
+        // The reset only released the link: the deletion and the removal stage are unchanged.
+        expect(terminations(fixture, HANDLE_CONNECTION)).toEqual(['removal']);
+        expect(ops.deleted).toEqual([fixture.peerId]);
+        expect(failedOutcomes(fixture)).toEqual([]);
+    });
+
+    it('finishes every held link through closeAll, the fail-closed path', async () => {
+        const ops = new RecordingOperations();
+        const fixture = await createFixture({ operations: ops });
+        const port = fixture.currentPort();
+        const firstSide = await openSession(fixture);
+        await respondToRemoval(fixture, firstSide);
+
+        // A second held link of another peer, so "every hold" is observable.
+        const otherPhone = await TestPhone.create();
+        const otherPeerId = await fixture.trust.addPeer(otherPhone);
+        await connectForSession(fixture, HANDLE_CONNECTION_2, HANDLE_DEVICE_2);
+        const opened = fixture.manager.open(HANDLE_CONNECTION_2, otherPeerId);
+        const otherSide = await answerHandshake(fixture, {
+            phone: otherPhone,
+            connectionHandle: HANDLE_CONNECTION_2,
+        });
+        await expect(opened).resolves.toEqual({
+            result: 'authenticated',
+            peerId: otherPeerId,
+        });
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION_2,
+            await otherSide.applicationFrame(RecordType.REMOVAL_REQUEST, 1n),
+        );
+        await ackSend(port, await nextSendFor(port, HANDLE_CONNECTION_2));
+        await flush();
+        expect(holdTasks(fixture.timers)).toHaveLength(2);
+
+        await expect(fixture.manager.closeAll()).resolves.toBeUndefined();
+        await flush();
+
+        expect(internals(fixture.manager).holds.size).toBe(0);
+        expect(holdTasks(fixture.timers).every((task) => task.cancelled)).toBe(true);
+        expect(postedDisconnects(port, HANDLE_CONNECTION)).toHaveLength(1);
+        expect(postedDisconnects(port, HANDLE_CONNECTION_2)).toHaveLength(1);
+        expect(terminations(fixture, HANDLE_CONNECTION)).toEqual(['removal']);
+        expect(terminations(fixture, HANDLE_CONNECTION_2)).toEqual(['removal']);
+        expect(ops.deleted).toEqual([fixture.peerId, otherPeerId]);
+        expect(fixture.manager.authenticatedSessions()).toEqual([]);
+    });
+
+    it('releases the revoked peer hold through closePeer', async () => {
+        const ops = new RecordingOperations();
+        const fixture = await createFixture({ operations: ops });
+        const side = await openSession(fixture);
+        const port = fixture.currentPort();
+        await respondToRemoval(fixture, side);
+        const task = holdTasks(fixture.timers)[0];
+
+        await expect(fixture.manager.closePeer(fixture.peerId)).resolves.toBeUndefined();
+        await flush();
+
+        expect(task?.cancelled).toBe(true);
+        expect(internals(fixture.manager).holds.size).toBe(0);
+        expect(postedDisconnects(port, HANDLE_CONNECTION)).toHaveLength(1);
+        // The revocation's trust work is unaffected: the handler's deletion still happened.
+        expect(ops.deleted).toEqual([fixture.peerId]);
+        expect(terminations(fixture, HANDLE_CONNECTION)).toEqual(['removal']);
+    });
+
+    it('leaves another peer hold untouched through closePeer', async () => {
+        const ops = new RecordingOperations();
+        const fixture = await createFixture({ operations: ops });
+        const side = await openSession(fixture);
+        const port = fixture.currentPort();
+        await respondToRemoval(fixture, side);
+        const task = holdTasks(fixture.timers)[0];
+        const otherPeerId = await fixture.trust.addPeer(await TestPhone.create());
+
+        await expect(fixture.manager.closePeer(otherPeerId)).resolves.toBeUndefined();
+        await flush();
+
+        expect(task?.cancelled).toBe(false);
+        expect(internals(fixture.manager).holds.get(HANDLE_CONNECTION)?.peerId).toBe(
+            fixture.peerId,
+        );
+        expect(postedDisconnects(port, HANDLE_CONNECTION)).toEqual([]);
+
+        // The surviving hold still ends at its own bound with exactly one disconnect.
+        task?.run();
+        await flush();
+        expect(internals(fixture.manager).holds.size).toBe(0);
+        expect(postedDisconnects(port, HANDLE_CONNECTION)).toHaveLength(1);
+        expect(ops.deleted).toEqual([fixture.peerId]);
+    });
+
+    it('keeps the responder hold when its own deletion starts the peer close', async () => {
+        const holder: { current?: SessionManager } = {};
+        const ops = new FinishingOperations(holder);
+        const fixture = await createFixture({ operations: ops });
+        holder.current = fixture.manager;
+        const side = await openSession(fixture);
+        const port = fixture.currentPort();
+
+        await respondToRemoval(fixture, side);
+        await flush();
+
+        // The responder's finish started `closePeer` while its handler step still owned the queue,
+        // so the cleanup snapshot ran before this hold existed: the reply's link stays held.
+        expect(internals(fixture.manager).holds.get(HANDLE_CONNECTION)?.peerId).toBe(
+            fixture.peerId,
+        );
+        const task = holdTasks(fixture.timers)[0];
+        expect(task?.cancelled).toBe(false);
+        expect(postedDisconnects(port, HANDLE_CONNECTION)).toEqual([]);
+        expect(sentTypes(port, HANDLE_CONNECTION).at(-1)).toBe(RecordType.REMOVAL_RESPONSE);
+        expect(ops.deleted).toEqual([fixture.peerId]);
+        expect(terminations(fixture, HANDLE_CONNECTION)).toEqual(['removal']);
+
+        // The hold ends at its own bound with exactly one disconnect.
+        task?.run();
+        await flush();
+        expect(internals(fixture.manager).holds.size).toBe(0);
+        expect(postedDisconnects(port, HANDLE_CONNECTION)).toHaveLength(1);
+        expect(failedOutcomes(fixture)).toEqual([]);
+    });
+
+    it('keeps a hold that a handler opens after the closeAll snapshot', async () => {
+        const ops = new SuspendedOperations();
+        const fixture = await createFixture({ operations: ops });
+        const side = await openSession(fixture);
+        const port = fixture.currentPort();
+
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.applicationFrame(RecordType.REMOVAL_REQUEST, 1n),
+        );
+        await ops.entered.promise;
+
+        // The reset starts while the handler still owns its step: no hold exists to snapshot yet.
+        const reset = fixture.manager.closeAll();
+        ops.allow();
+        await ackSend(port, await nextSendFor(port, HANDLE_CONNECTION));
+        await expect(reset).resolves.toBeUndefined();
+        await flush();
+
+        // The hold the handler opened after the snapshot survives the reset.
+        expect(internals(fixture.manager).holds.get(HANDLE_CONNECTION)?.peerId).toBe(
+            fixture.peerId,
+        );
+        expect(postedDisconnects(port, HANDLE_CONNECTION)).toEqual([]);
+        expect(ops.deleted).toEqual([fixture.peerId]);
+        expect(fixture.manager.authenticatedSessions()).toEqual([]);
+        expect(terminations(fixture, HANDLE_CONNECTION)).toEqual(['removal']);
+
+        // It ends at the peer's own close, which posts no disconnect of ours.
+        const task = holdTasks(fixture.timers)[0];
+        await port.emit(
+            disconnectedEvent({ request_id: undefined, connection_handle: HANDLE_CONNECTION }),
+        );
+        await flush();
+        expect(task?.cancelled).toBe(true);
+        expect(internals(fixture.manager).holds.size).toBe(0);
+        expect(postedDisconnects(port, HANDLE_CONNECTION)).toEqual([]);
+    });
+
+    it('clears a held link without a disconnect when the port closes', async () => {
+        const fixture = await createFixture();
+        const side = await openSession(fixture);
+        const port = fixture.currentPort();
+        await respondToRemoval(fixture, side);
+        const task = holdTasks(fixture.timers)[0];
+        // The port close resets the diagnostics ring, so the removal stage is asserted first.
+        expect(terminations(fixture, HANDLE_CONNECTION)).toEqual(['removal']);
+
+        await port.disconnect('native host gone');
+        await flush();
+
+        expect(task?.cancelled).toBe(true);
+        expect(internals(fixture.manager).holds.size).toBe(0);
+        expect(postedDisconnects(port, HANDLE_CONNECTION)).toEqual([]);
+        expect(fixture.manager.authenticatedSessions()).toEqual([]);
+    });
+
+    it('does not select a hold created after the closeAll snapshot', async () => {
+        const fixture = await createFixture();
+        const port = fixture.currentPort();
+        await connectForSession(fixture, HANDLE_CONNECTION_2, HANDLE_DEVICE_2);
+
+        const closing = fixture.manager.closeAll();
+        // Later in the same turn, after the snapshot: this hold belongs to no cleanup.
+        internals(fixture.manager).holdOpen({
+            handle: HANDLE_CONNECTION_2,
+            peerId: 'later-peer',
+        });
+        await expect(closing).resolves.toBeUndefined();
+
+        const task = holdTasks(fixture.timers)[0];
+        expect(task?.cancelled).toBe(false);
+        expect(internals(fixture.manager).holds.size).toBe(1);
+        expect(postedDisconnects(port, HANDLE_CONNECTION_2)).toEqual([]);
+
+        task?.run();
+        await flush();
+        expect(postedDisconnects(port, HANDLE_CONNECTION_2)).toHaveLength(1);
     });
 });
