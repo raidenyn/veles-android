@@ -25,6 +25,9 @@ private const val BYTE_MASK = 0xFFL
 private const val LEDGER_MAX_EVENTS = 256
 private const val SESSION_PREFIX_BYTES = 8
 
+/** The encoder's entropy block: the 16-byte event id followed by the 5 marker bytes. */
+internal const val SYNTHETIC_ENTROPY_BYTES = EVENT_ID_BYTES + MARKER_BODY_BYTES
+
 /** One §8.1 synthetic event: the decoded marker, the event id and the exact record body. */
 internal data class SyntheticEvent(
     val code: String,
@@ -156,15 +159,19 @@ internal class SyntheticProbeHandler private constructor(
  * Encodes one §8.1 event exactly: installation id and event id (16 bytes each), epoch
  * seconds (u64be), lifetime (u32be), code and merchant as `len u16be || UTF-8`, amount
  * magnitude (u64be), amount scale (u8) and the three ASCII currency bytes.
+ *
+ * [lifetimeSeconds] defaults to the probe's fixed 600 s; the Gate B fixture re-encodes its
+ * records with the floor of their remaining seconds.
  */
 internal fun createSyntheticEvent(
     localInstallationId: ByteArray,
     receiptEpochSeconds: Long,
     random: (Int) -> ByteArray,
+    lifetimeSeconds: Long = SYNTHETIC_REMAINING_LIFETIME,
 ): SyntheticEvent {
     require(localInstallationId.size == INSTALLATION_ID_BYTES) { "installation id is 16 bytes" }
-    val entropy = random(EVENT_ID_BYTES + MARKER_BODY_BYTES)
-    require(entropy.size == EVENT_ID_BYTES + MARKER_BODY_BYTES) { "probe entropy is 21 bytes" }
+    val entropy = random(SYNTHETIC_ENTROPY_BYTES)
+    require(entropy.size == SYNTHETIC_ENTROPY_BYTES) { "probe entropy is 21 bytes" }
     val eventId = entropy.copyOfRange(0, EVENT_ID_BYTES)
     val marker = buildString {
         append(CODE_PREFIX)
@@ -184,7 +191,7 @@ internal fun createSyntheticEvent(
     eventId.copyInto(body, offset)
     offset += EVENT_ID_BYTES
     offset = writeU64(body, offset, receiptEpochSeconds)
-    offset = writeU32(body, offset, SYNTHETIC_REMAINING_LIFETIME)
+    offset = writeU32(body, offset, lifetimeSeconds)
     offset = writeLengthPrefixed(body, offset, marker.toByteArray(Charsets.UTF_8))
     offset = writeLengthPrefixed(body, offset, merchant)
     offset = writeU64(body, offset, SYNTHETIC_AMOUNT_MAGNITUDE)
