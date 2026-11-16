@@ -509,13 +509,10 @@ gh api repos/<owner>/<repository>/rules/branches/<base>
 The required set is the **union** of the `required_status_checks` contexts every applicable ruleset reports in
 that response. Read it once per base branch and reuse it across polling cycles.
 
-Classic branch protection is **ignored**, never merged: do not read
+Classic branch protection is **ignored** even when it exists, never merged: do not read
 `repos/<owner>/<repository>/branches/<base>/protection` or its `required_status_checks` endpoint. A
 `404 Not Found` from it proves nothing — a token without repository admin gets one that does not distinguish
-"no protection" from "no permission" — and it never adds a required check. Ignore the retired classic contexts
-`lint-check`, `unit-tests` and `instrumented-tests` even when a classic rule still lists them: the CI reports
-those checks as `<node> / <check>`, so a bare classic context of that name can never be satisfied and would hang
-green forever. A ruleset that names one of them still counts, by the union rule above.
+"no protection" from "no permission" — and it never adds a required check.
 
 When the response cannot be read, reports no `required_status_checks` rule, or reports an empty context list,
 the inventory is not established: stop and ask the user, use the answered inventory, and never treat the
