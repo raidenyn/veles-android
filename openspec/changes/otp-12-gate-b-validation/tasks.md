@@ -31,8 +31,8 @@
 
 ## 6. Journey file
 
-- [ ] 6.1 Write `protocol/conformance/gate-b-journeys.json` with the `enrollment` and `protected-records` journeys, expectations and `trust_independent_of_platform_hint`
-- [ ] 6.2 Add the schema and vocabulary test in `protocol/checks/` (token matching incl. `transport_mtu` allowed and `tab_id` rejected, action list, hint rule, unknown action), add it to the named list in `check.mjs`, run `./gradlew protocolCheck`
+- [x] 6.1 Write `protocol/conformance/gate-b-journeys.json` with the `enrollment` and `protected-records` journeys, expectations and `trust_independent_of_platform_hint`
+- [x] 6.2 Add the schema and vocabulary test in `protocol/checks/` (token matching incl. `transport_mtu` allowed and `tab_id` rejected, action list, hint rule, unknown action), add it to the named list in `check.mjs`, run `./gradlew protocolCheck`
 
 ## 7. Scripted client and loopback
 
