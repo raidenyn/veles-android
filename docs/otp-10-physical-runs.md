@@ -18,7 +18,13 @@ builds, not production artifacts.
 | Extension | development channel, `web-extension/dist`, `version_name` `0.1.0-46-g1b740a9` |
 | Windows extension id | `icoiadkjakfgpipmocdbheockdcbleni` |
 | macOS extension id | `mhpehgcgnfejmeaocnpaihfaklopeabm` |
-| Native host | `veles-native-host/0.1.0`, built locally from `native-bridge/host` at `1b740a9`; unsigned on Windows; on macOS the canonical signed `VelesOtpDebug.app` (`me.nagaev.veles.debug`, Apple Development; see `.agents/rules/macos-test-app-tcc.md`); not the production host |
+| Native host | `veles-native-host/0.1.0`, built locally from `native-bridge/host` at `1b740a9`; unsigned on Windows, ad-hoc signed app bundle on macOS; not the production host |
+
+Procedure correction (2026-11-16): current macOS Bluetooth test runs use the canonical signed
+`VelesOtpDebug.app` (`me.nagaev.veles.debug`, Apple Development) built by
+`native-bridge/host/scripts/macos-test-bundle.sh`, per `.agents/rules/macos-test-app-tcc.md`, so one
+Bluetooth grant is reused across runs. The ad-hoc bundle above is the historical observation of the
+2026-11-13 run, not the current procedure.
 
 The phone is the repository's OTP-23 fixture build (`applicationIdSuffix = ".otp23"` via
 `config/android_keys/fixture-signing.gradle`). The debug pairing controls are
@@ -73,7 +79,7 @@ UTF-16LE on Windows).
 | 4. Reconnect 1 (device-row Connect, user-selected) | PASS (ack-loss recovery) | The signed reconnect resumed activation without a code: the phone record became `ACTIVE` (`lastSeen` set) and the Chrome record kept `active_activation_pending` with `lastSeen` set |
 | 5. Reconnect 2 | PASS | A further device-row Connect upgraded the Chrome record to `active`, `lastSeen` refreshed, macOS platform hint captured |
 
-The phone already held one `ACTIVE` record (the Windows client) when the macOS run started, so this run also exercises the multi-peer path: the phone ended with two independent desktop records. The macOS host was packaged as the canonical signed `VelesOtpDebug.app` bundle (`me.nagaev.veles.debug`, Apple Development; `NSBluetoothAlwaysUsageDescription` and `LSUIElement`) through `native-bridge/host/scripts/macos-test-bundle.sh`, so one Bluetooth grant is reused across runs; the Native Messaging manifest `me.nagaev.veles.bridge` was registered per-user and under the dedicated Chrome profile’s `NativeMessagingHosts` directory (with `--user-data-dir`, the profile-local directory is the one Chrome read).
+The phone already held one `ACTIVE` record (the Windows client) when the macOS run started, so this run also exercises the multi-peer path: the phone ended with two independent desktop records. The macOS host had to be packaged as an ad-hoc-signed `VelesNativeBridge.app` bundle with `NSBluetoothAlwaysUsageDescription` and `LSUIElement`; the Native Messaging manifest `me.nagaev.veles.bridge` was registered per-user and under the dedicated Chrome profile’s `NativeMessagingHosts` directory (with `--user-data-dir`, the profile-local directory is the one Chrome read).
 
 ## Post-gate re-check — 2026-11-13 (after the final-gate fixes)
 
@@ -94,8 +100,7 @@ identity was used instead of uninstalling the app or clearing app data.
 ## Limits
 
 - Development builds only: the extension and the Android fixture key are not production
-  artifacts; the Windows host is unsigned and the macOS host is the signed `VelesOtpDebug.app`
-  test identity, not the production bundle.
+  artifacts; the Windows host is unsigned and the macOS host is ad-hoc signed.
 - One phone (OnePlus 6T), one Chrome version per platform, one Windows build, one macOS build.
 - On Windows the interrupted activation was produced by force-stopping the app after the phone
   reached `COMMITTED_WAITING_ACK`; the resume used the connector's debug `connect` hook with an
