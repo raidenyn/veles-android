@@ -713,8 +713,9 @@ describe('development probe multi-event pull', () => {
         const sendsAfterRequest = await acknowledgePullRequest(port);
         await emitPullEvents(port, side, pullEventsBody([]));
 
+        // The promise resolves from the handler only after its ack loop, so no reply can still
+        // be in flight: completion alone proves the empty record sent no acknowledgement.
         await expect(pulled).resolves.toEqual([]);
-        await flush();
         // No acknowledgement for an empty record: no send follows the pull_request.
         expect(postedSends(port, HANDLE_CONNECTION)).toHaveLength(sendsAfterRequest);
         expect(readoutText(fixture)).toBe('');
