@@ -291,13 +291,13 @@ unit/integration tests only (`web-extension/test/connector/revocation-integratio
 ## Follow-up run — 2026-11-16, removal response delivery hold
 
 Purpose: verify that the Chrome responder keeps the removal link until the Android requester
-closes it (issue #154), so Android → Chrome mutual removal completes on both endpoints.
+closes it (the removal-response delivery follow-up), so Android → Chrome mutual removal completes on
+both endpoints.
 
 Environment: OnePlus 6T, Android 15, debug APK `me.nagaev.veles.debug`; development-channel
-extension `0.1.0-24-g3199b70` loaded unpacked in the dedicated Chrome profile
-(`~/.homepc/chrome-profile`, extension `mhpehgcgnfejmeaocnpaihfaklopeabm`); macOS host packaged as
-the canonical signed `VelesOtpDebug.app` (identifier `me.nagaev.veles.debug`, Apple Development:
-yuriy@nagaev.me (ZWYYS8X98S)), built from the unchanged `native-bridge/host` source with the
+extension `0.1.0-24-g3199b70` loaded unpacked in the dedicated Chrome profile; macOS host packaged
+as the canonical signed `VelesOtpDebug.app` (the canonical test identity in
+`.agents/rules/macos-test-app-tcc.md`), built from the unchanged `native-bridge/host` source with the
 development allowlist. No permission prompt appeared while the connector started and scanned, but
 the required TCC log capture (`log show` with the bundle-id and `kTCCServiceBluetoothAlways`
 predicate) produced no records in this session; grant reuse is therefore recorded as
@@ -345,11 +345,13 @@ second phone's Bluetooth was disabled so only the test phone advertised the Vele
   list was empty and the phone's trust record was deleted.
 
 Evidence not captured: the phone's on-screen outcome line (the debug screen is `FLAG_SECURE`; the
-driver log was used instead) and the native-port `sent` → phone `disconnected` trace. The required
-TCC log capture also produced no records, so the macOS grant reuse remains recorded as
-**inconclusive, not proven**, although the connector started and scanned without a prompt. The
-ten-per-direction target is met; the two evidence-format gaps are recorded here rather than
-claimed as observed screens.
+driver log was used instead) and the native-port `sent` → phone `disconnected` trace. Without that
+trace the ten Android → Chrome cycles confirm completion on both endpoints but cannot distinguish a
+normal close from the 5 s fallback; a fallback could still show `DONE` if the response reached the
+phone. For Chrome → Android the phone's on-screen line was not captured; the driver's
+`CHROME_REMOVED` and the empty trust store stood in for it. The TCC log capture also produced no
+records, so grant reuse remains **inconclusive, not proven**. The ten-per-direction target is met;
+these evidence gaps are recorded here rather than claimed as observed screens.
 
 Unit-only paths: the hold's bound-expiry fallback, the immediate-listener/port-close guards, and
 the reset/revocation cleanup paths are covered by `web-extension/test/session/removal.test.ts`,
