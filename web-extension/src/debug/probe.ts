@@ -30,6 +30,11 @@ export interface VelesDebug {
     connect(deviceHandle: string, peerId: string): Promise<void>;
     injectPeer(id: string, pub: string): Promise<void>;
     pull(handle?: string): Promise<ProbeEvent>;
+    /**
+     * A multi-event pull (design D9) that accepts a 0..5 event `pull_events` record. The whole
+     * record is validated before any `event_ack`; a violation rejects and ends the session.
+     */
+    pullAll(handle?: string): Promise<ProbeEvent[]>;
 }
 
 declare global {
@@ -69,12 +74,29 @@ const MAX_CODE_BYTES = 16;
 const MAX_MERCHANT_BYTES = 64;
 const MAX_AMOUNT_SCALE = 8;
 const CURRENCY_BYTES = 3;
+/** §8.1 `pull_events` carries at most five events. */
+const MAX_PULL_EVENTS = 5;
+/**
+ * A distinctive literal kept in this development-only module: `bundle.test.ts` asserts it is
+ * absent from the production guard bundle, so the multi-event path cannot leak unnoticed.
+ */
+const PULL_ALL_MARKER = 'veles-debug-pullAll';
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 interface PendingPull {
+    kind: 'pull';
     resolve(event: ProbeEvent): void;
     reject(error: Error): void;
 }
+
+interface PendingPullAll {
+    kind: 'pullAll';
+    resolve(events: ProbeEvent[]): void;
+    reject(error: Error): void;
+}
+
+/** A pending `pull_events` request; its kind selects the decoder in the per-session handler. */
+type PendingRequest = PendingPull | PendingPullAll;
 
 /** A malformed synthetic record ends the session (the engine fails closed on handler errors). */
 function reject(): never {
@@ -187,6 +209,31 @@ export function decodeProbeEvent(
     return event;
 }
 
+/**
+ * Strict §8.1 decode of a whole `pull_events` record carrying 0..5 synthetic events. The count
+ * must match the payload exactly and no event id may repeat; any violation rejects the record
+ * before the caller acknowledges a single event.
+ */
+export function decodeProbeEvents(
+    body: Uint8Array,
+    expectedPeerId: string,
+    sessionIdPrefix: string,
+): ProbeEvent[] {
+    const cursor = new Cursor(body);
+    const count = cursor.u8();
+    if (count > MAX_PULL_EVENTS) reject();
+    const events: ProbeEvent[] = [];
+    const eventIds = new Set<string>();
+    for (let index = 0; index < count; index += 1) {
+        const event = decodeEvent(cursor, expectedPeerId, sessionIdPrefix);
+        if (eventIds.has(event.eventId)) reject();
+        eventIds.add(event.eventId);
+        events.push(event);
+    }
+    cursor.end();
+    return events;
+}
+
 function ackBody(event: ProbeEvent): Uint8Array {
     const body = new Uint8Array(INSTALLATION_ID_BYTES + EVENT_ID_BYTES);
     body.set(bytes(event.phoneInstallationId, INSTALLATION_ID_BYTES));
@@ -208,7 +255,7 @@ export function createDevelopmentProbe(
     options: DevelopmentProbeOptions = {},
 ): DevelopmentProbe {
     const readout: DebugReadout = createDebugReadout(document);
-    const pending = new Map<string, PendingPull>();
+    const pending = new Map<string, PendingRequest>();
     const unsubscribers: (() => void)[] = [];
     let makeRepository: ConnectorSessionOptions['createRepository'] | null = null;
     let debugRepository: ChromeTrustRepository | null = null;
@@ -227,36 +274,47 @@ export function createDevelopmentProbe(
         return {
             handles: (type) => type === PROBE_TYPE.PULL_EVENTS || type === PROBE_TYPE.PUSH_EVENT,
             handle: async (type, body, reply) => {
-                let event: ProbeEvent;
+                // Design D9: the pending request kind selects the decoder, so `pull()` keeps
+                // its exactly-one rule while `pullAll()` accepts 0..5. A push event and an
+                // unsolicited pull_events record both keep the single-event decoder.
+                const requester = pending.get(handle);
+                const multi = type === PROBE_TYPE.PULL_EVENTS && requester?.kind === 'pullAll';
+                let events: ProbeEvent[];
                 try {
                     // The authenticated session owns the prefix; the record is already open.
                     const session = requireSessions()
                         .authenticatedSessions()
                         .find((candidate) => candidate.handle === handle);
-                    event = decodeProbeEvent(
-                        type,
-                        body,
-                        peerId,
-                        session === undefined ? '' : hex(session.sessionIdPrefix),
-                    );
+                    const prefix = session === undefined ? '' : hex(session.sessionIdPrefix);
+                    events = multi
+                        ? decodeProbeEvents(body, peerId, prefix)
+                        : [decodeProbeEvent(type, body, peerId, prefix)];
                 } catch (error) {
                     readout.clear();
                     throw error;
                 }
-                await reply(PROBE_TYPE.EVENT_ACK, ackBody(event));
-                // OTP2-REC-030a: a remaining lifetime of 0 is already expired. It is fully
-                // acknowledged above but never displayed.
-                if (event.remainingLifetime > 0) {
-                    readout.show({
-                        marker: event.code,
-                        eventId: event.eventId,
-                        sessionIdPrefix: event.sessionIdPrefix,
-                    });
+                // The whole record is valid now: only from here on may an event be acknowledged.
+                for (const event of events) {
+                    await reply(PROBE_TYPE.EVENT_ACK, ackBody(event));
+                    // OTP2-REC-030a: a remaining lifetime of 0 is already expired. It is
+                    // fully acknowledged above but never displayed.
+                    if (event.remainingLifetime > 0) {
+                        readout.show({
+                            marker: event.code,
+                            eventId: event.eventId,
+                            sessionIdPrefix: event.sessionIdPrefix,
+                        });
+                    }
                 }
-                if (type === PROBE_TYPE.PULL_EVENTS) {
-                    const waiter = pending.get(handle);
-                    pending.delete(handle);
-                    waiter?.resolve(event);
+                if (type !== PROBE_TYPE.PULL_EVENTS) return;
+                const waiter = pending.get(handle);
+                pending.delete(handle);
+                if (waiter === undefined) return;
+                if (waiter.kind === 'pullAll') {
+                    waiter.resolve(events);
+                } else {
+                    const [event] = events;
+                    if (event !== undefined) waiter.resolve(event);
                 }
             },
         };
@@ -322,7 +380,29 @@ export function createDevelopmentProbe(
                 resolve = settle;
                 reject = fail;
             });
-            pending.set(target, { resolve, reject });
+            pending.set(target, { kind: 'pull', resolve, reject });
+            try {
+                await manager.sendApplication(target, PROBE_TYPE.PULL_REQUEST, new Uint8Array(0));
+            } catch (error) {
+                pending.delete(target);
+                throw error;
+            }
+            return promise;
+        },
+        async pullAll(handle) {
+            const manager = requireSessions();
+            const target = targetHandle(handle);
+            if (pending.has(target)) {
+                // The marker literal is how `bundle.test.ts` proves this path is dev-only.
+                throw new Error(`debug probe: ${PULL_ALL_MARKER} is already outstanding`);
+            }
+            let resolve!: (events: ProbeEvent[]) => void;
+            let reject!: (error: Error) => void;
+            const promise = new Promise<ProbeEvent[]>((settle, fail) => {
+                resolve = settle;
+                reject = fail;
+            });
+            pending.set(target, { kind: 'pullAll', resolve, reject });
             try {
                 await manager.sendApplication(target, PROBE_TYPE.PULL_REQUEST, new Uint8Array(0));
             } catch (error) {

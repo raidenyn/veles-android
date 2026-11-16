@@ -132,6 +132,9 @@ describe('guard bundle excludes the debug probe', () => {
         'velesDebug',
         'Veles synthetic',
         'veles-debug-readout',
+        // The development-only multi-event pull (OTP-12 D9). The literal marker is embedded in
+        // the dev probe chunk; the guard build must never carry it.
+        'veles-debug-pullAll',
         // OTP-10 pairing panel surface (D5). The panel chunk is a dynamic import behind
         // the build-time `__VELES_CHANNEL__` guard, so the production build folds it
         // away entirely; these strings prove a regression would be caught.
@@ -204,5 +207,24 @@ describe('guard bundle excludes the debug probe', () => {
             }
         }
         expect(leaks).toEqual([]);
+    });
+
+    it('production_bundle_has_no_pullAll_marker', () => {
+        // OTP-12 D9: `pullAll()` exists only in the development probe. Its literal marker must
+        // reach the development probe chunk (a string literal survives minification) and must
+        // never appear in the production guard build.
+        const marker = 'veles-debug-pullAll';
+        const probeChunks = walk(DIST).filter((file) => /^chunks\/probe-[^/]+\.js$/.test(file));
+        expect(probeChunks).toHaveLength(1);
+        expect(readFileSync(join(DIST, probeChunks[0]), 'utf8')).toContain(marker);
+
+        const hits: string[] = [];
+        for (const file of walk(GUARD)) {
+            const bytes = readFileSync(join(GUARD, file));
+            if (bytes.toString('utf8').includes(marker) || utf16leText(bytes).includes(marker)) {
+                hits.push(file);
+            }
+        }
+        expect(hits).toEqual([]);
     });
 });
