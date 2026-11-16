@@ -243,3 +243,42 @@ Chrome, macOS host built from `5f41436`. Screenshots of the Android debug screen
   full session.
 - Record only values seen on the screens: notices, peer-row states and the trust status. Never
   record installation ids, public keys, pairing codes, platform hints or transcripts.
+
+## Follow-up run — 2026-11-16, activation ack flush
+
+Purpose: verify the OTP-10 follow-up that holds the enrollment link after `activation_ack` until the
+phone ends the connection (issue #155). The defect recorded above — the phone left at
+`COMMITTED_WAITING_ACK` while Chrome already reported `active` — must no longer occur, and the first
+signed reconnect must be a full session.
+
+Environment: OnePlus 6T (debug APK `me.nagaev.veles.debug`, certificate unchanged from the installed
+build), Android 15; Chrome in its dedicated profile on macOS and the development-channel extension
+(the unpacked local build) with a locally built `veles-native-host` (ad-hoc signed
+`VelesNativeBridge.app`), from the same commit as the APK. The phone's sharing transport was enabled
+from the Home card; the debug pairing screen drove the windows. The APK was installed with
+`adb install -r` after comparing the signing certificates (identical), and the phone was rebooted
+once because `uiautomator` was being killed and no tool could read the screen; no app data was
+cleared and no uninstall was performed.
+
+| Procedure | Result | Observed control response |
+| --- | --- | --- |
+| Enrollment (code read from the debug screen, entered in the Chrome panel) | PASS | Chrome `State: active · Fingerprint: F846 83EA 0DB8 · finished`, peer `active_activation_pending`; the phone row read `Chrome · ACTIVE` **immediately after the enrollment**, with the same fingerprint — not `COMMITTED_WAITING_ACK` |
+| First reconnect after that enrollment (device-row Connect) | PASS | The reconnect authenticated and the Chrome mirror moved to `active`; the panel read `Phone · active · … · full session open`. No `recovery session open` occurred and no extra disconnect/reconnect was needed |
+| Repeated enrollment/reconnect cycles | 12 PASS of 15 attempts | Every successful cycle showed the same two facts: the phone reached `ACTIVE` in the same enrollment (`Chrome · ACTIVE`, never `committed_waiting_ack`), and one reconnect upgraded the mirror with a full session. The three failures were harness-side: two pairing windows raced the preceding mutual removal and did not complete the exchange, and one reconnect was issued while the previous link was still tearing down; a repeat of the same steps passed. One intermediate script version also asserted on the panel's live-session text, which lags a session that opens after the last render (see below) — those cycles were re-checked through the durable mirror state |
+
+Observations worth carrying forward:
+
+- **The panel's live-session text can lag.** After a reconnect completes, the peer row sometimes still
+  read `no live session` until the next render, while the mirror had already moved to `active` and the
+  phone row showed `Peer connected`. The durable mirror state and the phone row were the reliable
+  signals in this run; the panel text is a debug-surface display.
+- **Stale peer records accumulate across repeats.** The run started with one record from the earlier
+  OTP-11 run. Mutual removal clears only the pair in use, so the phone kept one older `ACTIVE` record
+  alongside the current one; this is expected and does not affect the enrollment check.
+- **No code, installation id, key, hint or fingerprint of a secret is recorded here**; fingerprints
+  and ids read on screen are omitted or abbreviated as above.
+
+Unit-only paths in this run: the hold's bound-expiry fallback (a phone that never closes the link), a
+failed send of the ack, and a cancel or tab close exactly inside the hold were covered by the
+unit/integration tests only (`web-extension/test/connector/revocation-integration.test.ts`), plus
+`./gradlew sessionLoopbackCheck`. The same sentence must appear in the pull-request note.
