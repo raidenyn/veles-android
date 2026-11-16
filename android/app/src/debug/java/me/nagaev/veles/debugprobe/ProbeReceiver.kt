@@ -96,7 +96,9 @@ internal object DebugProbeRuntime {
  * The Gate B commands parse only their extras and forward to [gateB]: the fixture and the
  * scheduler keep their own validation rules and messages, so an out-of-range delay or a bad
  * lifetime list is refused by the component that owns the rule. Every command reports one bounded
- * structured result and logs the same outcome with an elapsed-realtime timestamp.
+ * structured result; only a refusal the command layer alone detects (no running service, a
+ * malformed extra) is also logged, so the owning component's single outcome line is never
+ * duplicated.
  */
 internal class ProbeCommands(
     private val sessions: ProbeSessions,
@@ -195,26 +197,19 @@ internal class ProbeCommands(
 
     /**
      * OTP-12 `GATE_B_SEED`: a missing `lifetimes` extra means the five-600 default; otherwise a
-     * comma list of values that must all be whole integers. The fixture owns the five-value and
-     * 1..600 checks and logs its own refusal reason. Without a running controller (no sharing
-     * service) nothing is armed and the refusal is logged and reported.
+     * comma list of values that must all be whole integers. The fixture owns the five-value,
+     * 1..600 and detached checks and logs its own refusal reason. Without a running controller
+     * (no sharing service) nothing is armed and the refusal is logged and reported.
      */
     fun gateBSeed(lifetimes: String?): Boolean {
         val controller = gateB
-        if (controller == null) {
-            refuse("seed", REASON_HOST)
-            return false
-        }
-        val parsed = parseLifetimes(lifetimes)
-        if (parsed == null) {
-            refuse("seed", "lifetimes")
-            return false
-        }
+        if (controller == null) return refuse("seed", REASON_HOST)
+        val parsed = parseLifetimes(lifetimes) ?: return refuse("seed", "lifetimes")
         if (!controller.seed(parsed)) {
-            outcome("gate-b seed refused")
+            result("gate-b seed refused")
             return false
         }
-        outcome("gate-b seed ok lifetimes=${parsed.joinToString(",")}")
+        result("gate-b seed ok lifetimes=${parsed.joinToString(",")}")
         return true
     }
 
@@ -225,7 +220,7 @@ internal class ProbeCommands(
             return
         }
         controller.disarm()
-        outcome("gate-b disarm ok")
+        result("gate-b disarm ok")
     }
 
     /**
@@ -235,20 +230,13 @@ internal class ProbeCommands(
      */
     fun gateBSchedulePush(delay: String?): Boolean {
         val controller = gateB
-        if (controller == null) {
-            refuse("schedule", REASON_HOST)
-            return false
-        }
-        val seconds = delay?.trim()?.toLongOrNull()
-        if (seconds == null) {
-            refuse("schedule", "delay")
-            return false
-        }
+        if (controller == null) return refuse("schedule", REASON_HOST)
+        val seconds = delay?.trim()?.toLongOrNull() ?: return refuse("schedule", "delay")
         if (!controller.schedule(seconds)) {
-            outcome("gate-b schedule refused delay=$seconds")
+            result("gate-b schedule refused delay=$seconds")
             return false
         }
-        outcome("gate-b schedule ok delay=$seconds")
+        result("gate-b schedule ok delay=$seconds")
         return true
     }
 
@@ -259,16 +247,19 @@ internal class ProbeCommands(
             return
         }
         controller.cancel()
-        outcome("gate-b cancel ok")
+        result("gate-b cancel ok")
     }
 
-    /** One structured result plus the same bounded outcome line with the elapsed timestamp. */
-    private fun outcome(line: String) {
+    /**
+     * A refusal no owning component will log: report it and write the one outcome line here. An
+     * outcome the fixture, scheduler or controller handled is only reported — it owns the line.
+     */
+    private fun refuse(command: String, reason: String): Boolean {
+        val line = "gate-b $command refused reason=$reason"
         result(line)
         log("elapsed=${elapsed.elapsedMillis()} $line")
+        return false
     }
-
-    private fun refuse(command: String, reason: String) = outcome("gate-b $command refused reason=$reason")
 
     /** A missing extra is the five-600 default; a malformed value is refused, never defaulted. */
     private fun parseLifetimes(raw: String?): List<Int>? {

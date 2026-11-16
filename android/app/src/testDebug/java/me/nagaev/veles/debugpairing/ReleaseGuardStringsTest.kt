@@ -1,5 +1,6 @@
 package me.nagaev.veles.debugpairing
 
+import me.nagaev.veles.debugprobe.PowerManagerWakeResource
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -54,6 +55,17 @@ class ReleaseGuardStringsTest {
             "missing from pairing_debug strings or releaseHookForbidden: $missing",
             missing.isEmpty(),
         )
+    }
+
+    /**
+     * OTP-12: `lintDebug` requires the platform `prefix:tag` wake-lock form, which puts the Gate B
+     * wake tag outside the `me.nagaev.veles.debug.` prefix. The resource-name loop above cannot see
+     * a tag, so the exact string is asserted here next to the list it must stay in.
+     */
+    @Test
+    fun gate_b_wake_lock_tag_is_forbidden_in_release() {
+        val tag = PowerManagerWakeResource.TAG
+        assertTrue("$tag is missing from releaseHookForbidden", "\"$tag\"" in releaseHookForbidden())
     }
 
     private fun debugStrings(): Map<String, String> {

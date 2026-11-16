@@ -21,9 +21,9 @@ internal class GateBController(
 
     fun cancel() = scheduler.cancel(GateBPushScheduler.REASON_EXPLICIT)
 
-    /** Service teardown: disarm, cancel with reason `detach`, release the wake lock and join. */
+    /** Service teardown: detach the fixture (which disarms it) and cancel/join the scheduler. */
     fun detach() {
-        fixture.disarm()
+        fixture.detach()
         scheduler.detach()
     }
 }

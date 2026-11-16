@@ -11,6 +11,7 @@ import me.nagaev.veles.trust.PendingPeer
 import me.nagaev.veles.trust.TrustSnapshot
 import me.nagaev.veles.trust.TrustStorage
 import me.nagaev.veles.trust.TrustedPeer
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -21,18 +22,19 @@ import java.io.File
  * The Gate B adb command surface (OTP-12 design D3/D4, spec "Debug-only five-record fixture" and
  * "Scheduled synthetic push"): the command layer only parses the `lifetimes` and `delay` extras
  * and forwards to the controller, so the fixture and the scheduler keep their own validation
- * messages. Every command returns one bounded structured result through the shell result channel
- * and logs the same outcome with an elapsed-realtime timestamp. Nothing here sleeps or reads a
+ * messages. Every command returns one bounded structured result through the shell result channel;
+ * only a refusal the command layer alone detects (no service, malformed extra) is also logged, so
+ * an outcome the owning component logs is never written twice. Nothing here sleeps or reads a
  * wall clock.
  */
 class GateBCommandsTest {
     private val installationId = ByteArray(16) { (0x10 + it).toByte() }
     private val wallNow = 1_700_000_000_123L
     private val clock = ManualClock()
+
+    /** Command-layer log lines; the owning components' outcome lines go to [runtimeLines]. */
     private val logs = mutableListOf<String>()
     private val results = mutableListOf<String>()
-
-    /** The fixture's and scheduler's own outcome lines, kept apart from the command lines. */
     private val runtimeLines = mutableListOf<String>()
     private val wake = RecordingWake()
     private val timer = PausedTimer(clock)
@@ -87,11 +89,8 @@ class GateBCommandsTest {
         assertTrue("a valid seed arms the fixture", fixture.armed)
         assertEquals("five records are seeded", 5, fixture.pullBody().first().toInt())
         assertEquals("the parsed list is reported", "gate-b seed ok lifetimes=60,120,180,240,300", results.single())
-        assertEquals(
-            "the same outcome is logged with an elapsed timestamp",
-            listOf("elapsed=$COMMAND_ELAPSED gate-b seed ok lifetimes=60,120,180,240,300"),
-            logs,
-        )
+        assertTrue("the fixture owns the seed outcome line", runtimeLines.any { it.contains(" seeded count=5 ") })
+        assertTrue("the command writes no second outcome line", logs.isEmpty())
 
         // A missing extra means the five-600 default, not a refusal.
         assertTrue(commands.gateBSeed(null))
@@ -100,6 +99,7 @@ class GateBCommandsTest {
             "gate-b seed ok lifetimes=600,600,600,600,600",
             results.last(),
         )
+        assertTrue("the command still writes no outcome line", logs.isEmpty())
     }
 
     @Test
@@ -107,23 +107,38 @@ class GateBCommandsTest {
         val fixture = fixture()
         val commands = commands(controller(fixture))
 
-        assertFalse("a non-numeric list is refused", commands.gateBSeed("60,120,180,240,soon"))
+        assertTrue(commands.gateBSeed("60,120,180,240,300"))
+        val seeded = fixture.pullBody()
+
         assertFalse("the fixture refuses four values", commands.gateBSeed("60,120,180,240"))
         assertFalse("the fixture refuses an out-of-range value", commands.gateBSeed("0,120,180,240,300"))
+        assertFalse("a non-numeric list is refused", commands.gateBSeed("60,120,180,240,soon"))
+        assertFalse("an empty list is refused", commands.gateBSeed(""))
+        assertFalse("a trailing comma is refused", commands.gateBSeed("60,120,180,240,300,"))
+        assertFalse("a whitespace-only list is refused", commands.gateBSeed("   "))
 
-        assertFalse("no refusal arms the fixture", fixture.armed)
+        assertTrue("every refusal leaves the fixture armed", fixture.armed)
+        assertArrayEquals("the seeded history is unchanged", seeded, fixture.pullBody())
         assertEquals(
-            "command refusals report themselves and the fixture logs its own reasons",
+            "each refusal reports one result",
             listOf(
+                "gate-b seed ok lifetimes=60,120,180,240,300",
+                "gate-b seed refused",
+                "gate-b seed refused",
                 "gate-b seed refused reason=lifetimes",
-                "gate-b seed refused",
-                "gate-b seed refused",
+                "gate-b seed refused reason=lifetimes",
+                "gate-b seed refused reason=lifetimes",
+                "gate-b seed refused reason=lifetimes",
             ),
             results,
         )
-        assertEquals("the command-level refusal is logged", "elapsed=$COMMAND_ELAPSED gate-b seed refused reason=lifetimes", logs.first())
-        assertTrue("the fixture logs the count refusal", runtimeLines.any { it.endsWith("refused seed reason=count") })
-        assertTrue("the fixture logs the lifetime refusal", runtimeLines.any { it.endsWith("refused seed reason=lifetime") })
+        assertEquals(
+            "only the malformed lists are logged by the command",
+            List(4) { "elapsed=$COMMAND_ELAPSED gate-b seed refused reason=lifetimes" },
+            logs,
+        )
+        assertEquals("the fixture logs the count refusal once", 1, runtimeLines.count { it.endsWith("refused seed reason=count") })
+        assertEquals("the fixture logs the lifetime refusal once", 1, runtimeLines.count { it.endsWith("refused seed reason=lifetime") })
     }
 
     @Test
@@ -134,10 +149,36 @@ class GateBCommandsTest {
 
         assertEquals("nothing is reported beyond the refusal", listOf("gate-b seed refused reason=host"), results)
         assertEquals(
-            "the refusal is logged with an elapsed timestamp",
+            "the no-service refusal is logged once with an elapsed timestamp",
             listOf("elapsed=$COMMAND_ELAPSED gate-b seed refused reason=host"),
             logs,
         )
+    }
+
+    /**
+     * The seed eligibility is the fixture's own synchronized `detached` flag: a controller captured
+     * before teardown cannot re-arm the fixture afterwards. No IO-pause seam is needed, because the
+     * check and the teardown share one lock, so there is no interleaving left to test.
+     */
+    @Test
+    fun seed_after_detach_is_refused() {
+        val fixture = fixture()
+        val controller = controller(fixture)
+        val commands = commands(controller)
+
+        controller.detach()
+        assertFalse("a detached fixture refuses the seed", commands.gateBSeed(null))
+
+        assertFalse("nothing is armed", fixture.armed)
+        assertEquals("no record exists after the refused seed", 0, fixture.pullBody().first().toInt())
+        assertEquals("one structured refusal", listOf("gate-b seed refused"), results)
+        assertTrue("the command writes no second outcome line", logs.isEmpty())
+        assertEquals(
+            "the fixture logs exactly one refusal line",
+            listOf("elapsed=0 refused seed reason=detached"),
+            runtimeLines.filter { it.contains("refused") },
+        )
+        assertTrue("the refused seed never logs a seeded line", runtimeLines.none { it.contains(" seeded ") })
     }
 
     @Test
@@ -149,29 +190,47 @@ class GateBCommandsTest {
         assertFalse("a blank delay is refused", commands.gateBSchedulePush(""))
         assertFalse("a fractional delay is refused", commands.gateBSchedulePush("1.5"))
         assertFalse("a non-numeric delay is refused", commands.gateBSchedulePush("soon"))
+        assertFalse("an overflowing delay is refused", commands.gateBSchedulePush("99999999999999999999"))
 
         assertEquals(
             "every command-level refusal names the delay",
-            List(4) { "gate-b schedule refused reason=delay" },
+            List(5) { "gate-b schedule refused reason=delay" },
             results,
         )
-        assertTrue("the command-level refusal is logged", logs.all { it.startsWith("elapsed=$COMMAND_ELAPSED gate-b schedule refused reason=delay") })
+        assertEquals(
+            "the command logs each parse refusal once",
+            List(5) { "elapsed=$COMMAND_ELAPSED gate-b schedule refused reason=delay" },
+            logs,
+        )
         assertTrue("nothing is scheduled", wake.acquires.isEmpty())
 
-        // Out-of-range values reach the scheduler, which keeps its own message.
+        // Parsed values reach the scheduler, which keeps its own messages and rules.
         assertFalse(commands.gateBSchedulePush("0"))
         assertFalse(commands.gateBSchedulePush("7201"))
+        assertFalse("a negative delay is refused", commands.gateBSchedulePush("-5"))
+        assertFalse("a valid delay still requires an armed fixture", commands.gateBSchedulePush("120"))
 
         assertEquals(
-            "the scheduler's refusal is reported without a second message",
-            listOf("gate-b schedule refused delay=0", "gate-b schedule refused delay=7201"),
-            results.takeLast(2),
+            "the scheduler's refusals are reported without a second message",
+            listOf(
+                "gate-b schedule refused delay=0",
+                "gate-b schedule refused delay=7201",
+                "gate-b schedule refused delay=-5",
+                "gate-b schedule refused delay=120",
+            ),
+            results.takeLast(4),
         )
         assertEquals(
             "each out-of-range delay is refused by the scheduler",
-            2,
+            3,
             runtimeLines.count { it.endsWith("refused schedule reason=delay pid=$PROCESS_ID") },
         )
+        assertEquals(
+            "the valid delay reaches the armed check",
+            1,
+            runtimeLines.count { it.endsWith("refused schedule reason=unarmed pid=$PROCESS_ID") },
+        )
+        assertEquals("the command logs no owner-handled outcome", 5, logs.size)
         assertTrue("nothing is scheduled", wake.acquires.isEmpty())
     }
 
@@ -185,21 +244,23 @@ class GateBCommandsTest {
 
         assertFalse("disarm returns answering to the probe", fixture.armed)
         assertEquals("gate-b disarm ok", results.last())
-        assertEquals("elapsed=$COMMAND_ELAPSED gate-b disarm ok", logs.last())
+        assertEquals("the fixture owns the disarmed line", 1, runtimeLines.count { it.endsWith(" disarmed") })
+        assertTrue("the command writes no second outcome line", logs.isEmpty())
 
         assertTrue(commands.gateBSeed(null))
         assertTrue(commands.gateBSchedulePush("120"))
 
         assertEquals("gate-b schedule ok delay=120", results.last())
         assertEquals("the schedule holds the wake resource", 1, wake.acquires.size)
+        assertEquals("the scheduler owns the scheduled line", 1, runtimeLines.count { it.contains(" scheduled delay=120 ") })
 
         commands.gateBCancelPush()
 
         assertEquals("gate-b cancel ok", results.last())
-        assertEquals("elapsed=$COMMAND_ELAPSED gate-b cancel ok", logs.last())
         assertEquals("cancel releases the wake resource", 1, wake.releases)
         assertTrue("the explicit cancellation is logged", runtimeLines.any { it.endsWith("cancelled reason=explicit pid=$PROCESS_ID") })
         assertTrue("cancel does not disarm the fixture", fixture.armed)
+        assertTrue("the command writes no outcome line for owner-handled outcomes", logs.isEmpty())
     }
 
     @Test

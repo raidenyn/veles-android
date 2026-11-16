@@ -12,9 +12,10 @@ internal fun interface ElapsedClock {
  * `remaining_lifetime` = floor(remaining seconds); a record under one second is omitted.
  *
  * A seed replaces only the history and arms the fixture; [disarm] returns answering to the
- * probe. Nothing is persisted and no notification, `OtpMessage` or clipboard is read, so a
- * process restart is simply a new unarmed instance. Every method is synchronized because the
- * adb receiver's IO coroutine and the session handlers both call in.
+ * probe and [detach] ends the fixture's service lifetime. Nothing is persisted and no
+ * notification, `OtpMessage` or clipboard is read, so a process restart is simply a new unarmed
+ * instance. Every method is synchronized because the adb receiver's IO coroutine and the session
+ * handlers both call in.
  */
 internal class GateBFixture(
     private val localInstallationId: ByteArray,
@@ -43,12 +44,22 @@ internal class GateBFixture(
         private set
 
     /**
+     * Set under this fixture's lock by [detach]. A detached fixture belongs to a service lifetime
+     * that has ended, so [seed] can never re-arm it; a fresh service start builds a new fixture.
+     */
+    private var detached = false
+
+    /**
      * Replaces the history with exactly five records armed from [lifetimes] (each 1..600 s) and
      * returns true; a list that is not five in-range values is refused, changes nothing and is
-     * logged.
+     * logged. A detached fixture refuses every seed.
      */
     @Synchronized
     fun seed(lifetimes: List<Int>): Boolean {
+        if (detached) {
+            log("elapsed=${elapsed.elapsedMillis()} refused seed reason=detached")
+            return false
+        }
         if (lifetimes.size != HISTORY_SIZE || lifetimes.any { it !in MIN_LIFETIME_SECONDS..MAX_LIFETIME_SECONDS }) {
             val reason = if (lifetimes.size != HISTORY_SIZE) "count" else "lifetime"
             log("elapsed=${elapsed.elapsedMillis()} refused seed reason=$reason")
@@ -83,6 +94,18 @@ internal class GateBFixture(
         if (!armed) return
         armed = false
         log("elapsed=${elapsed.elapsedMillis()} disarmed")
+    }
+
+    /**
+     * Service teardown (design D5): disarm and refuse every later seed, atomically with respect to
+     * [seed]. The flag is set under the same lock [seed] holds, so a seed already inside the lock
+     * completes before the teardown, and a seed that arrives after it can never re-arm the fixture
+     * with no service running.
+     */
+    @Synchronized
+    fun detach() {
+        detached = true
+        disarm()
     }
 
     /**
