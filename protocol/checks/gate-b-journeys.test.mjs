@@ -23,6 +23,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 const conformanceDir = join(dirname(fileURLToPath(import.meta.url)), "..", "conformance");
 const JOURNEYS_PATH = join(conformanceDir, "gate-b-journeys.json");
@@ -43,24 +44,29 @@ const ACTIONS = new Set([
 ]);
 const FORBIDDEN = new Set(["tab", "port", "native", "host", "handle", "extension", "offscreen", "badge"]);
 
-// The committed contract: per journey, the ordered steps with the exact
-// parameter names and expectation names each step carries.
+// The committed contract: per journey, the ordered steps with their exact
+// parameters and expectations. Values are pinned literally, because a structure
+// that drifts (a one-event seed, a zero-second advance) is a different journey.
 const EXPECTED = {
   enrollment: [
-    { action: "enroll", params: [], expect: ["session_class"] },
-    { action: "reconnect", params: [], expect: ["session_class", "key_fresh"] },
+    { action: "enroll", params: {}, expect: { session_class: "enrollment" } },
+    { action: "reconnect", params: {}, expect: { session_class: "full", key_fresh: true } },
   ],
   "protected-records": [
-    { action: "seed", params: ["lifetimes"], expect: ["event_count"] },
-    { action: "pull", params: [], expect: ["event_count"] },
-    { action: "advance_clock", params: ["seconds"], expect: [] },
-    { action: "pull", params: ["same_ids_as_previous_pull"], expect: ["event_count", "remaining_lifetime_range"] },
-    { action: "schedule_push", params: ["delay_seconds"], expect: [] },
-    { action: "advance_clock", params: ["seconds"], expect: [] },
-    { action: "push", params: [], expect: ["event_count"] },
-    { action: "ack", params: [], expect: [] },
-    { action: "revoke", params: [], expect: [] },
-    { action: "reconnect_expect_rejected", params: [], expect: ["rejected"] },
+    { action: "seed", params: { lifetimes: [60, 120, 300, 600, 600] }, expect: { event_count: 5 } },
+    { action: "pull", params: {}, expect: { event_count: 5 } },
+    { action: "advance_clock", params: { seconds: 150 }, expect: {} },
+    {
+      action: "pull",
+      params: { same_ids_as_previous_pull: true },
+      expect: { event_count: 3, remaining_lifetime_range: [150, 450] },
+    },
+    { action: "schedule_push", params: { delay_seconds: 1200 }, expect: {} },
+    { action: "advance_clock", params: { seconds: 1200 }, expect: {} },
+    { action: "push", params: {}, expect: { event_count: 1 } },
+    { action: "ack", params: {}, expect: {} },
+    { action: "revoke", params: {}, expect: {} },
+    { action: "reconnect_expect_rejected", params: {}, expect: { rejected: true } },
   ],
 };
 
@@ -83,7 +89,7 @@ function isLifetimeRange(value) {
   );
 }
 
-// Parameter names are closed: an action may carry only these names, with these values.
+// Parameter kind guards; the exact values are pinned by EXPECTED.
 const PARAMETERS = {
   lifetimes: (value) => Array.isArray(value) && value.length > 0 && value.every((entry) => Number.isInteger(entry) && entry > 0),
   seconds: isNonNegativeInteger,
@@ -199,11 +205,16 @@ function schemaFailures(document) {
       if (!isPlainObject(step.params)) {
         failures.push(`${where}.params must be an object`);
       } else {
-        expectKeys(step.params, expected.params, `${where}.params`, failures);
+        expectKeys(step.params, Object.keys(expected.params), `${where}.params`, failures);
         for (const [key, value] of Object.entries(step.params)) {
           const check = PARAMETERS[key];
           if (check !== undefined && !check(value)) {
             failures.push(`${where}.params.${key}: invalid value ${JSON.stringify(value)}`);
+          }
+        }
+        for (const [key, required] of Object.entries(expected.params)) {
+          if (Object.hasOwn(step.params, key) && !isDeepStrictEqual(step.params[key], required)) {
+            failures.push(`${where}.params.${key}: expected ${JSON.stringify(required)}, found ${JSON.stringify(step.params[key])}`);
           }
         }
       }
@@ -211,11 +222,16 @@ function schemaFailures(document) {
       if (!isPlainObject(step.expect)) {
         failures.push(`${where}.expect must be an object`);
       } else {
-        expectKeys(step.expect, expected.expect, `${where}.expect`, failures);
+        expectKeys(step.expect, Object.keys(expected.expect), `${where}.expect`, failures);
         for (const [key, value] of Object.entries(step.expect)) {
           const check = EXPECTATIONS[key];
           if (check !== undefined && !check(value)) {
             failures.push(`${where}.expect.${key}: invalid value ${JSON.stringify(value)}`);
+          }
+        }
+        for (const [key, required] of Object.entries(expected.expect)) {
+          if (Object.hasOwn(step.expect, key) && !isDeepStrictEqual(step.expect[key], required)) {
+            failures.push(`${where}.expect.${key}: expected ${JSON.stringify(required)}, found ${JSON.stringify(step.expect[key])}`);
           }
         }
       }
@@ -251,10 +267,16 @@ test("file_has_both_journeys", () => {
   assert.equal(reconnect.expect.key_fresh, true);
 
   // seed, pull, advance_clock, pull, schedule_push, advance_clock, push, ack, revoke, reconnect_expect_rejected
-  const [, firstPull, , secondPull, , , push, , , rejected] = document.journeys["protected-records"];
+  const [seed, firstPull, firstAdvance, secondPull, schedule, secondAdvance, push, , , rejected] =
+    document.journeys["protected-records"];
+  assert.deepEqual(seed.params.lifetimes, [60, 120, 300, 600, 600]);
+  assert.equal(seed.expect.event_count, 5);
   assert.equal(firstPull.expect.event_count, 5);
+  assert.equal(firstAdvance.params.seconds, 150);
   assert.equal(secondPull.expect.event_count, 3);
   assert.deepEqual(secondPull.expect.remaining_lifetime_range, [150, 450]);
+  assert.equal(schedule.params.delay_seconds, 1200);
+  assert.equal(secondAdvance.params.seconds, 1200);
   assert.equal(push.expect.event_count, 1);
   assert.equal(rejected.expect.rejected, true);
 });
@@ -280,6 +302,10 @@ test("incomplete_or_out_of_contract_journeys_fail", () => {
     ["a missing required expectation", (value) => { delete value.journeys.enrollment[1].expect.key_fresh; }, "key_fresh"],
     ["an unknown parameter name", (value) => { value.journeys[protectedSteps][0].params.mystery = 1; }, "params: expected keys"],
     ["a missing step", (value) => { value.journeys[protectedSteps].pop(); }, "exactly 10 steps"],
+    ["a drifted seed lifetime list", (value) => { value.journeys[protectedSteps][0].params.lifetimes = [1]; }, "lifetimes"],
+    ["a zero first clock advance", (value) => { value.journeys[protectedSteps][2].params.seconds = 0; }, "expected 150"],
+    ["a one-second schedule delay", (value) => { value.journeys[protectedSteps][4].params.delay_seconds = 1; }, "delay_seconds"],
+    ["a missing seed event count", (value) => { delete value.journeys[protectedSteps][0].expect.event_count; }, "event_count"],
   ]) {
     const failures = schemaFailures(mutated(change));
     assert.ok(failures.length > 0, `${label} must fail the schema`);
