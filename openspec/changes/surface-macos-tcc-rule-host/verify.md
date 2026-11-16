@@ -5,8 +5,8 @@
 > Failed checks must be fixed in the corresponding artifact, then re-run verify.
 
 **Change**: `surface-macos-tcc-rule-host`
-**Verified at**: `2026-11-16 12:14`
-**Iteration**: `1`
+**Verified at**: `2026-11-16 13:06`
+**Iteration**: `2`
 **Verifier**: OpenCode (DeepSeek V4.1 Flash), single-agent apply
 
 ---
@@ -48,7 +48,7 @@ compare with `openspec/specs/<capability>/spec.md`:
 
 | Capability | Sync status | Notes |
 |---|---|---|
-| agent-guidance-layout | ✗ pending sync | Expected: the closeout runs the sync and the archive once the required checks are green. The main spec still carries the old `macos-test-app-tcc` pointer until then. |
+| agent-guidance-layout | ✗ pending sync | Expected: the closeout runs the sync and the archive once the required checks are green. The main spec still carries the old `macos-test-app-tcc` pointer and the single-pattern rule requirement until then. |
 
 ---
 
@@ -58,8 +58,8 @@ No `design.md`: the schema marks design optional and the brainstorm records the 
 
 | Sample item | design description | specs counterpart | Gap |
 |---|---|---|---|
-| D1 parent scope | `native-bridge/**` is the narrowest scope cumulative over `installer/macos` and `host`; the checks require exactly one scope pattern | *Platform facts live in one canonical folder* | None |
-| D2 rule naming and listing | `native-bridge-<topic>.md` is listed by `native-bridge/AGENTS.md`; the macOS node keeps the canonical identity and a prose pointer | *Platform facts live in one canonical folder* | None |
+| D1 multi-pattern scope | the rule lists only `native-bridge/installer/macos/**` and `native-bridge/host/**`; the filename names the `native-bridge` parent | *Rules live in .agents/rules, scoped by path*, *Platform facts live in one canonical folder* | None |
+| D2 check extension | identical non-empty lists, each pattern under the scope folder; out-of-scope and brace patterns still fail | *Rules live in .agents/rules, scoped by path* | None |
 | D3 host pointer | host `AGENTS.md` names the rule with no by-hand read claim | *Host pointer* scenario | None |
 
 **Drift warnings** (non-blocking):
@@ -73,17 +73,17 @@ No `design.md`: the schema marks design optional and the brainstorm records the 
 - [x] No unstaged files in the worktree
 - [ ] All related commits have been pushed — deferred to finalize
 
-**Commit range** (if known): `302df46..986b5d5` (implementation `463a86b`, apply receipt `986b5d5`)
+**Commit range** (if known): `302df46..0bd4bce` (implementation `463a86b`, review-fix `0bd4bce`,
+  receipts `986b5d5` and `79f1f42`, verify `d016710`)
 
 ---
 
 ## 6. Review Records (review gate)
 
 The user explicitly directed: "No intermediate review needed, just the final whole PR one with Sol."
-No per-artifact review records were produced, and none are fabricated here. The single whole-PR
-review with Sol runs after finalize opens the pull request and covers the planning files and the
-implementation diff; the closeout documentation is reviewed by that same pass if it comes after the
-sync.
+No per-artifact review records were produced, and none are fabricated here. The single whole-PR Sol
+review was attempted after finalize but the model was unavailable (ChatGPT usage limit); the user's
+PR review comments drove iteration 2. The Sol pass still runs once the model is available.
 
 | Artifact | Reviewer | Hash state | Open critical or high findings |
 |---|---|---|---|
@@ -112,7 +112,7 @@ sync.
 - [ ] ✅ PASS — ready to proceed via /openspec-continue-change to the finalize artifact, whose hand-off starts the closeout; the closeout runs /openspec-archive-change exactly once, when every required check is green
 - [x] ⚠️ PASS WITH WARNINGS — can proceed but note: the review-records gate is waived by the user's
   explicit instruction; there are no per-artifact records, and the single whole-PR Sol review is the
-  agreed substitute
+  agreed substitute, still pending because the model was unavailable
 - [ ] ❌ FAIL — return to the failed artifact, fix, then re-run verify
 
 **Check 6 (Review Records) gate**: under the gate as normally applied this is a FAIL because the
@@ -121,8 +121,8 @@ user's instruction replaces the per-artifact pass with one whole-PR review.
 
 **Next step**:
 
-Proceed to finalize: push `docs/surface-macos-tcc-rule-host`, create the PR, then dispatch Sol on the
-whole PR. Sync and archive stay in the closeout, once the required checks are green.
+Push the review fix, run the docs and native-host checks, then run the whole-PR Sol review when the
+model is available. Sync and archive stay in the closeout, once the required checks are green.
 
 > **Convergence loop reminder**:
 > - PASS / PASS_WITH_WARNINGS → `/openspec-continue-change` advances to the finalize

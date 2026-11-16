@@ -1,13 +1,14 @@
 # Finalize Receipt
 
 **Change**: `surface-macos-tcc-rule-host`
-**Finalized at**: `2026-11-16 12:28`
+**Finalized at**: `2026-11-16 13:07`
 **Outcome**: `pr-created`
 
 > Canonical finalize left an open pull request: `pr-created`, Final state `pr-open`.
 > This session applied directly on the feature branch in the harness worktree, so there was no
 > separate worktree branch to merge; the push and PR creation are the substance of the git-side
-> closeout.
+> closeout. The PR received human review comments after the first push; iteration 2 addresses them
+> without changing the outcome or re-entering finalize.
 
 ---
 
@@ -38,7 +39,7 @@
 - **Baseline status at finish**: `passing`
 
 - `python3 docs/checks/check_agent_files.py --root .` — exit 0
-- `python3 -m unittest discover -s docs/checks -p 'test_*.py' -v` — 79 tests, OK
+- `python3 -m unittest discover -s docs/checks -p 'test_*.py' -v` — 81 tests, OK
 - `openspec validate --all` — 23 passed, 0 failed
 - `./gradlew bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint bridgeHostTest` — BUILD SUCCESSFUL
 - `./gradlew bridgeHostBuild` — BUILD SUCCESSFUL
