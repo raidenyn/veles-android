@@ -459,7 +459,16 @@ val sessionLoopbackCheck = tasks.register<Exec>("sessionLoopbackCheck") {
         // -Djava.library.path so the test-only `rustHostJni` output resolves.
         environment("VELES_HOST_JNI_DIR", rustHostJniDir.get().asFile.absolutePath)
     }
-    commandLine(npmCommand, "exec", "vitest", "run", "test/session/loopback.test.ts")
+    commandLine(
+        npmCommand,
+        "exec",
+        "vitest",
+        "run",
+        "test/session/loopback.test.ts",
+        "test/gate-b/import-guard.test.ts",
+        "test/gate-b/enrollment-journey.test.ts",
+        "test/gate-b/records-journey.test.ts",
+    )
 }
 
 val protocolFreshEvidenceCheck = tasks.register<Exec>("protocolFreshEvidenceCheck") {
