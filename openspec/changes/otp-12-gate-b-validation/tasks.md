@@ -45,11 +45,11 @@
 
 ## 8. Matrix, validator and runbook
 
-- [ ] 8.1 Write `docs/gate-b/matrix.json` with the required row table, each row's `journeys` and `no_bond_handle_or_hint_reliance`, `initial_state: true`, `decision: OPEN`, `gate_b_accepted: false`, every row `NOT RUN` with a blocker
-- [ ] 8.2 Write `docs/checks/test_check_gate_b_matrix.py` first, then `docs/checks/check_gate_b_matrix.py` (stdlib only): structure, row set ("Missing row"), status vocabulary ("Unknown status"), initial-state pin, invariants ("Accepted without every PASS"), never-accepts output
-- [ ] 8.3 Add tests then code for the evidence-field and case-specific-evidence checks and the pure timing functions (20-minute and background rules, all boundary scenarios); no clock, no sleep
-- [ ] 8.4 Add the protocol-side test in `protocol/checks/` that reads `docs/gate-b/matrix.json` and asserts every cited journey id exists in the journey file (the docs test reads the journey file too), and add it to the named list in `check.mjs`
-- [ ] 8.5 Write `docs/otp-12-gate-b-runbook.md` (section per case id, minute 0, reseed step, client eviction note, prerequisite state, smoke-run rule) with a test that checks the headings against the row cases and every required statement; add the check line to `docs/AGENTS.md`; run `python3 -m unittest discover -s docs/checks -p 'test_*.py'`, `python3 docs/checks/check_agent_files.py --root .` and `./gradlew protocolCheck`
+- [x] 8.1 Write `docs/gate-b/matrix.json` with the required row table, each row's `journeys` and `no_bond_handle_or_hint_reliance`, `initial_state: true`, `decision: OPEN`, `gate_b_accepted: false`, every row `NOT RUN` with a blocker
+- [x] 8.2 Write `docs/checks/test_check_gate_b_matrix.py` first, then `docs/checks/check_gate_b_matrix.py` (stdlib only): structure, row set ("Missing row"), status vocabulary ("Unknown status"), initial-state pin, invariants ("Accepted without every PASS"), never-accepts output
+- [x] 8.3 Add tests then code for the evidence-field and case-specific-evidence checks and the pure timing functions (20-minute and background rules, all boundary scenarios); no clock, no sleep
+- [x] 8.4 Add the protocol-side test in `protocol/checks/` that reads `docs/gate-b/matrix.json` and asserts every cited journey id exists in the journey file (the docs test reads the journey file too), and add it to the named list in `check.mjs`
+- [x] 8.5 Write `docs/otp-12-gate-b-runbook.md` (section per case id, minute 0, reseed step, client eviction note, prerequisite state, smoke-run rule) with a test that checks the headings against the row cases and every required statement; add the check line to `docs/AGENTS.md`; run `python3 -m unittest discover -s docs/checks -p 'test_*.py'`, `python3 docs/checks/check_agent_files.py --root .` and `./gradlew protocolCheck`
 
 ## 9. Real-environment verification (non-evidentiary)
 
