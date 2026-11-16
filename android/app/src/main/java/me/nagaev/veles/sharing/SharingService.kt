@@ -238,6 +238,7 @@ internal class SharingService : Service() {
      * falls back to a forced erasure, so a suspended Keystore call cannot leave keys behind.
      */
     private fun shutdownSessions() {
+        BuildSessionExtensions.detach()
         // The host closes every live pairing execution; the window then erases the code.
         host?.let { runBlocking { it.shutdown() } }
         host = null

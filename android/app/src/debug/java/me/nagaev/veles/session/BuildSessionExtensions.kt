@@ -1,19 +1,29 @@
 package me.nagaev.veles.session
 
 import android.content.Context
+import android.os.Process
 import android.os.SystemClock
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
 import me.nagaev.veles.debugpairing.PairingDebugHooks
+import me.nagaev.veles.debugprobe.CoroutineStepTimer
 import me.nagaev.veles.debugprobe.DebugProbeEntryPoint
 import me.nagaev.veles.debugprobe.DebugProbeRuntime
 import me.nagaev.veles.debugprobe.DebugRevocationRuntime
 import me.nagaev.veles.debugprobe.ElapsedClock
+import me.nagaev.veles.debugprobe.GateBController
 import me.nagaev.veles.debugprobe.GateBFixture
 import me.nagaev.veles.debugprobe.GateBPullRouter
+import me.nagaev.veles.debugprobe.GateBPushScheduler
+import me.nagaev.veles.debugprobe.NoSessions
 import me.nagaev.veles.debugprobe.PROBE_TAG
+import me.nagaev.veles.debugprobe.PowerManagerWakeResource
 import me.nagaev.veles.debugprobe.ProbeReceiver
+import me.nagaev.veles.debugprobe.SessionProbeSessions
 import me.nagaev.veles.debugprobe.SyntheticProbeHandler
 import me.nagaev.veles.sharing.PairingEndpoint
 import me.nagaev.veles.sharing.SessionHost
@@ -106,6 +116,37 @@ object BuildSessionExtensions {
 
     fun attach(host: SessionHost) {
         DebugProbeRuntime.host = host
+        val fixture = DebugProbeRuntime.fixture ?: return
+        val context = DebugProbeRuntime.applicationContext ?: return
+        val logger = EntryPointAccessors.fromApplication(
+            context,
+            DebugProbeEntryPoint::class.java,
+        ).velesLog()
+        // Never Main: detach() joins this job with runBlocking from onDestroy on the main thread.
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val scheduler = GateBPushScheduler(
+            fixture = fixture,
+            sessions = { DebugProbeRuntime.host?.let(::SessionProbeSessions) ?: NoSessions },
+            clock = DebugProbeRuntime.elapsed,
+            timer = CoroutineStepTimer,
+            wake = PowerManagerWakeResource(context),
+            scope = scope,
+            processId = Process.myPid(),
+            log = { line -> logger.d(PROBE_TAG, line) },
+        )
+        DebugProbeRuntime.gateB = GateBController(fixture = fixture, scheduler = scheduler)
+    }
+
+    /**
+     * OTP-12 D5: the sharing service calls this before the host shuts down, so a scheduled push
+     * can never fire against a closing host. `fail()` and `onDestroy()` both reach the call, so
+     * a second detach is harmless: disarm and cancel are idempotent and the scheduler join runs
+     * on an already-completed job. The runtime references are cleared last, after the join.
+     */
+    fun detach() {
+        DebugProbeRuntime.gateB?.detach()
+        DebugProbeRuntime.gateB = null
+        DebugProbeRuntime.host = null
     }
 
     /**

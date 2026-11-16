@@ -48,7 +48,8 @@ internal class SessionProbeSessions(private val host: SessionHost) : ProbeSessio
     override suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean = host.sendApplication(gen, type, body)
 }
 
-private object NoSessions : ProbeSessions {
+/** No running host: the empty session surface, also reused when the runtime host is null. */
+internal object NoSessions : ProbeSessions {
     override fun openFullSessions(): List<ProbeSession> = emptyList()
 
     override suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean = false
@@ -65,6 +66,13 @@ internal object DebugProbeRuntime {
     /** The Gate B fixture, built beside the probe when the installation identity is available (OTP-12). */
     @Volatile
     var fixture: GateBFixture? = null
+
+    /**
+     * The Gate B command surface (OTP-12): the fixture plus its push scheduler, created by the
+     * debug session extension's `attach` and cleared by `detach` so no schedule outlives a host.
+     */
+    @Volatile
+    var gateB: GateBController? = null
 
     /**
      * The application context the fixture's adb commands run from. Set by the debug session
@@ -98,6 +106,11 @@ internal class ProbeCommands(
      * refused and logged instead of sending a probe event. Task 3 keeps this beside its `gateB`.
      */
     private val gateBArmed: () -> Boolean = { false },
+    /**
+     * OTP-12: the Gate B fixture commands (seed, disarm, schedule, cancel, detach). `null` when
+     * no sharing service is running; the Gate B actions report that instead of scheduling.
+     */
+    internal val gateB: GateBController? = null,
     /**
      * The same injected elapsed-realtime clock the Gate B fixture uses (design D6): refusal
      * outcomes carry an elapsed timestamp, never a wall-clock read.
@@ -207,6 +220,7 @@ internal fun debugProbeCommands(
     log = log,
     result = result,
     gateBArmed = { DebugProbeRuntime.fixture?.armed == true },
+    gateB = DebugProbeRuntime.gateB,
     elapsed = DebugProbeRuntime.elapsed,
     revocation = DebugRevocationRuntime.management(),
 )
