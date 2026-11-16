@@ -68,8 +68,8 @@ def background_ok(start, end, event, copy, other_tab_focused, exemption_active):
 
     The interval from `start` to `end` must be at least ten continuous minutes with another
     ordinary tab focused and no audio, WebRTC or timer-throttling exemption active. The
-    protected event and its offscreen copy must both fall at or after the seven-minute mark of
-    the interval and inside it, with the copy at or after the event it copies.
+    protected event and its offscreen copy must both fall strictly after the seven-minute mark
+    of the interval and inside it, with the copy at or after the event it copies.
     """
     if not all(_is_seconds(value) for value in (start, end, event, copy)):
         return False
@@ -80,8 +80,8 @@ def background_ok(start, end, event, copy, other_tab_focused, exemption_active):
     if end - start < BACKGROUND_MINUTES * MINUTE:
         return False
     earliest = start + BACKGROUND_EVENT_MINUTE * MINUTE
-    if event < earliest or event > end:
+    if event <= earliest or event > end:
         return False
-    if copy < event or copy > end:
+    if copy <= earliest or copy < event or copy > end:
         return False
     return True

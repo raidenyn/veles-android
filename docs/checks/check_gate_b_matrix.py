@@ -87,6 +87,42 @@ EVIDENCE_FIELDS = (
     "provenance_anchor",
     "adjudication",
 )
+# A reference or a revision is one non-empty string, never a boolean stand-in.
+TEXT_EVIDENCE_FIELDS = (
+    "source_revision",
+    "evaluator_revision",
+    "focused_tab",
+    "provenance_anchor",
+    "adjudication",
+)
+# Identities, models, builds, hashes, adapters, bindings, return codes, classifications,
+# cleanup, expected and actual results: one non-empty string or a non-empty list.
+TEXT_OR_LIST_EVIDENCE_FIELDS = (
+    "hashes",
+    "identities",
+    "models",
+    "os_builds",
+    "chrome_versions",
+    "adapters",
+    "bindings",
+    "return_codes",
+    "classification",
+    "cleanup",
+    "expected",
+    "actual",
+    "reproducibility",
+)
+# Captures, catalogues, repetitions, logs, actions and queue observations carry content.
+CONTENT_EVIDENCE_FIELDS = (
+    "raw_captures",
+    "checksum_catalog",
+    "repetitions",
+    "redacted_logs",
+    "actions",
+    "host_process_queue",
+)
+# The affirmative flags are exactly true; `false` is not evidence of the safe outcome.
+AFFIRMATIVE_EVIDENCE_FIELDS = ("exemption_absent", "no_plaintext_fallback")
 FREEZE_CASE_EVIDENCE = (
     "forced_trace",
     "tabs_observations",
@@ -108,11 +144,41 @@ CASE_EVIDENCE = {
     "background-delivery": ("other_tab_focused",),
     "locked-phone-20min": ("foreground_present",),
 }
+# Case extras split by kind: a safe outcome is exactly true, everything else needs content.
+AFFIRMATIVE_CASE_EVIDENCE = ("foreground_present", "other_tab_focused")
+CONTENT_CASE_EVIDENCE = (
+    "forced_trace",
+    "tabs_observations",
+    "badge_clear",
+    "port_generation_invalidated",
+    "old_port_closed_no_host",
+    "repull_retained_expired",
+    "fresh_keys",
+    "fresh_handles",
+    "no_host_process",
+    "clipboard_transition",
+)
 
 NOT_ACCEPTANCE_STATEMENT = (
     "a validator pass is not Gate B acceptance: this tool never writes or upgrades a status "
     "and records no Gate B decision; the decision is a separate adjudication outside this tooling"
 )
+
+
+class Findings(list):
+    """The validator's result: a list of findings that always carries the statement.
+
+    An empty `Findings` is still a successful validation only in the structural sense: the
+    statement travels with the result so a direct `validate()` call cannot be presented as a
+    Gate B acceptance.
+    """
+
+    def __init__(self, findings=(), statement=NOT_ACCEPTANCE_STATEMENT):
+        super().__init__(findings)
+        self.statement = statement
+
+    def __str__(self):
+        return "\n".join(list(self) + [self.statement])
 
 
 def required_row_ids():
@@ -142,32 +208,38 @@ def _cases_for(platform, phones):
     return ()
 
 
-def _present(value):
-    """A required value is present when it is not null and carries content."""
-    if value is None:
-        return False
-    if isinstance(value, bool):
+def _is_text(value):
+    """A non-empty string: a reference, revision, model or identity written out."""
+    return isinstance(value, str) and value.strip() != ""
+
+
+def _is_text_or_list(value):
+    """A non-empty string or a non-empty list (hashes, identities, return codes, ...)."""
+    if _is_text(value):
         return True
+    return isinstance(value, list) and len(value) > 0
+
+
+def _has_content(value):
+    """Non-empty content, never a boolean: captures, catalogues, logs, repetitions, actions."""
     if isinstance(value, str):
         return value.strip() != ""
     if isinstance(value, (list, tuple, dict)):
         return len(value) > 0
-    return True
-
-
-def _is_text(value):
-    return isinstance(value, str) and value.strip() != ""
+    return False
 
 
 def validate(matrix, journey_ids):
-    """Return the findings for `matrix`; an empty list means only that the rules pass.
+    """Return the findings for `matrix` as a `Findings` list.
 
-    `journey_ids` is the set of journey ids defined by
-    `protocol/conformance/gate-b-journeys.json`. The matrix is never modified.
+    The list is empty only when every structural rule passes, and it always carries the
+    not-acceptance statement (`result.statement`, also printed by `str(result)`), because a
+    validation pass is necessary and not sufficient. `journey_ids` is the set of journey ids
+    defined by `protocol/conformance/gate-b-journeys.json`. The matrix is never modified.
     """
-    findings = []
+    findings = Findings()
     if not isinstance(matrix, dict):
-        return ["matrix: must be a JSON object"]
+        return Findings(["matrix: must be a JSON object"])
     known_journeys = set(journey_ids)
 
     for field in REQUIRED_TOP_LEVEL_FIELDS:
@@ -228,8 +300,8 @@ def validate(matrix, journey_ids):
     if gate_b_accepted is True:
         if decision != "ACCEPTED":
             findings.append("matrix: gate_b_accepted requires decision ACCEPTED")
-        if not _present(matrix.get("decision_reference")):
-            findings.append("matrix: gate_b_accepted requires a top-level decision_reference")
+        if not _is_text(matrix.get("decision_reference")):
+            findings.append("matrix: gate_b_accepted requires a non-empty decision_reference")
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -317,30 +389,49 @@ def _validate_row(index, row, journey_ids, findings):
         elif not isinstance(evidence, dict):
             findings.append("%s: evidence must be an object" % where)
         else:
-            _validate_evidence(where, case, evidence, findings)
+            # A malformed case value is already a finding; no case-specific evidence is
+            # evaluated against it.
+            _validate_evidence(where, case if isinstance(case, str) else None, evidence, findings)
 
 
 def _validate_evidence(where, case, evidence, findings):
-    for field in EVIDENCE_FIELDS:
-        if not _present(evidence.get(field)):
-            findings.append("%s: evidence field %s must be present and non-empty" % (where, field))
-    if evidence.get("exemption_absent") is not True:
-        findings.append(
-            "%s: evidence exemption_absent must be true (no audio, WebRTC or timer exemption)"
-            % where
-        )
-    if evidence.get("no_plaintext_fallback") is not True:
-        findings.append("%s: evidence no_plaintext_fallback must be true" % where)
-    for field in CASE_EVIDENCE.get(case, ()):
-        if not _present(evidence.get(field)):
+    for field in TEXT_EVIDENCE_FIELDS:
+        if not _is_text(evidence.get(field)):
             findings.append(
-                "%s: case %s requires evidence field %s" % (where, case, field)
+                "%s: evidence field %s must be a non-empty string reference" % (where, field)
+            )
+    for field in TEXT_OR_LIST_EVIDENCE_FIELDS:
+        if not _is_text_or_list(evidence.get(field)):
+            findings.append(
+                "%s: evidence field %s must be a non-empty string or list" % (where, field)
+            )
+    for field in CONTENT_EVIDENCE_FIELDS:
+        if not _has_content(evidence.get(field)):
+            findings.append(
+                "%s: evidence field %s must carry non-empty content, not a boolean"
+                % (where, field)
+            )
+    for field in AFFIRMATIVE_EVIDENCE_FIELDS:
+        if evidence.get(field) is not True:
+            findings.append("%s: evidence %s must be true" % (where, field))
+    for field in CASE_EVIDENCE.get(case, ()):
+        if field in AFFIRMATIVE_CASE_EVIDENCE:
+            if evidence.get(field) is not True:
+                findings.append(
+                    "%s: case %s requires the evidence flag %s to be true"
+                    % (where, case, field)
+                )
+        elif not _has_content(evidence.get(field)):
+            findings.append(
+                "%s: case %s requires non-empty evidence %s, not a boolean"
+                % (where, case, field)
             )
 
 
 def report(matrix, journey_ids):
-    """The validator's full output: the findings plus the not-acceptance statement."""
-    return [NOT_ACCEPTANCE_STATEMENT] + validate(matrix, journey_ids)
+    """The validator's full output: the findings followed by the not-acceptance statement."""
+    findings = validate(matrix, journey_ids)
+    return list(findings) + [findings.statement]
 
 
 def _load(path):
@@ -365,7 +456,7 @@ def main(argv=None):
     findings = validate(matrix, set(journeys["journeys"]))
     for finding in findings:
         print(finding)
-    print(NOT_ACCEPTANCE_STATEMENT)
+    print(findings.statement)
     return 1 if findings else 0
 
 

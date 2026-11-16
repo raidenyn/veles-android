@@ -213,7 +213,7 @@ event id, the controller-clock arrival, the ack codes, and the eviction observat
 **Steps.** 1. Open a full session in the connector and switch to another ordinary tab. 2. Hold
 that focus for at least ten continuous minutes with no audio playing, no WebRTC capture and no
 timer-throttling flag or exemption. 3. Confirm a protected event and its offscreen copy both
-occur after minute seven of the interval. 4. Sample `chrome.tabs` and the OS clipboard during
+occur strictly after minute seven of the interval. 4. Sample `chrome.tabs` and the OS clipboard during
 and after the interval.
 
 **Commands.** `await chrome.tabs.query({})` for the focused tab id/title and each tab's
@@ -404,25 +404,31 @@ explicit statement that neither trust nor session state was shared between the p
 **Steps.** 1. Enable the sharing transport and pair the desktop; keep one full session open.
 2. Seed the fixture. 3. Schedule a 1200-second push and read the fixture's `scheduled` line; the
 controller clock reading of that line is minute 0, and the phone `elapsed=` value plus the
-latency estimate is the offset method. 4. Remove the app task from Recents without
-force-stopping, then lock the screen. 5. Keep it locked for the whole wait, sampling the
-foreground indication. 6. Read the `fired` line and the connector's receipt: the arrival must be
-within minute 19 to minute 21 inclusive. 7. Confirm the phone was locked at task removal and was
-not unlocked before 15 minutes after it. 8. After minute 15, unlock, open the connector, reseed,
-and pull; the pull must be strictly after minute 15. 9. Evaluate `twenty_minute_ok` on the
-recorded integers.
+latency estimate is the offset method. 4. Lock the screen first and confirm the phone is asleep
+(`mWakefulness=Asleep`); every later step happens with the screen locked. 5. With the screen
+locked, remove the app task from Recents without force-stopping it and record the task-removal
+controller time; the phone must already be locked at task removal. 6. Keep the phone locked for
+at least 15 minutes after task removal, sampling the foreground indication. 7. Read the `fired`
+line and the connector's receipt: the arrival must be within minute 19 to minute 21 inclusive.
+8. Confirm the phone was locked at task removal and was not unlocked before 15 minutes after it.
+9. After minute 15, unlock, open the connector, reseed, and pull; the pull must be strictly after
+minute 15. 10. Evaluate `twenty_minute_ok` on the recorded integers.
 
-**Commands.** `adb shell am broadcast -a me.nagaev.veles.debug.GATE_B_SCHEDULE_PUSH -n "$R" --es
-delay 1200`; `adb shell am stack list` then `adb shell am stack remove <stackId>` (or the Recents
-gesture) for task removal; `adb shell input keyevent 223` to lock and `adb shell input keyevent
-224` plus the unlock gesture; `adb shell dumpsys power | grep -i mWakefulness`; `adb shell
-dumpsys activity services "$APP" | grep -i foreground`; `adb shell pidof "$APP"`; `adb logcat -v
-time -s VelesProbe`; `await velesDebug.pullAll()`.
+**Commands.** Schedule the push before locking: `adb shell am broadcast -a
+me.nagaev.veles.debug.GATE_B_SCHEDULE_PUSH -n "$R" --es delay 1200`. Lock the screen:
+`adb shell input keyevent 223`, then confirm `adb shell dumpsys power | grep -i mWakefulness`
+reports `Asleep`. With the screen still locked, remove the task: `adb shell am stack list` then
+`adb shell am stack remove <stackId>` (or the Recents gesture), and confirm `mWakefulness` is
+still `Asleep`. During the wait read `adb shell dumpsys activity services "$APP" | grep -i
+foreground`, `adb shell pidof "$APP"` and `adb logcat -v time -s VelesProbe`. After minute 15,
+unlock with `adb shell input keyevent 224` plus the unlock gesture and `await
+velesDebug.pullAll()`.
 
-**Record.** Minute 0 and the offset method, arrival, task-removal, unlock and pull times, the
-foreground samples, the phone process id before and after task removal, the `scheduled` and
-`fired` lines, the reseeded re-pull counts, the `foreground_present` flag, and the rule inputs
-and result. A missed window is recorded as `FAIL` with its classification, never rounded.
+**Record.** Minute 0 and the offset method, the lock time before task removal, the task-removal
+time, arrival, unlock and pull times, the foreground samples, the phone process id before and
+after task removal, the `scheduled` and `fired` lines, the reseeded re-pull counts, the
+`foreground_present` flag, and the rule inputs and result. A missed window is recorded as `FAIL`
+with its classification, never rounded.
 
 ## fixture-retention-expiry
 

@@ -24,7 +24,13 @@ CHECKS = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, CHECKS)
 
 from check_gate_b_matrix import (  # noqa: E402
+    AFFIRMATIVE_CASE_EVIDENCE,
+    AFFIRMATIVE_EVIDENCE_FIELDS,
+    CONTENT_CASE_EVIDENCE,
+    CONTENT_EVIDENCE_FIELDS,
     NOT_ACCEPTANCE_STATEMENT,
+    TEXT_EVIDENCE_FIELDS,
+    TEXT_OR_LIST_EVIDENCE_FIELDS,
     main,
     report,
     validate,
@@ -159,7 +165,7 @@ def evidence(case):
     record["reproducibility"] = "reproducible from the raw captures"
     record["classification"] = "physical run"
     for field in CASE_EXTRAS.get(case, ()):
-        record[field] = True if field == "foreground_present" else "recorded"
+        record[field] = True if field in ("foreground_present", "other_tab_focused") else "recorded"
     return record
 
 
@@ -238,21 +244,62 @@ class GateBMatrixTest(unittest.TestCase):
 
         self.assertEqual(self.findings(matrix, journey_ids), [])
         self.assertEqual(matrix, before, "the validator must not modify the matrix")
-        self.assertEqual(matrix["decision"], "OPEN")
-        self.assertIs(matrix["gate_b_accepted"], False)
-        self.assertIs(matrix["initial_state"], True)
         self.assertEqual({row["id"] for row in matrix["rows"]}, EXPECTED_ROW_IDS)
         self.assertEqual(len(matrix["rows"]), len(EXPECTED_ROW_IDS))
         for row in matrix["rows"]:
-            self.assertEqual(row["status"], "NOT RUN", row["id"])
-            self.assertTrue(row["blocker"].strip(), row["id"])
-            self.assertIsNone(row["no_bond_handle_or_hint_reliance"], row["id"])
-            self.assertNotIn("evidence", row, row["id"])
+            self.assertIn(row["status"], ("NOT RUN", "FAIL", "PASS"), row["id"])
             for journey in row["journeys"]:
                 self.assertIn(journey, journey_ids, row["id"])
 
         cited = {journey for row in matrix["rows"] for journey in row["journeys"]}
         self.assertEqual(cited, journey_ids)
+
+        if matrix["initial_state"] is True:
+            # The initial-state pin: the committed matrix must stay visibly not accepted.
+            self.assertEqual(matrix["decision"], "OPEN")
+            self.assertIs(matrix["gate_b_accepted"], False)
+            for row in matrix["rows"]:
+                self.assertEqual(row["status"], "NOT RUN", row["id"])
+                self.assertTrue(row["blocker"].strip(), row["id"])
+                self.assertIsNone(row["no_bond_handle_or_hint_reliance"], row["id"])
+                self.assertNotIn("evidence", row, row["id"])
+        else:
+            # A later evidence commit released the pin; only the invariants apply.
+            if matrix["gate_b_accepted"] is True:
+                self.assertEqual(matrix["decision"], "ACCEPTED")
+                self.assertTrue(str(matrix.get("decision_reference", "")).strip())
+            for row in matrix["rows"]:
+                if row["status"] == "PASS":
+                    self.assertIs(row["no_bond_handle_or_hint_reliance"], True, row["id"])
+                    self.assertIn("evidence", row, row["id"])
+
+    def test_later_evidence_state_is_not_pinned(self):
+        # The committed matrix stays pinned; a later commit releases the pin in place.
+        with open(MATRIX_PATH, encoding="utf-8") as handle:
+            committed = json.load(handle)
+        self.assertIs(committed["initial_state"], True)
+        released = copy.deepcopy(committed)
+        released["initial_state"] = False
+        self.assertEqual(self.findings(released), [])
+
+        # Releasing the pin does not by itself make a matrix valid: the invariants still apply.
+        later = initial_matrix()
+        later["initial_state"] = False
+        self.assertEqual(self.findings(later), [])
+
+        # A valid later-state matrix with all rows PASS and full evidence validates.
+        accepted = accepted_matrix()
+        self.assertEqual(self.findings(accepted), [])
+
+        # The same evidence under initial_state true is rejected by the pin.
+        pinned = copy.deepcopy(accepted)
+        pinned["initial_state"] = True
+        self.assert_finding(self.findings(pinned), "initial_state")
+
+        # Releasing the pin does not relax the invariants.
+        without_reference = copy.deepcopy(accepted)
+        del without_reference["decision_reference"]
+        self.assert_finding(self.findings(without_reference), "decision_reference")
 
     def test_missing_row_names_the_id(self):
         matrix = initial_matrix()
@@ -479,20 +526,95 @@ class GateBMatrixTest(unittest.TestCase):
         end = start + 10 * 60
         seven = start + 7 * 60
 
+        # Both the event and its copy must be strictly after minute seven.
+        self.assertTrue(background_ok(start, end, seven + 1, seven + 1, True, False))
         self.assertTrue(background_ok(start, end, seven + 5, seven + 6, True, False))
-        self.assertTrue(background_ok(start, end, seven, seven, True, False))
+        self.assertFalse(background_ok(start, end, seven, seven, True, False))
+        self.assertFalse(background_ok(start, end, seven, seven + 1, True, False))
+        self.assertFalse(background_ok(start, end, seven + 1, seven, True, False))
         self.assertFalse(background_ok(start, end, seven - 1, seven, True, False))
-        self.assertFalse(background_ok(start, end, seven, seven - 1, True, False))
+        self.assertFalse(background_ok(start, end, seven + 5, seven - 1, True, False))
         self.assertFalse(background_ok(start, end - 1, seven + 5, seven + 6, True, False))
         self.assertFalse(background_ok(start, end, seven + 5, seven + 6, False, False))
         self.assertFalse(background_ok(start, end, seven + 5, seven + 6, True, True))
         self.assertFalse(background_ok(start, end, end + 1, end + 2, True, False))
 
+    def test_placeholder_boolean_evidence_rejected(self):
+        # An accepted matrix whose evidence is only booleans is not evidence: references and
+        # content fields need real values, and a boolean decision reference is not a reference.
+        matrix = accepted_matrix()
+        matrix["decision_reference"] = True
+        for row in matrix["rows"]:
+            row["evidence"] = {field: True for field in EVIDENCE_FIELDS}
+            for field in CASE_EXTRAS.get(row["case"], ()):
+                row["evidence"][field] = True
+        findings = self.findings(matrix)
+        self.assert_finding(findings, "decision_reference")
+        self.assert_finding(findings, "source_revision")
+        self.assert_finding(findings, "provenance_anchor")
+        self.assert_finding(findings, "raw_captures")
+        self.assert_finding(findings, "actions")
+
+        # Case extras need content too; the affirmative flags are the only booleans.
+        for row_id, fields in (
+            ("windows.A.forced-freeze", ("badge_clear", "forced_trace")),
+            ("windows.A.offscreen-copy", ("clipboard_transition",)),
+            ("macos.A.connector-restart", ("fresh_keys", "fresh_handles")),
+        ):
+            matrix = verdict_matrix("PASS", row_id)
+            record = row_of(matrix, row_id)["evidence"]
+            for field in fields:
+                record[field] = False
+            findings = self.findings(matrix)
+            for field in fields:
+                self.assert_finding(findings, field)
+
+        matrix = verdict_matrix("PASS", "android.A.locked-phone-20min")
+        row_of(matrix, "android.A.locked-phone-20min")["evidence"]["foreground_present"] = False
+        self.assert_finding(self.findings(matrix), "foreground_present")
+
+        # A single affirmative flag turned into content is rejected as well.
+        matrix = verdict_matrix("PASS")
+        row_of(matrix, "windows.A.push")["evidence"]["exemption_absent"] = "yes"
+        self.assert_finding(self.findings(matrix), "exemption_absent")
+
+    def test_evidence_type_categories_cover_every_field(self):
+        categorised = set(TEXT_EVIDENCE_FIELDS) | set(TEXT_OR_LIST_EVIDENCE_FIELDS)
+        categorised |= set(CONTENT_EVIDENCE_FIELDS) | set(AFFIRMATIVE_EVIDENCE_FIELDS)
+        self.assertEqual(categorised, set(EVIDENCE_FIELDS))
+        self.assertEqual(
+            len(TEXT_EVIDENCE_FIELDS)
+            + len(TEXT_OR_LIST_EVIDENCE_FIELDS)
+            + len(CONTENT_EVIDENCE_FIELDS)
+            + len(AFFIRMATIVE_EVIDENCE_FIELDS),
+            len(EVIDENCE_FIELDS),
+            "an evidence field must belong to exactly one type category",
+        )
+        case_extras = set()
+        for fields in CASE_EXTRAS.values():
+            case_extras |= set(fields)
+        self.assertEqual(
+            case_extras, set(AFFIRMATIVE_CASE_EVIDENCE) | set(CONTENT_CASE_EVIDENCE)
+        )
+
+    def test_malformed_case_type_does_not_raise(self):
+        matrix = verdict_matrix("PASS", "windows.A.push")
+        row = row_of(matrix, "windows.A.push")
+        row["case"] = {"unexpected": "object"}
+        findings = self.findings(matrix)
+        self.assert_finding(findings, "case must be a string")
+        self.assert_finding(findings, "windows.A.push")
+
     def test_output_states_tool_does_not_accept_gate_b(self):
         matrix = verdict_matrix("PASS")
         before = copy.deepcopy(matrix)
         journey_ids = set(JOURNEY_IDS)
-        self.assertEqual(validate(matrix, journey_ids), [])
+        direct = validate(matrix, journey_ids)
+        self.assertIsInstance(direct, list)
+        self.assertEqual(direct, [])
+        self.assertTrue(direct.statement)
+        self.assertIn(NOT_ACCEPTANCE_STATEMENT, direct.statement)
+        self.assertIn(NOT_ACCEPTANCE_STATEMENT, str(direct))
         self.assertIn(NOT_ACCEPTANCE_STATEMENT, report(matrix, journey_ids))
         self.assertEqual(matrix, before)
         self.assertEqual(row_of(matrix, "windows.A.push")["status"], "PASS")
@@ -551,6 +673,21 @@ class GateBMatrixTest(unittest.TestCase):
             "never Gate B evidence",
         ):
             self.assertIn(statement.lower(), lowered, "runbook lacks %r" % statement)
+
+        # The locked-phone rule requires the phone to be locked at task removal, so the
+        # procedure must lock first, remove the task while locked, and pull after minute 15.
+        locked = "\n".join(sections["locked-phone-20min"]).lower()
+        self.assertIn("lock the screen first", locked)
+        self.assertLess(
+            locked.index("lock the screen first"),
+            locked.index("remove the app task"),
+            "the locked-phone procedure must lock before it removes the task",
+        )
+        self.assertLess(
+            locked.index("remove the app task"),
+            locked.index("reseed"),
+            "the locked-phone procedure must remove the task before the post-minute-15 pull",
+        )
 
 
 if __name__ == "__main__":
