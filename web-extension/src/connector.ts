@@ -406,6 +406,13 @@ export class ConnectorApp {
     private readonly unsubscribers: (() => void)[] = [];
     private readonly userDisconnectHandles = new Set<string>();
     private readonly sessionFailedHandles = new Set<string>();
+    /**
+     * Handles the session manager holds open after a `removal_response` (design D4). Their
+     * disappearance is intentional, so it schedules no automatic recovery. Start-only: the
+     * manager never calls back when a hold ends, and a reset keeps the mark of a hold its
+     * `closeAll()` snapshot did not select.
+     */
+    private readonly removalHoldHandles = new Set<string>();
     private readonly connectionPeerTargets = new Map<string, PeerTarget>();
     private readonly suppressedPeerIds = new Set<string>();
     private readonly recoveryEpochs = new Map<string, number>();
@@ -531,6 +538,9 @@ export class ConnectorApp {
                 (sessionId) => this.proofs.revoke(sessionId),
                 // The coordinator selects a live enrollment link by its bound peer id only.
                 () => this.pairingLinks(),
+                // A responder's reply-then-close hold is intentional; mark the handle so its
+                // disappearance never schedules a reconnect.
+                (handle) => this.removalHoldHandles.add(handle),
             );
             holder.verify = manager.verifier;
             this.repository = repository;
@@ -1389,6 +1399,7 @@ export class ConnectorApp {
         this.readiness = null;
         this.connectionPeerTargets.clear();
         this.sessionFailedHandles.clear();
+        this.removalHoldHandles.clear();
         this.pairingHandles.clear();
         for (const key of this.reconnect.keys()) {
             if (key === 'host') continue;
@@ -1472,6 +1483,7 @@ export class ConnectorApp {
         if (this.ready !== null && this.controller.isOpen() && !this.shuttingDown) {
             for (const [handle, previous] of this.trackedConnections) {
                 if (next.has(handle)) continue;
+                if (this.removalHoldHandles.delete(handle)) continue;
                 if (this.pairingHandles.delete(handle)) continue;
                 if (this.userDisconnectHandles.delete(handle)) continue;
 
@@ -1492,6 +1504,11 @@ export class ConnectorApp {
         }
         for (const handle of [...this.sessionFailedHandles]) {
             if (!next.has(handle)) this.sessionFailedHandles.delete(handle);
+        }
+        for (const handle of [...this.removalHoldHandles]) {
+            // A mark recorded after its handle already left the snapshot must not linger until
+            // some later port close.
+            if (!next.has(handle)) this.removalHoldHandles.delete(handle);
         }
         for (const handle of [...this.connectionPeerTargets.keys()]) {
             if (!next.has(handle)) this.connectionPeerTargets.delete(handle);
