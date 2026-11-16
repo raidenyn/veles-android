@@ -26,8 +26,8 @@
 
 ## 5. Debug connector multi-event pull
 
-- [ ] 5.1 Add development-only `pullAll()` to `web-extension/src/debug/probe.ts`: the per-session handler picks the decoder from the pending request kind; decode the whole record (count 0..5, count matches payload, no duplicate ids) before acking any event, otherwise reject, send no ack and end the session; one-event `pull()` unchanged
-- [ ] 5.2 Tests in `debug-probe.test.ts`: five events, empty history, malformed count, duplicate id, bound violation, one-event pull unchanged; extend `bundle.test.ts` with a distinctive `pullAll` marker string that must be absent from the production bundle
+- [x] 5.1 Add development-only `pullAll()` to `web-extension/src/debug/probe.ts`: the per-session handler picks the decoder from the pending request kind; decode the whole record (count 0..5, count matches payload, no duplicate ids) before acking any event, otherwise reject, send no ack and end the session; one-event `pull()` unchanged
+- [x] 5.2 Tests in `debug-probe.test.ts`: five events, empty history, malformed count, duplicate id, bound violation, one-event pull unchanged; extend `bundle.test.ts` with a distinctive `pullAll` marker string that must be absent from the production bundle
 
 ## 6. Journey file
 
