@@ -16,8 +16,8 @@
 
 ## Commits
 
-- **Range**: `b04edd0..9e8e11e`
-- **Count**: `30`
+- **Range**: `b04edd0..9ff0ed2`
+- **Count**: `33`
 
 ---
 
@@ -37,8 +37,12 @@ is Gate B evidence and the committed matrix stays `decision: OPEN`, `gate_b_acce
 
 ---
 
+The final whole-branch review ran after Task 10. It found one merge-blocking race (a schedule
+could survive a completed disarm because the armed read sat outside the registration lock) and
+the Task 9 verification gap. The race was fixed in `34f7a32` with a deterministic regression
+test; a scoped re-review approved the fix. The verification gap remains for the owner.
+
 ## Next step
 
-Run `/openspec-verify-change`. The plan's final whole-branch review runs first. Task 9's
-Chrome step needs a decision from the owner: resolve the pairing handshake and repeat it, or
-record the gap as a prerequisite for the later Gate B runs.
+Run `/openspec-verify-change`. Task 9's Chrome step needs a decision from the owner: resolve the
+pairing handshake and repeat it, or record the gap as a prerequisite for the later Gate B runs.
