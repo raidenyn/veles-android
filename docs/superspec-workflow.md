@@ -61,18 +61,30 @@ Ask it these three questions, in this order:
   open critical or high finding.
 - Medium and low findings are recorded with a disposition (fixed, rebutted or deferred with a reason) and do
   not block approval.
+- A fix of up to five minor findings or a cosmetic edit does not reopen review; the threshold and the count
+  are in *Review passes and caps*.
 
 ## Review passes and caps
 
 ### What a pass is
 
 A **review pass** is one loop for one artifact and one reviewer. It begins when that reviewer's review opens,
-continues through every edit made in response to its findings without resetting the counter, and ends at that
-reviewer's approval or at escalation. A pass is capped at **5 rounds per reviewer**. The round tables in the
-record are the counter, so a resumed session continues the same pass instead of restarting it.
+continues through every re-review made in response to its findings without resetting the counter, and ends at
+that reviewer's approval or at escalation. A pass is capped at **5 rounds per reviewer**. The round tables in
+the record are the counter, so a resumed session continues the same pass instead of restarting it.
 
-A **round** is one review, re-review or rebuttal judgement. A rebuttal must give a reason, is judged by the
-reviewer in the next round and consumes a round.
+A **round** is one review, re-review or rebuttal judgement. A critical or high rebuttal must give a reason, is
+judged by the reviewer in the next round and consumes a round; a minor rebuttal or deferral is recorded and does
+not open a round.
+
+**Minor** means medium, low or cosmetic. **Cosmetic** means a wording or formatting change that does not change
+meaning. An edit or rebuttal is **triggering** when it is a critical or high fix, a critical or high rebuttal
+that must be judged, more than five minor fixes since the last completed review, or a normative edit that is not
+a finding fix; it reopens review. Everything else is **non-triggering**: up to five minor fixes, a cosmetic
+edit, or a minor rebuttal or deferral. The count is per artifact since the last completed review — every
+reviewer the preset lists approved — and neither an intermediate round nor one reviewer's approval resets it;
+during an active pass a triggering fix continues the same reviewer's counter. A triggering fix opens a new
+round; a non-triggering fix opens no round, is recorded, and re-points the affected hash with a note.
 
 With a two-reviewer preset the first reviewer must approve before the second reviewer starts.
 
@@ -80,33 +92,32 @@ With a two-reviewer preset the first reviewer must approve before the second rev
 
 | Event | Reviewed by | Cap | Recorded |
 |---|---|---|---|
-| A planning file is first written | each preset reviewer, in order, one after another | 5 rounds each | a pass section and an approval line with the hash |
-| Edits made in response to findings during a pass | the same reviewer | same counter, no reset | rounds in the pass |
-| The second reviewer's accepted edits change normative content | first reviewer, one confirmation pass | 2; if it demands normative edits, escalate | confirmation pass |
-| The second reviewer's accepted edits are wording only | the second reviewer's approving round confirms | none extra | note "cosmetic, confirmed in round N" |
-| Normative edit after the cycle is complete | every approving reviewer, in order, new pass | 5 each | new pass |
-| Edit after the cycle claimed cosmetic | one reviewer round confirms | 1 | hash re-pointed with a note |
-| An upstream hash no longer matches | each approving reviewer, in order, consistency check | 2 each | new upstream hashes |
-| An upstream edit confirmed cosmetic | none | none | downstream records re-pointed, citing the round |
+| A planning file is first written | each preset reviewer, in order | 5 rounds each | a pass section and an approval line with the hash |
+| A triggering fix during a pass | the same reviewer | same counter, no reset | rounds in the pass |
+| A non-triggering fix during a pass | none | none | dispositions; hash re-pointed with a note |
+| The second reviewer's accepted fixes are triggering | first reviewer, one confirmation pass | 2; escalate on a critical or high fix | confirmation pass |
+| The second reviewer's accepted fixes are not triggering | none | none extra | the second reviewer's approval covers them; first record re-pointed with a note |
+| A triggering edit after the cycle | every approving reviewer, in order, new pass | 5 each | new pass |
+| A non-triggering edit after the cycle | none | none | hash re-pointed with a note |
+| A triggering upstream edit | each approving reviewer, in order, consistency check | 2 each | new upstream hashes |
+| A non-triggering upstream edit | none | none | downstream records re-pointed with a note |
 | Any cap reached | stop; the escalation template goes to the user | none | the escalation |
 
 ### Confirmation and revalidation
 
-- **Normative edits from the second reviewer:** the first reviewer runs exactly one confirmation pass, capped
-  at 2 rounds. If that pass demands further normative edits, escalate instead of reopening the second
-  reviewer — every two-reviewer cycle must end. At most one confirmation pass runs per cycle.
-- **Wording-only edits from the second reviewer:** the second reviewer's approving round confirms them; no
-  confirmation pass runs.
-- **A consistency revalidation after an upstream change** is its own pass, capped at 2 rounds per reviewer.
-  If a reviewer round confirms the upstream edit was cosmetic, re-point the downstream records to the new
-  upstream hash with a note citing that round and open no new pass.
-- **A claimed cosmetic edit after the cycle** is confirmed by one reviewer round (cap 1), and the record notes
-  that round. If the round finds the edit is not cosmetic, it is a substantive edit: open a new pass for every
-  approving reviewer, in preset order. A substantive edit after the cycle likewise reopens review for every
-  approving reviewer, in preset order, as a new pass. An edit made during an active two-reviewer cycle
-  follows the confirmation rules above and nothing else.
+- **Triggering fixes from the second reviewer:** the first reviewer runs exactly one confirmation pass, capped
+  at 2 rounds. If that pass demands a critical or high fix, escalate instead of reopening the second reviewer —
+  every two-reviewer cycle must end. At most one confirmation pass runs per cycle.
+- **Non-triggering fixes from the second reviewer:** the second reviewer's approving round covers them; no
+  confirmation pass runs, and the first reviewer's record is re-pointed with a note.
+- **A consistency revalidation after a triggering upstream edit** is its own pass, capped at 2 rounds per
+  reviewer. A non-triggering upstream edit opens no pass: re-point the downstream records to the new upstream
+  hash with a note.
+- **A non-triggering edit after the cycle** re-points its hashes with a note; a triggering edit after the cycle
+  opens a new pass for every approving reviewer, in preset order. An edit made during an active two-reviewer
+  cycle follows the confirmation rules above and nothing else.
 
-At a cap, or when a confirmation pass demands normative edits, stop and follow *Escalation*. Do not start
+At a cap, or when a confirmation pass demands a critical or high fix, stop and follow *Escalation*. Do not start
 another round before the user answers.
 
 ## Revision binding
@@ -146,12 +157,16 @@ section inside the pass and its own `Approved content` line, keyed by the spec f
 change directory. The record of the latest approval is the one that binds; a later pass appends to the same
 file.
 
+A record may re-point its `Approved content` line or an upstream hash in its header only after a non-triggering
+edit; the note follows the changed hash and names the fixes. An untouched hash needs no note.
+
 ### Upstream and hashes
 
 **Upstream** means every planning file earlier in the order brainstorm, proposal, design, specs, tasks, plan.
-This is stricter than the schema's dependency graph — a design edit also makes later approvals stale — and a
-record whose upstream set is smaller than this order fails the audit. Record one hash per upstream file, and
-one hash per spec file for the `specs` artifact; a single hash for "the specs" is not enough.
+This is stricter than the schema's dependency graph — a triggering design edit also makes later approvals stale;
+a non-triggering one only re-points the downstream records with a note — and a record whose upstream set is
+smaller than this order fails the audit. Record one hash per upstream file, and one hash per spec file for the
+`specs` artifact; a single hash for "the specs" is not enough.
 
 The hash is the sha256 of the file's decoded UTF-8 text after two normalizations:
 
@@ -181,8 +196,11 @@ always-on rule, or by hand — audit every planning file against its records. Fo
 1. **Each listed reviewer approved it.** The record header's preset lists the reviewers in order; there is an
    approved record from every one of them, not only the first.
 2. **Its own hash is current.** Recompute the file with the command above and compare it with the last
-   `Approved content` line for that file. For `specs`, check every spec file against its own keyed line.
-3. **Every recorded upstream hash is current.** Recompute each upstream file named in the record and compare.
+   `Approved content` line for that file. For `specs`, check every spec file against its own keyed line. A
+   hash changed after a non-triggering edit must carry its note naming the fixes; a changed hash without the
+   note is FAIL, and a triggering edit that was not re-reviewed is FAIL even with a note.
+3. **Every recorded upstream hash is current.** Recompute each upstream file named in the record and compare;
+   a changed upstream hash has the same note condition.
 4. **The upstream set is complete.** The record names every file earlier in the order; a smaller set fails.
 5. **Nothing blocking is open.** No critical or high finding is open: each is fixed, or rebutted and accepted
    by the reviewer's approving round. Deferred medium and low findings are allowed.
@@ -192,9 +210,9 @@ missing record, a stale hash, a smaller upstream set, a missing reviewer and an 
 finding are FAIL. Put the result in the verify report's "Review records" section when the verify template has
 one.
 
-Never recompute or rewrite a recorded hash to make an audit pass, and never edit anything under `reviews/` to
-settle a case: a FAIL is reported to the user, and only a reviewer round or the user settles it. An approval
-whose hash was rewritten is treated as no approval at all.
+Never rewrite a hash to hide a triggering edit: a noted non-triggering re-point is the one allowed rewrite, and
+a rewrite without the note is treated as no approval. Never edit anything under `reviews/` to settle a case: a
+FAIL is reported to the user, and only a reviewer round or the user settles it.
 
 ### Closeout documentation records
 
@@ -213,7 +231,7 @@ pre-flight refuses to start when the plan's approval is missing, stale or incomp
 
 ## Escalation
 
-Escalate when a cap is reached, and when a confirmation pass demands normative edits. Stop and write an
+Escalate when a cap is reached, and when a confirmation pass demands a critical or high fix. Stop and write an
 explanation in plain language, with these six parts:
 
 1. What the artifact is trying to do.
