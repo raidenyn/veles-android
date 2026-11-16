@@ -36,7 +36,7 @@
 - Consumes: the approved spec delta in this change (`Green means required checks succeeded on the current head`).
 - Produces: the documented procedure the closeout rule cites; Task 2's rule text must match it.
 
-- [ ] **Step 1: Replace the discovery block and the union paragraph**
+- [x] **Step 1: Replace the discovery block and the union paragraph**
 
 Replace `docs/superspec-workflow.md:501-522` (from `### Required checks and green` through the
 `An unestablished inventory is not green.` line) with:
@@ -66,12 +66,12 @@ the inventory is not established: stop and ask the user, use the answered invent
 missing rule as "nothing is required". An unestablished inventory is not green.
 ````
 
-- [ ] **Step 2: Verify the stale two-source wording is gone**
+- [x] **Step 2: Verify the stale two-source wording is gone**
 
 Run: `grep -n "protection/required_status_checks\|every source that can apply" docs/superspec-workflow.md`
 Expected: no output.
 
-- [ ] **Step 3: Replace the polling-table required-checks row**
+- [x] **Step 3: Replace the polling-table required-checks row**
 
 Replace line 627 with:
 
@@ -82,7 +82,7 @@ Replace line 627 with:
 Run: `sed -n '627p' docs/superspec-workflow.md`
 Expected: the new row, with no mention of the classic endpoint.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/superspec-workflow.md
@@ -98,7 +98,7 @@ git commit -m "docs(superspec): read required checks from rulesets only"
 - Consumes: Task 1's procedure wording (same endpoint, same ignored names).
 - Produces: the always-on rule text the spec's requirement is enforced through.
 
-- [ ] **Step 1: Replace the bullet**
+- [x] **Step 1: Replace the bullet**
 
 Replace the `- **Green is fail-closed:**` bullet (line 10) with:
 
@@ -110,12 +110,12 @@ Replace the `- **Green is fail-closed:**` bullet (line 10) with:
   and a missing `required_status_checks` rule are not green.
 ```
 
-- [ ] **Step 2: Verify the size cap and frontmatter**
+- [x] **Step 2: Verify the size cap and frontmatter**
 
 Run: `wc -c .agents/rules/repo-superspec-closeout.md && head -3 .agents/rules/repo-superspec-closeout.md`
 Expected: fewer than 4096 bytes, and the frontmatter still reads `---\ntrigger: always_on\n---`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .agents/rules/repo-superspec-closeout.md
@@ -131,28 +131,28 @@ git commit -m "docs(superspec): ignore classic protection in the closeout rule"
 - Consumes: both edited files.
 - Produces: evidence for the change's verify step.
 
-- [ ] **Step 1: Confirm no reader is left on the classic endpoint**
+- [x] **Step 1: Confirm no reader is left on the classic endpoint**
 
 Run: `grep -rn "protection/required_status_checks\|classic branch protection" docs .agents`
 Expected: only the new sentences, each saying classic protection is ignored or never read. Any hit that reads
 the endpoint, or that describes the union of sources, is a miss from Task 1.
 
-- [ ] **Step 2: Run the docs node agent-file check**
+- [x] **Step 2: Run the docs node agent-file check**
 
 Run: `python3 docs/checks/check_agent_files.py --root .`
 Expected: exit 0, no error findings.
 
-- [ ] **Step 3: Run the docs node unit tests**
+- [x] **Step 3: Run the docs node unit tests**
 
 Run: `python3 -m unittest discover -s docs/checks -p 'test_*.py'`
 Expected: OK.
 
-- [ ] **Step 4: Validate the change**
+- [x] **Step 4: Validate the change**
 
 Run: `openspec validate ruleset-only-required-checks --strict`
 Expected: `Change 'ruleset-only-required-checks' is valid`.
 
-- [ ] **Step 5: Run the selected node checks**
+- [x] **Step 5: Run the selected node checks**
 
 Run: `python3 -I scripts/components.py changed --base $(git merge-base origin/master HEAD)`
 Expected: one `node=true|false` line per component with `docs=true` and every other node `false` — the change
