@@ -45,7 +45,7 @@
 `<varies by outcome:>`
 
 - `merge-locally`: "The closeout runs on the default branch: sync, archive once and review the docs, then ask the user before any push to the default branch. For tracked work, close the issue and set Done only after that push succeeds. A rejected push is reported, never retried or bypassed, with a follow-up PR offered; if the user declines the push, the issue stays open and the card stays In Progress with a follow-up PR offered."
-- `pr-created`: "Monitor the PR to green, sync and archive once in the closeout, review the docs, push, then wait for approval and merge."
-- `pr-updated`: "Monitor the PR to green, sync and archive once in the closeout, review the docs, push, then wait for approval and merge."
+- `pr-created`: "Monitor the PR to green, sync and archive once in the closeout, review the docs, push, then monitor to merge and complete the applicable follow-ups."
+- `pr-updated`: "Monitor the PR to green, sync and archive once in the closeout, review the docs, push, then monitor to merge and complete the applicable follow-ups."
 - `kept-as-is`: "Resume later. The card stays In Progress; re-enter finalize when ready, or pick up where you left off; the worktree is preserved."
 - `discarded`: "Report the outcome and ask the user what the status becomes; the change directory may also be discarded if appropriate."

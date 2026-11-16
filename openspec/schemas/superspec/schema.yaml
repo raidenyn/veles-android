@@ -34,7 +34,8 @@ description: >
   tracker.md for tracked work (committed and pushed as part of the
   PR), sets the card In Review and hands off to the closeout rule,
   which monitors to green, syncs and archives once, reviews the
-  docs, pushes, waits for approval and merges. Verify and finalize
+  docs, pushes, monitors to merge and completes the applicable
+  follow-ups. Verify and finalize
   no longer send the agent straight to archive; archive runs once,
   inside the closeout, when the required checks are green.
 
@@ -415,7 +416,8 @@ artifacts:
          - Next step: per templates/finalize.md's bullet for the
            recorded outcome — for `pr-created` and `pr-updated`,
            monitor to green, sync and archive once in the closeout,
-           review the docs, push, wait for approval and merge.
+           review the docs, push, monitor to merge and complete the
+           applicable follow-ups.
 
       9. Commit the receipt on the feature branch:
 
