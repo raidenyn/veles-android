@@ -6,6 +6,7 @@ import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -350,20 +351,26 @@ class GateBPushSchedulerTest {
         val sendStarted = CompletableDeferred<Unit>()
         val sendGate = CompletableDeferred<Unit>()
         val finishedSends = AtomicInteger()
+        val interruptedSends = AtomicInteger()
         val sessions = object : ProbeSessions {
             override fun openFullSessions(): List<ProbeSession> = listOf(session(1, 0x40))
 
             override suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean {
                 sendStarted.complete(Unit)
-                // A real send is not interrupted by the scheduler's cancellation; detach must
-                // wait for it to finish instead of racing the host shutdown.
-                withContext(NonCancellable) { sendGate.await() }
+                // Deliberately cancellable: the scheduler, not the destination, must keep an
+                // admitted send's result wait alive across detach's cancellation.
+                try {
+                    sendGate.await()
+                } catch (cancelled: CancellationException) {
+                    interruptedSends.incrementAndGet()
+                    throw cancelled
+                }
                 finishedSends.incrementAndGet()
                 return true
             }
         }
-        // detach drops the wake resource before joining; completing the in-flight send from that
-        // observable point means the join, not a real wait, is what makes the assertion hold.
+        // detach delivers the scope cancellation before it releases the wake lock, so resolving
+        // the admitted send from this hook proves the scheduler kept the result wait alive.
         val wake = RecordingWake { sendGate.complete(Unit) }
         val scheduler = GateBPushScheduler(
             fixture = fixture,
@@ -383,6 +390,7 @@ class GateBPushSchedulerTest {
         scheduler.detach()
 
         assertEquals("detach returned only after the in-flight send completed", 1, finishedSends.get())
+        assertEquals("an admitted send is never cancelled mid-wait", 0, interruptedSends.get())
         assertEquals(1, lines.count { it.contains("cancelled reason=detach") })
 
         // fail() and onDestroy() both reach shutdownSessions, so detach runs twice.
@@ -390,6 +398,191 @@ class GateBPushSchedulerTest {
 
         assertEquals("a second detach logs no duplicate cancellation", 1, lines.count { it.contains("cancelled reason=detach") })
         assertEquals("the wake resource is released exactly once", 1, wake.releases)
+        assertEquals("no wake lock is left held", 0, wake.held)
+    }
+
+    @Test
+    fun cancel_at_the_fire_boundary_sends_nothing() {
+        val clock = ManualClock()
+        val lines = mutableListOf<String>()
+        val timer = BoundaryTimer(clock)
+        val sessions = RecordingSessions(listOf(session(1, 0x40)))
+        val wake = RecordingWake()
+        val fixture = fixture(clock, lines)
+        val scheduler = scheduler(fixture, { sessions }, clock, timer, wake, lines)
+        val controller = GateBController(fixture, scheduler)
+
+        assertTrue(controller.schedule(1))
+        // The worker is paused at the deadline, immediately before the deadline re-check.
+        controller.cancel()
+        timer.step()
+
+        assertTrue("a cancelled schedule never begins a send", sessions.sends.isEmpty())
+        assertEquals("no fired outcome", 0, lines.count { it.contains(" fired ") })
+        assertEquals("no skipped outcome for a cancelled schedule", 0, lines.count { it.contains(" skipped") })
+        assertEquals(1, lines.count { it.contains("cancelled reason=explicit") })
+    }
+
+    @Test
+    fun replacement_at_the_fire_boundary_sends_only_the_replacement() {
+        val clock = ManualClock()
+        val lines = mutableListOf<String>()
+        val timer = BoundaryTimer(clock)
+        val sessions = RecordingSessions(listOf(session(1, 0x40)))
+        val wake = RecordingWake()
+        val fixture = fixture(clock, lines)
+        val scheduler = scheduler(fixture, { sessions }, clock, timer, wake, lines)
+
+        assertTrue(scheduler.schedule(1))
+        // The old worker is paused at its deadline; the replacement retires it.
+        assertTrue(scheduler.schedule(5))
+        timer.step()
+
+        assertEquals("the retired schedule begins no send", 0, sessions.sends.size)
+        assertEquals(1, lines.count { it.contains("cancelled reason=replaced") })
+
+        driveUntilOutcome(timer, lines)
+
+        assertEquals("only the replacement fires", 1, sessions.sends.size)
+        assertEquals(1, lines.count { it.contains(" fired ") })
+    }
+
+    @Test
+    fun replacement_wake_lock_ownership_stays_with_the_replacement() {
+        val clock = ManualClock()
+        val lines = mutableListOf<String>()
+        val timer = BoundaryTimer(clock)
+        val sessions = RecordingSessions(listOf(session(1, 0x40)))
+        val wake = RecordingWake()
+        val fixture = fixture(clock, lines)
+        val scheduler = scheduler(fixture, { sessions }, clock, timer, wake, lines)
+
+        assertTrue(scheduler.schedule(5))
+        assertTrue(scheduler.schedule(3))
+        assertEquals("the replacement acquired exactly one lock", 1, wake.held)
+        assertEquals("the retired attempt released its own lock", 1, wake.releases)
+
+        // Resuming the retired attempt runs its cleanup; it must not release the replacement.
+        timer.step()
+        assertEquals("a retired attempt never releases the new acquisition", 1, wake.held)
+        assertEquals("no release beyond the retired attempt's own", 1, wake.releases)
+
+        driveUntilOutcome(timer, lines)
+
+        assertEquals("the replacement fires once", 1, sessions.sends.size)
+        assertEquals("the replacement released its own lock", 2, wake.releases)
+        assertEquals("no wake lock is left held", 0, wake.held)
+    }
+
+    @Test
+    fun detach_drains_a_predecessor_admitted_send() {
+        val clock = ManualClock()
+        val lines = mutableListOf<String>()
+        val fixture = fixture(clock, lines)
+        // A real dispatcher so the predecessor's admitted send genuinely outlives its job cancel.
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val timer = SteppingTimer(clock)
+        val sendStarted = CompletableDeferred<Unit>()
+        val sendGate = CompletableDeferred<Unit>()
+        val finishedSends = AtomicInteger()
+        val interruptedSends = AtomicInteger()
+        val sendCalls = AtomicInteger()
+        val firstSend = AtomicBoolean(true)
+        val sessions = object : ProbeSessions {
+            override fun openFullSessions(): List<ProbeSession> = listOf(session(1, 0x40))
+
+            override suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean {
+                sendCalls.incrementAndGet()
+                if (firstSend.compareAndSet(true, false)) {
+                    sendStarted.complete(Unit)
+                    try {
+                        sendGate.await()
+                    } catch (cancelled: CancellationException) {
+                        interruptedSends.incrementAndGet()
+                        throw cancelled
+                    }
+                    finishedSends.incrementAndGet()
+                }
+                return true
+            }
+        }
+        var releases = 0
+        // The replacement's retirement (release #2) resolves the predecessor's admitted send.
+        val wake = RecordingWake {
+            releases += 1
+            if (releases == 2) sendGate.complete(Unit)
+        }
+        val scheduler = GateBPushScheduler(
+            fixture = fixture,
+            sessions = { sessions },
+            clock = clock,
+            timer = timer,
+            wake = wake,
+            scope = scope,
+            processId = PROCESS_ID,
+            log = { lines += it },
+        )
+
+        assertTrue(scheduler.schedule(1))
+        timer.step()
+        runBlocking { sendStarted.await() }
+        assertEquals("the predecessor's send is in flight", 0, finishedSends.get())
+
+        // Replacing retires the predecessor's job, but its admitted send keeps running.
+        assertTrue(scheduler.schedule(5))
+        assertEquals("the replacement acquired the wake lock", 1, wake.held)
+
+        scheduler.detach()
+
+        assertEquals("detach drained the predecessor's admitted send", 1, finishedSends.get())
+        assertEquals("the predecessor's admitted send was not cancelled", 0, interruptedSends.get())
+        assertEquals("the retired predecessor admitted exactly one send", 1, sendCalls.get())
+        assertEquals("no wake lock is left held", 0, wake.held)
+    }
+
+    @Test
+    fun cancel_during_an_admitted_send_stops_later_destinations() {
+        val clock = ManualClock()
+        val lines = mutableListOf<String>()
+        val fixture = fixture(clock, lines)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val firstSendStarted = CompletableDeferred<Unit>()
+        val releaseFirstSend = CompletableDeferred<Unit>()
+        val sendCalls = AtomicInteger()
+        val sessions = object : ProbeSessions {
+            override fun openFullSessions(): List<ProbeSession> = listOf(session(1, 0x40), session(2, 0x50))
+
+            override suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean {
+                if (sendCalls.incrementAndGet() == 1) {
+                    firstSendStarted.complete(Unit)
+                    releaseFirstSend.await()
+                }
+                return true
+            }
+        }
+        val wake = RecordingWake()
+        val scheduler = GateBPushScheduler(
+            fixture = fixture,
+            sessions = { sessions },
+            clock = clock,
+            timer = StepTimer { millis -> clock.millis += millis },
+            wake = wake,
+            scope = scope,
+            processId = PROCESS_ID,
+            log = { lines += it },
+        )
+
+        assertTrue(scheduler.schedule(1))
+        runBlocking { firstSendStarted.await() }
+
+        // The first destination's send is admitted; cancelling must stop the second one.
+        scheduler.cancel("explicit")
+        releaseFirstSend.complete(Unit)
+        scheduler.detach()
+
+        assertEquals("no destination after the admitted one is sent", 1, sendCalls.get())
+        assertEquals("the admitted destination still logs one fired line", 1, lines.count { it.contains(" fired ") })
+        assertEquals("the wake lock is released", 0, wake.held)
     }
 
     @Test
@@ -445,7 +638,7 @@ class GateBPushSchedulerTest {
     }
 
     /** Releases the fake timer step by step until a terminal outcome is logged. */
-    private fun driveUntilOutcome(timer: SteppingTimer, lines: List<String>, maxSteps: Int = 16) {
+    private fun driveUntilOutcome(timer: StepDriver, lines: List<String>, maxSteps: Int = 16) {
         var steps = 0
         while (steps < maxSteps && lines.none { it.contains(" fired ") || it.contains(" skipped") }) {
             timer.step()
@@ -467,7 +660,9 @@ class GateBPushSchedulerTest {
      * Advances the injected clock by the requested step and then suspends (yielding the thread)
      * until the test releases that step, so each loop iteration is observable without sleeping.
      */
-    private class SteppingTimer(private val clock: ManualClock) : StepTimer {
+    private class SteppingTimer(private val clock: ManualClock) :
+        StepTimer,
+        StepDriver {
         private val gate = Channel<Unit>(Channel.UNLIMITED)
         val pauses = mutableListOf<Long>()
 
@@ -477,21 +672,48 @@ class GateBPushSchedulerTest {
             gate.receive()
         }
 
-        fun step() {
+        override fun step() {
             gate.trySend(Unit)
         }
+    }
+
+    /**
+     * A step timer whose suspension ignores cancellation, so a test can cancel a schedule while
+     * the worker is paused immediately before the deadline re-check and then let that pause return
+     * normally. This is the race the admission check and the attempt state must close.
+     */
+    private class BoundaryTimer(private val clock: ManualClock) :
+        StepTimer,
+        StepDriver {
+        private val gate = Channel<Unit>(Channel.UNLIMITED)
+
+        override suspend fun pause(millis: Long) {
+            clock.millis += millis
+            withContext(NonCancellable) { gate.receive() }
+        }
+
+        override fun step() {
+            gate.trySend(Unit)
+        }
+    }
+
+    private interface StepDriver {
+        fun step()
     }
 
     private class RecordingWake(private val onRelease: () -> Unit = {}) : WakeResource {
         val acquires = mutableListOf<Long>()
         var releases = 0
+        var held = 0
 
         override fun acquire(timeoutMillis: Long) {
             acquires += timeoutMillis
+            held += 1
         }
 
         override fun release() {
             releases += 1
+            held -= 1
             onRelease()
         }
     }
