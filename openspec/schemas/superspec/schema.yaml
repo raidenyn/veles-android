@@ -10,10 +10,9 @@ description: >
   /openspec-apply-change has executed. Finalize requires verify and is reached via
   /openspec-continue-change after verify reports PASS; its instruction executes
   the git-side closeout directly (merge worktree branch back into the
-  feature branch, push the branch — which updates an existing spec
-  pre-review PR if one was opened between plan and apply, or creates
-  a remote tracking branch otherwise — and post a code-reviewer
-  onboarding comment on the PR if one exists) and records the outcome
+  feature branch, push the branch, create the PR when none exists (an
+  existing spec pre-review PR is reused), and post the code-reviewer
+  onboarding comment) and records the outcome
   in finalize.md.
   Apply uses git worktrees + subagent-driven-development (brings TDD and
   code-review transitively). executing-plans is documented only as a
@@ -30,7 +29,9 @@ description: >
   wording is also updated to recommend a user-created feature branch
   as the canonical starting state (previously the schema recommended
   starting on the integration branch). v5 (current): finalize
-  confirms the open pull request (`gh pr view`), records it in
+  always creates the pull request when none exists, without asking
+  and without a skip choice, confirms it open (`gh pr view`), writes
+  the receipt with the true outcome, records it in
   tracker.md for tracked work (committed and pushed as part of the
   PR), sets the card In Review and hands off to the closeout rule,
   which monitors to green, syncs and archives once, reviews the
@@ -269,8 +270,8 @@ artifacts:
       Recommended convergence loop:
       - PASS → /openspec-continue-change advances to the finalize artifact, which
         executes the git-side closeout directly (merge worktree →
-        feature branch, push the branch, update the PR if one exists,
-        post code-reviewer comment if a PR is present) and hands off to
+        feature branch, push the branch, create the PR when none exists
+        and update it, post the code-reviewer comment) and hands off to
         the closeout rule. The skill
         superpowers:finishing-a-development-branch is retained as a
         manual escape hatch for non-canonical flows. The closeout runs
@@ -292,18 +293,15 @@ artifacts:
 
   - id: finalize
     generates: finalize.md
-    description: Git-side closeout — merge worktree back into feature branch, push, optionally open PR, post code-reviewer comment
+    description: Git-side closeout — merge worktree back into feature branch, push, create the PR when none exists, post code-reviewer comment
     template: finalize.md
     instruction: |
       The git-side closeout is Superspec's canonical finalize flow:
       merge the implementation worktree branch back into your feature
-      branch locally, push the feature branch (which updates the
-      existing PR if one was opened manually between plan and apply
-      for spec pre-review, or creates a remote tracking branch if
-      not), write the finalize.md receipt, and — if a PR exists —
-      post a code-reviewer onboarding comment on it. The spec
-      pre-review PR is an optional team-workflow pattern; the
-      canonical closeout works either way.
+      branch locally, push the feature branch; the PR is created when
+      none exists (an existing spec pre-review PR is reused), the
+      finalize.md receipt is written, and a code-reviewer onboarding
+      comment is posted on the PR.
 
       Prerequisites for the git-side closeout (canonical path):
       - You are on a feature branch in the main checkout (apply
@@ -315,18 +313,13 @@ artifacts:
       - Apply ran in a worktree at `.worktrees/<change-name>/` with
         a worktree branch named `<change-name>`.
 
-      Optional precondition (recommended for team workflows):
-      - A PR for this feature branch already exists on the remote.
-        This is the "spec pre-review PR" — opened manually between
-        plan and apply so the logic reviewer can approve the
-        proposal/specs/plan before code is written. If you didn't
-        open a pre-review PR, the canonical git-side closeout
-        still works: it merges the worktree back, pushes the
-        feature branch (creating the remote tracking branch if
-        needed), and the code-reviewer comment subroutine
-        self-skips (recording `PR comment: skipped (no PR)` in
-        finalize.md). You can `gh pr create` after finalize
-        completes, or never open a PR at all.
+      Pull request state: an open PR for this feature branch is
+      optional at the start of finalize. This is the spec pre-review
+      PR, opened manually between plan and apply so the logic reviewer
+      can approve the proposal/specs/plan before code is written. If
+      one exists, finalize reuses and updates it. If none exists,
+      finalize creates the code-review PR itself, without asking; a
+      branch without a PR never takes a non-canonical outcome.
 
       If a structural prerequisite (feature branch, worktree) is
       not met, skip the auto-executed flow below and invoke
@@ -399,117 +392,99 @@ artifacts:
 
          git branch -d "$WORKTREE_BRANCH"
 
-      8. Write finalize.md per templates/finalize.md to
-         openspec/changes/<change-name>/finalize.md. Required values
-         for the git-side closeout:
-         - Outcome: `pr-updated`
-         - Branch: <feature-branch>
-         - Base branch: <integration branch, typically `main`>
-         - Final state: `pr-updated`
-         - PR URL: discovered via `gh pr view <feature-branch> --json url --jq .url`
-         - Worktree: <path or "removed">
-         - Cleanup: `removed` (or `preserved (harness-owned)`)
-         - Tests baseline status at finish: `passing`
-         - PR comment status: filled in by step 12 below (or by
-           step 11 if the user declines the PR-creation prompt /
-           the session is non-interactive)
-         - Next step: per templates/finalize.md's bullet for the
-           recorded outcome — for `pr-created` and `pr-updated`,
-           monitor to green, sync and archive once in the closeout,
-           review the docs, push, monitor to merge and complete the
-           applicable follow-ups.
+      8. Push the feature branch:
 
-      9. Commit the receipt on the feature branch:
+         git push origin "$FEATURE_BRANCH"
+         # If a PR already exists for this branch, it auto-updates
+         # with the merge commits, finalize.md, and the
+         # implementation history. If no PR exists, this push
+         # creates (or updates) the remote tracking branch; step 9
+         # creates the PR.
 
-         git add openspec/changes/<change-name>/finalize.md
-         git commit -m "docs(openspec): finalize receipt for <change-name>"
+      9. Create the code-review PR when none exists. Never prompt
+         for a title and never offer a skip:
 
-      10. Push the feature branch:
+         PR_NUMBER=$(gh pr view "$FEATURE_BRANCH" --json number --jq .number 2>/dev/null)
 
+         If PR_NUMBER is empty:
+           a. Read proposal.md (if present at
+              openspec/changes/<change-name>/proposal.md) and infer
+              a conventional-commit type for the title:
+                - feat:     new capability or behavior change (default if unclear)
+                - fix:      bug fix restoring expected behavior
+                - refactor: internal restructuring without behavior change
+                - docs:     documentation-only
+                - test:     tests-only
+                - chore:    tooling, deps, config
+              If a natural scope is obvious (e.g., an affected
+              capability name from proposal.md's Capabilities
+              section), format as
+              `<type>(<scope>): <change-name>`. Otherwise
+              `<type>: <change-name>`.
+
+           b. Create the PR:
+
+                gh pr create --title "<title>" --body "$(cat <<'EOF'
+                Implements OpenSpec change `<change-name>`.
+
+                Full artifacts are in `openspec/changes/<change-name>/`. The
+                superspec-generated code-reviewer orientation is posted as a
+                comment on this PR.
+                EOF
+                )"
+
+              If creation reports that a PR already exists, reuse it
+              by reading it again with `gh pr view`. Any other
+              failure is reported and finalize stops with no outcome.
+
+         If PR_NUMBER is non-empty: a PR already exists (likely the
+         spec pre-review PR). Reuse it and create no duplicate.
+
+      10. Confirm the open PR:
+
+          gh pr view "$FEATURE_BRANCH" --json state,url,number
+
+          A missing PR, or a state other than `OPEN`, is an error:
+          report it, record no outcome and stop; do not hand off.
+
+      11. Run the comment-posting subroutine (see "Code-reviewer
+          onboarding comment subroutine" below) and keep its result
+          for the receipt's `PR comment status`.
+
+      12. Write finalize.md per templates/finalize.md to
+          openspec/changes/<change-name>/finalize.md. Write no
+          receipt before the confirmation in step 10 succeeds.
+          Required values for the git-side closeout:
+          - Outcome: `pr-created` when step 9 created the PR,
+            `pr-updated` when it reused one
+          - Branch: <feature-branch>
+          - Base branch: <integration branch, typically `main`>
+          - Final state: `pr-open` for Outcome `pr-created`;
+            `pr-updated` for Outcome `pr-updated`
+          - PR URL: <from step 10>
+          - Worktree: <path or "removed">
+          - Cleanup: `removed` (or `preserved (harness-owned)`)
+          - Tests baseline status at finish: `passing`
+          - PR comment status: the result from step 11
+          - Next step: per templates/finalize.md's bullet for the
+            recorded outcome — for `pr-created` and `pr-updated`,
+            monitor to green, sync and archive once in the closeout,
+            review the docs, push, monitor to merge and complete the
+            applicable follow-ups.
+
+      13. Commit the receipt and push it:
+
+          git add openspec/changes/<change-name>/finalize.md
+          git commit -m "docs(openspec): finalize receipt for <change-name>"
           git push origin "$FEATURE_BRANCH"
-          # If a PR already exists for this branch, it auto-updates
-          # with the merge commits, finalize.md, and the implementation
-          # history. If no PR exists, this push creates (or updates)
-          # the remote tracking branch — step 11 below will offer to
-          # open a PR.
 
-      11. Offer to open a code-review PR (interactive prompt). This
-          step makes finalize the SDLC-natural moment to open the PR
-          when the team didn't open one for spec pre-review:
+      14. Hand off to the closeout. The receipt's outcome decides
+          the branch:
 
-          PR_NUMBER=$(gh pr view "$FEATURE_BRANCH" --json number --jq .number 2>/dev/null)
-
-          If PR_NUMBER is non-empty:
-            A PR already exists (likely the spec pre-review PR).
-            Skip to step 12 — nothing to prompt.
-
-          If PR_NUMBER is empty AND the session is interactive:
-            a. Read proposal.md (if present at
-               openspec/changes/<change-name>/proposal.md) and infer
-               a conventional-commit type for the suggested title:
-                 - feat:     new capability or behavior change (default if unclear)
-                 - fix:      bug fix restoring expected behavior
-                 - refactor: internal restructuring without behavior change
-                 - docs:     documentation-only
-                 - test:     tests-only
-                 - chore:    tooling, deps, config
-               If a natural scope is obvious (e.g., an affected
-               capability name from proposal.md's Capabilities
-               section), format as
-               `<type>(<scope>): <change-name>`. Otherwise
-               `<type>: <change-name>`.
-
-            b. Prompt the user:
-
-                 No PR exists for <feature-branch>. Open one now?
-
-                 Suggested title: <generated conventional-commit title>
-
-                 1. Yes, create PR with the suggested title (recommended)
-                 2. Yes, create PR with a custom title (please provide it)
-                 3. No, skip PR creation — I'll open it later or never
-
-            c. If the user picks 1 or 2, create the PR:
-
-                 gh pr create --title "<title>" --body "$(cat <<'EOF'
-                 Implements OpenSpec change `<change-name>`.
-
-                 Full artifacts are in `openspec/changes/<change-name>/`. The
-                 superspec-generated code-reviewer orientation is posted as a
-                 comment on this PR.
-                 EOF
-                 )"
-
-               Capture the new PR URL and use it for the orientation
-               comment in step 12.
-
-            d. If the user picks 3:
-               Record `PR comment status: skipped (no PR)` in
-               finalize.md. Skip step 12 (which would self-skip
-               anyway).
-
-          If PR_NUMBER is empty AND the session is non-interactive:
-            Skip silently. Record
-            `PR comment status: skipped (no PR)` in finalize.md.
-            Skip step 12.
-
-      12. Run the comment-posting subroutine (see "Code-reviewer
-          onboarding comment subroutine" below). Update the
-          `PR comment status` field in finalize.md with the result
-          and amend the receipt commit (or add a follow-up commit
-          and push) so finalize.md is accurate. Non-blocking — on
-          subroutine failure, record `failed: <reason>` and continue.
-
-      13. Confirm the pull request and hand off to the closeout.
-          The receipt's outcome decides the branch:
-
-          - `pr-created` and `pr-updated`: confirm the PR is open
-            with `gh pr view "$FEATURE_BRANCH" --json
-            state,url,number`. A missing or non-open PR is an error:
-            report it and stop instead of recording the outcome. For
-            tracked work, record the PR in `tracker.md` as the
-            tracker capability specifies, commit that edit and push
-            it as part of the PR, then set the item to In Review
+          - `pr-created` and `pr-updated`: for tracked work, record
+            the PR in `tracker.md` as the tracker capability
+            specifies, commit that edit and push it as part of the
+            PR, then set the item to In Review
             (matched by name; stop and ask when the field or an
             option is missing). Then hand off to
             `.agents/rules/repo-superspec-closeout.md` and stay in
@@ -538,7 +513,12 @@ artifacts:
           - `kept-as-is`: leave the card In Progress and say the work
             resumes when the user re-enters finalize.
 
-      Recommended (non-blocking): before step 8, write a short
+         `merge-locally`, `kept-as-is` and `discarded` are only for
+         an explicitly user-chosen non-canonical flow (the escape
+         hatch below). A missing PR is never a reason to select one
+         of them: the canonical flow creates the PR.
+
+      Recommended (non-blocking): before step 12, write a short
       retrospective.md in the change directory. Six suggested
       sections: Wins, Misses, Plan deviations, Skill/workflow
       compliance, Surprises, Promote candidates. Evidence first,
@@ -551,7 +531,7 @@ artifacts:
       Assumption: the human who pre-reviewed the proposal/specs
       (logic review) may not be the same human who reviews the code.
       This subroutine posts a single PR comment to orient the code
-      reviewer. It is invoked from the git-side closeout (step 12)
+      reviewer. It is invoked from the git-side closeout (step 11)
       AND from the escape hatch (step 3 of the escape-hatch
       instructions below)
       so that any PR present at finalize completion gets a comment.
@@ -676,7 +656,10 @@ artifacts:
       via the skill (Option 2); keep the worktree alive for iteration
       (Option 3); or discard the work (Option 4) — invoke
       `superpowers:finishing-a-development-branch` directly via
-      the Skill tool and pick the matching option.
+      the Skill tool and pick the matching option. The hand-written
+      receipt may record any outcome the user chose, but "no
+      pre-review PR" is not an escape-hatch reason: the canonical
+      git-side closeout creates the PR.
 
       After the skill returns:
       1. Hand-write finalize.md from
@@ -689,7 +672,7 @@ artifacts:
          which option ran. It self-skips when no PR exists
          (Options 1, 3, 4) and posts/edits when a PR exists
          (Option 2 or an earlier git-side closeout run left one).
-      4. Hand off per step 13's outcome branch. A `pr-created` or
+      4. Hand off per step 14's outcome branch. A `pr-created` or
          `pr-updated` outcome starts the closeout; `merge-locally`,
          `discarded` and `kept-as-is` follow their bullets there.
 
@@ -697,7 +680,7 @@ artifacts:
       comment exists on any PR that exists at finalize completion,
       even outside the canonical automation.
 
-      Once finalize.md exists, follow step 13. For `pr-created` and
+      Once finalize.md exists, follow step 14. For `pr-created` and
       `pr-updated` the closeout rule owns the rest of the flow and
       archive runs once inside it; for `merge-locally` archive runs
       once on the default branch after the local merge, behind the
@@ -862,8 +845,8 @@ apply:
        - PASS or PASS_WITH_WARNINGS → proceed via /openspec-continue-change to the
          finalize artifact, which executes the git-side closeout
          directly (merge worktree → feature branch, push the branch,
-         update the PR if one exists, post code-reviewer comment if a
-         PR is present) and writes finalize.md, then hands off to the
+         create the PR when none exists and update it, post the
+         code-reviewer comment) and writes finalize.md, then hands off to the
          closeout rule. The skill
          superpowers:finishing-a-development-branch is retained as a
          manual escape hatch for non-canonical flows. The closeout runs
