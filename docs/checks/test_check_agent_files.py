@@ -838,11 +838,11 @@ class AgentFileCheckTest(unittest.TestCase):
             findings,
             "error",
             ".agents/rules/android-mismatch.md",
-            '`paths` must be exactly ["android/**"]',
+            "`paths` must match `globs`",
         )
         self.assertEqual(len(findings), 1, findings)
 
-    def test_node_rule_pattern_must_equal_scope(self):
+    def test_node_rule_pattern_must_be_inside_scope(self):
         files = with_rule(
             clean_files(), "rust-wrong-pattern.md", node_rule_text("android/**"), "rust"
         )
@@ -851,13 +851,67 @@ class AgentFileCheckTest(unittest.TestCase):
             findings,
             "error",
             ".agents/rules/rust-wrong-pattern.md",
-            '`globs` must be exactly ["rust/**"]',
+            "`globs` must list patterns under `rust/`",
         )
         self.assert_finding(
             findings,
             "error",
             ".agents/rules/rust-wrong-pattern.md",
-            '`paths` must be exactly ["rust/**"]',
+            "`paths` must list patterns under `rust/`",
+        )
+        self.assertEqual(len(findings), 2, findings)
+
+    def test_node_rule_accepts_multiple_patterns_inside_scope(self):
+        patterns = (
+            '  - "native-bridge/installer/macos/**"\n'
+            '  - "native-bridge/host/**"\n'
+        )
+        text = rule_text("trigger: glob\nglobs:\n" + patterns + "paths:\n" + patterns)
+        files = with_rule(clean_files(), "native-bridge-multi.md", text, "native-bridge")
+        findings = check_repo(self.repo(files))
+        self.assertEqual(findings, [])
+
+    def test_node_rule_rejects_parent_directory_traversal(self):
+        text = rule_text(
+            'trigger: glob\nglobs:\n  - "android/../rust/**"\n'
+            'paths:\n  - "android/../rust/**"\n'
+        )
+        files = with_rule(clean_files(), "android-traversal.md", text, "android")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings,
+            "error",
+            ".agents/rules/android-traversal.md",
+            "`globs` must not use parent-directory traversal",
+        )
+        self.assert_finding(
+            findings,
+            "error",
+            ".agents/rules/android-traversal.md",
+            "`paths` must not use parent-directory traversal",
+        )
+        self.assertEqual(len(findings), 2, findings)
+
+    def test_node_rule_rejects_pattern_outside_scope(self):
+        text = rule_text(
+            'trigger: glob\nglobs:\n  - "native-bridge/installer/macos/**"\n'
+            '  - "native-bridge/host/**"\n'
+            'paths:\n  - "native-bridge/installer/macos/**"\n'
+            '  - "native-bridge/host/**"\n'
+        )
+        files = with_rule(clean_files(), "macos-cross.md", text, "macos")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings,
+            "error",
+            ".agents/rules/macos-cross.md",
+            "`globs` must list patterns under `native-bridge/installer/macos/`",
+        )
+        self.assert_finding(
+            findings,
+            "error",
+            ".agents/rules/macos-cross.md",
+            "`paths` must list patterns under `native-bridge/installer/macos/`",
         )
         self.assertEqual(len(findings), 2, findings)
 
