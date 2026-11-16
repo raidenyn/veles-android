@@ -554,6 +554,11 @@ def _check_rule_frontmatter(path, scope, frontmatter):
         if any("{" in item or "}" in item for item in value):
             findings.append(Finding("error", path, "`%s` must not use brace expansion" % key))
             continue
+        if any(".." in item.split("/") for item in value):
+            findings.append(
+                Finding("error", path, "`%s` must not use parent-directory traversal" % key)
+            )
+            continue
         outside = [item for item in value if not item.startswith(folder)]
         if outside:
             findings.append(

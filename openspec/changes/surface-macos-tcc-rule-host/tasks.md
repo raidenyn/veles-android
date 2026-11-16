@@ -21,5 +21,5 @@
 - [x] 4.1 Run `python3 docs/checks/check_agent_files.py --root .`; expect exit 0 (warnings allowed).
 - [x] 4.2 Run `python3 -m unittest discover -s docs/checks -p 'test_*.py' -v`; expect all tests to pass.
 - [x] 4.3 Run `openspec validate --all`; expect every item valid.
-- [x] 4.4 Grep the live files (outside `openspec/changes/archive/`, which keeps history) for `macos-test-app-tcc`; expect no hits outside the archived changes and the main spec that the closeout syncs.
+- [x] 4.4 Grep the live files for `macos-test-app-tcc`, excluding `.git/` and `openspec/changes/` (the change history legitimately quotes the old name); expect only the not-yet-synced main spec that the closeout updates.
 - [x] 4.5 Inspect `git status --short`; expect the rename plus the edited `AGENTS.md`, check and test files and the change directory only.

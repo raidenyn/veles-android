@@ -31,9 +31,9 @@ named `<scope>-<topic>.md` with a known scope (`repo`, `android`, `web-extension
 - `repo-*` rules are always on: frontmatter `trigger: always_on` and no `globs`/`paths`.
 - Node rules use `trigger: glob` plus identical YAML lists `globs` and `paths` of patterns under the
   rule's scope (`android/**`, or `native-bridge/installer/macos/**` plus `native-bridge/host/**` for a
-  rule two sibling nodes consume), no brace expansion. The filename names the narrowest common parent
-  for the list, and a parent pattern such as `native-bridge/**` also applies inside `host/` and
-  `installer/`.
+  rule two sibling nodes consume), no brace expansion and no `..` segment. The filename names the
+  narrowest common parent for the list, and a parent pattern such as `native-bridge/**` also applies
+  inside `host/` and `installer/`.
 - Frontmatter keys are limited to `trigger`, `globs` and `paths`; a node rule is at most 24,000
   bytes and a `repo-*` rule at most 4,096 bytes (the always-on context budget).
 - List the file in the `## Rules` section of the `AGENTS.md` of the scope's folder (the root

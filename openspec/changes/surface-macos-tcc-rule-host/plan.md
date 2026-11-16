@@ -3,11 +3,12 @@
 > **For agentic workers:** Use superpowers:subagent-driven-development to implement this plan
 > task-by-task where a subagent is warranted; this change is small enough for one agent.
 
-**Goal:** Re-scope the macOS test-app TCC rule to `native-bridge/**` so it loads automatically for
-`native-bridge/host/` work, and update the node guidance and layout spec around the new scope.
+**Goal:** Re-scope the macOS test-app TCC rule to its two consuming nodes, `native-bridge/installer/macos/`
+and `native-bridge/host/`, so it loads automatically for host work without loading for the Windows
+installer or the Tauri scaffold, and update the node guidance, agent-file check and layout spec.
 
-**Architecture:** One file rename plus frontmatter change, three `AGENTS.md` pointers and a delta spec.
-No rule content, check code or generated skill changes.
+**Architecture:** One file rename plus frontmatter change, a small extension to the agent-file check and
+its tests, three `AGENTS.md` pointers and a delta spec. No rule content or generated skill changes.
 
 **Tech Stack:** Markdown, YAML frontmatter, the repository's stdlib Python agent-file check and OpenSpec.
 
@@ -15,8 +16,12 @@ No rule content, check code or generated skill changes.
 
 ## Global Constraints
 
-- Frontmatter `globs` and `paths` MUST each be exactly `["native-bridge/**"]`, matching the
-  `native-bridge` scope in `docs/checks/check_agent_files.py`; no brace expansion, no second pattern.
+- Frontmatter `globs` and `paths` MUST each be the identical list
+  `["native-bridge/installer/macos/**", "native-bridge/host/**"]`; the filename names the
+  `native-bridge` parent and the list names only the consuming nodes.
+- The check MUST accept identical non-empty pattern lists under the rule's scope and MUST reject
+  out-of-scope, brace-expanded and parent-directory-traversal patterns; ordinary single-pattern rules
+  keep their previous behavior.
 - The rule's normative text (identity, designated requirement, launch path, grant reuse) is unchanged.
 - `native-bridge/installer/macos/AGENTS.md` stays the canonical home of the macOS signing identity.
 - The root `AGENTS.md` gains no macOS content.
@@ -88,12 +93,14 @@ the sentence that the macOS scope does not deliver it under `native-bridge/host/
 - [x] **Step 4: Check for stale references (green)**
 
 ```bash
-grep -rn "macos-test-app-tcc" --exclude-dir=.git . | grep -v '^./openspec/changes/archive/'
-grep -rn "does not deliver it" native-bridge
+grep -rn "macos-test-app-tcc" --exclude-dir=.git --exclude-dir=changes . || true
+grep -rn "does not deliver it" native-bridge || true
 ```
 
 Expected: the first prints only the not-yet-synced main spec
-`openspec/specs/agent-guidance-layout/spec.md` (the closeout sync updates it); the second prints nothing.
+`openspec/specs/agent-guidance-layout/spec.md` (the closeout sync updates it); the second prints
+nothing. The active change directory is excluded because its history legitimately quotes the old
+name.
 
 ---
 

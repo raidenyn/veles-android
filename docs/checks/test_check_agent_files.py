@@ -871,6 +871,27 @@ class AgentFileCheckTest(unittest.TestCase):
         findings = check_repo(self.repo(files))
         self.assertEqual(findings, [])
 
+    def test_node_rule_rejects_parent_directory_traversal(self):
+        text = rule_text(
+            'trigger: glob\nglobs:\n  - "android/../rust/**"\n'
+            'paths:\n  - "android/../rust/**"\n'
+        )
+        files = with_rule(clean_files(), "android-traversal.md", text, "android")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings,
+            "error",
+            ".agents/rules/android-traversal.md",
+            "`globs` must not use parent-directory traversal",
+        )
+        self.assert_finding(
+            findings,
+            "error",
+            ".agents/rules/android-traversal.md",
+            "`paths` must not use parent-directory traversal",
+        )
+        self.assertEqual(len(findings), 2, findings)
+
     def test_node_rule_rejects_pattern_outside_scope(self):
         text = rule_text(
             'trigger: glob\nglobs:\n  - "native-bridge/installer/macos/**"\n'

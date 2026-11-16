@@ -37,6 +37,17 @@ consuming patterns (`native-bridge/installer/macos/**` and `native-bridge/host/*
 `check_agent_files.py` to accept identical multi-pattern lists under a rule's scope, adds the
 multi-pattern and out-of-scope tests, and updates `docs/AGENTS.md` and the delta spec.
 
+The whole-PR Sol review then returned changes-required:
+
+- **High:** the prefix check let `android/../rust/**` escape the scope; patterns with a `..` segment
+  are now rejected and a regression test covers it.
+- **Medium:** the plan's goal, architecture and global constraints still described iteration 1;
+  they now state the two-pattern list and the check extension.
+- **Low:** the stale-reference grep searched the change's own history; it now excludes
+  `openspec/changes/` and expects only the not-yet-synced main spec.
+
+All three are fixed; the delta spec and `docs/AGENTS.md` now cover the traversal rule.
+
 ---
 
 ## Review gate
