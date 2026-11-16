@@ -20,9 +20,9 @@
 
 ## 4. adb surface, manifest and release guard
 
-- [ ] 4.1 Add receiver actions with the `me.nagaev.veles.debug.` prefix so the existing guard prefix covers them: `GATE_B_SEED` (comma-list extra), `GATE_B_DISARM`, `GATE_B_SCHEDULE_PUSH`, `GATE_B_CANCEL_PUSH`; debug-manifest intent filters, shell-only permission, structured result output, and the debug-manifest `WAKE_LOCK`; refuse a seed while no sharing host runs
-- [ ] 4.2 Unit tests for the receiver actions (parsing, refusals, result output, seed with no host) in `testDebug`
-- [ ] 4.3 Add any new strings outside the existing forbidden prefixes (the wake-lock tag) to `releaseHookForbidden` and `ReleaseGuardStringsTest`; do not add `WAKE_LOCK`; run the release guard on a release build and check the merged release manifest
+- [x] 4.1 Add receiver actions with the `me.nagaev.veles.debug.` prefix so the existing guard prefix covers them: `GATE_B_SEED` (comma-list extra), `GATE_B_DISARM`, `GATE_B_SCHEDULE_PUSH`, `GATE_B_CANCEL_PUSH`; debug-manifest intent filters, shell-only permission, structured result output, and the debug-manifest `WAKE_LOCK`; refuse a seed while no sharing host runs
+- [x] 4.2 Unit tests for the receiver actions (parsing, refusals, result output, seed with no host) in `testDebug`
+- [x] 4.3 Add any new strings outside the existing forbidden prefixes (the wake-lock tag) to `releaseHookForbidden` and `ReleaseGuardStringsTest`; do not add `WAKE_LOCK`; run the release guard on a release build and check the merged release manifest
 
 ## 5. Debug connector multi-event pull
 
