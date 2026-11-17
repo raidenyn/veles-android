@@ -1549,46 +1549,47 @@ test('project-flow workflow reconciles on safe events only', async () => {
   const prTypes = `[${PROJECT_FLOW_EVENTS.pull_request_target.join(', ')}]`;
   const issueTypes = `[${PROJECT_FLOW_EVENTS.issues.join(', ')}]`;
   const gate = `if: ${PROJECT_FLOW_GATE}`;
+  // label: [mutation, the start of the assertion message it must fail with]
   const mutations = {
-    'edited PR trigger': (text) => text.replace(prTypes, prTypes.replace('opened,', 'opened, edited,')),
-    'edited issue trigger': (text) => text.replace(issueTypes, issueTypes.replace(']', ', edited]')),
-    'synchronize PR trigger': (text) => text.replace(prTypes, prTypes.replace(']', ', synchronize]')),
-    'dropped PR trigger type': (text) => text.replace(prTypes, prTypes.replace(', converted_to_draft', '')),
-    'pull_request trigger': (text) => text.replace('  pull_request_target:\n', '  pull_request:\n'),
-    'push trigger': (text) => text.replace('  workflow_dispatch:\n', '  workflow_dispatch:\n  push:\n'),
-    'hourly schedule': (text) => text.replace(/    - cron: '[^'\n]+'\n/, "    - cron: '0 * * * *'\n"),
-    'weekly schedule': (text) => text.replace(/    - cron: '[^'\n]+'\n/, "    - cron: '23 4 * * 1'\n"),
-    'two schedules': (text) => text.replace(/(    - cron: '[^'\n]+'\n)/, "$1    - cron: '0 12 * * *'\n"),
-    'head sha checkout': (text) => text.replace(`ref: ${DEFAULT_BRANCH_REF}`, 'ref: ${{ github.event.pull_request.head.sha }}'),
-    'github.sha checkout': (text) => text.replace(`ref: ${DEFAULT_BRANCH_REF}`, 'ref: ${{ github.sha }}'),
-    'missing ref': (text) => text.replace(`          ref: ${DEFAULT_BRANCH_REF}\n`, ''),
-    'persisted credentials': (text) => text.replace('persist-credentials: false', 'persist-credentials: true'),
-    'unpinned checkout': (text) => text.replace(/actions\/checkout@[0-9a-f]{40} # v7/, 'actions/checkout@v7'),
-    'PR head fetch': (text) => text.replace('          set -o pipefail\n', '          set -o pipefail\n          git fetch origin "refs/pull/1/head"\n'),
-    'second secret': (text) => text.replace('          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}\n', '          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}\n          OTHER: ${{ secrets.OTHER_TOKEN }}\n'),
-    'GITHUB_TOKEN as the write token': (text) => text.replace('GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}', 'GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}'),
-    'project URL interpolated into run': (text) => text.replace('--project "$PROJECT_URL"', '--project "${{ vars.PROJECT_URL }}"'),
-    'write permission': (text) => text.replace('permissions:\n  contents: read', 'permissions:\n  contents: write'),
-    'cancelling concurrency': (text) => text.replace('cancel-in-progress: false', 'cancel-in-progress: true'),
-    'pip install': (text) => text.replace('          set -o pipefail\n', '          set -o pipefail\n          pip install requests\n'),
-    'npm install': (text) => text.replace('          set -o pipefail\n', '          set -o pipefail\n          npm ci\n'),
-    'apt install': (text) => text.replace('          set -o pipefail\n', '          set -o pipefail\n          sudo apt-get install -y jq\n'),
-    'ungated checkout': (text) => text.replace(`        ${gate}\n        uses: actions/checkout`, '        uses: actions/checkout'),
-    'ungated sync': (text) => text.replace(`        ${gate}\n        env:\n          GH_TOKEN`, '        env:\n          GH_TOKEN'),
-    'guard accepts URL only': (text) => text.replace('[ -n "$PROJECT_URL" ] && [ "$HAS_TOKEN" = "true" ]', '[ -n "$PROJECT_URL" ]'),
-    'guard accepts token only': (text) => text.replace('[ -n "$PROJECT_URL" ] && [ "$HAS_TOKEN" = "true" ]', '[ "$HAS_TOKEN" = "true" ]'),
-    'guard accepts either': (text) => text.replace('[ -n "$PROJECT_URL" ] && [ "$HAS_TOKEN" = "true" ]', '[ -n "$PROJECT_URL" ] || [ "$HAS_TOKEN" = "true" ]'),
-    'silent guard': (text) => text.replace('::notice::project-flow not configured', 'skipped'),
-    'agent mode': (text) => text.replace('--mode action', '--mode agent'),
-    'no summary': (text) => text.replace(' | tee -a "$GITHUB_STEP_SUMMARY"', ''),
-    'swallowed failure': (text) => text.replace('exit "$status"', 'exit 0'),
-    'job-level skip': (text) => text.replace('    runs-on: ubuntu-latest\n', "    if: github.event_name != 'issues'\n    runs-on: ubuntu-latest\n"),
-    'no timeout': (text) => text.replace(/^    timeout-minutes: \d+\n/m, ''),
+    'edited PR trigger': [(text) => text.replace(prTypes, prTypes.replace('opened,', 'opened, edited,')), `${PROJECT_FLOW_FILE} must trigger on pull_request_target types exactly`],
+    'edited issue trigger': [(text) => text.replace(issueTypes, issueTypes.replace(']', ', edited]')), `${PROJECT_FLOW_FILE} must trigger on issues types exactly`],
+    'synchronize PR trigger': [(text) => text.replace(prTypes, prTypes.replace(']', ', synchronize]')), `${PROJECT_FLOW_FILE} must trigger on pull_request_target types exactly`],
+    'dropped PR trigger type': [(text) => text.replace(prTypes, prTypes.replace(', converted_to_draft', '')), `${PROJECT_FLOW_FILE} must trigger on pull_request_target types exactly`],
+    'pull_request trigger': [(text) => text.replace('  pull_request_target:\n', '  pull_request:\n'), `${PROJECT_FLOW_FILE} must trigger on exactly issues, pull_request_target, schedule and workflow_dispatch`],
+    'push trigger': [(text) => text.replace('  workflow_dispatch:\n', '  workflow_dispatch:\n  push:\n'), `${PROJECT_FLOW_FILE} must trigger on exactly issues, pull_request_target, schedule and workflow_dispatch`],
+    'hourly schedule': [(text) => text.replace(/    - cron: '[^'\n]+'\n/, "    - cron: '0 * * * *'\n"), `${PROJECT_FLOW_FILE} must run its schedule once a day`],
+    'weekly schedule': [(text) => text.replace(/    - cron: '[^'\n]+'\n/, "    - cron: '23 4 * * 1'\n"), `${PROJECT_FLOW_FILE} must run its schedule once a day`],
+    'two schedules': [(text) => text.replace(/(    - cron: '[^'\n]+'\n)/, "$1    - cron: '0 12 * * *'\n"), `${PROJECT_FLOW_FILE} must declare exactly one schedule`],
+    'head sha checkout': [(text) => text.replace(`ref: ${DEFAULT_BRANCH_REF}`, 'ref: ${{ github.event.pull_request.head.sha }}'), `${PROJECT_FLOW_FILE} must check out ref: ${DEFAULT_BRANCH_REF}`],
+    'github.sha checkout': [(text) => text.replace(`ref: ${DEFAULT_BRANCH_REF}`, 'ref: ${{ github.sha }}'), `${PROJECT_FLOW_FILE} must check out ref: ${DEFAULT_BRANCH_REF}`],
+    'missing ref': [(text) => text.replace(`          ref: ${DEFAULT_BRANCH_REF}\n`, ''), `${PROJECT_FLOW_FILE} must check out ref: ${DEFAULT_BRANCH_REF}`],
+    'persisted credentials': [(text) => text.replace('persist-credentials: false', 'persist-credentials: true'), `${PROJECT_FLOW_FILE} must check out with persist-credentials: false`],
+    'unpinned checkout': [(text) => text.replace(/actions\/checkout@[0-9a-f]{40} # v7/, 'actions/checkout@v7'), `${PROJECT_FLOW_FILE} uses "actions/checkout@v7" which must be`],
+    'PR head fetch': [(text) => text.replace('          set -o pipefail\n', '          set -o pipefail\n          git fetch origin "refs/pull/1/head"\n'), `${PROJECT_FLOW_FILE} must never name the PR head`],
+    'second secret': [(text) => text.replace('          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}\n', '          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}\n          OTHER: ${{ secrets.OTHER_TOKEN }}\n'), `${PROJECT_FLOW_FILE} must reference only the PROJECT_TOKEN secret`],
+    'GITHUB_TOKEN as the write token': [(text) => text.replace('GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}', 'GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}'), `${PROJECT_FLOW_FILE} must reference only the PROJECT_TOKEN secret`],
+    'project URL interpolated into run': [(text) => text.replace('--project "$PROJECT_URL"', '--project "${{ vars.PROJECT_URL }}"'), `${PROJECT_FLOW_FILE} run scripts must take every value from env, never from an expression`],
+    'write permission': [(text) => text.replace('permissions:\n  contents: read', 'permissions:\n  contents: write'), `${PROJECT_FLOW_FILE} must be read-only at workflow scope`],
+    'cancelling concurrency': [(text) => text.replace('cancel-in-progress: false', 'cancel-in-progress: true'), `${PROJECT_FLOW_FILE} must run in one group that never cancels a reconciliation`],
+    'pip install': [(text) => text.replace('          set -o pipefail\n', '          set -o pipefail\n          pip install requests\n'), `${PROJECT_FLOW_FILE} must install nothing`],
+    'npm install': [(text) => text.replace('          set -o pipefail\n', '          set -o pipefail\n          npm ci\n'), `${PROJECT_FLOW_FILE} must install nothing`],
+    'apt install': [(text) => text.replace('          set -o pipefail\n', '          set -o pipefail\n          sudo apt-get install -y jq\n'), `${PROJECT_FLOW_FILE} must install nothing`],
+    'ungated checkout': [(text) => text.replace(`        ${gate}\n        uses: actions/checkout`, '        uses: actions/checkout'), `every ${PROJECT_FLOW_FILE} step after the guard must be gated on ${PROJECT_FLOW_GATE}`],
+    'ungated sync': [(text) => text.replace(`        ${gate}\n        env:\n          GH_TOKEN`, '        env:\n          GH_TOKEN'), `every ${PROJECT_FLOW_FILE} step after the guard must be gated on ${PROJECT_FLOW_GATE}`],
+    'guard accepts URL only': [(text) => text.replace('[ -n "$PROJECT_URL" ] && [ "$HAS_TOKEN" = "true" ]', '[ -n "$PROJECT_URL" ]'), `the guard must write configured=false with PROJECT_URL set, HAS_TOKEN false`],
+    'guard accepts token only': [(text) => text.replace('[ -n "$PROJECT_URL" ] && [ "$HAS_TOKEN" = "true" ]', '[ "$HAS_TOKEN" = "true" ]'), `the guard must write configured=false with PROJECT_URL empty, HAS_TOKEN true`],
+    'guard accepts either': [(text) => text.replace('[ -n "$PROJECT_URL" ] && [ "$HAS_TOKEN" = "true" ]', '[ -n "$PROJECT_URL" ] || [ "$HAS_TOKEN" = "true" ]'), `the guard must write configured=false with PROJECT_URL set, HAS_TOKEN false`],
+    'silent guard': [(text) => text.replace('::notice::project-flow not configured', 'skipped'), `the guard must print the not-configured notice with PROJECT_URL empty, HAS_TOKEN false`],
+    'agent mode': [(text) => text.replace('--mode action', '--mode agent'), `sync must run: ${PROJECT_FLOW_SYNC}`],
+    'no summary': [(text) => text.replace(' | tee -a "$GITHUB_STEP_SUMMARY"', ''), `sync output must be teed to the job summary`],
+    'swallowed failure': [(text) => text.replace('exit "$status"', 'exit 0'), `the sync step must exit 1 when sync exits 1`],
+    'job-level skip': [(text) => text.replace('    runs-on: ubuntu-latest\n', "    if: github.event_name != 'issues'\n    runs-on: ubuntu-latest\n"), `${PROJECT_FLOW_FILE} must not skip events, depend on jobs, widen permissions or enter an environment`],
+    'no timeout': [(text) => text.replace(/^    timeout-minutes: \d+\n/m, ''), `${PROJECT_FLOW_FILE} must bound the job with timeout-minutes`],
   };
-  for (const [label, mutate] of Object.entries(mutations)) {
+  for (const [label, [mutate, reason]] of Object.entries(mutations)) {
     const mutated = mutate(source);
     assert.notEqual(mutated, source, `mutation "${label}" must change ${PROJECT_FLOW_FILE}`);
-    assert.throws(() => assertProjectFlowWorkflow(mutated), `the project-flow contract must reject "${label}"`);
+    assert.throws(() => assertProjectFlowWorkflow(mutated), { name: 'AssertionError', message: new RegExp(`^${escapeRegexp(reason)}`) }, `the project-flow contract must reject "${label}" because: ${reason}`);
   }
 });
 
