@@ -36,6 +36,26 @@ _URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
 _ISSUE_REF = re.compile(r"#\d+")
 _NODE_ID = re.compile(r"[A-Z]{1,4}_[A-Za-z0-9_-]{8,}")
 _DIGITS = re.compile(r"\d+")
+# Characters that could start a new line or a terminal escape in printed output: C0 and C1 controls
+# (newline, carriage return, escape, ...) and the Unicode line and paragraph separators.
+_UNSAFE = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+SAFE_LIMIT = 200
+
+
+def _safe(text: Any, limit: Optional[int] = SAFE_LIMIT) -> str:
+    """Untrusted text (titles, logins, gh error texts, issue text) made safe to print: every control
+    character and line separator becomes a space, so nothing can start a line (a `::command::` in a
+    workflow log) or fake one; every backtick becomes an apostrophe, so nothing closes a Markdown
+    fence; longer than `limit` it is cut and ends in "...". Idempotent."""
+    text = _UNSAFE.sub(" ", str(text)).replace("`", "'")
+    if limit is not None and len(text) > limit:
+        text = text[:limit - 3] + "..."
+    return text
+
+
+def _say(line: str, file: Any = None) -> None:
+    """Print one output line; every line goes through _safe (no length limit), whatever it holds."""
+    print(_safe(line, limit=None), file=file)
 
 
 # GraphQL queries. Every connection reads `first: $first`, which defaults to 100; only the
@@ -480,7 +500,7 @@ def _query(t: Transport, query: str, variables: dict, what: str,
     except GhError as err:
         if map_gh_error(err) is not None:
             raise
-        raise Stop("incomplete-read", "%s: %s" % (what, err.message))
+        raise Stop("incomplete-read", "%s: %s" % (what, _safe(err.message)))
     scope_error = _scope_errors(response)
     if scope_error is not None:
         raise scope_error
@@ -572,8 +592,8 @@ def _field(obj: Any, key: str, kind: Any, what: str, nullable: bool = False) -> 
 def _enum(obj: Any, key: str, allowed: tuple, what: str) -> Any:
     value = obj.get(key, _MISSING) if isinstance(obj, dict) else _MISSING
     if value is _MISSING or value not in allowed:
-        raise Stop("incomplete-read", "%s: unexpected %s %r" % (
-            what, key, None if value is _MISSING else value))
+        raise Stop("incomplete-read", "%s: unexpected %s %s" % (
+            what, key, _safe(repr(None if value is _MISSING else value))))
     return value
 
 
@@ -627,13 +647,14 @@ def _number_field_id(field_node: Any, what: str) -> Optional[str]:
         raise Stop("incomplete-read", "%s: order field metadata is not an object" % what)
     kind = _field(field_node, "__typename", str, what + " order field")
     if kind != "ProjectV2Field" and kind not in _OTHER_FIELDS:
-        raise Stop("incomplete-read", "%s: unknown order field type %r" % (what, kind))
+        raise Stop("incomplete-read", "%s: unknown order field type %s" % (what, _safe(repr(kind))))
     field_id = _field(field_node, "id", str, what + " order field")
     if kind in _OTHER_FIELDS:
         return None
     data_type = _field(field_node, "dataType", str, what + " order field")
     if data_type not in _FIELD_DATA_TYPES:
-        raise Stop("incomplete-read", "%s: unknown order field data type %r" % (what, data_type))
+        raise Stop("incomplete-read", "%s: unknown order field data type %s"
+                   % (what, _safe(repr(data_type))))
     return field_id if data_type == "NUMBER" else None
 
 
@@ -749,7 +770,8 @@ def read_board(t: Transport, project_url: str, cfg: Config) -> Board:
             continue
         try:
             if kind != "ISSUE":
-                raise Stop("incomplete-read", "item %s: content not readable (%s)" % (item_id, kind))
+                raise Stop("incomplete-read", "item %s: content not readable (%s)"
+                           % (item_id, _safe(kind)))
             board.items.append(_facts(t, node, "item %s" % item_id, order_id is not None))
         except Stop as stop:
             if stop.reason != "incomplete-read":
@@ -849,7 +871,7 @@ def _rest(t: Transport, method: str, path: str, what: str, body: Optional[dict] 
     except GhError as err:
         if map_gh_error(err) is not None:
             raise
-        raise Stop("incomplete-read", "%s: %s" % (what, err.message))
+        raise Stop("incomplete-read", "%s: %s" % (what, _safe(err.message)))
 
 
 def _rest_pages(t: Transport, path: str, what: str) -> list:
@@ -964,7 +986,7 @@ class Writer:
         if not self.dry_run:
             _rest_write(self.t, "POST", "repos/%s/issues/%d/assignees" % (repo, number), ref,
                         {"assignees": [login]})
-        self._emit("%s assignees: +%s" % (ref, login))
+        self._emit("%s assignees: +%s" % (ref, _safe(login)))
 
     def set_order(self, item_id: Optional[str], value: float, label: Optional[str] = None) -> None:
         """label: how the item is named in the output (followup's dry run has no item id yet)."""
@@ -985,7 +1007,7 @@ class Writer:
             response = _rest_write(self.t, "POST", "repos/%s/issues" % repo, what,
                                    {"title": title, "body": body})
             created = (_field(response, "number", int, what), response)
-        self._emit("create issue in %s: %s" % (repo, title))
+        self._emit("create issue in %s: %s" % (repo, _safe(title)))
         return created
 
     def add_sub_issue(self, parent: tuple, ref: str, issue_id: Optional[int]) -> None:
@@ -1000,7 +1022,7 @@ class Writer:
         if not self.dry_run:
             _rest_write(self.t, "PATCH", "repos/%s/issues/%d" % (repo, number), ref,
                         {"milestone": milestone_number})
-        self._emit("%s milestone: %s" % (ref, title))
+        self._emit("%s milestone: %s" % (ref, _safe(title)))
 
     def add_blocked_by(self, repo: str, number: Optional[int], ref: str, blocker: tuple,
                        blocker_id: int) -> None:
@@ -1034,7 +1056,8 @@ class Writer:
                     title: num for num, title, _ in _milestones(self.t, repo, "all")}
             milestone_number = self._milestone_numbers[repo].get(milestone_title)
             if milestone_number is None:
-                self.out.append("skipped %s: milestone %r not found in %s" % (ref, milestone_title, repo))
+                self.out.append("skipped %s: milestone %s not found in %s"
+                                % (ref, _safe(repr(milestone_title)), repo))
                 return False
             current = _rest(self.t, "GET", "repos/%s/issues/%d" % (repo, number), ref)
             if not isinstance(current, dict) or "milestone" not in current:
@@ -1057,7 +1080,7 @@ class Writer:
                     raise
                 self._record_failure(ref, stop)
                 return False
-        self._emit("%s milestone: %s" % (ref, milestone_title))
+        self._emit("%s milestone: %s" % (ref, _safe(milestone_title)))
         return True
 
 
@@ -1116,7 +1139,7 @@ def _reconcile(t: Transport, cfg: Config, project_url: str, *, mode: str, repo: 
         # so no completed write goes unreported.
         for line in out:
             if line.startswith(_WRITE_PREFIXES):
-                print(line)
+                _say(line)
         sys.stdout.flush()
         raise
 
@@ -1168,7 +1191,8 @@ def _reconcile_pass(t: Transport, cfg: Config, board: Board, writer: "Writer", o
         titles = sorted({title for _, _, title in closing if title is not None})
         if len(titles) > 1:
             conflicts += 1
-            reports.append("%s: conflicting milestones %s; none set" % (ref, ", ".join(titles)))
+            reports.append("%s: conflicting milestones %s; none set"
+                           % (ref, ", ".join(_safe(title) for title in titles)))
         elif titles:
             writer.set_pr_milestone(pr_repo, pr_number, titles[0])
 
@@ -1203,8 +1227,8 @@ def _reconcile_pass(t: Transport, cfg: Config, board: Board, writer: "Writer", o
                 continue
             for _, title, open_issues in found:
                 if open_issues == 0 and title in closed:
-                    reports.append("milestone %r in %s is complete: no open issues; not closed"
-                                   % (title, r))
+                    reports.append("milestone %s in %s is complete: no open issues; not closed"
+                                   % (_safe(repr(title)), r))
 
     writes = [line for line in out if line.startswith(_WRITE_PREFIXES)]
     reports = [line for line in out if not line.startswith(_WRITE_PREFIXES)] + reports
@@ -1231,7 +1255,7 @@ def _summary(result: SyncResult) -> str:
 
 def _print_result(result: SyncResult) -> None:
     for line in result.writes + result.reports:
-        print(line)
+        _say(line)
 
 
 def _stop_on_failed_writes(result: SyncResult) -> None:
@@ -1272,7 +1296,7 @@ def next_task(t: Transport, cfg: Config, project_url: str, repo: str, *, skip_un
         raise Stop("missing-order", "Ready, unassigned items without a %r value: %s"
                    % (cfg.order_field, ", ".join(unordered)))
     for ref in unordered:
-        print("skipped %s: no %r value" % (ref, cfg.order_field))
+        _say("skipped %s: no %r value" % (ref, cfg.order_field))
     ordered = [f for f in candidates if f.order is not None]
     if not ordered:
         raise Stop("nothing-ready", "no Ready, unassigned item has a %r value" % cfg.order_field)
@@ -1283,7 +1307,7 @@ def next_task(t: Transport, cfg: Config, project_url: str, repo: str, *, skip_un
             " and ".join("%s#%d" % (f.repo, f.number) for f in chosen), cfg.order_field,
             _order_text(lowest)))
     f = chosen[0]
-    print("next: %s#%d order=%s" % (f.repo, f.number, _order_text(f.order)))
+    _say("next: %s#%d order=%s" % (f.repo, f.number, _order_text(f.order)))
     return f
 
 
@@ -1304,7 +1328,7 @@ def _not_ready(f: Facts, cfg: Config, role: str, lines: list) -> str:
         parts.extend(lines)  # blockers closed as not planned or duplicate
         return "%s is %s: %s" % (ref, cfg.roles[role], "; ".join(parts) or "blocked")
     if role == "in_progress":
-        return "%s is assigned to %s" % (ref, ", ".join(sorted(f.assignees)))
+        return "%s is assigned to %s" % (ref, ", ".join(_safe(a) for a in sorted(f.assignees)))
     return "%s is %s" % (ref, cfg.roles[role])
 
 
@@ -1330,7 +1354,7 @@ def start(t: Transport, cfg: Config, project_url: str, repo: str, issue: tuple, 
     if role != "ready":
         if not force:
             raise Stop("not-ready", _not_ready(current, cfg, role, lines))
-        print("forced: " + _not_ready(current, cfg, role, lines))
+        _say("forced: " + _not_ready(current, cfg, role, lines))
     login = _authenticated_login(t)
     out = []
     writer = Writer(t, board, cfg, dry_run, out)
@@ -1339,22 +1363,22 @@ def start(t: Transport, cfg: Config, project_url: str, repo: str, issue: tuple, 
         writer.write_role(current, "in_progress")
     finally:
         for line in out:
-            print(line)
+            _say(line)
     if dry_run:
         return
     after = read_item(t, current.item_id, cfg)
     others = sorted(a for a in after.assignees if a.lower() != login.lower())
     if others:
         raise Stop("collision", "%s is also assigned to %s; ask before continuing"
-                   % (ref, ", ".join(others)))
+                   % (ref, ", ".join(_safe(a) for a in others)))
     if login.lower() not in {a.lower() for a in after.assignees}:
         raise Stop("assignment-failed", "%s: %s is not assigned after the claim; GitHub drops an "
-                   "assignee without push access to %s" % (ref, login, current.repo))
+                   "assignee without push access to %s" % (ref, _safe(login), current.repo))
     result = _reconcile(t, cfg, project_url, mode=mode, repo=repo, dry_run=False,
                         only=(current.repo, current.number))
     _print_result(result)
     _stop_on_failed_writes(result)
-    print("started: %s" % ref)
+    _say("started: %s" % ref)
 
 
 def allocate_order(parent: Facts, items: list, descendants: set) -> float:
@@ -1430,7 +1454,8 @@ def _disagreements(links: IssueLinks, parent: tuple, milestone: Optional[str], b
     if links.parent is not None and _key(links.parent) != _key(parent):
         found.append("it is a sub-issue of %s#%d, not of %s#%d" % (links.parent + tuple(parent)))
     if links.milestone is not None and links.milestone != milestone:
-        found.append("its milestone is %r, the parent's is %r" % (links.milestone, milestone))
+        found.append("its milestone is %s, the parent's is %s"
+                     % (_safe(repr(links.milestone)), _safe(repr(milestone))))
     wanted = {_key(b) for b in blockers}
     extra = ["%s#%d" % b for b in links.blockers if _key(b) not in wanted]
     if extra:
@@ -1487,8 +1512,8 @@ def followup(t: Transport, cfg: Config, project_url: str, repo: str, *, parent: 
         numbers = {title_: number for number, title_, _ in _milestones(t, repo, "all")}
         milestone_number = numbers.get(parent_facts.milestone)
         if milestone_number is None:
-            raise Stop("missing-option", "milestone %r of %s not found in %s"
-                       % (parent_facts.milestone, parent_ref, repo))
+            raise Stop("missing-option", "milestone %s of %s not found in %s"
+                       % (_safe(repr(parent_facts.milestone)), parent_ref, repo))
     have = set() if links is None else {_key(b) for b in links.blockers}
     blocker_ids = {}
     for b in blockers:
@@ -1506,7 +1531,7 @@ def followup(t: Transport, cfg: Config, project_url: str, repo: str, *, parent: 
 
     def flush():
         for line in out:
-            print(line)
+            _say(line)
         del out[:]
 
     # Completion is sequentially idempotent: every link step re-reads the issue right before its
@@ -1520,7 +1545,7 @@ def followup(t: Transport, cfg: Config, project_url: str, repo: str, *, parent: 
         flush()
         if created is not None:
             number = created[0]
-            print("created: #%d" % number)
+            _say("created: #%d" % number)
             sys.stdout.flush()
     ref = "%s#%s" % (repo, number if number is not None else "(new)")
     pending = list(FOLLOWUP_STEPS)
@@ -1562,7 +1587,7 @@ def followup(t: Transport, cfg: Config, project_url: str, repo: str, *, parent: 
                 failing = None
         else:
             issue_id, content_id = links.database_id, links.content_id
-            print("resuming: %s#%d" % (repo, resume))
+            _say("resuming: %s#%d" % (repo, resume))
         if links is not None and links.parent is not None:
             done("add_sub_issue", "already a sub-issue of %s" % parent_ref)
         else:
@@ -1579,14 +1604,14 @@ def followup(t: Transport, cfg: Config, project_url: str, repo: str, *, parent: 
         if parent_facts.milestone is None:
             done("set_milestone", "%s has no milestone" % parent_ref)
         elif now is not None and now.milestone is not None:
-            done("set_milestone", "milestone already %r" % now.milestone)
+            done("set_milestone", "milestone already %s" % _safe(repr(now.milestone)))
         else:
             if milestone_number is None:  # resumed with a milestone a concurrent writer removed
                 numbers = {t_: n_ for n_, t_, _ in _milestones(t, repo, "all")}
                 milestone_number = numbers.get(parent_facts.milestone)
                 if milestone_number is None:
-                    raise Stop("missing-option", "milestone %r of %s not found in %s"
-                               % (parent_facts.milestone, parent_ref, repo))
+                    raise Stop("missing-option", "milestone %s of %s not found in %s"
+                               % (_safe(repr(parent_facts.milestone)), parent_ref, repo))
             writer.set_issue_milestone(repo, number, ref, milestone_number, parent_facts.milestone)
             done("set_milestone")
         wrote = False
@@ -1626,10 +1651,11 @@ def followup(t: Transport, cfg: Config, project_url: str, repo: str, *, parent: 
     except (Stop, GhError) as err:
         flush()
         if number is not None and not dry_run:
-            print("failed: %s: %s" % (failing or pending[0], err.detail if isinstance(err, Stop) else err.message))
-            print("created: #%d" % number)
-            print("missing: %s" % ", ".join(pending))
-            print("resume with the same arguments and --resume %d" % number)
+            _say("failed: %s: %s" % (failing or pending[0],
+                                     err.detail if isinstance(err, Stop) else _safe(err.message)))
+            _say("created: #%d" % number)
+            _say("missing: %s" % ", ".join(pending))
+            _say("resume with the same arguments and --resume %d" % number)
         raise
     return number or 0
 
@@ -1717,7 +1743,8 @@ def _prose_warnings(t: Transport, f: Facts) -> list:
         if key in native or key in seen:
             continue
         seen.add(key)
-        warnings.append("%s: mentions %r without a native blocked-by link" % (ref, match.group(0)))
+        warnings.append("%s: mentions %s without a native blocked-by link"
+                        % (ref, _safe(repr(match.group(0)))))
     return warnings
 
 
@@ -1767,11 +1794,11 @@ def _sync(args, transport: Transport, env: Mapping[str, str]) -> int:
     result = sync(transport, cfg, args.project, mode=args.mode, repo=args.repo, env=env,
                   dry_run=args.dry_run)
     for line in result.writes + result.reports + result.ready:
-        print(line)
+        _say(line)
     if not result.writes and not result.failed:
-        print("no changes" + (" would be written" if args.dry_run else " written"))
-    print(_summary(result))
-    print("rate-limit: cost=%d remaining=%s" % (
+        _say("no changes" + (" would be written" if args.dry_run else " written"))
+    _say(_summary(result))
+    _say("rate-limit: cost=%d remaining=%s" % (
         result.rate_cost, "-" if result.rate_remaining is None else result.rate_remaining))
     _stop_on_failed_writes(result)
     return 0
@@ -1855,17 +1882,17 @@ def _check(args, transport: Transport) -> int:
     """Exit 0 when the facts are clean (warnings alone never fail); Stop("setup-incomplete")
     after printing every finding when any fact is found."""
     cfg = load_config(args.config)
-    print("config ok: %s" % args.config)
+    _say("config ok: %s" % args.config)
     if not args.project:
         return 0
     result = check(transport, cfg, args.project)
     for line in result.facts:
-        print("fact: " + line)
+        _say("fact: " + line)
     for line in result.warnings:
-        print("warning: " + line)
+        _say("warning: " + line)
     if not result.facts:
-        print("facts clean")
-    print(result.notice)
+        _say("facts clean")
+    _say(result.notice)
     if result.facts:
         raise Stop("setup-incomplete", "%d setup facts need attention" % len(result.facts))
     return 0
@@ -1889,21 +1916,21 @@ def main(argv: list, transport: Optional[Transport] = None,
         if args.command == "check":
             return _check(args, transport)
         if args.command not in _COMMANDS:
-            print("usage: %s is not implemented yet" % args.command, file=sys.stderr)
+            _say("usage: %s is not implemented yet" % args.command, file=sys.stderr)
             return 2
         if args.command in GATED_COMMANDS and not args.project:
-            print("usage: %s needs --project URL" % args.command, file=sys.stderr)
+            _say("usage: %s needs --project URL" % args.command, file=sys.stderr)
             return 2
         return _COMMANDS[args.command](args, transport, env)
     except Stop as stop:
-        print("stop: %s: %s" % (stop.reason, stop.detail))
+        _say("stop: %s: %s" % (stop.reason, stop.detail))
         return 3
     except GhError as err:
         stop = map_gh_error(err)
         if stop is None:
-            print("error: %s" % err.message, file=sys.stderr)
+            _say("error: %s" % _safe(err.message, limit=None), file=sys.stderr)
             return 1
-        print("stop: %s: %s" % (stop.reason, stop.detail))
+        _say("stop: %s: %s" % (stop.reason, stop.detail))
         return 3
 
 

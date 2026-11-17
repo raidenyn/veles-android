@@ -58,11 +58,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PROJECT_URL: ${{ vars.PROJECT_URL }}
-        # The output is teed into the job summary inside a fence; the step still fails with sync's exit code.
+        # sync prints text from GitHub (titles, logins, error texts). Workflow commands are switched off
+        # around it with a random token, so no printed line can act as one; sync itself replaces every
+        # backtick and control character, so its output cannot close the four-backtick fence it is teed
+        # into in the job summary. The step still fails with sync's exit code.
         run: |
           set -o pipefail
-          printf '## project-flow sync\n\n```text\n' >> "$GITHUB_STEP_SUMMARY"
+          token=$(openssl rand -hex 16)
+          printf '## project-flow sync\n\n````text\n' >> "$GITHUB_STEP_SUMMARY"
+          echo "::stop-commands::$token"
           status=0
           python3 -I scripts/project_flow.py sync --mode action --repo "$GITHUB_REPOSITORY" --project "$PROJECT_URL" | tee -a "$GITHUB_STEP_SUMMARY" || status=$?
-          printf '```\n' >> "$GITHUB_STEP_SUMMARY"
+          echo "::$token::"
+          printf '````\n' >> "$GITHUB_STEP_SUMMARY"
           exit "$status"

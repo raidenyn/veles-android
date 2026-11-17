@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SCRIPTS)
@@ -743,6 +744,67 @@ class SummaryLineTest(CliCase):
         self.assertEqual(out.splitlines()[-3:], [
             "sync: partial (0 unreadable, 0 conflicts, 1 skipped)", "rate-limit: cost=0 remaining=-",
             "stop: write-failed: 1 write(s) failed"])
+
+
+
+class SafeOutputTest(CliCase):
+    """Untrusted text (titles, gh error texts) cannot start a line, fake one or close a fence."""
+
+    PAYLOAD = "M1\n::error title=x::pwned\r\n```\u2028::set-output name=a::b\x1b[2J"
+
+    def assert_inert(self, out):
+        for line in out.splitlines():
+            self.assertFalse(line.startswith("::"), line)
+            self.assertNotIn("`", line)
+            self.assertNotIn("\x1b", line)
+
+    def test_safe(self):
+        safe = project_flow._safe
+        self.assertEqual(safe("a\nb\rc\td\x1be\u2028f\x85g"), "a b c d e f g")
+        self.assertEqual(safe("```x`"), "'''x'")
+        self.assertEqual(safe("::error::x"), "::error::x")  # harmless once it cannot start a line
+        self.assertEqual(safe("x" * 500), "x" * 197 + "...")
+        self.assertEqual(len(safe("x" * 500, limit=None)), 500)
+        self.assertEqual(safe(safe(self.PAYLOAD)), safe(self.PAYLOAD))
+
+    def test_milestone_title_in_a_write_line(self):
+        node = item(issue(1, prs=[pr(9)], milestone=self.PAYLOAD), status="In Review")
+        fake = FakeTransport(board([node]) + [
+            ("closingIssuesReferences", closing_issues([(1, self.PAYLOAD)])),
+            all_milestones(milestones=[milestone(4, self.PAYLOAD)]), pr_issue(9),
+            ("repos/owner/repo/issues/9", {"number": 9}), open_milestones()])
+        code, out = self.main_sync(fake)
+        self.assertEqual(code, 0, out)
+        self.assertEqual([m["body"] for m in patches(fake)], [{"milestone": 4}])  # matched raw
+        self.assertIn("write: owner/repo#9 milestone: M1 ::error title=x::pwned  ''' ::set-output "
+                      "name=a::b [2J\n", out)
+        self.assert_inert(out)
+
+    def test_conflicting_titles_and_gh_error_text(self):
+        one = item(issue(1, prs=[pr(9)], milestone="A`"), status="In Review")
+        two = item(issue(2, prs=[pr(9)], milestone=self.PAYLOAD), status="In Review")
+        partial = item(issue(3, labels=["a"], more=("labels",)), status="Ready")
+        fake = FakeTransport(board([one, two, partial]) + [
+            ("IssueConnection_labels", GhError("gh: HTTP 502\n::error::spoofed ```")),
+            ("closingIssuesReferences", closing_issues([(1, "A`"), (2, self.PAYLOAD)])),
+            open_milestones()])
+        code, out = self.main_sync(fake)
+        self.assertEqual(code, 0, out)
+        self.assertIn("unreadable PVTI_item3: ", out)
+        self.assertIn("HTTP 502 ::error::spoofed '''", out)
+        self.assertIn("conflicting milestones A', M1 ::error", out)
+        self.assert_inert(out)
+
+    def test_main_error_line_on_stderr(self):
+        err = io.StringIO()
+        failing = mock.Mock(side_effect=GhError("boom\n::error::x `y`"))
+        with mock.patch.dict(project_flow._COMMANDS, {"sync": failing}), \
+                contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            code = project_flow.main(["sync", "--project", URL, "--config", self.config, "--mode",
+                                      "action", "--repo", REPO], FakeTransport([]),
+                                     env={"PROJECT_URL": URL})
+        self.assertEqual(code, 1)
+        self.assertEqual(err.getvalue(), "error: boom ::error::x 'y'\n")
 
 
 if __name__ == "__main__":

@@ -1463,22 +1463,34 @@ function assertGuardBehaviour(script) {
   }
 }
 
-// Executes the sync script against a fake python3: the command is exact, the summary gets a heading
-// and the output, and a failing sync fails the step with its exit code.
+// Executes the sync script against a fake python3 that also prints a workflow command: the command is
+// exact; its output reaches the log only between `::stop-commands::<token>` and `::<token>::`, with a
+// fresh random token each run; the summary gets a heading and the output inside a four-backtick fence;
+// and the step exits with sync's exit code.
 function assertSyncBehaviour(script) {
   const directory = mkdtempSync(join(tmpdir(), 'project-flow-bin-'));
   try {
     const fake = join(directory, 'python3');
-    writeFileSync(fake, '#!/bin/sh\nprintf \'argv:%s\\n\' "$*"\nexit "$FAKE_EXIT"\n');
+    writeFileSync(fake, '#!/bin/sh\nprintf \'argv:%s\\n::error::injected\\n\' "$*"\nexit "$FAKE_EXIT"\n');
     chmodSync(fake, 0o755);
     const project = 'https://github.com/orgs/example/projects/1';
+    const argv = `argv:-I scripts/project_flow.py sync --mode action --repo example/repo --project ${project}`;
+    const tokens = new Set();
     for (const exit of [0, 1, 3]) {
       const result = runBash(script, { PATH: `${directory}:${process.env.PATH}`, FAKE_EXIT: String(exit), GITHUB_REPOSITORY: 'example/repo', PROJECT_URL: project, GH_TOKEN: 'token', GITHUB_STEP_SUMMARY: '<file>' });
+      const lines = result.stdout.split('\n');
+      const start = lines.findIndex((line) => /^::stop-commands::[0-9a-f]{32}$/.test(line));
+      assert.ok(start !== -1, 'sync output must be wrapped in ::stop-commands:: with a 32-hex-digit token');
+      const token = lines[start].slice('::stop-commands::'.length);
+      const end = lines.indexOf(`::${token}::`);
+      assert.ok(end > lines.indexOf(argv) && lines.indexOf(argv) > start && lines.indexOf('::error::injected') < end, 'sync output must sit between ::stop-commands:: and the resume line ::<token>::');
+      tokens.add(token);
       assert.equal(result.status, exit, `the sync step must exit ${exit} when sync exits ${exit}`);
       const summary = result.files.GITHUB_STEP_SUMMARY;
       assert.match(summary, /^## /, 'the job summary must start with a heading');
-      assert.ok(summary.includes(`argv:-I scripts/project_flow.py sync --mode action --repo example/repo --project ${project}\n`), 'the summary must carry the sync output of the exact action-mode command');
+      assert.ok(summary.includes(`\n\`\`\`\`text\n${argv}\n::error::injected\n\`\`\`\`\n`), 'the summary must carry the sync output of the exact action-mode command inside a four-backtick fence');
     }
+    assert.equal(tokens.size, 3, 'the stop-commands token must be random on every run');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -1582,6 +1594,11 @@ test('project-flow workflow reconciles on safe events only', async () => {
     'silent guard': [(text) => text.replace('::notice::project-flow not configured', 'skipped'), `the guard must print the not-configured notice with PROJECT_URL empty, HAS_TOKEN false`],
     'agent mode': [(text) => text.replace('--mode action', '--mode agent'), `sync must run: ${PROJECT_FLOW_SYNC}`],
     'no summary': [(text) => text.replace(' | tee -a "$GITHUB_STEP_SUMMARY"', ''), `sync output must be teed to the job summary`],
+    'no stop-commands': [(text) => text.replace('          echo "::stop-commands::$token"\n', ''), 'sync output must be wrapped in ::stop-commands::'],
+    'commands never resumed': [(text) => text.replace('          echo "::$token::"\n', ''), 'sync output must sit between ::stop-commands:: and the resume line'],
+    'resumed before sync': [(text) => text.replace('          echo "::$token::"\n', '').replace('          status=0\n', '          echo "::$token::"\n          status=0\n'), 'sync output must sit between ::stop-commands:: and the resume line'],
+    'fixed token': [(text) => text.replace('token=$(openssl rand -hex 16)', 'token=0123456789abcdef0123456789abcdef'), 'the stop-commands token must be random on every run'],
+    'three-backtick fence': [(text) => text.replace(/````/g, '```'), 'the summary must carry the sync output of the exact action-mode command inside a four-backtick fence'],
     'swallowed failure': [(text) => text.replace('exit "$status"', 'exit 0'), `the sync step must exit 1 when sync exits 1`],
     'job-level skip': [(text) => text.replace('    runs-on: ubuntu-latest\n', "    if: github.event_name != 'issues'\n    runs-on: ubuntu-latest\n"), `${PROJECT_FLOW_FILE} must not skip events, depend on jobs, widen permissions or enter an environment`],
     'no timeout': [(text) => text.replace(/^    timeout-minutes: \d+\n/m, ''), `${PROJECT_FLOW_FILE} must bound the job with timeout-minutes`],
