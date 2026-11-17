@@ -307,10 +307,48 @@ def load_config(path: str) -> Config:
     return Config(raw["status_field"], dict(raw["roles"]), raw["order_field"], raw["blocked_label"])
 
 
+# The scope-error wordings gh and GitHub print: `gh project ...` ("missing required scopes"), a GraphQL
+# INSUFFICIENT_SCOPES error ("Your token has not been granted the required scopes to execute this query.
+# The 'projectV2' field requires one of the following scopes: ['read:project'] ...") and a REST 403
+# ('This API operation needs the "<scope>" scope. To request it, run: gh auth refresh ...').
+_SCOPE_MARKERS = ("missing required scopes", "INSUFFICIENT_SCOPES",
+                  "has not been granted the required scopes")
+_SCOPE_NAME = r"[a-z][a-z0-9_]*(?::[a-z][a-z0-9_]*)?"
+_REST_SCOPE = re.compile(r'needs the "(%s)" scope' % _SCOPE_NAME)
+_GRAPHQL_SCOPES = re.compile(r"requires one of the following scopes: \[([^\]]*)\]")
+_PROJECT_SCOPES = ("project", "read:project")
+
+
+def _scope_fix(scopes: list) -> str:
+    """The fix command for the scopes an error names: project when it names a project scope or
+    none; otherwise the first scope it names."""
+    if not scopes or any(scope in _PROJECT_SCOPES for scope in scopes):
+        return SCOPE_FIX
+    return "run gh auth refresh -s %s" % scopes[0]
+
+
 def map_gh_error(e: GhError) -> Optional[Stop]:
-    if "missing required scopes" in getattr(e, "message", str(e)):
-        return Stop("missing-scope", SCOPE_FIX)
+    """Stop("missing-scope") with the exact fix command when gh failed for a missing token scope."""
+    text = "%s\n%s" % (getattr(e, "message", str(e)), getattr(e, "stdout", "") or "")
+    rest = _REST_SCOPE.search(text)
+    if rest:
+        return Stop("missing-scope", _scope_fix([rest.group(1)]))
+    if any(marker in text for marker in _SCOPE_MARKERS):
+        listed = _GRAPHQL_SCOPES.search(text)
+        names = re.findall(r"'(%s)'" % _SCOPE_NAME, listed.group(1)) if listed else []
+        return Stop("missing-scope", _scope_fix(names))
     return None
+
+
+def _scope_errors(response: Any) -> Optional[GhError]:
+    """A GhError for a GraphQL response whose errors include INSUFFICIENT_SCOPES, else None."""
+    errors = response.get("errors") if isinstance(response, dict) else None
+    if not isinstance(errors, list):
+        return None
+    scoped = [e for e in errors if isinstance(e, dict) and e.get("type") == "INSUFFICIENT_SCOPES"]
+    if not scoped:
+        return None
+    return GhError("INSUFFICIENT_SCOPES: " + "; ".join(str(e.get("message", "")) for e in scoped))
 
 
 @dataclass(frozen=True)
@@ -426,6 +464,9 @@ def _query(t: Transport, query: str, variables: dict, what: str,
         if map_gh_error(err) is not None:
             raise
         raise Stop("incomplete-read", "%s: %s" % (what, err.message))
+    scope_error = _scope_errors(response)
+    if scope_error is not None:
+        raise scope_error
     if not isinstance(response, dict) or response.get("errors") or not isinstance(response.get("data"), dict):
         raise Stop("incomplete-read", "%s: no data in the response" % what)
     return response["data"]
@@ -1556,6 +1597,9 @@ def enabled_url(t: Transport, repo: str, *, mode: str, env: Mapping[str, str]) -
     try:
         response = t.rest("GET", "repos/%s/actions/variables/PROJECT_URL" % repo)
     except GhError as err:
+        scope = map_gh_error(err)
+        if scope is not None:
+            raise scope
         if "HTTP 404" in err.message:
             return None
         raise Stop("variable-unreadable", VARIABLE_FIX)
