@@ -10,6 +10,8 @@ next and start before any selection or claim, followup after its created:/missin
 reason is in STOP_REASONS). sync, next, start and followup run
 only on the project the repository variable PROJECT_URL names; each public entry point gates itself.
 """
+from __future__ import annotations
+
 import argparse
 import json
 import os
