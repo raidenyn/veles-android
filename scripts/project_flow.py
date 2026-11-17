@@ -313,6 +313,27 @@ _PROJECT_URL = re.compile(
     r"https://github\.com/(?:users|orgs)/([A-Za-z0-9][A-Za-z0-9-]*)/projects/(\d+)(?:/views/\d+)?/?")
 
 
+def derive(f: Facts, cfg: Config) -> tuple:
+    """The role key a Facts snapshot maps to, plus report lines. Pure; first match wins."""
+    if f.state == "CLOSED":
+        return "done", []
+    if cfg.blocked_label.lower() in f.labels:
+        return "blocked", []
+    if any(p.state == "OPEN" and not p.is_draft for p in f.closing_prs):
+        return "in_review", []
+    if f.assignees:
+        return "in_progress", []
+    lines = []
+    for b in f.blockers:
+        if b.state == "CLOSED" and b.state_reason == "NOT_PLANNED":
+            lines.append("blocker %s#%d closed as not planned" % (b.repo, b.number))
+        elif b.state == "CLOSED" and b.state_reason == "DUPLICATE":
+            lines.append("blocker %s#%d closed as duplicate" % (b.repo, b.number))
+    if all(b.state == "CLOSED" and b.state_reason == "COMPLETED" for b in f.blockers):
+        return "ready", lines
+    return "backlog", lines
+
+
 def parse_project_url(url: str) -> tuple:
     """`https://github.com/{users|orgs}/<owner>/projects/<n>[/views/<v>]` -> (owner, n)."""
     bare = re.split(r"[?#]", url.strip(), maxsplit=1)[0]
