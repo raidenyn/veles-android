@@ -156,7 +156,8 @@ class SelectionTest(unittest.TestCase):
 
     def test_project_flow_files_select_tooling(self):
         expected = {
-            ".github/workflows/project-flow.yml": {"tooling", "supply-chain"},
+            # installer: native-bridge/installer/scripts/test_build_contract.py enumerates every workflow.
+            ".github/workflows/project-flow.yml": {"tooling", "supply-chain", "installer"},
             ".github/project-flow.json": {"tooling"},
         }
         for path, nodes in expected.items():

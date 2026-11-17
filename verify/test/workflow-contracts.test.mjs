@@ -1484,6 +1484,14 @@ function assertSyncBehaviour(script) {
   }
 }
 
+// Exactly one schedule entry, and it fires once a day: one numeric minute and hour, every other field `*`.
+function assertDailySchedule(on, name) {
+  const crons = [...on.matchAll(/^\s*-\s*cron:\s*(.*)$/gm)].map((match) => match[1]);
+  assert.equal(crons.length, 1, `${name} must declare exactly one schedule`);
+  const daily = crons[0].match(/^'([0-9]|[1-5][0-9]) ([0-9]|1[0-9]|2[0-3]) \* \* \*'$/);
+  assert.ok(daily, `${name} must run its schedule once a day ('M H * * *'), not ${crons[0]}`);
+}
+
 function assertProjectFlowWorkflow(source) {
   const name = PROJECT_FLOW_FILE;
   const on = prWorkflowOnBlock(source);
@@ -1491,7 +1499,7 @@ function assertProjectFlowWorkflow(source) {
   for (const [event, types] of Object.entries(PROJECT_FLOW_EVENTS)) {
     assert.match(on, new RegExp(`^  ${event}:\\n    types: ${escapeRegexp(`[${types.join(', ')}]`)}$`, 'm'), `${name} must trigger on ${event} types exactly [${types.join(', ')}]`);
   }
-  assert.equal((on.match(/^    - cron: '[^'\n]+'$/gm) ?? []).length, 1, `${name} must run on exactly one daily schedule`);
+  assertDailySchedule(on, name);
   assert.doesNotMatch(on, /\bedited\b/, `${name} must not trigger on edited`);
   assert.deepEqual(prWorkflowPermissions(source), ['contents: read'], `${name} must be read-only at workflow scope`);
   assert.match(source, /^concurrency:\n  group: project-flow\n  cancel-in-progress: false$/m, `${name} must run in one group that never cancels a reconciliation`);
@@ -1548,6 +1556,8 @@ test('project-flow workflow reconciles on safe events only', async () => {
     'dropped PR trigger type': (text) => text.replace(prTypes, prTypes.replace(', converted_to_draft', '')),
     'pull_request trigger': (text) => text.replace('  pull_request_target:\n', '  pull_request:\n'),
     'push trigger': (text) => text.replace('  workflow_dispatch:\n', '  workflow_dispatch:\n  push:\n'),
+    'hourly schedule': (text) => text.replace(/    - cron: '[^'\n]+'\n/, "    - cron: '0 * * * *'\n"),
+    'weekly schedule': (text) => text.replace(/    - cron: '[^'\n]+'\n/, "    - cron: '23 4 * * 1'\n"),
     'two schedules': (text) => text.replace(/(    - cron: '[^'\n]+'\n)/, "$1    - cron: '0 12 * * *'\n"),
     'head sha checkout': (text) => text.replace(`ref: ${DEFAULT_BRANCH_REF}`, 'ref: ${{ github.event.pull_request.head.sha }}'),
     'github.sha checkout': (text) => text.replace(`ref: ${DEFAULT_BRANCH_REF}`, 'ref: ${{ github.sha }}'),
@@ -1595,6 +1605,18 @@ test('the default-branch checkout check rejects every other ref', () => {
     assert.throws(() => assertDefaultBranchCheckouts(checkout(withLines), 'fixture'), /must check out/, `the checkout check must reject ${label}`);
   }
   assert.throws(() => assertDefaultBranchCheckouts('jobs:\n  a:\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n', 'fixture'), /must check out ref/, 'a checkout without with: must be rejected');
+});
+
+test('the daily schedule check rejects every other cadence', () => {
+  const on = (cron) => `  schedule:\n    - cron: '${cron}'\n  workflow_dispatch:`;
+  for (const cron of ['23 4 * * *', '0 0 * * *', '59 23 * * *']) {
+    assert.doesNotThrow(() => assertDailySchedule(on(cron), 'fixture'), `${cron} is daily`);
+  }
+  for (const cron of ['0 * * * *', '*/30 4 * * *', '0 */6 * * *', '0 4,16 * * *', '0 4 * * 1', '0 4 1 * *', '0 4 * 1 *', '60 4 * * *', '0 24 * * *', '0 4 * * *  ']) {
+    assert.throws(() => assertDailySchedule(on(cron), 'fixture'), /once a day/, `the schedule check must reject '${cron}'`);
+  }
+  assert.throws(() => assertDailySchedule(`${on('0 4 * * *')}\n    - cron: '0 16 * * *'`, 'fixture'), /exactly one/, 'two schedules must be rejected');
+  assert.throws(() => assertDailySchedule('  workflow_dispatch:', 'fixture'), /exactly one/, 'a missing schedule must be rejected');
 });
 
 // publish-release.yml (design D4): the only release-producing workflow. It absorbed the retired

@@ -37,7 +37,8 @@
     ],
     ".github/workflows/project-flow.yml": [
       "tooling",
-      "supply-chain"
+      "supply-chain",
+      "installer"
     ],
     "android/AGENTS.md": [
       "docs"

@@ -1462,6 +1462,27 @@ class Callers(unittest.TestCase):
     def test_signed_candidates_never_come_from_pull_request_artifacts(self):
         self.assertEqual(check_gate_boundary(self.workflows()), [])
 
+    def test_project_flow_stays_outside_the_release_boundary(self):
+        # project-flow.yml holds the PROJECT_TOKEN secret on pull_request_target; as an enumerated workflow
+        # it must pass the boundary, and a copy that signs, enters a release environment or publishes must not.
+        workflows = self.workflows()
+        self.assertIn("project-flow.yml", workflows)
+        self.assertEqual(check_gate_boundary(workflows), [])
+        flow = workflows["project-flow.yml"]
+        anchor = "          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}\n"
+        self.assertIn(anchor, flow)
+        for label, mutated in (
+            ("keystore secret", flow.replace(anchor, anchor + "          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}\n", 1)),
+            ("native signing secret", flow.replace(anchor, anchor + "          VELES_WIN_PFX_BASE64: ${{ secrets.VELES_WIN_PFX_BASE64 }}\n", 1)),
+            ("release environment", flow.replace("    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    environment: release-publish\n", 1)),
+            ("release publication", flow + "      - run: gh release create v1\n"),
+            ("tag push", flow + "      - run: git push origin --tags\n"),
+        ):
+            with self.subTest(label=label):
+                self.assertNotEqual(mutated, flow, label)
+                errors = check_gate_boundary({**workflows, "project-flow.yml": mutated})
+                self.assertTrue(any(error.startswith("project-flow.yml ") for error in errors), (label, errors))
+
     def test_installer_release_selects_both_platforms_without_a_platform_input(self) -> None:
         gate = read(".github/workflows/publish-release.yml")
         body = strip_yaml_comments(gate)
