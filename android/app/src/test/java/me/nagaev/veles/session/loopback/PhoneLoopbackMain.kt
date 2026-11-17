@@ -103,7 +103,7 @@ fun main(args: Array<String>) {
 }
 
 /** Serialized stdout writer; one frame or event per call, flushed before returning. */
-private class LoopbackOutput(private val output: DataOutputStream) {
+internal class LoopbackOutput(private val output: DataOutputStream) {
     fun frame(bytes: ByteArray) = emit(KIND_BYTES, bytes)
 
     fun authenticated(classCode: Byte, prefix: ByteArray) = event(EVENT_AUTHENTICATED, byteArrayOf(classCode) + prefix)
@@ -129,7 +129,7 @@ private class LoopbackOutput(private val output: DataOutputStream) {
 }
 
 @Suppress("ReturnCount") // One branch per truncated stream frame.
-private fun readMessage(input: DataInputStream): Pair<Int, ByteArray>? {
+internal fun readMessage(input: DataInputStream): Pair<Int, ByteArray>? {
     val kind = try {
         input.readUnsignedByte()
     } catch (_: Exception) {
@@ -422,7 +422,7 @@ private fun localState(state: TrustState): LocalRecordState = when (state) {
     TrustState.ACTIVE -> LocalRecordState.ACTIVE
 }
 
-private fun classCode(value: SessionClass): Byte = when (value) {
+internal fun classCode(value: SessionClass): Byte = when (value) {
     SessionClass.FULL -> 0x00
     SessionClass.FULL_PENDING_PEER -> 0x01
     SessionClass.ACTIVATION_RECOVERY -> 0x02
@@ -561,7 +561,7 @@ private class LoopbackHandler(
 }
 
 /** A software P-256 identity derived from the loopback seed. */
-private class LoopbackIdentity private constructor(
+internal class LoopbackIdentity private constructor(
     val installationId: ByteArray,
     val publicKey: ByteArray,
     privateKey: java.security.PrivateKey,

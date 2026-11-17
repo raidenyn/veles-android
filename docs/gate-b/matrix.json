@@ -1,0 +1,447 @@
+{
+  "decision": "OPEN",
+  "gate_b_accepted": false,
+  "initial_state": true,
+  "rows": [
+    {
+      "id": "windows.none.host-missing-recovery",
+      "platform": "windows",
+      "phones": "none",
+      "case": "host-missing-recovery",
+      "journeys": [],
+      "status": "NOT RUN",
+      "blocker": "On Windows, the host-absent recovery has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.none.host-incompatible-recovery",
+      "platform": "windows",
+      "phones": "none",
+      "case": "host-incompatible-recovery",
+      "journeys": [],
+      "status": "NOT RUN",
+      "blocker": "On Windows, the incompatible-host recovery has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.A.extension-search",
+      "platform": "windows",
+      "phones": "A",
+      "case": "extension-search",
+      "journeys": [
+        "enrollment"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On Windows, the extension-owned search has no recorded observation; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.A.spake2-pairing",
+      "platform": "windows",
+      "phones": "A",
+      "case": "spake2-pairing",
+      "journeys": [
+        "enrollment"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On Windows, SPAKE2 pairing has no recorded physical run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.A.hint-reconnect-fresh-keys",
+      "platform": "windows",
+      "phones": "A",
+      "case": "hint-reconnect-fresh-keys",
+      "journeys": [
+        "enrollment"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On Windows, a hint-based reconnect with fresh keys has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.A.protected-pull",
+      "platform": "windows",
+      "phones": "A",
+      "case": "protected-pull",
+      "journeys": [
+        "protected-records"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On Windows, a protected pull has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.A.push",
+      "platform": "windows",
+      "phones": "A",
+      "case": "push",
+      "journeys": [
+        "protected-records"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On Windows, a protected push has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.A.background-delivery",
+      "platform": "windows",
+      "phones": "A",
+      "case": "background-delivery",
+      "journeys": [
+        "protected-records"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On Windows, the ten-minute background delivery has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.A.offscreen-copy",
+      "platform": "windows",
+      "phones": "A",
+      "case": "offscreen-copy",
+      "journeys": [
+        "protected-records"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On Windows, no correlated clipboard transition has been recorded; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.A.forced-freeze",
+      "platform": "windows",
+      "phones": "A",
+      "case": "forced-freeze",
+      "journeys": [
+        "protected-records"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On Windows, a forced freeze has not been driven; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.A.forced-discard",
+      "platform": "windows",
+      "phones": "A",
+      "case": "forced-discard",
+      "journeys": [
+        "protected-records"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On Windows, a forced discard has not been driven; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.A.connector-closure",
+      "platform": "windows",
+      "phones": "A",
+      "case": "connector-closure",
+      "journeys": [],
+      "status": "NOT RUN",
+      "blocker": "On Windows, connector closure has no recorded observation; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.A.connector-restart",
+      "platform": "windows",
+      "phones": "A",
+      "case": "connector-restart",
+      "journeys": [
+        "enrollment"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On Windows, a connector restart with fresh handles and keys has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.A.host-closure",
+      "platform": "windows",
+      "phones": "A",
+      "case": "host-closure",
+      "journeys": [],
+      "status": "NOT RUN",
+      "blocker": "On Windows, host closure has no recorded observation; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.A.host-restart",
+      "platform": "windows",
+      "phones": "A",
+      "case": "host-restart",
+      "journeys": [
+        "enrollment"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On Windows, a host restart with fresh handles and keys has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.A.revocation",
+      "platform": "windows",
+      "phones": "A",
+      "case": "revocation",
+      "journeys": [
+        "protected-records"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On Windows, revocation has no recorded observation; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.A.bluetooth-interruption",
+      "platform": "windows",
+      "phones": "A",
+      "case": "bluetooth-interruption",
+      "journeys": [
+        "enrollment"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On Windows, a Bluetooth interruption has not been driven; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "windows.AB.two-phone-lifecycle",
+      "platform": "windows",
+      "phones": "AB",
+      "case": "two-phone-lifecycle",
+      "journeys": [
+        "enrollment"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On Windows, the two-phone lifecycle has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.none.host-missing-recovery",
+      "platform": "macos",
+      "phones": "none",
+      "case": "host-missing-recovery",
+      "journeys": [],
+      "status": "NOT RUN",
+      "blocker": "On macOS, the host-absent recovery has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.none.host-incompatible-recovery",
+      "platform": "macos",
+      "phones": "none",
+      "case": "host-incompatible-recovery",
+      "journeys": [],
+      "status": "NOT RUN",
+      "blocker": "On macOS, the incompatible-host recovery has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.A.extension-search",
+      "platform": "macos",
+      "phones": "A",
+      "case": "extension-search",
+      "journeys": [
+        "enrollment"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On macOS, the extension-owned search has no recorded observation; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.A.spake2-pairing",
+      "platform": "macos",
+      "phones": "A",
+      "case": "spake2-pairing",
+      "journeys": [
+        "enrollment"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On macOS, SPAKE2 pairing has no recorded physical run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.A.hint-reconnect-fresh-keys",
+      "platform": "macos",
+      "phones": "A",
+      "case": "hint-reconnect-fresh-keys",
+      "journeys": [
+        "enrollment"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On macOS, a hint-based reconnect with fresh keys has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.A.protected-pull",
+      "platform": "macos",
+      "phones": "A",
+      "case": "protected-pull",
+      "journeys": [
+        "protected-records"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On macOS, a protected pull has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.A.push",
+      "platform": "macos",
+      "phones": "A",
+      "case": "push",
+      "journeys": [
+        "protected-records"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On macOS, a protected push has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.A.background-delivery",
+      "platform": "macos",
+      "phones": "A",
+      "case": "background-delivery",
+      "journeys": [
+        "protected-records"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On macOS, the ten-minute background delivery has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.A.offscreen-copy",
+      "platform": "macos",
+      "phones": "A",
+      "case": "offscreen-copy",
+      "journeys": [
+        "protected-records"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On macOS, no correlated clipboard transition has been recorded; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.A.forced-freeze",
+      "platform": "macos",
+      "phones": "A",
+      "case": "forced-freeze",
+      "journeys": [
+        "protected-records"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On macOS, a forced freeze has not been driven; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.A.forced-discard",
+      "platform": "macos",
+      "phones": "A",
+      "case": "forced-discard",
+      "journeys": [
+        "protected-records"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On macOS, a forced discard has not been driven; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.A.connector-closure",
+      "platform": "macos",
+      "phones": "A",
+      "case": "connector-closure",
+      "journeys": [],
+      "status": "NOT RUN",
+      "blocker": "On macOS, connector closure has no recorded observation; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.A.connector-restart",
+      "platform": "macos",
+      "phones": "A",
+      "case": "connector-restart",
+      "journeys": [
+        "enrollment"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On macOS, a connector restart with fresh handles and keys has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.A.host-closure",
+      "platform": "macos",
+      "phones": "A",
+      "case": "host-closure",
+      "journeys": [],
+      "status": "NOT RUN",
+      "blocker": "On macOS, host closure has no recorded observation; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.A.host-restart",
+      "platform": "macos",
+      "phones": "A",
+      "case": "host-restart",
+      "journeys": [
+        "enrollment"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On macOS, a host restart with fresh handles and keys has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.A.revocation",
+      "platform": "macos",
+      "phones": "A",
+      "case": "revocation",
+      "journeys": [
+        "protected-records"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On macOS, revocation has no recorded observation; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.A.bluetooth-interruption",
+      "platform": "macos",
+      "phones": "A",
+      "case": "bluetooth-interruption",
+      "journeys": [
+        "enrollment"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On macOS, a Bluetooth interruption has not been driven; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "macos.AB.two-phone-lifecycle",
+      "platform": "macos",
+      "phones": "AB",
+      "case": "two-phone-lifecycle",
+      "journeys": [
+        "enrollment"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On macOS, the two-phone lifecycle has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "android.A.locked-phone-20min",
+      "platform": "android",
+      "phones": "A",
+      "case": "locked-phone-20min",
+      "journeys": [
+        "protected-records"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On Android, the locked-phone 20-minute window has no recorded run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    },
+    {
+      "id": "android.A.fixture-retention-expiry",
+      "platform": "android",
+      "phones": "A",
+      "case": "fixture-retention-expiry",
+      "journeys": [
+        "protected-records"
+      ],
+      "status": "NOT RUN",
+      "blocker": "On Android, the five-record retained/expired fixture has no recorded physical run; OTP-24 physical acceptance is not complete, so no Gate B run has been scheduled.",
+      "no_bond_handle_or_hint_reliance": null
+    }
+  ]
+}

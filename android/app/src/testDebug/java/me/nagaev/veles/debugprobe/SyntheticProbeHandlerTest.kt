@@ -168,6 +168,25 @@ class SyntheticProbeHandlerTest {
     }
 
     @Test
+    fun `probe_default_lifetime_still_600`() {
+        // The new lifetime parameter defaults to the probe's fixed 600 s; the fixture passes its own.
+        val default = createSyntheticEvent(
+            localInstallationId = installationId,
+            receiptEpochSeconds = 1_700_000_000L,
+            random = random,
+        )
+        assertEquals(600L, EventReader(default.body).event().remainingLifetime)
+
+        val explicit = createSyntheticEvent(
+            localInstallationId = installationId,
+            receiptEpochSeconds = 1_700_000_000L,
+            random = random,
+            lifetimeSeconds = 42L,
+        )
+        assertEquals(42L, EventReader(explicit.body).event().remainingLifetime)
+    }
+
+    @Test
     fun pullLogsMarkerEventAndSessionPrefix() = runTest {
         val lines = mutableListOf<String>()
         val session = handler { lines += it }.forSession(context(ByteArray(8) { (0x40 + it).toByte() }))

@@ -22,6 +22,10 @@ It prints one finding per violation (`severity path: message`), exits non-zero o
 with warnings, and takes `--platform` so the Windows symlink warning path is testable. It is
 structural: it never runs `openspec update` or compares generated skill text.
 
+## The Gate B evidence matrix validator
+
+- `docs/checks/check_gate_b_matrix.py` validates `docs/gate-b/matrix.json`; run `python3 docs/checks/check_gate_b_matrix.py` (a clean result is necessary, not sufficient, and it never records the Gate B decision).
+
 ## Adding a rule or a node
 
 **A rule** is one concern in one file in the flat `.agents/rules/` directory (no subdirectories),

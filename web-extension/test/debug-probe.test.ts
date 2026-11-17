@@ -24,10 +24,13 @@ import {
     emitRecord,
     flush,
     nextSend,
+    postedSends,
     sessionEngineDeps,
+    type PhoneSide,
     type TestController,
     type TestTrust,
 } from './connector/session-harness';
+import type { MockNativePort } from './connector/mock-port';
 import { PEER_STATE_BELOW_ACTIVE, TestPhone } from './session/client-harness';
 
 // ---------------------------------------------------------------------------
@@ -191,6 +194,96 @@ function encodeEvent(fields: {
 
 function readoutText(fixture: ProbeFixture): string {
     return fixture.document.findReadout()?.textContent ?? '';
+}
+
+interface SyntheticOverrides {
+    eventId?: Uint8Array;
+    code?: string;
+    remainingLifetime?: number;
+}
+
+/** Distinct 16-byte event id per position in a multi-event record. */
+function eventIdFor(index: number): Uint8Array {
+    return new Uint8Array(16).fill(index);
+}
+
+function syntheticEvent(
+    fixture: ProbeFixture,
+    index: number,
+    overrides: SyntheticOverrides = {},
+): Uint8Array {
+    return encodeEvent({
+        phoneInstallationId: hex(fixture.phone.installationId),
+        eventId: overrides.eventId ?? eventIdFor(index),
+        receiptEpochSeconds: 1_700_000_000n,
+        remainingLifetime: overrides.remainingLifetime ?? 600,
+        code: overrides.code ?? `VAB${index}C`,
+        merchant: 'Veles synthetic',
+        amountMagnitude: 100n,
+        amountScale: 2,
+        currency: 'XTS',
+    });
+}
+
+/** `pull_events` body: the u8 count followed by its events. `count` defaults to the payload. */
+function pullEventsBody(events: Uint8Array[], count: number = events.length): Uint8Array {
+    return Uint8Array.from([count, ...events.flatMap((event) => [...event])]);
+}
+
+/** The one full session the probe targets, with the fixture's phone trusted. */
+async function openProbedFullSession(
+    fixture: ProbeFixture,
+): Promise<{ side: PhoneSide; port: MockNativePort }> {
+    await debugHook().injectPeer(hex(fixture.phone.installationId), hex(fixture.phone.publicKey));
+    const side = await connectAndAuthenticate(fixture, hex(fixture.phone.installationId));
+    return { side, port: fixture.currentPort() };
+}
+
+/** Consumes the probe's `pull_request` and returns the send count it has reached. */
+async function acknowledgePullRequest(port: MockNativePort): Promise<number> {
+    const request = await nextSend(port);
+    expect(decodeRecordHeader(request.bytes)?.type).toBe(RecordType.PULL_REQUEST);
+    await ackSend(port, request);
+    // The handshake used the same connection, so count the sends before the record arrives.
+    return postedSends(port, HANDLE_CONNECTION).length;
+}
+
+async function emitPullEvents(
+    port: MockNativePort,
+    side: PhoneSide,
+    body: Uint8Array,
+    sequence = 1n,
+): Promise<void> {
+    await emitRecord(
+        port,
+        HANDLE_CONNECTION,
+        await side.applicationFrame(RecordType.PULL_EVENTS, sequence, body),
+    );
+}
+
+/**
+ * A record the probe must reject: the session ends with a disconnect, the pending promise
+ * fails, the readout stays empty and no `event_ack` ever leaves the connector.
+ */
+async function expectRejectedRecord(
+    fixture: ProbeFixture,
+    pulled: Promise<unknown>,
+    port: MockNativePort,
+    sendsBefore: number,
+): Promise<void> {
+    const disconnect = await port.nextPosted();
+    expect(disconnect.type).toBe('disconnect');
+    await port.emit(
+        disconnectedEvent({
+            request_id: disconnect.request_id as string,
+            connection_handle: HANDLE_CONNECTION,
+        }),
+    );
+    await expect(pulled).rejects.toBeTruthy();
+    // No send followed the pull_request: nothing was acknowledged.
+    expect(postedSends(port, HANDLE_CONNECTION)).toHaveLength(sendsBefore);
+    expect(readoutText(fixture)).toBe('');
+    expect(fixture.document.findReadout()?.hidden).toBe(true);
 }
 
 const EVENT_ID = new Uint8Array(16).fill(0x5a);
@@ -371,6 +464,7 @@ describe('development probe', () => {
             'exportIdentity',
             'injectPeer',
             'pull',
+            'pullAll',
         ]);
     });
 
@@ -563,5 +657,173 @@ describe('development probe', () => {
         await expect(pulled).rejects.toBeTruthy();
         expect(readoutText(fixture)).toBe('');
         expect(fixture.document.findReadout()?.hidden).toBe(true);
+    });
+});
+
+describe('development probe multi-event pull', () => {
+    it('pullAll_five_events_acks_each', async () => {
+        const fixture = await createProbeFixture();
+        const { side, port } = await openProbedFullSession(fixture);
+
+        const pulled = debugHook().pullAll();
+        const sendsAfterRequest = await acknowledgePullRequest(port);
+        await emitPullEvents(
+            port,
+            side,
+            pullEventsBody([1, 2, 3, 4, 5].map((index) => syntheticEvent(fixture, index))),
+        );
+
+        const events = await pulled;
+        expect(events.map((event) => event.code)).toEqual([
+            'VAB1C',
+            'VAB2C',
+            'VAB3C',
+            'VAB4C',
+            'VAB5C',
+        ]);
+        expect(events.map((event) => event.eventId)).toEqual(
+            [1, 2, 3, 4, 5].map((index) => hex(eventIdFor(index))),
+        );
+        for (const event of events) {
+            expect(event.sessionIdPrefix).toBe(hex(side.prefix));
+        }
+        // The readout shows the last event of the record.
+        expect(readoutText(fixture)).toContain('VAB5C');
+        expect(readoutText(fixture)).toContain(hex(eventIdFor(5)));
+
+        // One ack per event, in record order, each carrying its own event id.
+        for (const [index, event] of events.entries()) {
+            const ack = await nextSend(port);
+            const opened = await side.openClientRecord(ack.bytes, 2n + BigInt(index));
+            expect(opened.type).toBe(RecordType.EVENT_ACK);
+            expect(hex(opened.body.slice(0, 16))).toBe(hex(fixture.phone.installationId));
+            expect(hex(opened.body.slice(16))).toBe(event.eventId);
+            await ackSend(port, ack);
+        }
+        expect(postedSends(port, HANDLE_CONNECTION)).toHaveLength(
+            sendsAfterRequest + events.length,
+        );
+    });
+
+    it('pullAll_empty_history_returns_empty_and_no_ack', async () => {
+        const fixture = await createProbeFixture();
+        const { side, port } = await openProbedFullSession(fixture);
+
+        const pulled = debugHook().pullAll();
+        const sendsAfterFirstRequest = await acknowledgePullRequest(port);
+        await emitPullEvents(port, side, pullEventsBody([]));
+
+        // The handler settles `pullAll()` before the connector applies that step's buffered send
+        // effects, so resolution alone is not a barrier for acknowledgements. A second request
+        // runs on the same serialized session queue, behind the first step's effect application:
+        // seeing its `pull_request` posted (and no ack ahead of it) proves the empty record
+        // produced no send.
+        await expect(pulled).resolves.toEqual([]);
+        const second = debugHook().pullAll();
+        await acknowledgePullRequest(port);
+        // Answer the queued request with its own empty record so nothing stays pending.
+        await emitPullEvents(port, side, pullEventsBody([]), 2n);
+
+        await expect(second).resolves.toEqual([]);
+        // No acknowledgement for either empty record: no send follows the second request.
+        expect(postedSends(port, HANDLE_CONNECTION)).toHaveLength(sendsAfterFirstRequest + 1);
+        expect(readoutText(fixture)).toBe('');
+    });
+
+    it('pullAll_count_six_rejected_without_ack', async () => {
+        const fixture = await createProbeFixture();
+        const { side, port } = await openProbedFullSession(fixture);
+
+        const pulled = debugHook().pullAll();
+        const sendsAfterRequest = await acknowledgePullRequest(port);
+        await emitPullEvents(
+            port,
+            side,
+            pullEventsBody(
+                [1, 2, 3, 4, 5, 6].map((index) => syntheticEvent(fixture, index)),
+                6,
+            ),
+        );
+
+        await expectRejectedRecord(fixture, pulled, port, sendsAfterRequest);
+    });
+
+    it('pullAll_count_payload_mismatch_rejected', async () => {
+        // Two events claimed, one present.
+        const short = await createProbeFixture();
+        const shortSession = await openProbedFullSession(short);
+        const shortPull = debugHook().pullAll();
+        const shortSends = await acknowledgePullRequest(shortSession.port);
+        await emitPullEvents(
+            shortSession.port,
+            shortSession.side,
+            pullEventsBody([syntheticEvent(short, 1)], 2),
+        );
+        await expectRejectedRecord(short, shortPull, shortSession.port, shortSends);
+
+        // One event claimed, a second trails the payload.
+        const long = await createProbeFixture();
+        const longSession = await openProbedFullSession(long);
+        const longPull = debugHook().pullAll();
+        const longSends = await acknowledgePullRequest(longSession.port);
+        await emitPullEvents(
+            longSession.port,
+            longSession.side,
+            pullEventsBody([syntheticEvent(long, 1), syntheticEvent(long, 2)], 1),
+        );
+        await expectRejectedRecord(long, longPull, longSession.port, longSends);
+    });
+
+    it('pullAll_duplicate_event_id_rejected', async () => {
+        const fixture = await createProbeFixture();
+        const { side, port } = await openProbedFullSession(fixture);
+
+        const pulled = debugHook().pullAll();
+        const sendsAfterRequest = await acknowledgePullRequest(port);
+        await emitPullEvents(
+            port,
+            side,
+            pullEventsBody([
+                syntheticEvent(fixture, 1),
+                syntheticEvent(fixture, 1, { code: 'DUPE2C' }),
+            ]),
+        );
+
+        await expectRejectedRecord(fixture, pulled, port, sendsAfterRequest);
+    });
+
+    it('pullAll_bound_violation_ends_session', async () => {
+        const fixture = await createProbeFixture();
+        const { side, port } = await openProbedFullSession(fixture);
+
+        const pulled = debugHook().pullAll();
+        const sendsAfterRequest = await acknowledgePullRequest(port);
+        // The first event is valid, the second exceeds the §8.1 lifetime bound. Nothing is
+        // acknowledged because the whole record must validate first.
+        await emitPullEvents(
+            port,
+            side,
+            pullEventsBody([
+                syntheticEvent(fixture, 1),
+                syntheticEvent(fixture, 2, { remainingLifetime: 601 }),
+            ]),
+        );
+
+        await expectRejectedRecord(fixture, pulled, port, sendsAfterRequest);
+    });
+
+    it('pull_still_requires_exactly_one_event', async () => {
+        const fixture = await createProbeFixture();
+        const { side, port } = await openProbedFullSession(fixture);
+
+        const pulled = debugHook().pull();
+        const sendsAfterRequest = await acknowledgePullRequest(port);
+        await emitPullEvents(
+            port,
+            side,
+            pullEventsBody([syntheticEvent(fixture, 1), syntheticEvent(fixture, 2)]),
+        );
+
+        await expectRejectedRecord(fixture, pulled, port, sendsAfterRequest);
     });
 });

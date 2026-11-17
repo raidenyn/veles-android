@@ -17,6 +17,9 @@ object BuildSessionExtensions {
     @Suppress("UnusedParameter")
     fun attach(host: SessionHost) = Unit
 
+    /** Release builds schedule no Gate B push, so there is nothing to detach (OTP-12 D5). */
+    fun detach() = Unit
+
     /** Release builds expose no debug peer-management control (OTP-11 D9). */
     @Suppress("UnusedParameter")
     internal fun attachRevocation(coordinator: PeerRevocationCoordinator) = Unit

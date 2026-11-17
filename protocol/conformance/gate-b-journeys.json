@@ -1,0 +1,95 @@
+{
+  "trust_independent_of_platform_hint": true,
+  "journeys": {
+    "enrollment": [
+      {
+        "action": "enroll",
+        "params": {},
+        "expect": {
+          "session_class": "enrollment"
+        }
+      },
+      {
+        "action": "reconnect",
+        "params": {},
+        "expect": {
+          "session_class": "full",
+          "key_fresh": true
+        }
+      }
+    ],
+    "protected-records": [
+      {
+        "action": "seed",
+        "params": {
+          "lifetimes": [60, 120, 300, 600, 600]
+        },
+        "expect": {
+          "event_count": 5
+        }
+      },
+      {
+        "action": "pull",
+        "params": {},
+        "expect": {
+          "event_count": 5
+        }
+      },
+      {
+        "action": "advance_clock",
+        "params": {
+          "seconds": 150
+        },
+        "expect": {}
+      },
+      {
+        "action": "pull",
+        "params": {
+          "same_ids_as_previous_pull": true
+        },
+        "expect": {
+          "event_count": 3,
+          "remaining_lifetime_range": [150, 450]
+        }
+      },
+      {
+        "action": "schedule_push",
+        "params": {
+          "delay_seconds": 1200
+        },
+        "expect": {}
+      },
+      {
+        "action": "advance_clock",
+        "params": {
+          "seconds": 1200
+        },
+        "expect": {}
+      },
+      {
+        "action": "push",
+        "params": {},
+        "expect": {
+          "event_count": 1
+        }
+      },
+      {
+        "action": "ack",
+        "params": {},
+        "expect": {}
+      },
+      {
+        "action": "revoke",
+        "params": {},
+        "expect": {}
+      },
+      {
+        "action": "reconnect_expect_rejected",
+        "params": {},
+        "expect": {
+          "rejected": true
+        }
+      }
+    ]
+  }
+}

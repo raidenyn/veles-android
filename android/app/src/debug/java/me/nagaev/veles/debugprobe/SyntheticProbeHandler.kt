@@ -25,6 +25,9 @@ private const val BYTE_MASK = 0xFFL
 private const val LEDGER_MAX_EVENTS = 256
 private const val SESSION_PREFIX_BYTES = 8
 
+/** The encoder's entropy block: the 16-byte event id followed by the 5 marker bytes. */
+internal const val SYNTHETIC_ENTROPY_BYTES = EVENT_ID_BYTES + MARKER_BODY_BYTES
+
 /** One §8.1 synthetic event: the decoded marker, the event id and the exact record body. */
 internal data class SyntheticEvent(
     val code: String,
@@ -35,6 +38,21 @@ internal data class SyntheticEvent(
 /** Produces a fresh synthetic event for one destination session (never real OTP data). */
 internal fun interface ProbeEventSource {
     fun next(sessionIdPrefix: ByteArray?): SyntheticEvent
+}
+
+/**
+ * §8.1/event_ack shape and installation-id check, shared by the probe and the Gate B pull
+ * router so neither can weaken the other: the body is exactly
+ * `phone_installation_id || event_id`, and a wrong shape or a foreign installation id fails
+ * closed with [SessionReject]. Returns the 16-byte event id. An unknown event id is not an
+ * error here; the owner treats it as the OTP2-REC-032a no-op.
+ */
+internal fun validateAck(body: ByteArray, installationId: ByteArray): ByteArray {
+    if (body.size != EVENT_ACK_BYTES) throw SessionReject()
+    if (!body.copyOfRange(0, INSTALLATION_ID_BYTES).contentEquals(installationId)) {
+        throw SessionReject()
+    }
+    return body.copyOfRange(INSTALLATION_ID_BYTES, EVENT_ACK_BYTES)
 }
 
 /**
@@ -140,11 +158,7 @@ internal class SyntheticProbeHandler private constructor(
      * (authenticated, well-formed, settles nothing, mutates nothing, not an error).
      */
     private fun acknowledge(body: ByteArray) {
-        if (body.size != EVENT_ACK_BYTES) throw SessionReject()
-        if (!body.copyOfRange(0, INSTALLATION_ID_BYTES).contentEquals(localInstallationId)) {
-            throw SessionReject()
-        }
-        ledger.acknowledge(body.copyOfRange(INSTALLATION_ID_BYTES, EVENT_ACK_BYTES))
+        ledger.acknowledge(validateAck(body, localInstallationId))
     }
 
     private companion object {
@@ -156,15 +170,19 @@ internal class SyntheticProbeHandler private constructor(
  * Encodes one §8.1 event exactly: installation id and event id (16 bytes each), epoch
  * seconds (u64be), lifetime (u32be), code and merchant as `len u16be || UTF-8`, amount
  * magnitude (u64be), amount scale (u8) and the three ASCII currency bytes.
+ *
+ * [lifetimeSeconds] defaults to the probe's fixed 600 s; the Gate B fixture re-encodes its
+ * records with the floor of their remaining seconds.
  */
 internal fun createSyntheticEvent(
     localInstallationId: ByteArray,
     receiptEpochSeconds: Long,
     random: (Int) -> ByteArray,
+    lifetimeSeconds: Long = SYNTHETIC_REMAINING_LIFETIME,
 ): SyntheticEvent {
     require(localInstallationId.size == INSTALLATION_ID_BYTES) { "installation id is 16 bytes" }
-    val entropy = random(EVENT_ID_BYTES + MARKER_BODY_BYTES)
-    require(entropy.size == EVENT_ID_BYTES + MARKER_BODY_BYTES) { "probe entropy is 21 bytes" }
+    val entropy = random(SYNTHETIC_ENTROPY_BYTES)
+    require(entropy.size == SYNTHETIC_ENTROPY_BYTES) { "probe entropy is 21 bytes" }
     val eventId = entropy.copyOfRange(0, EVENT_ID_BYTES)
     val marker = buildString {
         append(CODE_PREFIX)
@@ -184,7 +202,7 @@ internal fun createSyntheticEvent(
     eventId.copyInto(body, offset)
     offset += EVENT_ID_BYTES
     offset = writeU64(body, offset, receiptEpochSeconds)
-    offset = writeU32(body, offset, SYNTHETIC_REMAINING_LIFETIME)
+    offset = writeU32(body, offset, lifetimeSeconds)
     offset = writeLengthPrefixed(body, offset, marker.toByteArray(Charsets.UTF_8))
     offset = writeLengthPrefixed(body, offset, merchant)
     offset = writeU64(body, offset, SYNTHETIC_AMOUNT_MAGNITUDE)
