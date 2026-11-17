@@ -592,6 +592,20 @@ class ReadyLinesTest(CliCase):
         self.assertEqual(ready, ["ready: owner/repo#1 order=1.5", "ready: owner/repo#2 order=2",
                                  "ready: owner/repo#4 order=2", "ready: owner/repo#3 order=-"])
 
+    def test_equal_order_sorts_by_number_before_repository(self):
+        nodes = [item(issue(5, repo="a/first"), status="Ready", order=2),
+                 item(issue(3, repo="z/last"), status="Ready", order=2)]
+        fake = FakeTransport(board(nodes) + [open_milestones("a/first"), open_milestones("z/last")])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = project_flow.main(["sync", "--project", URL, "--config", self.config, "--repo", REPO],
+                                     FakeTransport([("actions/variables/PROJECT_URL",
+                                                     {"name": "PROJECT_URL", "value": URL})]
+                                                   + fake.responses), env={})
+        self.assertEqual(code, 0, out.getvalue())
+        ready = [line for line in out.getvalue().splitlines() if line.startswith("ready: ")]
+        self.assertEqual(ready, ["ready: z/last#3 order=2", "ready: a/first#5 order=2"])
+
     def test_written_ready_listed_and_stale_ready_not(self):
         promoted = item(issue(1), status="Backlog", order=1)
         demoted = item(issue(2, assignees=["me"]), status="Ready", order=2)

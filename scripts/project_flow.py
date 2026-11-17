@@ -1099,7 +1099,7 @@ def _reconcile_pass(t: Transport, cfg: Config, board: Board, writer: "Writer", o
         if status == cfg.roles["ready"] and derive(latest, cfg)[0] == "ready":
             ready.append(latest)
     ready.sort(key=lambda f: (f.order is None, round(f.order, 3) if f.order is not None else 0.0,
-                              f.repo.lower(), f.number))
+                              f.number, f.repo.lower()))
     ready_lines = ["ready: %s#%d order=%s" % (f.repo, f.number,
                                              "-" if f.order is None else _order_text(f.order))
                    for f in ready]
