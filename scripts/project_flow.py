@@ -108,9 +108,10 @@ SUB_ISSUES_QUERY = """query IssueSubIssues($owner: String!, $name: String!, $num
 
 
 class GhError(Exception):
-    def __init__(self, message: str):
+    def __init__(self, message: str, stdout: str = ""):
         super().__init__(message)
         self.message = message
+        self.stdout = stdout  # what gh printed on stdout before failing
 
 
 class Stop(Exception):
@@ -144,7 +145,8 @@ class GhTransport:
         except OSError as exc:
             raise GhError("cannot run gh: %s" % exc)
         if done.returncode != 0:
-            raise GhError((done.stderr or done.stdout).strip() or "gh exited %d" % done.returncode)
+            raise GhError((done.stderr or done.stdout).strip() or "gh exited %d" % done.returncode,
+                          done.stdout or "")
         return done.stdout
 
     def graphql(self, query: str, variables: Optional[dict] = None) -> dict:
@@ -154,7 +156,13 @@ class GhTransport:
                 args += ["-F", "%s=%s" % (name, json.dumps(value))]  # None -> null
             else:
                 args += ["-f", "%s=%s" % (name, value)]
-        return self._decode(self._run(args))
+        try:
+            return self._decode(self._run(args))
+        except GhError as err:
+            absent = _absent_field_response(query, err.stdout)
+            if absent is None:
+                raise
+            return absent
 
     def rest(self, method: str, path: str, body: Optional[dict] = None) -> Any:
         args = ["api", "-X", method, path]
@@ -172,6 +180,42 @@ class GhTransport:
             return json.loads(text)
         except ValueError as exc:
             raise GhError("invalid JSON from gh: %s" % exc)
+
+
+def _absent_field_response(query: str, stdout: str) -> Optional[dict]:
+    """GitHub answers `field(name:)` for a field the project lacks with a null value and a
+    NOT_FOUND error, and gh exits 1. When every error is such a lookup, the data is the answer:
+    return it with the errors moved to `_errors`. Anything else is None (the failure stands)."""
+    try:
+        response = json.loads(stdout)
+    except ValueError:
+        return None
+    if not isinstance(response, dict) or not isinstance(response.get("data"), dict):
+        return None
+    errors = response.get("errors")
+    if not isinstance(errors, list) or not errors:
+        return None
+    for error in errors:
+        if not isinstance(error, dict) or error.get("type") != "NOT_FOUND":
+            return None
+        path = error.get("path")
+        if not isinstance(path, list) or len(path) < 2 or not isinstance(path[-1], str):
+            return None
+        # The path's last key is a field lookup: `field(` itself or an alias of it in the query.
+        name = path[-1]
+        if name != "field" and not re.search(r"(?<![\w$])%s\s*:\s*field\s*\(" % re.escape(name), query):
+            return None
+        value = response["data"]
+        for key in path:
+            if isinstance(value, dict) and key in value:
+                value = value[key]
+            elif isinstance(value, list) and isinstance(key, int) and 0 <= key < len(value):
+                value = value[key]
+            else:
+                return None
+        if value is not None:
+            return None
+    return {"data": response["data"], "_errors": errors}
 
 
 @dataclass(frozen=True)
@@ -313,7 +357,7 @@ _PROJECT_URL = re.compile(
     r"https://github\.com/(?:users|orgs)/([A-Za-z0-9][A-Za-z0-9-]*)/projects/(\d+)(?:/views/\d+)?/?")
 
 
-def derive(f: Facts, cfg: Config) -> tuple:
+def derive(f: Facts, cfg: Config) -> tuple[str, list[str]]:
     """The role key a Facts snapshot maps to, plus report lines. Pure; first match wins."""
     if f.state == "CLOSED":
         return "done", []
@@ -666,6 +710,247 @@ def read_descendants(t: Transport, repo: str, number: int) -> set:
     return found
 
 
+SET_FIELD_MUTATION = """mutation SetStatus($project: ID!, $item: ID!, $field: ID!, $option: String!) {
+  updateProjectV2ItemFieldValue(input: {projectId: $project, itemId: $item, fieldId: $field,
+      value: {singleSelectOptionId: $option}}) { projectV2Item { id } }
+}"""
+SET_ORDER_MUTATION = """mutation SetOrder($project: ID!, $item: ID!, $field: ID!, $value: Float!) {
+  updateProjectV2ItemFieldValue(input: {projectId: $project, itemId: $item, fieldId: $field,
+      value: {number: $value}}) { projectV2Item { id } }
+}"""
+_REST_PAGE = 100
+
+
+def preflight(board: Board, cfg: Config, *, needs_order: bool) -> None:
+    """Stop("missing-option") naming every configured Status option the project lacks and, when
+    the command allocates order values, a missing NUMBER order field. Runs before any mutation."""
+    missing = ["Status option %r (%s)" % (cfg.roles[key], key)
+               for key in ROLE_KEYS if cfg.roles[key] not in board.options]
+    if needs_order and board.order_field_id is None:
+        missing.append("number field %r" % cfg.order_field)
+    if missing:
+        raise Stop("missing-option", "not on the project: " + ", ".join(missing))
+
+
+def _rest(t: Transport, method: str, path: str, what: str, body: Optional[dict] = None) -> Any:
+    """One REST call; a scope error propagates, any other failure is an incomplete read."""
+    try:
+        return t.rest(method, path, body)
+    except GhError as err:
+        if map_gh_error(err) is not None:
+            raise
+        raise Stop("incomplete-read", "%s: %s" % (what, err.message))
+
+
+def _rest_pages(t: Transport, path: str, what: str) -> list:
+    """Every element of a paged REST list, page by page until a short page."""
+    found, page = [], 1
+    while True:
+        chunk = _rest(t, "GET", "%s&per_page=%d&page=%d" % (path, _REST_PAGE, page), what)
+        if not isinstance(chunk, list) or any(not isinstance(e, dict) for e in chunk):
+            raise Stop("incomplete-read", "%s: not a list of objects" % what)
+        found.extend(chunk)
+        if len(chunk) < _REST_PAGE:
+            return found
+        page += 1
+
+
+def _milestones(t: Transport, repo: str, state: str) -> list:
+    """(number, title, open_issues) of every milestone of the repository in `state`."""
+    what = "%s milestones" % repo
+    return [(_field(m, "number", int, what), _field(m, "title", str, what),
+             _field(m, "open_issues", int, what) if state == "open" else None)
+            for m in _rest_pages(t, "repos/%s/milestones?state=%s" % (repo, state), what)]
+
+
+def _mutate(t: Transport, query: str, variables: dict, what: str) -> None:
+    data = _query(t, query, variables, what)
+    _dig(data, ("updateProjectV2ItemFieldValue", "projectV2Item", "id"), what)
+
+
+class Writer:
+    """Every write sync, start, next and followup make. Each method appends `write: ...`,
+    `would write: ...` (dry run) or `skipped ...` to `out`."""
+
+    def __init__(self, t: Transport, board: Board, cfg: Config, dry_run: bool, out: list):
+        self.t, self.board, self.cfg, self.dry_run, self.out = t, board, cfg, dry_run, out
+        self._milestone_numbers = {}  # repo -> {title: number}
+
+    def _emit(self, text: str) -> None:
+        self.out.append(("would write: " if self.dry_run else "write: ") + text)
+
+    def set_role(self, f: Facts, role: str) -> bool:
+        """Write the role's Status option, after a fresh read shows the derivation inputs unchanged."""
+        ref = "%s#%d" % (f.repo, f.number)
+        try:
+            fresh = read_item(self.t, f.item_id, self.cfg)
+        except Stop as stop:
+            if stop.reason != "incomplete-read":
+                raise
+            self.out.append("skipped %s: unreadable: %s" % (ref, stop.detail))
+            return False
+        if fresh.inputs() != f.inputs():
+            self.out.append("skipped %s: inputs changed" % ref)
+            return False
+        name = self.cfg.roles[role]
+        if fresh.status == name:
+            return False
+        line = "%s Status: %s -> %s" % (ref, fresh.status or "(none)", name)
+        if not self.dry_run:
+            try:
+                _mutate(self.t, SET_FIELD_MUTATION, {
+                    "project": self.board.project_id, "item": f.item_id,
+                    "field": self.board.status_field_id, "option": self.board.options[name]}, ref)
+            except Stop as stop:
+                self.out.append("skipped %s: write failed: %s" % (ref, stop.detail))
+                return False
+        self._emit(line)
+        return True
+
+    def set_order(self, item_id: str, value: float) -> None:
+        if self.board.order_field_id is None:
+            raise Stop("missing-option", "number field %r not on the project" % self.cfg.order_field)
+        if not self.dry_run:
+            _mutate(self.t, SET_ORDER_MUTATION, {
+                "project": self.board.project_id, "item": item_id,
+                "field": self.board.order_field_id, "value": float(value)}, "item %s" % item_id)
+        self._emit("%s %s: %s" % (item_id, self.cfg.order_field, value))
+
+    def set_pr_milestone(self, repo: str, number: int, milestone_title: str) -> bool:
+        """Set the PR's milestone by title, unless a fresh read shows it already has one or the
+        repository has no milestone of that title (both reported)."""
+        ref = "%s#%d" % (repo, number)
+        try:
+            current = _rest(self.t, "GET", "repos/%s/issues/%d" % (repo, number), ref)
+            if not isinstance(current, dict) or "milestone" not in current:
+                raise Stop("incomplete-read", "%s: no milestone in the response" % ref)
+            if current["milestone"] is not None:
+                self.out.append("skipped %s: milestone already set" % ref)
+                return False
+            if repo not in self._milestone_numbers:
+                self._milestone_numbers[repo] = {
+                    title: num for num, title, _ in _milestones(self.t, repo, "all")}
+        except Stop as stop:
+            if stop.reason != "incomplete-read":
+                raise
+            self.out.append("skipped %s: unreadable: %s" % (ref, stop.detail))
+            return False
+        milestone_number = self._milestone_numbers[repo].get(milestone_title)
+        if milestone_number is None:
+            self.out.append("skipped %s: milestone %r not found in %s" % (ref, milestone_title, repo))
+            return False
+        if not self.dry_run:
+            try:
+                _rest(self.t, "PATCH", "repos/%s/issues/%d" % (repo, number), ref,
+                      {"milestone": milestone_number})
+            except Stop as stop:
+                self.out.append("skipped %s: write failed: %s" % (ref, stop.detail))
+                return False
+        self._emit("%s milestone: %s" % (ref, milestone_title))
+        return True
+
+
+@dataclass
+class SyncResult:
+    writes: list
+    reports: list
+    unreadable: list
+
+
+_WRITE_PREFIXES = ("write: ", "would write: ")
+
+
+def sync(t: Transport, cfg: Config, project_url: str, *, mode: str, repo: Optional[str],
+         dry_run: bool, only: Optional[tuple] = None) -> SyncResult:
+    """The complete reconciliation: every in-scope item's Status, the milestone of every open or
+    merged in-scope PR closing a board issue, and the report of empty open milestones.
+    mode "action" writes only items and PRs of `repo`; "agent" covers the whole project.
+    `only` (repo, number) limits the status and milestone pass to one issue and skips the
+    milestone report."""
+    if mode not in ("action", "agent"):
+        raise Stop("config-invalid", "unknown mode %r" % mode)
+    if mode == "action":
+        owner, _, name = (repo or "").partition("/")
+        if not owner or not name or "/" in name:
+            raise Stop("config-invalid", "action mode needs --repo OWNER/NAME")
+    board = read_board(t, project_url, cfg)
+    preflight(board, cfg, needs_order=False)
+
+    def in_scope(r: str) -> bool:
+        return mode == "agent" or r == repo
+
+    out, reports = [], []
+    writer = Writer(t, board, cfg, dry_run, out)
+    for item_id in board.unreadable:
+        reports.append("unreadable %s: %s; not written" % (item_id, board.reasons.get(item_id, "")))
+    targets = [f for f in board.items
+               if only is None or (f.repo, f.number) == tuple(only)]
+    if only is not None and not targets:
+        reports.append("%s#%d: not a readable issue on the project" % tuple(only))
+
+    for f in targets:
+        if not in_scope(f.repo):
+            continue
+        role, lines = derive(f, cfg)
+        reports.extend("%s#%d: %s" % (f.repo, f.number, line) for line in lines)
+        if f.status != cfg.roles[role]:
+            writer.set_role(f, role)
+
+    pulls = {}
+    for f in targets:
+        for p in f.closing_prs:
+            if p.state in ("OPEN", "MERGED") and p.milestone is None and in_scope(p.repo):
+                pulls.setdefault((p.repo, p.number), p)
+    for (pr_repo, pr_number) in pulls:
+        ref = "%s#%d" % (pr_repo, pr_number)
+        try:
+            closing = read_pr_closing_issues(t, pr_repo, pr_number)
+        except Stop as stop:
+            if stop.reason != "incomplete-read":
+                raise
+            reports.append("%s: closing issues unreadable, no milestone set: %s" % (ref, stop.detail))
+            continue
+        titles = sorted({title for _, _, title in closing if title is not None})
+        if len(titles) > 1:
+            reports.append("%s: conflicting milestones %s; none set" % (ref, ", ".join(titles)))
+        elif titles:
+            writer.set_pr_milestone(pr_repo, pr_number, titles[0])
+
+    if only is None:
+        repos = sorted({f.repo for f in board.items if in_scope(f.repo)})
+        for r in repos:
+            closed = {f.milestone for f in board.items
+                      if f.repo == r and f.state == "CLOSED" and f.milestone is not None}
+            try:
+                found = _milestones(t, r, "open")
+            except Stop as stop:
+                if stop.reason != "incomplete-read":
+                    raise
+                reports.append("%s milestones unreadable: %s" % (r, stop.detail))
+                continue
+            for _, title, open_issues in found:
+                if open_issues == 0 and title in closed:
+                    reports.append("milestone %r in %s is complete: no open issues; not closed"
+                                   % (title, r))
+
+    writes = [line for line in out if line.startswith(_WRITE_PREFIXES)]
+    reports = [line for line in out if not line.startswith(_WRITE_PREFIXES)] + reports
+    return SyncResult(writes, reports, list(board.unreadable))
+
+
+def _sync(args, transport: Transport) -> int:
+    if not args.project:
+        print("usage: sync needs --project URL", file=sys.stderr)
+        return 2
+    cfg = load_config(args.config)
+    result = sync(transport, cfg, args.project, mode=args.mode, repo=args.repo, dry_run=args.dry_run)
+    for line in result.writes + result.reports:
+        print(line)
+    if not result.writes:
+        print("no changes" + (" would be written" if args.dry_run else " written"))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="project_flow.py")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -696,6 +981,8 @@ def main(argv: list, transport: Optional[Transport] = None) -> int:
     try:
         if args.command == "check":
             return _check(args)
+        if args.command == "sync":
+            return _sync(args, transport if transport is not None else GhTransport())
         print("usage: %s is not implemented yet" % args.command, file=sys.stderr)
         return 2
     except Stop as stop:

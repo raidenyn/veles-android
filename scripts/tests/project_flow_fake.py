@@ -175,5 +175,28 @@ def board(items, page_size=None, options=STATUS_OPTIONS, order=True, enabled=Non
     return responses
 
 
+def item_response(node):
+    """One ITEM_QUERY response for an item() node."""
+    return {"data": {"node": node}}
+
+
+def closing_issues(refs, more=False, cursor="cursor-next"):
+    """One CLOSING_ISSUES_QUERY response; refs: (number or (repo, number), milestone title or None)."""
+    nodes = [dict(_ref(ref), milestone={"title": title} if title else None) for ref, title in refs]
+    return {"data": {"repository": {"pullRequest": {"closingIssuesReferences": _conn(nodes, more, cursor)}}}}
+
+
+def status_written(item_id="PVTI_item1"):
+    """An updateProjectV2ItemFieldValue response."""
+    return {"data": {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": item_id}}}}
+
+
+def milestone(number, title, open_issues=1, closed_issues=0):
+    """A REST milestone object, trimmed like fixtures/project_flow/milestones.json."""
+    return {"number": number, "title": title, "state": "open",
+            "open_issues": open_issues, "closed_issues": closed_issues}
+
+
 __all__ = ["FakeTransport", "GhError", "issue", "pr", "blocker", "item", "item_project", "items_page",
-           "fields", "workflows", "board"]
+           "fields", "workflows", "board", "item_response", "closing_issues", "status_written",
+           "milestone"]
