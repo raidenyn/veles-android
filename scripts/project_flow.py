@@ -40,6 +40,8 @@ _DIGITS = re.compile(r"\d+")
 # (newline, carriage return, escape, ...) and the Unicode line and paragraph separators.
 _UNSAFE = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 SAFE_LIMIT = 200
+ERROR_LIMIT = 500    # characters of one gh error text in any diagnostic
+LINE_LIMIT = 4000    # characters of any printed line (a stop listing many unreadable items included)
 
 
 def _safe(text: Any, limit: Optional[int] = SAFE_LIMIT) -> str:
@@ -53,9 +55,14 @@ def _safe(text: Any, limit: Optional[int] = SAFE_LIMIT) -> str:
     return text
 
 
+def _error_text(err: GhError) -> str:
+    """A gh error text for a diagnostic: neutralized and at most ERROR_LIMIT characters."""
+    return _safe(err.message, limit=ERROR_LIMIT)
+
+
 def _say(line: str, file: Any = None) -> None:
-    """Print one output line; every line goes through _safe (no length limit), whatever it holds."""
-    print(_safe(line, limit=None), file=file)
+    """Print one output line. Every line takes this one path: _safe, cut at LINE_LIMIT characters."""
+    print(_safe(line, limit=LINE_LIMIT), file=file)
 
 
 # GraphQL queries. Every connection reads `first: $first`, which defaults to 100; only the
@@ -500,7 +507,7 @@ def _query(t: Transport, query: str, variables: dict, what: str,
     except GhError as err:
         if map_gh_error(err) is not None:
             raise
-        raise Stop("incomplete-read", "%s: %s" % (what, _safe(err.message)))
+        raise Stop("incomplete-read", "%s: %s" % (what, _error_text(err)))
     scope_error = _scope_errors(response)
     if scope_error is not None:
         raise scope_error
@@ -883,7 +890,7 @@ def _rest(t: Transport, method: str, path: str, what: str, body: Optional[dict] 
     except GhError as err:
         if map_gh_error(err) is not None:
             raise
-        raise Stop("incomplete-read", "%s: %s" % (what, _safe(err.message)))
+        raise Stop("incomplete-read", "%s: %s" % (what, _error_text(err)))
 
 
 def _rest_pages(t: Transport, path: str, what: str) -> list:
@@ -1666,7 +1673,7 @@ def followup(t: Transport, cfg: Config, project_url: str, repo: str, *, parent: 
         flush()
         if number is not None and not dry_run:
             _say("failed: %s: %s" % (failing or pending[0],
-                                     err.detail if isinstance(err, Stop) else _safe(err.message)))
+                                     err.detail if isinstance(err, Stop) else _error_text(err)))
             _say("created: #%d" % number)
             _say("missing: %s" % ", ".join(pending))
             _say("resume with the same arguments and --resume %d" % number)
@@ -1942,7 +1949,7 @@ def main(argv: list, transport: Optional[Transport] = None,
     except GhError as err:
         stop = map_gh_error(err)
         if stop is None:
-            _say("error: %s" % _safe(err.message, limit=None), file=sys.stderr)
+            _say("error: %s" % _error_text(err), file=sys.stderr)
             return 1
         _say("stop: %s: %s" % (stop.reason, stop.detail))
         return 3

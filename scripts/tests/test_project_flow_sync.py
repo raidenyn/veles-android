@@ -814,5 +814,58 @@ class SafeOutputTest(CliCase):
         self.assertEqual(err.getvalue(), "error: boom ::error::x 'y'\n")
 
 
+
+class BoundedErrorTest(CliCase):
+    """A gh error text is untrusted and unbounded: every diagnostic carries at most ERROR_LIMIT
+    characters of it (cut with "..."), neutralized, and no printed line exceeds LINE_LIMIT."""
+
+    HUGE = "x" * 4000 + "\n::error::injected `fence` " + "y" * 6000
+
+    def assert_bounded(self, text):
+        self.assertTrue(text, "nothing printed")
+        for line in text.splitlines():
+            self.assertLessEqual(len(line), project_flow.LINE_LIMIT, line[:80])
+            self.assertFalse(line.startswith("::"), line[:80])
+            self.assertNotIn("`", line)
+        self.assertNotIn("y" * (project_flow.ERROR_LIMIT + 1), text)
+
+    def test_stderr_error_line(self):
+        err = io.StringIO()
+        failing = mock.Mock(side_effect=GhError(self.HUGE))
+        with mock.patch.dict(project_flow._COMMANDS, {"sync": failing}), \
+                contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            code = project_flow.main(["sync", "--project", URL, "--config", self.config, "--mode",
+                                      "action", "--repo", REPO], FakeTransport([]),
+                                     env={"PROJECT_URL": URL})
+        self.assertEqual(code, 1)
+        self.assertLessEqual(len(err.getvalue().rstrip("\n")), len("error: ") + project_flow.ERROR_LIMIT)
+        self.assertTrue(err.getvalue().rstrip("\n").endswith("..."), err.getvalue()[-20:])
+        self.assert_bounded(err.getvalue())
+
+    def test_stop_line(self):
+        fake = FakeTransport([("query ProjectFields", GhError(self.HUGE)),
+                              ("query ProjectFields", GhError(self.HUGE))])
+        code, out = self.main_sync(fake)
+        self.assertEqual(code, 3, out[:200])
+        self.assertTrue(out.splitlines()[-1].startswith("stop: incomplete-read: "), out[:200])
+        self.assert_bounded(out)
+
+    def test_unreadable_line(self):
+        partial = item(issue(3, labels=["a"], more=("labels",)), status="Ready")
+        fake = FakeTransport(board([partial]) + [("IssueConnection_labels", GhError(self.HUGE)),
+                                                 open_milestones()])
+        code, out = self.main_sync(fake)
+        self.assertEqual(code, 0, out[:200])
+        self.assertIn("unreadable PVTI_item3: ", out)
+        self.assert_bounded(out)
+
+    def test_say_bounds_every_line(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            project_flow._say("z" * 20000 + "\n::x `")
+        self.assertEqual(len(out.getvalue().rstrip("\n")), project_flow.LINE_LIMIT)
+        self.assertTrue(out.getvalue().rstrip("\n").endswith("..."))
+
+
 if __name__ == "__main__":
     unittest.main()
