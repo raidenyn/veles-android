@@ -390,50 +390,97 @@ def _issue_connection(t: Transport, issue: dict, name: str, what: str) -> list:
     return nodes
 
 
+_MISSING = object()
+_ISSUE_STATES = ("OPEN", "CLOSED")
+_PR_STATES = ("OPEN", "CLOSED", "MERGED")
+_CLOSED_REASONS = ("COMPLETED", "NOT_PLANNED", "DUPLICATE")
+_OPEN_REASONS = (None, "REOPENED")
+
+
+def _field(obj: Any, key: str, kind: Any, what: str, nullable: bool = False) -> Any:
+    """obj[key], which must be present and of `kind`; None only when `nullable`. A missing
+    key or a wrong type is an incomplete read, never a default."""
+    value = obj.get(key, _MISSING) if isinstance(obj, dict) else _MISSING
+    if value is _MISSING:
+        raise Stop("incomplete-read", "%s: missing %s" % (what, key))
+    if value is None and nullable:
+        return None
+    if kind is int:
+        ok = isinstance(value, int) and not isinstance(value, bool)
+    elif kind is float:
+        ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+    else:
+        ok = isinstance(value, kind)
+    if not ok:
+        raise Stop("incomplete-read", "%s: %s has the wrong type" % (what, key))
+    return value
+
+
+def _enum(obj: Any, key: str, allowed: tuple, what: str) -> Any:
+    value = obj.get(key, _MISSING) if isinstance(obj, dict) else _MISSING
+    if value is _MISSING or value not in allowed:
+        raise Stop("incomplete-read", "%s: unexpected %s %r" % (
+            what, key, None if value is _MISSING else value))
+    return value
+
+
 def _ref(node: Any, what: str) -> tuple:
-    try:
-        return node["repository"]["nameWithOwner"], int(node["number"])
-    except (KeyError, TypeError, ValueError):
-        raise Stop("incomplete-read", "%s: malformed issue reference" % what)
+    repository = _field(node, "repository", dict, what)
+    return _field(repository, "nameWithOwner", str, what), _field(node, "number", int, what)
+
+
+def _title(obj: Any, what: str) -> Optional[str]:
+    """The milestone title, None for an explicit null milestone."""
+    milestone = _field(obj, "milestone", dict, what, nullable=True)
+    return None if milestone is None else _field(milestone, "title", str, what + " milestone")
+
+
+def _blocker(node: dict, what: str) -> Blocker:
+    repo, number = _ref(node, what)
+    state = _enum(node, "state", _ISSUE_STATES, what)
+    reasons = _CLOSED_REASONS if state == "CLOSED" else _OPEN_REASONS
+    return Blocker(repo, number, state, _enum(node, "stateReason", reasons, what))
+
+
+def _pull(node: dict, what: str) -> PullRef:
+    repo, number = _ref(node, what)
+    return PullRef(repo, number, _enum(node, "state", _PR_STATES, what),
+                   _field(node, "isDraft", bool, what), _title(node, what))
 
 
 def _facts(t: Transport, node: dict, what: str) -> Facts:
     """Facts of one project item whose content is an issue, reading every page."""
-    issue = node.get("content")
-    if not isinstance(issue, dict) or issue.get("__typename") != "Issue":
+    item_id = _field(node, "id", str, what)
+    issue = _field(node, "content", dict, what)
+    if issue.get("__typename") != "Issue":
         raise Stop("incomplete-read", "%s: content is not a readable issue" % what)
-    if not issue.get("id") or not isinstance(issue.get("databaseId"), int):
-        raise Stop("incomplete-read", "%s: issue ids missing" % what)
+    content_id = _field(issue, "id", str, what)
+    database_id = _field(issue, "databaseId", int, what)
     repo, number = _ref(issue, what)
-    if issue.get("state") not in ("OPEN", "CLOSED"):
-        raise Stop("incomplete-read", "%s: unknown issue state" % what)
+    state = _enum(issue, "state", _ISSUE_STATES, what)
+    milestone = _title(issue, what)
+    parent = _field(issue, "parent", dict, what, nullable=True)
+    status_value = _field(node, "status", dict, what, nullable=True)
+    status = None if status_value is None else _field(status_value, "name", str, what + " status")
+    order_value = _field(node, "order", dict, what, nullable=True)
+    order = None
+    if order_value:  # {} is a value of a non-number field, reported by order_field_id
+        order = float(_field(order_value, "number", float, what + " order"))
     labels = _issue_connection(t, issue, "labels", what)
     assignees = _issue_connection(t, issue, "assignees", what)
     prs = _issue_connection(t, issue, "closedByPullRequestsReferences", what)
     blockers = _issue_connection(t, issue, "blockedBy", what)
     subs = _issue_connection(t, issue, "subIssues", what)
-    try:
-        closing = tuple(PullRef(p["repository"]["nameWithOwner"], int(p["number"]), p["state"],
-                                bool(p["isDraft"]), (p.get("milestone") or {}).get("title"))
-                        for p in prs)
-        blocked = tuple(Blocker(b["repository"]["nameWithOwner"], int(b["number"]), b["state"],
-                                b.get("stateReason")) for b in blockers)
-        label_names = frozenset(label["name"].lower() for label in labels)
-        logins = frozenset(user["login"] for user in assignees)
-    except (KeyError, TypeError, ValueError, AttributeError):
-        raise Stop("incomplete-read", "%s: malformed issue facts" % what)
-    order = (node.get("order") or {}).get("number")
-    parent = issue.get("parent")
     return Facts(
-        item_id=node["id"], content_id=issue["id"], repo=repo, number=number,
-        state=issue["state"], labels=label_names, assignees=logins,
-        closing_prs=closing, blockers=blocked,
-        order=float(order) if order is not None else None,
-        status=(node.get("status") or {}).get("name"),
-        parent=_ref(parent, what) if parent is not None else None,
-        sub_issues=tuple(_ref(sub, what) for sub in subs),
-        milestone=(issue.get("milestone") or {}).get("title"),
-        database_id=issue["databaseId"],
+        item_id=item_id, content_id=content_id, repo=repo, number=number, state=state,
+        labels=frozenset(_field(n, "name", str, what + " label").lower() for n in labels),
+        assignees=frozenset(_field(n, "login", str, what + " assignee") for n in assignees),
+        closing_prs=tuple(_pull(n, what + " closing PR") for n in prs),
+        blockers=tuple(_blocker(n, what + " blocker") for n in blockers),
+        order=order, status=status,
+        parent=None if parent is None else _ref(parent, what + " parent"),
+        sub_issues=tuple(_ref(n, what + " sub-issue") for n in subs),
+        milestone=milestone, database_id=database_id,
     )
 
 
@@ -475,17 +522,13 @@ def read_board(t: Transport, project_url: str, cfg: Config) -> Board:
         raise Stop("incomplete-read", "project fields: malformed response")
     flows = _paginate(t, _owner_query(WORKFLOWS_QUERY, owner_key), base,
                       (owner_key, "projectV2", "workflows"), "project workflows")
-    try:
-        workflows = {w["name"]: bool(w["enabled"]) for w in flows}
-    except (KeyError, TypeError):
-        raise Stop("incomplete-read", "project workflows: malformed response")
+    workflows = {_field(w, "name", str, "project workflow"): _field(w, "enabled", bool, "project workflow")
+                 for w in flows}
     nodes = _paginate(t, _owner_query(ITEMS_QUERY, owner_key), dict(base, **names),
                       (owner_key, "projectV2", "items"), "project items")
     board = Board(project_id, status_id, options, order_id, [], [], workflows)
     for node in nodes:
-        item_id = node.get("id")
-        if not item_id:
-            raise Stop("incomplete-read", "project items: an item without an id")
+        item_id = _field(node, "id", str, "project items")
         kind = node.get("type")
         if kind in ("DRAFT_ISSUE", "PULL_REQUEST"):
             continue
@@ -519,12 +562,12 @@ def read_text(t: Transport, repo: str, number: int) -> str:
     what = "text of %s#%d" % (repo, number)
     data = _query(t, TEXT_QUERY, variables, what)
     issue = _dig(data, ("repository", "issue"), what)
-    parts = [issue.get("body") or ""]
+    parts = [_field(issue, "body", str, what)]
     nodes, more, after = _connection(issue.get("comments"), what)
     if more:
         nodes = nodes + _paginate(t, TEXT_QUERY, dict(variables, after=after),
                                   ("repository", "issue", "comments"), what)
-    parts.extend(node.get("body") or "" for node in nodes)
+    parts.extend(_field(node, "body", str, what + " comment") for node in nodes)
     return "\n\n".join(parts)
 
 
@@ -534,7 +577,7 @@ def read_pr_closing_issues(t: Transport, repo: str, number: int) -> list:
     what = "closing issues of %s#%d" % (repo, number)
     nodes = _paginate(t, CLOSING_ISSUES_QUERY, {"owner": owner, "name": name, "number": number},
                       ("repository", "pullRequest", "closingIssuesReferences"), what)
-    return [_ref(node, what) + ((node.get("milestone") or {}).get("title"),) for node in nodes]
+    return [_ref(node, what) + (_title(node, what),) for node in nodes]
 
 
 def read_descendants(t: Transport, repo: str, number: int) -> set:

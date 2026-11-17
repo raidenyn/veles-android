@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import project_flow  # noqa: E402
 from project_flow import Config, GhError, Stop  # noqa: E402
+import project_flow_fake  # noqa: E402
 from project_flow_fake import FakeTransport, blocker, board, issue, item, pr  # noqa: E402
 
 FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "project_flow")
@@ -213,6 +214,151 @@ class FactsTest(unittest.TestCase):
         self.assertEqual(facts.blockers, (project_flow.Blocker("owner/repo", 2, "OPEN", None),))
 
 
+def read_one(node, extra=()):
+    fake = FakeTransport([("query ProjectItem(", {"data": {"node": node}})] + list(extra))
+    return project_flow.read_item(fake, node["id"], CFG)
+
+
+class StrictFactsTest(unittest.TestCase):
+    """A missing key or a wrong type is an incomplete read; an explicit null is a fact."""
+
+    def assertIncomplete(self, node):
+        with self.assertRaises(Stop) as caught:
+            read_one(node)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+        # On a board the same item is unreadable and the others are still read.
+        result = project_flow.read_board(FakeTransport(board([node, item(issue(2))])), URL, CFG)
+        self.assertEqual(result.unreadable, [node["id"]])
+        self.assertIn(node["id"], result.reasons)
+        self.assertEqual([f.number for f in result.items], [2])
+
+    def test_missing_parent_key(self):
+        node = item(issue(1))
+        del node["content"]["parent"]
+        self.assertIncomplete(node)
+
+    def test_explicit_null_parent_is_none(self):
+        self.assertIsNone(read_one(item(issue(1))).parent)
+
+    def test_missing_milestone_key(self):
+        node = item(issue(1, milestone="M"))
+        del node["content"]["milestone"]
+        self.assertIncomplete(node)
+
+    def test_milestone_without_title(self):
+        node = item(issue(1))
+        node["content"]["milestone"] = {}
+        self.assertIncomplete(node)
+
+    def test_is_draft_null(self):
+        node = item(issue(1, prs=[pr(3)]))
+        node["content"]["closedByPullRequestsReferences"]["nodes"][0]["isDraft"] = None
+        self.assertIncomplete(node)
+
+    def test_is_draft_missing(self):
+        node = item(issue(1, prs=[pr(3)]))
+        del node["content"]["closedByPullRequestsReferences"]["nodes"][0]["isDraft"]
+        self.assertIncomplete(node)
+
+    def test_pr_milestone_missing(self):
+        node = item(issue(1, prs=[pr(3)]))
+        del node["content"]["closedByPullRequestsReferences"]["nodes"][0]["milestone"]
+        self.assertIncomplete(node)
+
+    def test_unknown_pr_state(self):
+        self.assertIncomplete(item(issue(1, prs=[pr(3, state="DRAFT")])))
+
+    def test_missing_status_value_key(self):
+        node = item(issue(1), status="Ready")
+        del node["status"]
+        self.assertIncomplete(node)
+
+    def test_status_value_without_name(self):
+        node = item(issue(1), status="Ready")
+        node["status"] = {"optionId": "opt-Ready"}
+        self.assertIncomplete(node)
+
+    def test_explicit_unset_status_and_order(self):
+        facts = read_one(item(issue(1)))
+        self.assertIsNone(facts.status)
+        self.assertIsNone(facts.order)
+
+    def test_missing_order_value_key(self):
+        node = item(issue(1), order=3)
+        del node["order"]
+        self.assertIncomplete(node)
+
+    def test_mistyped_order_value(self):
+        node = item(issue(1), order=3)
+        node["order"] = {"number": "3"}
+        self.assertIncomplete(node)
+
+    def test_unknown_issue_state(self):
+        self.assertIncomplete(item(issue(1, state="MERGED")))
+
+    def test_missing_issue_state(self):
+        node = item(issue(1))
+        del node["content"]["state"]
+        self.assertIncomplete(node)
+
+    def test_unknown_blocker_reason_when_closed(self):
+        self.assertIncomplete(item(issue(1, blockers=[(2, "CLOSED", "WONTFIX")])))
+
+    def test_closed_blocker_without_reason(self):
+        self.assertIncomplete(item(issue(1, blockers=[(2, "CLOSED", None)])))
+
+    def test_missing_blocker_reason_key(self):
+        node = item(issue(1, blockers=[(2, "CLOSED", "COMPLETED")]))
+        del node["content"]["blockedBy"]["nodes"][0]["stateReason"]
+        self.assertIncomplete(node)
+
+    def test_open_blocker_reasons(self):
+        node = item(issue(1, blockers=[(2, "OPEN", None), (3, "OPEN", "REOPENED")]))
+        self.assertEqual([b.state for b in read_one(node).blockers], ["OPEN", "OPEN"])
+
+    def test_wrong_typed_number(self):
+        node = item(issue(1))
+        node["content"]["number"] = "1"
+        self.assertIncomplete(node)
+
+    def test_wrong_typed_blocker_number(self):
+        node = item(issue(1, blockers=[(2, "CLOSED", "COMPLETED")]))
+        node["content"]["blockedBy"]["nodes"][0]["number"] = 2.0
+        self.assertIncomplete(node)
+
+    def test_bool_database_id(self):
+        node = item(issue(1))
+        node["content"]["databaseId"] = True
+        self.assertIncomplete(node)
+
+    def test_missing_repository(self):
+        node = item(issue(1))
+        del node["content"]["repository"]
+        self.assertIncomplete(node)
+
+    def test_sub_issue_without_repository(self):
+        node = item(issue(1, sub_issues=[2]))
+        node["content"]["subIssues"]["nodes"][0]["repository"] = None
+        self.assertIncomplete(node)
+
+    def test_label_name_not_a_string(self):
+        node = item(issue(1, labels=["a"]))
+        node["content"]["labels"]["nodes"][0]["name"] = None
+        self.assertIncomplete(node)
+
+    def test_workflow_enabled_must_be_bool(self):
+        responses = board([])
+        responses[1] = ("query ProjectWorkflows", project_flow_fake.workflows({"Item closed": None}))
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_board(FakeTransport(responses), URL, CFG)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_recorded_fixtures_still_read(self):
+        result = project_flow.read_board(FakeTransport(recorded_board()), URL, CFG)
+        self.assertEqual(result.unreadable, [])
+        self.assertEqual(len(result.items), 7)
+
+
 class ParseProjectUrlTest(unittest.TestCase):
     def test_parse_project_url_strips_view(self):
         self.assertEqual(project_flow.parse_project_url("https://github.com/users/o/projects/3/views/2"),
@@ -247,6 +393,38 @@ class ReadTextTest(unittest.TestCase):
         with self.assertRaises(Stop) as caught:
             project_flow.read_text(fake, "owner/repo", 1)
         self.assertEqual(caught.exception.reason, "incomplete-read")
+
+
+class StrictTextTest(unittest.TestCase):
+    def text(self, page):
+        return project_flow.read_text(FakeTransport([("query IssueText", page)]), "owner/repo", 1)
+
+    def page(self, body="b", comments=("c",)):
+        return {"data": {"repository": {"issue": {"body": body, "comments": {
+            "nodes": [{"body": c} for c in comments],
+            "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+
+    def assertIncomplete(self, page):
+        with self.assertRaises(Stop) as caught:
+            self.text(page)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_missing_issue_body_key(self):
+        page = self.page()
+        del page["data"]["repository"]["issue"]["body"]
+        self.assertIncomplete(page)
+
+    def test_missing_comment_body_key(self):
+        page = self.page()
+        del page["data"]["repository"]["issue"]["comments"]["nodes"][0]["body"]
+        self.assertIncomplete(page)
+
+    def test_null_body_is_incomplete(self):
+        self.assertIncomplete(self.page(body=None))
+        self.assertIncomplete(self.page(comments=(None,)))
+
+    def test_empty_body_is_text(self):
+        self.assertEqual(self.text(self.page(body="", comments=("c",))), "\n\nc")
 
 
 class ReadPrClosingIssuesTest(unittest.TestCase):
