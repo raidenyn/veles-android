@@ -259,8 +259,8 @@ the **source** of the work. A project mentioned as an example, as background or 
 make the work tracked. Without such a source nothing is tracked: there is no `tracker.md`, no claim and no
 board or issue write, at intake or at closeout.
 
-A project takes part only while it is **enabled**: the repository variable `PROJECT_URL` of this repository
-names it. `sync`, `next`, `start` and `followup` refuse any other project with the stop reason `not-enabled`,
+A project takes part only while it is **enabled**: the `PROJECT_URL` variable (repository-level, or in the environment named in `.github/project-flow.json`) of this
+repository names it. `sync`, `next`, `start` and `followup` refuse any other project with the stop reason `not-enabled`,
 and the agent never sets the variable itself. Every tracked command needs the `gh` token's `project` scope;
 a missing scope is reported with the exact fix command (`gh auth refresh -s project`) and never worked
 around.

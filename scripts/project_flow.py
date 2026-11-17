@@ -8,7 +8,9 @@ another login is assigned and `stop: assignment-failed` when its own assignment 
 `stop: write-failed` when a write was rejected: sync after attempting and printing every other write,
 next and start before any selection or claim, followup after its created:/missing: lines; every
 reason is in STOP_REASONS). sync, next, start and followup run
-only on the project the repository variable PROJECT_URL names; each public entry point gates itself.
+only on the project the PROJECT_URL variable names; each public entry point gates itself. The variable
+is read at the repository level, or from the Actions environment named by the optional `environment`
+key of the config, which must be the environment the project-flow workflow job declares.
 """
 from __future__ import annotations
 

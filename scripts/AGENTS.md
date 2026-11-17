@@ -25,8 +25,8 @@ python3 -I scripts/project_flow.py followup --help                              
 ```
 
 `project_flow.py` exits 0 on success, 2 on a usage error, 1 on a `gh` error and 3 on a named stop
-(`stop: <reason>: <detail>`); `sync`, `next`, `start` and `followup` act only on the project the
-repository variable `PROJECT_URL` names. Its tests run in `scriptsTest` from recorded fixtures. Setup:
+(`stop: <reason>: <detail>`); `sync`, `next`, `start` and `followup` act only on the project
+the `PROJECT_URL` variable (repository-level, or in the environment named in `.github/project-flow.json`) names. Its tests run in `scriptsTest` from recorded fixtures. Setup:
 [`docs/github-project-setup.md`](../docs/github-project-setup.md); agent commands: the `github-project`
 skill.
 

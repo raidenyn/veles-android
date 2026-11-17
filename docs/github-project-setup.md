@@ -50,11 +50,14 @@ field id or an option id:
     "done": "Done"
   },
   "order_field": "<order field name>",
-  "blocked_label": "blocked"
+  "blocked_label": "blocked",
+  "environment": "<environment name>"
 }
 ```
 
-To use other names, change the values, never the keys. Options are matched by name, and the tool never
+`environment` is optional: it names the Actions environment that holds the variable and the secret (see
+[Environment](#environment)); without it both live at the repository level. To use other names, change the
+values, never the keys. Options are matched by name, and the tool never
 creates or renames a field, an option or a milestone: a missing one stops it with `missing-option`.
 `python3 -I scripts/project_flow.py check` validates the file offline.
 
@@ -74,13 +77,16 @@ the next successful `sync` derives the Status again.
 
 ## Variable and secret
 
-- **`PROJECT_URL`** (repository variable): the URL of the project the repository serves, in the form
+Both live in the environment that `.github/project-flow.json` names, or at the repository level when it names
+none (see [Environment](#environment)).
+
+- **`PROJECT_URL`** (variable): the URL of the project the repository serves, in the form
   `https://github.com/users/<owner>/projects/<n>` or `https://github.com/orgs/<owner>/projects/<n>`. It is the
   enable switch. While it is unset, or names another project, the workflow is a successful no-op with a notice,
   and `sync`, `next`, `start` and `followup` stop with `not-enabled`. The agent commands read it over the REST
-  API from the repository given as `--repo`, so the user's `gh` token needs read access to the repository's
-  Actions variables; otherwise they stop with `variable-unreadable`.
-- **`PROJECT_TOKEN`** (repository secret): the token the workflow uses to write the project and to read and
+  API from the repository given as `--repo` (from the configured environment, if any), so the user's `gh` token
+  needs read access to the repository's Actions variables; otherwise they stop with `variable-unreadable`.
+- **`PROJECT_TOKEN`** (secret): the token the workflow uses to write the project and to read and
   edit the repository's issues and pull requests. The default `GITHUB_TOKEN` cannot write a user-owned project.
   Only the workflow uses it; the agents use the user's own `gh` login, which needs the `project` scope
   (`gh auth refresh -s project`).
@@ -99,11 +105,29 @@ user-owned project is invisible to any other account, and the workflow then fail
 the agent commands stop with `missing-scope`, but the workflow still succeeds, reporting every card as
 unreadable (`sync: partial`) and writing nothing, so read the job summary after changing the token.
 
-**Security.** Anyone with write access to the repository can run a workflow on a branch that reads
-`PROJECT_TOKEN`; that is GitHub's model for repository secrets. The project-flow workflow itself checks out only
-the default branch and never runs pull request code, but limit the token to what the flow needs (a
-fine-grained token where possible), and consider scoping the secret to an environment. An expired token makes
-the workflow fail visibly.
+**Security.** Anyone with write access to the repository can run a workflow on a branch that reads a
+repository-level `PROJECT_TOKEN`; that is GitHub's model for repository secrets. The project-flow workflow
+itself checks out only the default branch and never runs pull request code, but limit the token to what the
+flow needs (a fine-grained token where possible), and keep it in an environment limited to the default branch
+(below). An expired token makes the workflow fail visibly.
+
+## Environment
+
+The variable and the secret can live in an Actions environment instead of at the repository level:
+
+1. Create the environment in the repository's *Settings → Environments*.
+2. Add `PROJECT_TOKEN` as an environment secret and `PROJECT_URL` as an environment variable.
+3. Name it in two places, which must agree (a unit test in `scripts/tests` checks it): the `environment` key of
+   `.github/project-flow.json`, which the agent commands use to read `PROJECT_URL`, and the job-level
+   `environment:` of `.github/workflows/project-flow.yml`, a plain name, never an expression.
+
+Under *Deployment branches and tags*, limit the environment to the default branch: a workflow run on any other
+branch then cannot read the token, which closes the write-access exposure above. Issue, schedule and manual
+runs on the default branch are allowed, and so are `pull_request_target` runs for pull requests into the
+default branch (they run on the base branch); a run for a pull request into another branch, or a manual run on
+another branch, fails at the environment check instead. Do not add required reviewers or a wait timer: every
+run, on every issue and pull request event, would wait for approval. Each job run is recorded as a deployment
+of the environment, under the repository's *Deployments*.
 
 A project that spans several repositories installs the workflow, the configuration, the variable and the
 secret in each one. Each repository's workflow writes only the items whose issue lives in it (it still reads
@@ -144,7 +168,7 @@ native link, as **warnings**. A clean warning list does not prove the conversion
 1. Create the fields, the Status options and the blocked label, and adjust `.github/project-flow.json` if your
    names differ from the committed ones.
 2. Enable the built-in workflows (*Item closed*; *Auto-add to project*, issues only).
-3. Add the `PROJECT_TOKEN` secret.
+3. Add the `PROJECT_TOKEN` secret, in the environment if you use one.
 4. Convert the prose dependencies to native links.
 5. Give every open item an order value.
 6. Give every In Progress item an assignee and every Blocked item the blocked label, or move them.
@@ -156,7 +180,7 @@ native link, as **warnings**. A clean warning list does not prove the conversion
 
    Each finding is printed as `fact: …` or `warning: …`; while any fact remains it ends with
    `stop: setup-incomplete` and exit 3.
-8. Set the `PROJECT_URL` variable — **last**.
+8. Set the `PROJECT_URL` variable, in the same place as the secret — **last**.
 9. Reconcile once, previewing first:
 
    ```bash
@@ -182,6 +206,6 @@ someone acts; the reason names the remedy:
 
 ## Rollback
 
-Unset `PROJECT_URL`. The workflow becomes a no-op and every agent command refuses the project with
+Unset `PROJECT_URL` (in the configured environment, if any). The workflow becomes a no-op and every agent command refuses the project with
 `not-enabled`. Statuses already written are plain field values and need no cleanup. Remove the secret as well if
 the flow will not come back.

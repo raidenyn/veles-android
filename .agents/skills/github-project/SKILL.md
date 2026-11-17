@@ -19,7 +19,11 @@ the task*.
 THIS_REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner) && [ -n "$THIS_REPO" ] \
   || echo "THIS_REPO unresolved: stop"   # --repo: where PROJECT_URL is read and follow-ups are created
 PF="python3 -I scripts/project_flow.py"
+PF_ENV=$(python3 -I -c 'import json; print(json.load(open(".github/project-flow.json")).get("environment", ""))')
 ```
+
+The enabled project is the `PROJECT_URL` variable (repository-level, or in the environment named in
+`.github/project-flow.json`); `PF_ENV` is that environment's name, empty for the repository level.
 
 Add `--dry-run` to any writing command to print its writes without making them.
 
@@ -42,7 +46,8 @@ Add `--dry-run` to any writing command to print its writes without making them.
        projectItems(first: 50, after: $cursor) {
          pageInfo { hasNextPage endCursor } nodes { project { title url } } } } }
    }' -f o=<owner> -f r=<repo> -F num=<n>
-   gh api "repos/$THIS_REPO/actions/variables/PROJECT_URL" --jq .value
+   if [ -n "$PF_ENV" ]; then gh api "repos/$THIS_REPO/environments/$PF_ENV/variables/PROJECT_URL" --jq .value
+   else gh api "repos/$THIS_REPO/actions/variables/PROJECT_URL" --jq .value; fi
    ```
 
 3. **Pickup** without a named task — see *Next task*, *Selecting the task*:
