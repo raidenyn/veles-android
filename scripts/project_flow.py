@@ -2,15 +2,18 @@
 """project_flow: derive GitHub Project statuses from facts (stdlib only).
 
 Run as `python3 -I scripts/project_flow.py <sync|next|start|followup|check> ...`.
-Exit 0 success, 2 usage, 3 a stop (`stop: <reason>: <detail>` on stdout).
+Exit 0 success, 1 `check` found facts (or a gh error), 2 usage, 3 a stop
+(`stop: <reason>: <detail>` on stdout). sync, next, start and followup run only on the project
+the repository variable PROJECT_URL names.
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from typing import Any, Optional, Protocol
+from typing import Any, Mapping, Optional, Protocol
 
 DEFAULT_CONFIG = ".github/project-flow.json"
 ROLE_KEYS = ("backlog", "ready", "in_progress", "in_review", "blocked", "done")
@@ -944,10 +947,125 @@ def sync(t: Transport, cfg: Config, project_url: str, *, mode: str, repo: Option
     return SyncResult(writes, reports, list(board.unreadable))
 
 
+VARIABLE_FIX = "needs the Actions variables read permission"
+ENABLE_STEP = "set the repository variable PROJECT_URL to this project to enable it"
+
+
+def enabled_url(t: Transport, repo: str, *, mode: str, env: Mapping[str, str]) -> Optional[str]:
+    """The project PROJECT_URL names, None when it is unset. Mode "action" reads the environment;
+    "agent" reads the repository variable over REST, where a 404 means unset and any other failure
+    is reported, never guessed."""
+    if mode == "action":
+        return env.get("PROJECT_URL") or None
+    if mode != "agent":
+        raise Stop("config-invalid", "unknown mode %r" % mode)
+    try:
+        response = t.rest("GET", "repos/%s/actions/variables/PROJECT_URL" % repo)
+    except GhError as err:
+        if "HTTP 404" in err.message:
+            return None
+        raise Stop("variable-unreadable", VARIABLE_FIX)
+    if not isinstance(response, dict) or not isinstance(response.get("value"), str):
+        raise Stop("variable-unreadable", VARIABLE_FIX)
+    return response["value"] or None
+
+
+def require_enabled(t: Transport, project_url: str, repo: Optional[str], *, mode: str,
+                    env: Mapping[str, str]) -> None:
+    """Stop("not-enabled") unless PROJECT_URL names the same project as project_url; a view URL
+    and the project URL are the same project."""
+    wanted = parse_project_url(project_url)
+    owner, _, name = (repo or "").partition("/")
+    if not owner or not name or "/" in name:
+        raise Stop("config-invalid", "the PROJECT_URL check needs --repo OWNER/NAME")
+    enabled = enabled_url(t, repo, mode=mode, env=env)
+    if enabled is None:
+        raise Stop("not-enabled", "PROJECT_URL is not set; " + ENABLE_STEP)
+    try:
+        named = parse_project_url(enabled)
+    except Stop:
+        raise Stop("not-enabled", "PROJECT_URL is not a project URL; " + ENABLE_STEP)
+    if (named[0].lower(), named[1]) != (wanted[0].lower(), wanted[1]):
+        raise Stop("not-enabled", "PROJECT_URL names %s/%d, not %s/%d; %s"
+                   % (named[0], named[1], wanted[0], wanted[1], ENABLE_STEP))
+
+
+# The built-in project workflows the setup relies on. Enabling one is possible only in the
+# project UI; the API has no mutation for it.
+REQUIRED_WORKFLOWS = ("Item closed", "Auto-add to project")
+_PROSE_DEPENDENCY = re.compile(r"(?i)\b(blocked by|depends on|after)\s+((?:[\w.-]+/[\w.-]+)?#\d+)")
+CHECK_NOTICE = (
+    "A clean warning list does not prove that prose dependencies were converted to native "
+    "blocked-by links. Setting PROJECT_URL is your attestation that they were reviewed and converted.")
+
+
+@dataclass
+class CheckResult:
+    facts: list
+    warnings: list
+    notice: str
+
+
+def _prose_warnings(t: Transport, f: Facts) -> list:
+    ref = "%s#%d" % (f.repo, f.number)
+    try:
+        body = read_text(t, f.repo, f.number)
+    except Stop as stop:
+        if stop.reason != "incomplete-read":
+            raise
+        return ["%s: text unreadable, dependency mentions not checked: %s" % (ref, stop.detail)]
+    native = {(b.repo.lower(), b.number) for b in f.blockers}
+    warnings, seen = [], set()
+    for match in _PROSE_DEPENDENCY.finditer(body):
+        target_repo, _, number = match.group(2).rpartition("#")
+        key = ((target_repo or f.repo).lower(), int(number))
+        if key in native or key in seen:
+            continue
+        seen.add(key)
+        warnings.append("%s: mentions %r without a native blocked-by link" % (ref, match.group(0)))
+    return warnings
+
+
+def check(t: Transport, cfg: Config, project_url: Optional[str]) -> CheckResult:
+    """The setup check. Without a project URL the (already validated) config is all there is and no
+    call is made. With one: the facts that must be clean before enabling, and the heuristic
+    warnings about prose dependencies. Reads only."""
+    if project_url is None:
+        return CheckResult([], [], CHECK_NOTICE)
+    facts, warnings = [], []
+    try:
+        board = read_board(t, project_url, cfg)
+    except Stop as stop:
+        if stop.reason != "missing-option":
+            raise
+        return CheckResult([stop.detail], [], CHECK_NOTICE)
+    for name in REQUIRED_WORKFLOWS:
+        state = board.workflows.get(name)
+        if state is not True:
+            facts.append("built-in workflow %r is %s; enable it in the project UI (Workflows)"
+                         % (name, "missing" if state is None else "disabled"))
+    for key in ROLE_KEYS:
+        if cfg.roles[key] not in board.options:
+            facts.append("Status option %r (%s) is not on the project" % (cfg.roles[key], key))
+    if board.order_field_id is None:
+        facts.append("number field %r is not on the project" % cfg.order_field)
+    for item_id in board.unreadable:
+        facts.append("item %s is unreadable: %s" % (item_id, board.reasons.get(item_id, "")))
+    for f in board.items:
+        ref = "%s#%d" % (f.repo, f.number)
+        if f.state == "OPEN" and board.order_field_id is not None and f.order is None:
+            facts.append("%s: open item without a %r value" % (ref, cfg.order_field))
+        if f.status == cfg.roles["in_progress"] and not f.assignees:
+            facts.append("%s: %r without an assignee" % (ref, f.status))
+        if f.status == cfg.roles["blocked"] and cfg.blocked_label.lower() not in f.labels:
+            facts.append("%s: %r without the %r label" % (ref, f.status, cfg.blocked_label))
+    for f in board.items:
+        if f.state == "OPEN":
+            warnings.extend(_prose_warnings(t, f))
+    return CheckResult(facts, warnings, CHECK_NOTICE)
+
+
 def _sync(args, transport: Transport) -> int:
-    if not args.project:
-        print("usage: sync needs --project URL", file=sys.stderr)
-        return 2
     cfg = load_config(args.config)
     result = sync(transport, cfg, args.project, mode=args.mode, repo=args.repo, dry_run=args.dry_run)
     for line in result.writes + result.reports:
@@ -970,27 +1088,49 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _check(args) -> int:
-    load_config(args.config)
-    if args.project:
-        print("usage: check with --project is not implemented yet", file=sys.stderr)
-        return 2
+def _check(args, transport: Transport) -> int:
+    """Exit 0 when the facts are clean, 1 when any fact is found."""
+    cfg = load_config(args.config)
     print("config ok: %s" % args.config)
-    return 0
+    if not args.project:
+        return 0
+    result = check(transport, cfg, args.project)
+    for line in result.facts:
+        print("fact: " + line)
+    for line in result.warnings:
+        print("warning: " + line)
+    if not result.facts:
+        print("facts clean")
+    print(result.notice)
+    return 1 if result.facts else 0
 
 
-def main(argv: list, transport: Optional[Transport] = None) -> int:
+# The commands that act on a project only while PROJECT_URL names it; main refuses them before
+# any other call. Tasks 7 and 8 add next, start and followup.
+GATED_COMMANDS = ("sync",)
+_COMMANDS = {"sync": _sync}
+
+
+def main(argv: list, transport: Optional[Transport] = None,
+         env: Optional[Mapping[str, str]] = None) -> int:
     try:
         args = build_parser().parse_args(argv)
     except SystemExit as exc:
         return 2 if exc.code else 0
+    transport = transport if transport is not None else GhTransport()
+    env = os.environ if env is None else env
     try:
         if args.command == "check":
-            return _check(args)
-        if args.command == "sync":
-            return _sync(args, transport if transport is not None else GhTransport())
-        print("usage: %s is not implemented yet" % args.command, file=sys.stderr)
-        return 2
+            return _check(args, transport)
+        if args.command not in _COMMANDS:
+            print("usage: %s is not implemented yet" % args.command, file=sys.stderr)
+            return 2
+        if args.command in GATED_COMMANDS:
+            if not args.project:
+                print("usage: %s needs --project URL" % args.command, file=sys.stderr)
+                return 2
+            require_enabled(transport, args.project, args.repo, mode=args.mode, env=env)
+        return _COMMANDS[args.command](args, transport)
     except Stop as stop:
         print("stop: %s: %s" % (stop.reason, stop.detail))
         return 3

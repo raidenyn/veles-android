@@ -440,17 +440,21 @@ class MainSyncTest(unittest.TestCase):
         fake = FakeTransport([(None, SCOPE_ERROR)])
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = project_flow.main(["sync", "--project", URL, "--config", self.config], fake)
+            code = project_flow.main(["sync", "--project", URL, "--config", self.config,
+                                      "--mode", "action", "--repo", REPO], fake,
+                                     env={"PROJECT_URL": URL})
         self.assertEqual(code, 3)
         self.assertIn("stop: missing-scope: run gh auth refresh -s project", out.getvalue())
 
     def test_sync_prints_writes_and_reports(self):
         stale = item(issue(1), status="Backlog")
-        fake = FakeTransport(board([stale]) + [fresh(stale), open_milestones()])
+        fake = FakeTransport([("repos/%s/actions/variables/PROJECT_URL" % REPO,
+                               {"name": "PROJECT_URL", "value": URL})]
+                             + board([stale]) + [fresh(stale), open_milestones()])
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = project_flow.main(["sync", "--project", URL, "--config", self.config, "--dry-run"],
-                                     fake)
+            code = project_flow.main(["sync", "--project", URL, "--repo", REPO, "--config", self.config,
+                                      "--dry-run"], fake, env={})
         self.assertEqual(code, 0)
         self.assertIn("would write: ", out.getvalue())
         self.assertEqual(fake.mutations, [])
