@@ -369,7 +369,9 @@ the issue in the `--repo` repository, prints its number at once, makes it a sub-
 with that issue's milestone, adds native "blocked by" links only to the blockers given (never the parent), adds
 it to the project and gives it an order value after the parent's existing follow-ups. A failure after the issue
 exists prints `created: #<n>` and `missing: <steps>`; `--resume <n>` with the original arguments completes only
-the missing steps. The pull request body lists every follow-up issue the change filed. When the size or the
+the missing steps. The follow-up's body links the change's pull request, so when the change has none yet,
+first open it as a draft (with the closing keyword for the tracked issue in its body) and pass its real URL —
+never a placeholder. The pull request body lists every follow-up issue the change filed. When the size or the
 scope of a finding is unclear, ask the user.
 
 ## tracker.md

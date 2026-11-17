@@ -5,88 +5,100 @@ description: Run tracked work on a GitHub Project with scripts/project_flow.py. 
 
 # github-project
 
-The commands for tracked work. The rules they serve are in `docs/superspec-workflow.md`: read *Next task* and
-*tracker.md* before intake, and *Closeout* and *Monitoring* before finalize and the closeout. This skill
-restates none of them; when a step below and the doc seem to differ, the doc wins. Project setup is in
+Commands only. The rules they serve are in `docs/superspec-workflow.md`: *Next task* and *tracker.md* before
+intake, *Closeout* and *Monitoring* before finalize and the closeout. Each step names the section that decides
+whether and when to run it; when this skill and the doc seem to differ, the doc wins. Project setup is in
 `docs/github-project-setup.md`.
 
-Placeholders: `<project URL>` is the project the user named (a view URL works too); `<this repo>` is this
-checkout's repository, whose variable `PROJECT_URL` enables the project; `<owner>/<repo>#<n>` is the tracked
-issue, in its own repository. Every command runs from the repository root and prints
-`stop: <reason>: <detail>` with exit 3 when it stops; the response to each reason is the table in *Next task*,
-*Selecting the task*.
+Placeholders: `<project URL>` is the project the user named (a view URL works too); `<owner>/<repo>#<n>` is the
+tracked issue, in its own repository. Every command runs from the repository root. A stop prints
+`stop: <reason>: <detail>` and exits 3; the response to each reason is the table in *Next task*, *Selecting
+the task*.
 
 ```bash
-THIS_REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)   # <this repo>
+THIS_REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)   # --repo: where PROJECT_URL is read and follow-ups are created
 PF="python3 -I scripts/project_flow.py"
 ```
 
+Add `--dry-run` to any writing command to print its writes without making them.
+
 ## Intake
 
-1. **Scope precheck.** `gh auth status` must list the `project` scope. If it does not, report it with
-   `gh auth refresh -s project` and stop.
-2. **Tracked or not** (*Next task*, *When this applies*). Without a named source, stop using this skill.
-3. **Issue-only intake** (*Next task*, *Issue-only intake*): list the issue's projects, then read which project
-   is enabled (a 404 means none):
+1. **Scope precheck** — see *Next task*, *When this applies*:
+
+   ```bash
+   gh auth status                     # the token scopes must include project
+   gh auth refresh -s project         # the fix to report when it does not
+   ```
+
+2. **Issue-only intake** — see *Next task*, *Issue-only intake*. List the issue's projects (page with
+   `-f cursor=<endCursor>` while `hasNextPage` is true) and read the enabled project (HTTP 404: none):
 
    ```bash
    gh api graphql -f query='
-   query($o: String!, $r: String!, $num: Int!) {
+   query($o: String!, $r: String!, $num: Int!, $cursor: String) {
      repository(owner: $o, name: $r) { issue(number: $num) {
-       projectItems(first: 20) { pageInfo { hasNextPage } nodes { project { title url } } } } }
+       projectItems(first: 50, after: $cursor) {
+         pageInfo { hasNextPage endCursor } nodes { project { title url } } } } }
    }' -f o=<owner> -f r=<repo> -F num=<n>
    gh api "repos/$THIS_REPO/actions/variables/PROJECT_URL" --jq .value
    ```
 
-4. **Pickup** without a named task:
+3. **Pickup** without a named task — see *Next task*, *Selecting the task*:
 
    ```bash
    $PF next --project "<project URL>" --repo "$THIS_REPO"
-   # only after the user agrees to skip items without an order value:
-   $PF next --project "<project URL>" --repo "$THIS_REPO" --skip-unordered
+   $PF next --project "<project URL>" --repo "$THIS_REPO" --skip-unordered   # only after the user agrees (missing-order)
    ```
 
    Success ends with `next: <owner>/<repo>#<n> order=<value>`.
-5. **Resume check** before any claim: an active change that records the issue is a resume (no `start`).
+
+4. **Resume check** — see *Next task*, *Naming, announcing and reading*. Lists the active changes that record
+   the issue:
 
    ```bash
    grep -l "Issue: <owner>/<repo>#<n>$" openspec/changes/*/tracker.md
    ```
 
-6. **Announce and read** (*Next task*, *Naming, announcing and reading*): `gh issue view <n> --repo
-   <owner>/<repo> --comments`, then its links, parent and sub-issues; findings go into the brainstorm.
-7. **Create the change, then write `tracker.md`** with the fields in *tracker.md*, *Purpose and fields*.
-8. **Claim** (*Next task*, *The claim*):
+5. **Read the issue** — see *Next task*, *Naming, announcing and reading*:
+
+   ```bash
+   gh issue view <n> --repo <owner>/<repo> --comments
+   ```
+
+6. **Write `tracker.md`** — the fields are in *tracker.md*, *Purpose and fields*.
+
+7. **Claim** — see *Next task*, *The claim*:
 
    ```bash
    $PF start <owner>/<repo>#<n> --project "<project URL>" --repo "$THIS_REPO"
-   # only after the user explicitly authorizes claiming an item that is not Ready:
-   $PF start <owner>/<repo>#<n> --project "<project URL>" --repo "$THIS_REPO" --force
+   $PF start <owner>/<repo>#<n> --project "<project URL>" --repo "$THIS_REPO" --force   # never without the user's explicit authorization (Next task)
    ```
 
-   Success ends with `started: <owner>/<repo>#<n>`. Add `--dry-run` to any writing command to print the writes
-   without making them.
+   Success ends with `started: <owner>/<repo>#<n>`.
 
 ## During the change
 
-9. **Pre-review PR** (if one is opened before finalize): always a draft.
+8. **Draft PR** — see *Next task*, *Statuses are derived* and *Follow-up work*. The body is the template in
+   step 11:
 
    ```bash
    gh pr create --draft --title "<type>(<scope>): <change-name>" --body-file <body.md>
    ```
 
-10. **Blocked or released** (*tracker.md*, *Statuses and finalize outcomes*); the label name is `blocked_label`
-    in `.github/project-flow.json`:
+9. **Blocked label and release** — see *tracker.md*, *Statuses and finalize outcomes*. The label name is
+   `blocked_label` in `.github/project-flow.json`:
 
-    ```bash
-    gh issue edit <n> --repo <owner>/<repo> --add-label <blocked label>     # Blocked
-    gh issue edit <n> --repo <owner>/<repo> --remove-label <blocked label>  # derived again
-    gh issue edit <n> --repo <owner>/<repo> --remove-assignee @me            # release the claim
-    $PF sync --project "<project URL>" --repo "$THIS_REPO"
-    ```
+   ```bash
+   gh issue edit <n> --repo <owner>/<repo> --add-label <blocked label>
+   gh issue edit <n> --repo <owner>/<repo> --remove-label <blocked label>
+   gh issue edit <n> --repo <owner>/<repo> --remove-assignee @me
+   $PF sync --project "<project URL>" --repo "$THIS_REPO"
+   ```
 
-11. **Follow-up issue** (*Next task*, *Follow-up work*). Write the body to a file first; `--blocker` repeats
-    per blocker and never names the parent; the issue is created in `--repo`:
+10. **Follow-up issue** — see *Next task*, *Follow-up work*. `--pr` takes the real URL of the change's PR
+    (`gh pr view --json url --jq .url`; step 8 creates it when there is none). Write the body to a file;
+    repeat `--blocker` per blocker:
 
     ```bash
     $PF followup --project "<project URL>" --repo "$THIS_REPO" \
@@ -95,13 +107,13 @@ PF="python3 -I scripts/project_flow.py"
       --change-dir openspec/changes/<change-name> --found-at "<file:line or step>"
     ```
 
-    It prints `created: #<m>` at once. On a later failure it prints `missing: <steps>` and
-    `resume with the same arguments and --resume <m>`: re-run the **exact** command line with `--resume <m>`
-    added. Add every follow-up to the PR body.
+    It prints `created: #<m>` at once. After a later failure it prints `missing: <steps>` and
+    `resume with the same arguments and --resume <m>`: re-run the exact command line with `--resume <m>` added.
+    Add the issue to the PR body (step 11).
 
-## Finalize (tracked work)
+## Finalize
 
-12. **PR body** (*Closeout*, *When it starts*), set before the PR is marked ready:
+11. **PR body** — see *Closeout*, *When it starts*:
 
     ```markdown
     Closes <owner>/<repo>#<n>
@@ -111,30 +123,36 @@ PF="python3 -I scripts/project_flow.py"
     ```
 
     ```bash
-    gh pr edit <pr> --body-file <body.md>      # when the PR already exists
-    gh pr ready <pr>                            # when it is a draft
-    gh pr view <pr> --json state,isDraft        # must report "OPEN" and false
+    gh pr edit <pr> --body-file <body.md>
+    gh pr ready <pr>
+    gh pr view <pr> --json state,isDraft
     ```
 
-13. **Record the PR** in `tracker.md`, commit and push it with the PR.
-14. **Confirm In Review** without writing it: run one `sync`, then read the item's Status (the field name is
-    `status_field` in `.github/project-flow.json`):
+12. **Record the PR** in `tracker.md` — see *tracker.md*, *Purpose and fields*.
+
+13. **Sync and read the Status back** — see *Closeout*, *When it starts*. The field name is `status_field` in
+    `.github/project-flow.json`:
 
     ```bash
     $PF sync --project "<project URL>" --repo "$THIS_REPO"
     gh api graphql -f query='
-    query($o: String!, $r: String!, $num: Int!) {
+    query($o: String!, $r: String!, $num: Int!, $cursor: String) {
       repository(owner: $o, name: $r) { issue(number: $num) { state
-        projectItems(first: 20) { pageInfo { hasNextPage } nodes { project { url }
-          fieldValueByName(name: "<status field>") {
-            ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } }
+        projectItems(first: 50, after: $cursor) { pageInfo { hasNextPage endCursor }
+          nodes { project { url }
+            fieldValueByName(name: "<status field>") {
+              ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } }
     }' -f o=<owner> -f r=<repo> -F num=<n>
     ```
 
-## After the merge (*Closeout*, *Done, last: the post-merge check*)
+    Take only the node whose `project.url` is the enabled project (the `PROJECT_URL` value). While it is not
+    found and `hasNextPage` is true, repeat with `-f cursor=<endCursor>`. A node that is never found, a failed
+    page or an empty Status confirms nothing: report "could not confirm" with the reason.
 
-15. Check the issue, close it only if the merge did not, then sync once and confirm Done with the query in
-    step 14:
+## After the merge
+
+14. **Post-merge check** — see *Closeout*, *Done, last: the post-merge check*. Read the Status back as in
+    step 13:
 
     ```bash
     gh issue view <n> --repo <owner>/<repo> --json state
@@ -142,8 +160,7 @@ PF="python3 -I scripts/project_flow.py"
     $PF sync --project "<project URL>" --repo "$THIS_REPO"
     ```
 
-    Report the `sync` writes to Ready and the follow-up issues from the PR body.
-16. **Local merge** (*Closeout*, *Local merge*), only after the push to the default branch succeeded:
+15. **Local merge** — see *Closeout*, *Local merge*:
 
     ```bash
     gh issue close <n> --repo <owner>/<repo> --reason completed --comment "Completed by <pushed commit SHA>"
@@ -152,5 +169,9 @@ PF="python3 -I scripts/project_flow.py"
 
 ## Setup check
 
-17. `$PF check` validates `.github/project-flow.json` offline; `$PF check --project "<project URL>"` lists the
-    setup facts (`fact:`) and warnings (`warning:`) and stops with `setup-incomplete` while any fact remains.
+16. See `docs/github-project-setup.md`:
+
+    ```bash
+    $PF check                               # .github/project-flow.json, offline
+    $PF check --project "<project URL>"     # fact: / warning: lines; stop: setup-incomplete while a fact remains
+    ```

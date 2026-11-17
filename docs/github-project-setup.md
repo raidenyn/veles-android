@@ -65,8 +65,8 @@ enable them.
   card of its own and every task has exactly one card. `check` only hints at it: cards may also be added by
   hand.
 
-Other built-in workflows that set a Status do no lasting harm, since the next `sync` derives the Status again,
-but each of their writes is churn that `sync` must undo.
+Other built-in workflows that set a conflicting Status can cause temporary discrepancies and extra writes;
+the next successful `sync` derives the Status again.
 
 ## Variable and secret
 
