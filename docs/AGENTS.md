@@ -115,8 +115,10 @@ A reinstall also drops the fork's own edits, so re-apply each divergence as well
    the current-version mentions in `README.md`, `INTEGRATION.md` and this file.
 6. **Derived project statuses**: the draft spec pre-review PR (`gh pr create --draft`), finalize's
    `gh pr ready` step and its `state,isDraft` confirmation, the closing keyword and follow-up list
-   in the PR body, the single `project_flow.py sync` that confirms In Review without writing it,
-   the `merge-locally` close-the-issue-then-`sync` step and the claim-based `discarded` and
+   in the PR body, the In Review confirmation (only after a `project_flow.py sync` that exits 0
+   and prints `sync: complete`, re-run once for the closing-keyword lag before reporting another
+   Status; the Status is never written), the post-merge Done check that needs the same complete
+   `sync`, the `merge-locally` close-the-issue-then-`sync` step and the claim-based `discarded` and
    `kept-as-is` bullets, in `schema.yaml`, `INTEGRATION.md` and `templates/finalize.md`.
 
 ## OpenCode and the `opencode-rules` plugin
