@@ -5,11 +5,11 @@ For each project item whose content is an issue, `scripts/project_flow.py` SHALL
 
 0. the issue is closed → Done;
 1. the issue carries the blocked label → Blocked;
-2. at least one open, non-draft pull request closes the issue → In Review;
+2. at least one open, non-draft pull request from a trusted source closes the issue → In Review;
 3. the issue has an assignee → In Progress;
 4. every native "blocked by" issue is closed as completed, or there is none → Ready, otherwise → Backlog.
 
-A blocker closed as not planned or as a duplicate MUST NOT count as closed, and the item MUST be reported. Status options MUST be matched by name through the configured role map. Draft-issue and pull-request items on the project MUST be ignored. A write MUST be made only when the derived Status differs from the current one.
+A pull request is from a trusted source when its head repository is the issue's repository, or its author association is OWNER, MEMBER or COLLABORATOR (a pull request without a head repository counts only through the association). A pull request that is not from a trusted source MUST NOT change the derived Status, MUST NOT receive a milestone write, and MUST be reported. A blocker closed as not planned or as a duplicate MUST NOT count as closed, and the item MUST be reported. Status options MUST be matched by name through the configured role map. Draft-issue and pull-request items on the project MUST be ignored. A write MUST be made only when the derived Status differs from the current one.
 
 #### Scenario: Last blocker closes
 - **WHEN** an open, unassigned, unlabelled issue with no closing PR has its last open blocker closed as completed
@@ -22,6 +22,14 @@ A blocker closed as not planned or as a duplicate MUST NOT count as closed, and 
 #### Scenario: Blocker added to a Ready item
 - **WHEN** a native blocker that is open is added to a Ready item
 - **THEN** the next reconciliation makes it Backlog
+
+#### Scenario: Outsider fork PR
+- **WHEN** a non-draft pull request from a fork by an author with no association closes an issue that is Ready
+- **THEN** the issue stays Ready, `next` can still select it, the pull request receives no milestone write, and the report names the ignored pull request
+
+#### Scenario: Collaborator fork PR
+- **WHEN** a non-draft pull request from a fork by a collaborator closes an assigned issue
+- **THEN** the item becomes In Review
 
 #### Scenario: Draft PR
 - **WHEN** the only PR that closes an assigned issue is a draft
@@ -49,7 +57,7 @@ A blocker closed as not planned or as a duplicate MUST NOT count as closed, and 
 - the milestone copy for every open or merged pull request that closes an issue on the project;
 - the report of every open repository milestone that has no open issue and at least one closed issue on the project.
 
-It MUST print one line `ready: <owner>/<repo>#<n> order=<value>` for every item that is Ready after the reconciliation, whoever wrote that Status, with `order=-` for an item without an order value; the post-merge report of newly Ready tasks is built from these lines and the merged issue's blocking list, never from this run's writes. When the project query exposes it, `sync` MUST finish with a line `rate-limit: cost=<total> remaining=<last>`. It MUST attempt every write and report every failed write; a failed write MUST make `sync` finish with the named stop `write-failed` (exit 3) after all reports and completed writes were printed, and MUST make `next` stop with `write-failed` instead of selecting after a failed reconciliation. `start` writes its claim (the assignment and In Progress) before it reconciles the claimed item, so when that reconciliation reports a failed write `start` MUST stop with `write-failed` and MUST NOT announce a successful claim; the completed claim writes stay in place and are not rolled back.
+It MUST print a line `sync: complete` when every item was read completely and no read, conflict or write problem was reported, and otherwise a line `sync: partial (<n> unreadable, <m> conflicts, <k> skipped)` (exit 0 for a partial run unless a write failed); consumers that report or confirm Statuses from a run MUST do so only after `sync: complete`. An item whose blockers the token cannot see (the reported blocker count exceeds the blockers read) MUST be treated as unreadable, never as having no blocker. It MUST print one line `ready: <owner>/<repo>#<n> order=<value>` for every item that is Ready after the reconciliation, whoever wrote that Status, with `order=-` for an item without an order value; the post-merge report of newly Ready tasks is built from these lines and the merged issue's blocking list, never from this run's writes. When the project query exposes it, `sync` MUST finish with a line `rate-limit: cost=<total> remaining=<last>`. It MUST attempt every write and report every failed write; a failed write MUST make `sync` finish with the named stop `write-failed` (exit 3) after all reports and completed writes were printed, and MUST make `next` stop with `write-failed` instead of selecting after a failed reconciliation. `start` writes its claim (the assignment and In Progress) before it reconciles the claimed item, so when that reconciliation reports a failed write `start` MUST stop with `write-failed` and MUST NOT announce a successful claim; the completed claim writes stay in place and are not rolled back.
 
 It MUST follow every paginated connection it reads to its last page. An item whose facts cannot be read completely MUST receive no write and MUST be reported. Running `sync` twice with no change on GitHub in between MUST make no write in the second run. `sync` MUST NOT close, create or rename a milestone, field or Status option.
 
@@ -175,6 +183,10 @@ If the re-read shows any login other than the authenticated user, `start` MUST r
 - **WHEN** a second account is assigned between the claim and the re-read
 - **THEN** `start` reports a collision and stops
 
+#### Scenario: Failed claim reconciliation
+- **WHEN** `start` has assigned the issue and set In Progress but the reconciliation of that item reports a rejected write
+- **THEN** `start` ends with `stop: write-failed` and exit 3, announces no successful claim, and leaves every completed write (the assignment, the status and any other write that succeeded) in place, with no rollback
+
 ### Requirement: Follow-up issues are created fully linked and resumable
 `project_flow.py followup` SHALL create a follow-up issue in this order:
 1. create the issue, with a body linking the PR, the change directory and the place where the work was found, and print the new issue number immediately;
@@ -252,10 +264,6 @@ The output MUST state that a clean warning list does not prove that dependencies
 #### Scenario: Auto-add missing is not a fact
 - **WHEN** *Item closed* is enabled and no *Auto-add to project* workflow exists or it is disabled
 - **THEN** `check` lists one advisory warning, reports no setup fact and exits 0
-
-#### Scenario: Failed claim reconciliation
-- **WHEN** `start` has assigned the issue and set In Progress but the reconciliation of that item reports a rejected write
-- **THEN** `start` ends with `stop: write-failed` and exit 3, announces no successful claim, and leaves every completed write (the assignment, the status and any other write that succeeded) in place, with no rollback
 
 #### Scenario: Unconverted prose dependency
 - **WHEN** an open issue says "Depends on #12" and has no native link to it

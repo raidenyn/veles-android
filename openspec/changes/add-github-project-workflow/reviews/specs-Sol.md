@@ -5,9 +5,9 @@
 - Session preset: [Sol]
 - Cap: 5 rounds per reviewer per pass
 - Upstream hashes:
-  - brainstorm.md sha256 cc91af6286ab0753e157b3cdeaad59feee8388d31ddcb689b22ebbdbdece7a53
-  - proposal.md sha256 37823956307c9e8063bfd26113d734ea50a1034671261e99142e6697460ee20d
-  - design.md sha256 090fa30202de7c840bb37d29a8c7ac32c99e1ed2268ffb9c25316464f7ccc682 (re-pointed in pass 2 after a minor edit narrowing the workflow facts)
+  - brainstorm.md sha256 cc91af6286ab0753e157b3cdeaad59feee8388d31ddcb689b22ebbdbdece7a53 (re-pointed after minor edits: workflow facts, trust qualification)
+  - proposal.md sha256 6a91d7ee3c7aaf368e6c6796593c19914a9f98da6a195fcdf9abb945ac3bcb52 (re-pointed after minor edits: workflow facts, trust qualification)
+  - design.md sha256 c350e1488ff4b27ebd570ae1bfcb6f3ed7d042e829cab7dbbf3582a72739bdd4 (re-pointed after minor edits: workflow facts, trust qualification)
 
 ## Pass 1
 
@@ -63,3 +63,25 @@ Approved content: specs/superspec-tracker-intake/spec.md sha256 d58d36e42c00d40a
 
 ### specs/superspec-closeout/spec.md
 Approved content: specs/superspec-closeout/spec.md sha256 fcb933dc9975934b30972995022e415560ced5fff353e34ab306b9d086908a5f (unchanged in pass 2)
+
+## Pass 3 (triggering edit after the cycle: a high-severity fix from a second whole-branch review)
+
+Edits: derivation rule 2 counts only pull requests from a trusted source (head repository equals the issue's repository, or author association OWNER/MEMBER/COLLABORATOR; others are ignored, get no milestone write and are reported) with two fork scenarios; the sync requirement gains a \`sync: complete\` / \`sync: partial (...)\` summary line (confirmations and reports only after \`sync: complete\`) and treats an item whose blockers the token cannot see as unreadable; the failed-claim scenario moved under 'A task is claimed by assignment'.
+
+### Round 1 — approve (no critical or high finding)
+| Severity | Finding | Disposition |
+| --- | --- | --- |
+| medium | Closeout needs an explicit partial-sync outcome | fixed (finalize clause and scenario 'Partial sync at finalize' in the closeout spec) |
+| medium | A reported missing milestone could still yield \`sync: complete\` | fixed in the code (counts as skipped; summary assertion) |
+| medium | design.md D2/D4 and proposal.md lacked the trust qualification | fixed (non-triggering minor edits; hashes re-pointed with a note) |
+
+Downstream consistency check (tasks.md and plan.md against the edited specs): no contradiction.
+
+### specs/github-project-automation/spec.md
+Approved content: specs/github-project-automation/spec.md sha256 af61fd5016fbe326fd652565b8c0252c95a0bca37b178dc48e485c3553656c09 (pass 3)
+
+### specs/superspec-tracker-intake/spec.md
+Approved content: specs/superspec-tracker-intake/spec.md sha256 d58d36e42c00d40a523137131468f42f300e829fd68a0e207a75e8e28953db2d (pass 3, unchanged since pass 2)
+
+### specs/superspec-closeout/spec.md
+Approved content: specs/superspec-closeout/spec.md sha256 a5b7f0db76e7386b814c7618649e359b215f92936fb6dda1a7db0137a9903925 (pass 3; re-pointed after 1 minor fix made after the approval: the partial-sync finalize clause and scenario)

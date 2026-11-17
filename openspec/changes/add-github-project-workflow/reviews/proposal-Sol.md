@@ -22,4 +22,4 @@
 | --- | --- | --- |
 | — | No new findings; all round-1 findings resolved | — |
 
-Approved content: proposal sha256 37823956307c9e8063bfd26113d734ea50a1034671261e99142e6697460ee20d
+Approved content: proposal sha256 6a91d7ee3c7aaf368e6c6796593c19914a9f98da6a195fcdf9abb945ac3bcb52 (re-pointed after 1 minor fix: the trust qualification of the In Review rule)

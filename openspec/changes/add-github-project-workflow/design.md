@@ -76,7 +76,11 @@ status is derived **only from facts on GitHub**, never from the previous Status.
    work that started and got stuck on something outside the board. Adding the label is the way to set it, so
    the fact survives any concurrent write. A Blocked status without the label is reported by `check`, and the
    setup guide says to use the label.
-2. At least one **open, non-draft** PR closes the issue → In Review.
+2. At least one **open, non-draft** PR **from a trusted source** closes the issue → In Review. A PR is trusted when
+   its head repository is the issue's repository, or its author association is OWNER, MEMBER or COLLABORATOR (a
+   PR without a head repository counts only through the association). Any other PR is ignored by the derivation,
+   gets no milestone write, and is reported: otherwise an outsider's fork PR with a closing keyword could move
+   any Ready issue to In Review and hide it from `next`. *(Added after the whole-branch review.)*
 3. Otherwise, the issue has an **assignee** → In Progress. Assignment is the claim, as GitHub's own convention
    has it ("assign yourself when you start").
 4. Otherwise, every native blocker is closed as completed (or there are none) → Ready, else → Backlog.
@@ -145,7 +149,7 @@ view filters and board position are no longer read. This replaces steps 3–5 of
   `Closes <owner>/<repo>#<n>` across repositories). This links the PR to the issue, fills the item's
   *Linked pull requests* field, and closes the issue on merge. PRs are **not** added as project items, so a
   task has one card.
-- The Action copies the issue's milestone onto the PR when the PR has none. If the closed issues carry
+- The Action copies the issue's milestone onto the PR when the PR is trusted (D2) and has none. If the closed issues carry
   different milestones, or a same-named milestone is missing in the PR's repository, it reports and sets
   nothing.
 - Follow-up issues are sub-issues of the originating issue (D7).

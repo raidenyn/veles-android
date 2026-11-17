@@ -15,7 +15,7 @@ re-tuning the procedure.
 - To: every status is derived from facts on GitHub, first match wins:
   1. issue closed → Done;
   2. the `blocked` label → Blocked;
-  3. an open, non-draft PR that closes the issue → In Review;
+  3. an open, non-draft PR from a trusted source that closes the issue → In Review (trusted: its head repository is the issue's repository, or its author is an owner, member or collaborator; other PRs are ignored and reported);
   4. an assignee → In Progress;
   5. every native blocker closed as completed → Ready, else → Backlog. A blocker closed as not planned or
      duplicate keeps the item in Backlog and is reported.

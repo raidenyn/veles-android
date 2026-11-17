@@ -6,7 +6,7 @@
 - Cap: 5 rounds per reviewer per pass
 - Upstream hashes:
   - brainstorm.md sha256 cc91af6286ab0753e157b3cdeaad59feee8388d31ddcb689b22ebbdbdece7a53
-  - proposal.md sha256 37823956307c9e8063bfd26113d734ea50a1034671261e99142e6697460ee20d
+  - proposal.md sha256 6a91d7ee3c7aaf368e6c6796593c19914a9f98da6a195fcdf9abb945ac3bcb52
 
 ## Pass 1
 
@@ -27,4 +27,6 @@
 | medium | `start` did not refuse Backlog | fixed after approval (refuses anything not Ready; `--force` = explicit user authorization) |
 | medium | The milestone copy covered only open PRs | fixed after approval (open or merged PRs closing project issues) |
 
-Approved content: design sha256 090fa30202de7c840bb37d29a8c7ac32c99e1ed2268ffb9c25316464f7ccc682 (re-pointed again after 1 minor fix made after the final whole-branch review: the setup-check workflow facts narrowed to Item closed)
+Approved content: design sha256 c350e1488ff4b27ebd570ae1bfcb6f3ed7d042e829cab7dbbf3582a72739bdd4 (re-pointed after 3 minor fixes: the setup-check workflow facts, the trust qualification of rule 2 and of the milestone copy)
+
+Upstream (proposal) re-pointed after the minor trust-qualification edit.

@@ -10,7 +10,7 @@ The canonical finalize instruction of the superspec schema:
 - MUST mark a draft pull request ready for review;
 - MUST confirm the pull request is open and not a draft (`gh pr view`);
 - MUST write and commit `finalize.md` on the feature branch with the true `pr-created` or `pr-updated` outcome, only after that confirmation and before the closeout handoff;
-- for tracked work, MUST record the pull request in `tracker.md` (committed and pushed as part of the PR), MUST include a closing keyword for the tracked issue in the PR body, and MUST confirm, after one `project_flow.py sync`, that the item is In Review. It MUST NOT write that Status itself. If the item is not In Review, it reports the derived Status and the reason, and the closeout still starts;
+- for tracked work, MUST record the pull request in `tracker.md` (committed and pushed as part of the PR), MUST include a closing keyword for the tracked issue in the PR body, and MUST confirm, after a `project_flow.py sync` that exits 0 and prints `sync: complete`, that the item is In Review (one further run is allowed for the lag in GitHub's indexing of the closing keyword). It MUST NOT write that Status itself. If the item is not In Review, it reports the derived Status and the reason, and the closeout still starts. After a `sync: partial` run or a non-zero exit it MUST report that it could not confirm, with the summary line, assert no Status, and the closeout still starts;
 - hands off to the closeout rule.
 
 The outcomes `merge-locally`, `kept-as-is` and `discarded` MUST remain available only when the user explicitly chooses a non-canonical flow, and MUST NOT be selected merely because the feature branch has no pull request. A pull request that cannot be created or confirmed MUST stop finalize: the agent MUST report it and MUST NOT record an outcome or start the closeout. The steps that touch the board, the issue or `tracker.md` SHALL apply only to tracked work.
@@ -48,6 +48,10 @@ The order of the closeout MUST be: babysit to green, sync and archive once, revi
 #### Scenario: Tracked work
 - **WHEN** finalize confirms an open, ready-for-review PR with a closing keyword for tracked work, and the issue is open and has no blocked label
 - **THEN** the PR is recorded in `tracker.md`, the item is confirmed In Review without the agent writing it, and the closeout starts
+
+#### Scenario: Partial sync at finalize
+- **WHEN** the `sync` run after marking the PR ready prints `sync: partial (...)`
+- **THEN** finalize reports that it could not confirm the Status, quotes the summary line, writes and asserts no Status, and the closeout still starts
 
 #### Scenario: Derived status is not In Review
 - **WHEN** after the `sync` the item is derived as something other than In Review, for example Blocked because of the label
