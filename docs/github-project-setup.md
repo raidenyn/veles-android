@@ -22,9 +22,10 @@ member or collaborator. A fork pull request from anyone else moves no Status and
 reports it as `ignored untrusted PR <owner>/<repo>#<n>`.
 
 `project_flow.py sync` makes the board match these rules. The workflow runs it on issue and pull request events
-(in a public repository the latter need an Actions policy, see
+(in a public repository, from 2026-12-02, the latter need an Actions policy, see
 [below](#pull_request_target-in-public-repositories-from-2026-12-02)) and once a day, and the agents run it at
-intake and at the closeout. It also copies an issue's milestone onto the pull request that closes it, and reports open milestones that have no open issue left. Draft-issue and
+intake and at the closeout. It also copies an issue's milestone onto the pull request that closes it, and
+reports open milestones that have no open issue left. Draft-issue and
 pull-request cards are ignored.
 
 ## Fields and Status options
@@ -144,15 +145,18 @@ blockers from anywhere), so their item sets do not overlap. The agent's commands
 ## pull_request_target in public repositories (from 2026-12-02)
 
 From 2026-12-02 GitHub blocks `pull_request_target` by default in public repositories unless an Actions event
-policy allows it; private and internal repositories are not affected. The project-flow workflow depends on it
-for its pull request events (opened, reopened, ready for review, converted to draft, closed). Before that date,
-the owner of a public repository must allow `pull_request_target` for `.github/workflows/project-flow.yml` in
-the repository's Actions policies (*Settings → Actions → Policies*: an event rule, targeted at this workflow
-file).
+policy allows it; private and internal repositories are not affected. Before that date, outside GitHub's
+announced brownouts, no explicit allowance is required. The project-flow workflow depends on it for its pull
+request events (opened, reopened, ready for review, converted to draft, closed). To keep them running, the owner
+of a public repository must allow `pull_request_target` for `.github/workflows/project-flow.yml` in the
+repository's Actions policies (*Settings → Actions → Policies*: an event rule, targeted at this workflow file)
+before that date.
 
 Until it is allowed, the pull request events are blocked (failed runs with an annotation). The issue,
-schedule and manual events and the agent's own `sync` keep working, and the daily run reconciles what the
-blocked events missed.
+schedule and manual events are expected to remain unaffected by this default block, subject to any other
+policy the owner has configured. Once the event is allowed, the pull request events resume with the next
+successful run. The agent's own `sync` runs on the user's machine and is independent of Actions event
+enforcement.
 
 The exact steps for a user-owned repository were **not verified** here; the first real run after the merge
 confirms them. Sources:

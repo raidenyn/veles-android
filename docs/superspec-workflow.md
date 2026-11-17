@@ -283,8 +283,9 @@ open a fork pull request whose body closes an issue, so an untrusted one moves n
 duplicate does not count as closed, and `sync` reports it for every open issue, whichever rule decides its
 Status. Option names come from the role map in `.github/project-flow.json`.
 `sync` makes the board match the derivation; the repository's `project-flow` workflow runs it on issue and pull
-request events (in a public repository only where an Actions policy allows `pull_request_target`; see
-`docs/github-project-setup.md`) and daily, and the agent runs it at intake, after the claim and at the closeout.
+request events (in a public repository, from 2026-12-02, only where an Actions policy allows
+`pull_request_target`; see `docs/github-project-setup.md`) and daily, and the agent runs it at intake, after
+the claim and at the closeout.
 
 `sync` prints its writes (`write: …`, or `would write: …` with `--dry-run`), its reports, one line
 `ready: <owner>/<repo>#<n> order=<value>` for **every** item that is Ready once its writes land — whoever made it
