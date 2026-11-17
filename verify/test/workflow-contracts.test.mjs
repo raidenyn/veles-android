@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { lstatSync, readFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1352,13 +1352,299 @@ test('the remote-code scan scopes exist and cover the CI, tooling and hook sourc
   const { REMOTE_CODE_SCOPES, missingScopes } = await import(new URL('verify/check-remote-code.mjs', root));
   assert.deepEqual(await missingScopes(repository, REMOTE_CODE_SCOPES), [], 'every remote-code scope must exist');
   assert.deepEqual(await missingScopes(repository, ['web-extension/manifest.json']), ['web-extension/manifest.json'], 'a missing scope must be reported');
-  for (const scope of ['.github/workflows/check-native-host.yml', '.github/workflows/check-installer.yml', '.github/workflows/check-docs.yml', '.github/workflows/ci.yml', '.github/workflows/pr-title.yml', 'scripts', '.githooks', 'web-extension/vite.config.ts']) {
+  for (const scope of ['.github/workflows/check-native-host.yml', '.github/workflows/check-installer.yml', '.github/workflows/check-docs.yml', '.github/workflows/ci.yml', '.github/workflows/pr-title.yml', '.github/workflows/project-flow.yml', 'scripts', 'scripts/project_flow.py', '.githooks', 'web-extension/vite.config.ts']) {
     assert.ok(REMOTE_CODE_SCOPES.includes(scope), `the remote-code scan must cover ${scope}`);
   }
   assert.ok(REMOTE_CODE_SCOPES.includes('docs/checks/'), 'the remote-code scan must cover the docs node check scripts');
   for (const scope of ['.github/workflows/build-native-host.yml', 'web-extension/manifest.json']) {
     assert.ok(!REMOTE_CODE_SCOPES.includes(scope), `the remote-code scan must not list ${scope}`);
   }
+});
+
+// project-flow.yml (design D8): reconciles the GitHub Project from facts on GitHub. pull_request_target
+// hands the job the PROJECT_TOKEN secret, so the job may only ever run the default branch's code, never
+// the PR's; it triggers on no `edited` event, and a guard skips every other step until both PROJECT_URL
+// and PROJECT_TOKEN are set. The job enters the environment named in .github/project-flow.json by its
+// plain name, so the secret and the variable resolve from there (scripts/tests checks the two agree).
+const PROJECT_FLOW_FILE = 'project-flow.yml';
+const PROJECT_FLOW_ENVIRONMENT = 'project-actions';
+const PROJECT_FLOW_EVENTS = {
+  issues: ['closed', 'reopened', 'labeled', 'unlabeled', 'assigned', 'unassigned'],
+  pull_request_target: ['opened', 'reopened', 'ready_for_review', 'converted_to_draft', 'closed'],
+};
+const PROJECT_FLOW_GATE = "steps.guard.outputs.configured == 'true'";
+const DEFAULT_BRANCH_REF = '${{ github.event.repository.default_branch }}';
+const PROJECT_FLOW_SYNC = 'python3 -I scripts/project_flow.py sync --mode action --repo "$GITHUB_REPOSITORY" --project "$PROJECT_URL"';
+
+// The steps of a job block, each as its text (step-level keys sit at column 8).
+function jobStepTexts(jobBlock) {
+  const lines = jobBlock.split('\n');
+  const start = lines.findIndex((line) => /^    steps:\s*$/.test(line));
+  assert.notEqual(start, -1, 'the job must declare steps');
+  const result = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() && !line.startsWith('      ')) break;
+    if (/^      - /.test(line)) result.push([]);
+    if (result.length > 0) result[result.length - 1].push(line);
+  }
+  return result.map((step) => step.join('\n'));
+}
+
+function stepKey(step, key) {
+  return step.match(new RegExp(`^(?:      - |        )${escapeRegexp(key)}:[ \\t]*(.*)$`, 'm'))?.[1].trim() ?? null;
+}
+
+// A step-level block mapping (env: or with:) as { key: value } with its values verbatim.
+function stepBlock(step, key) {
+  const lines = step.split('\n');
+  const start = lines.findIndex((line) => new RegExp(`^(?:      - |        )${escapeRegexp(key)}:\\s*$`).test(line));
+  if (start === -1) return null;
+  const entries = {};
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() && !line.startsWith('          ')) break;
+    const entry = mappingEntry(line);
+    if (entry && entry.indent === 10) entries[entry.key] = entry.value.trim();
+  }
+  return entries;
+}
+
+// The literal block `run: |` script of a step, dedented, exactly as the runner would execute it.
+function stepRunScript(step) {
+  const lines = step.split('\n');
+  const start = lines.findIndex((line) => /^(?:      - |        )run: \|\s*$/.test(line));
+  assert.notEqual(start, -1, 'the step must use a literal block run script');
+  const body = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() && !line.startsWith('          ')) break;
+    body.push(line.slice(10));
+  }
+  return `${body.join('\n').trimEnd()}\n`;
+}
+
+// Every actions/checkout step pins the default branch and drops the token from .git/config.
+function assertDefaultBranchCheckouts(source, name) {
+  const checkouts = steps(source).filter((step) => stepUses(step).some((value) => /^actions\/checkout@/.test(value)));
+  assert.ok(checkouts.length > 0, `${name} must check out the default branch`);
+  for (const step of checkouts) {
+    const text = step.join('\n');
+    const withBlock = stepBlock(text, 'with') ?? {};
+    assert.equal(withBlock.ref, DEFAULT_BRANCH_REF, `${name} must check out ref: ${DEFAULT_BRANCH_REF}`);
+    assert.equal(withBlock['persist-credentials'], 'false', `${name} must check out with persist-credentials: false`);
+  }
+}
+
+function runBash(script, env) {
+  const directory = mkdtempSync(join(tmpdir(), 'project-flow-step-'));
+  try {
+    const scriptFile = join(directory, 'step.sh');
+    writeFileSync(scriptFile, script);
+    const files = {};
+    for (const [key, value] of Object.entries(env)) {
+      if (value !== '<file>') continue;
+      files[key] = join(directory, key);
+      writeFileSync(files[key], '');
+    }
+    // The runner's default shell for `run:` on Linux is `bash -e {0}`.
+    const result = spawnSync('bash', ['-e', scriptFile], { env: { PATH: process.env.PATH, ...env, ...files }, encoding: 'utf8' });
+    const contents = Object.fromEntries(Object.entries(files).map(([key, path]) => [key, readFileSync(path, 'utf8')]));
+    return { status: result.status, stdout: result.stdout, files: contents };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+// Executes the guard script four times: configured only when both the URL and the token exist.
+function assertGuardBehaviour(script) {
+  for (const [url, token, expected] of [['', 'false', 'false'], ['https://github.com/orgs/example/projects/1', 'false', 'false'], ['', 'true', 'false'], ['https://github.com/orgs/example/projects/1', 'true', 'true']]) {
+    const label = `PROJECT_URL ${url ? 'set' : 'empty'}, HAS_TOKEN ${token}`;
+    const result = runBash(script, { PROJECT_URL: url, HAS_TOKEN: token, GITHUB_OUTPUT: '<file>' });
+    assert.equal(result.status, 0, `the guard must succeed with ${label}`);
+    assert.equal(result.files.GITHUB_OUTPUT, `configured=${expected}\n`, `the guard must write configured=${expected} with ${label}`);
+    if (expected === 'false') assert.match(result.stdout, /^::notice::project-flow not configured$/m, `the guard must print the not-configured notice with ${label}`);
+    else assert.doesNotMatch(result.stdout, /not configured/, `the guard must not print the notice with ${label}`);
+  }
+}
+
+// Executes the sync script against a fake python3 that also prints a workflow command: the command is
+// exact; its output reaches the log only between `::stop-commands::<token>` and `::<token>::`, with a
+// fresh random token each run; the summary gets a heading and the output inside a four-backtick fence;
+// and the step exits with sync's exit code.
+function assertSyncBehaviour(script) {
+  const directory = mkdtempSync(join(tmpdir(), 'project-flow-bin-'));
+  try {
+    const fake = join(directory, 'python3');
+    writeFileSync(fake, '#!/bin/sh\nprintf \'argv:%s\\n::error::injected\\n\' "$*"\nexit "$FAKE_EXIT"\n');
+    chmodSync(fake, 0o755);
+    const project = 'https://github.com/orgs/example/projects/1';
+    const argv = `argv:-I scripts/project_flow.py sync --mode action --repo example/repo --project ${project}`;
+    const tokens = new Set();
+    for (const exit of [0, 1, 3]) {
+      const result = runBash(script, { PATH: `${directory}:${process.env.PATH}`, FAKE_EXIT: String(exit), GITHUB_REPOSITORY: 'example/repo', PROJECT_URL: project, GH_TOKEN: 'token', GITHUB_STEP_SUMMARY: '<file>' });
+      const lines = result.stdout.split('\n');
+      const start = lines.findIndex((line) => /^::stop-commands::[0-9a-f]{32}$/.test(line));
+      assert.ok(start !== -1, 'sync output must be wrapped in ::stop-commands:: with a 32-hex-digit token');
+      const token = lines[start].slice('::stop-commands::'.length);
+      const end = lines.indexOf(`::${token}::`);
+      assert.ok(end > lines.indexOf(argv) && lines.indexOf(argv) > start && lines.indexOf('::error::injected') < end, 'sync output must sit between ::stop-commands:: and the resume line ::<token>::');
+      tokens.add(token);
+      assert.equal(result.status, exit, `the sync step must exit ${exit} when sync exits ${exit}`);
+      const summary = result.files.GITHUB_STEP_SUMMARY;
+      assert.match(summary, /^## /, 'the job summary must start with a heading');
+      assert.ok(summary.includes(`\n\`\`\`\`text\n${argv}\n::error::injected\n\`\`\`\`\n`), 'the summary must carry the sync output of the exact action-mode command inside a four-backtick fence');
+    }
+    assert.equal(tokens.size, 3, 'the stop-commands token must be random on every run');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+// Exactly one schedule entry, and it fires once a day: one numeric minute and hour, every other field `*`.
+function assertDailySchedule(on, name) {
+  const crons = [...on.matchAll(/^\s*-\s*cron:\s*(.*)$/gm)].map((match) => match[1]);
+  assert.equal(crons.length, 1, `${name} must declare exactly one schedule`);
+  const daily = crons[0].match(/^'([0-9]|[1-5][0-9]) ([0-9]|1[0-9]|2[0-3]) \* \* \*'$/);
+  assert.ok(daily, `${name} must run its schedule once a day ('M H * * *'), not ${crons[0]}`);
+}
+
+function assertProjectFlowWorkflow(source) {
+  const name = PROJECT_FLOW_FILE;
+  const on = prWorkflowOnBlock(source);
+  assert.deepEqual(on.split('\n').map(mappingEntry).filter((entry) => entry?.indent === 2).map((entry) => entry.key), ['issues', 'pull_request_target', 'schedule', 'workflow_dispatch'], `${name} must trigger on exactly issues, pull_request_target, schedule and workflow_dispatch`);
+  for (const [event, types] of Object.entries(PROJECT_FLOW_EVENTS)) {
+    assert.match(on, new RegExp(`^  ${event}:\\n    types: ${escapeRegexp(`[${types.join(', ')}]`)}$`, 'm'), `${name} must trigger on ${event} types exactly [${types.join(', ')}]`);
+  }
+  assertDailySchedule(on, name);
+  assert.doesNotMatch(on, /\bedited\b/, `${name} must not trigger on edited`);
+  assert.deepEqual(prWorkflowPermissions(source), ['contents: read'], `${name} must be read-only at workflow scope`);
+  assert.match(source, /^concurrency:\n  group: project-flow\n  cancel-in-progress: false$/m, `${name} must run in one group that never cancels a reconciliation`);
+  assertActionsPinned(source, name);
+  assertDefaultBranchCheckouts(source, name);
+  assert.doesNotMatch(source, /head\.(?:sha|ref)\b|github\.head_ref|refs\/pull\//, `${name} must never name the PR head`);
+  assert.doesNotMatch(executableYaml(source), /git fetch/, `${name} must not fetch any other ref`);
+  assert.deepEqual([...new Set([...source.matchAll(/\bsecrets\.([A-Za-z_][A-Za-z0-9_]*)/g)].map((match) => match[1]))], ['PROJECT_TOKEN'], `${name} must reference only the PROJECT_TOKEN secret`);
+  assert.doesNotMatch(executableYaml(source), /secrets:\s*inherit/, `${name} must not inherit secrets`);
+  for (const command of runCommands(source)) {
+    assert.doesNotMatch(command, /\$\{\{/, `${name} run scripts must take every value from env, never from an expression`);
+    assert.doesNotMatch(command, /\b(?:pip3?|npm|apt(?:-get)?|brew|cargo)\s+(?:ci|install)\b|-m\s+pip\b/, `${name} must install nothing`);
+  }
+  const jobs = workflowJobBlocks(source);
+  assert.deepEqual(Object.keys(jobs), ['project-flow'], `${name} must define exactly one job`);
+  const job = jobs['project-flow'];
+  assert.equal(jobRunner(job), 'ubuntu-latest', `${name} must run on ubuntu-latest`);
+  assert.match(job, /^    timeout-minutes: \d+\s*$/m, `${name} must bound the job with timeout-minutes`);
+  assert.doesNotMatch(job, /^    (?:if|needs|permissions):/m, `${name} must not skip events, depend on jobs or widen permissions`);
+  const environments = [...executableYaml(source).matchAll(/^(\s*)environment:(.*)$/gm)].map((match) => [match[1].length, match[2].trim()]);
+  assert.deepEqual(environments.map(([indent]) => indent), [4], `${name} must declare exactly one environment, at job level`);
+  assert.equal(environments[0][1], PROJECT_FLOW_ENVIRONMENT, `${name} must enter the environment ${PROJECT_FLOW_ENVIRONMENT} by its plain name`);
+  const stepTexts = jobStepTexts(job);
+  const guardIndex = stepTexts.findIndex((step) => stepKey(step, 'id') === 'guard');
+  assert.equal(guardIndex, 0, `${name} must run the guard first, before it needs any repository file`);
+  const guard = stepTexts[guardIndex];
+  assert.equal(stepKey(guard, 'uses'), null, 'the guard must not run an action');
+  assert.deepEqual(stepBlock(guard, 'env'), { PROJECT_URL: '${{ vars.PROJECT_URL }}', HAS_TOKEN: "${{ secrets.PROJECT_TOKEN != '' }}" }, 'the guard must read only the PROJECT_URL variable and whether PROJECT_TOKEN is set');
+  assertGuardBehaviour(stepRunScript(guard));
+  const later = stepTexts.slice(guardIndex + 1);
+  assert.ok(later.length >= 2, `${name} must check out and sync after the guard`);
+  for (const step of later) {
+    assert.equal(stepKey(step, 'if'), PROJECT_FLOW_GATE, `every ${name} step after the guard must be gated on ${PROJECT_FLOW_GATE}`);
+  }
+  const syncs = later.filter((step) => step.includes('scripts/project_flow.py'));
+  assert.equal(syncs.length, 1, `${name} must run sync in exactly one step`);
+  const [sync] = syncs;
+  assert.deepEqual(stepBlock(sync, 'env'), { GH_TOKEN: '${{ secrets.PROJECT_TOKEN }}', PROJECT_URL: '${{ vars.PROJECT_URL }}' }, 'sync must receive the token and the project URL through env only');
+  const script = stepRunScript(sync);
+  assert.ok(script.includes(PROJECT_FLOW_SYNC), `sync must run: ${PROJECT_FLOW_SYNC}`);
+  assert.match(script, /tee -a "\$GITHUB_STEP_SUMMARY"/, 'sync output must be teed to the job summary');
+  assertSyncBehaviour(script);
+}
+
+test('project-flow workflow reconciles on safe events only', async () => {
+  const source = await workflow(PROJECT_FLOW_FILE);
+  assertProjectFlowWorkflow(source);
+  // Not a required check and not part of the CI graph.
+  assert.doesNotMatch(await workflow('ci.yml'), /project-flow/, 'ci.yml must not call or need project-flow');
+  const prTypes = `[${PROJECT_FLOW_EVENTS.pull_request_target.join(', ')}]`;
+  const issueTypes = `[${PROJECT_FLOW_EVENTS.issues.join(', ')}]`;
+  const gate = `if: ${PROJECT_FLOW_GATE}`;
+  // label: [mutation, the start of the assertion message it must fail with]
+  const mutations = {
+    'edited PR trigger': [(text) => text.replace(prTypes, prTypes.replace('opened,', 'opened, edited,')), `${PROJECT_FLOW_FILE} must trigger on pull_request_target types exactly`],
+    'edited issue trigger': [(text) => text.replace(issueTypes, issueTypes.replace(']', ', edited]')), `${PROJECT_FLOW_FILE} must trigger on issues types exactly`],
+    'synchronize PR trigger': [(text) => text.replace(prTypes, prTypes.replace(']', ', synchronize]')), `${PROJECT_FLOW_FILE} must trigger on pull_request_target types exactly`],
+    'dropped PR trigger type': [(text) => text.replace(prTypes, prTypes.replace(', converted_to_draft', '')), `${PROJECT_FLOW_FILE} must trigger on pull_request_target types exactly`],
+    'pull_request trigger': [(text) => text.replace('  pull_request_target:\n', '  pull_request:\n'), `${PROJECT_FLOW_FILE} must trigger on exactly issues, pull_request_target, schedule and workflow_dispatch`],
+    'push trigger': [(text) => text.replace('  workflow_dispatch:\n', '  workflow_dispatch:\n  push:\n'), `${PROJECT_FLOW_FILE} must trigger on exactly issues, pull_request_target, schedule and workflow_dispatch`],
+    'hourly schedule': [(text) => text.replace(/    - cron: '[^'\n]+'\n/, "    - cron: '0 * * * *'\n"), `${PROJECT_FLOW_FILE} must run its schedule once a day`],
+    'weekly schedule': [(text) => text.replace(/    - cron: '[^'\n]+'\n/, "    - cron: '23 4 * * 1'\n"), `${PROJECT_FLOW_FILE} must run its schedule once a day`],
+    'two schedules': [(text) => text.replace(/(    - cron: '[^'\n]+'\n)/, "$1    - cron: '0 12 * * *'\n"), `${PROJECT_FLOW_FILE} must declare exactly one schedule`],
+    'head sha checkout': [(text) => text.replace(`ref: ${DEFAULT_BRANCH_REF}`, 'ref: ${{ github.event.pull_request.head.sha }}'), `${PROJECT_FLOW_FILE} must check out ref: ${DEFAULT_BRANCH_REF}`],
+    'github.sha checkout': [(text) => text.replace(`ref: ${DEFAULT_BRANCH_REF}`, 'ref: ${{ github.sha }}'), `${PROJECT_FLOW_FILE} must check out ref: ${DEFAULT_BRANCH_REF}`],
+    'missing ref': [(text) => text.replace(`          ref: ${DEFAULT_BRANCH_REF}\n`, ''), `${PROJECT_FLOW_FILE} must check out ref: ${DEFAULT_BRANCH_REF}`],
+    'persisted credentials': [(text) => text.replace('persist-credentials: false', 'persist-credentials: true'), `${PROJECT_FLOW_FILE} must check out with persist-credentials: false`],
+    'unpinned checkout': [(text) => text.replace(/actions\/checkout@[0-9a-f]{40} # v7/, 'actions/checkout@v7'), `${PROJECT_FLOW_FILE} uses "actions/checkout@v7" which must be`],
+    'PR head fetch': [(text) => text.replace('          set -o pipefail\n', '          set -o pipefail\n          git fetch origin "refs/pull/1/head"\n'), `${PROJECT_FLOW_FILE} must never name the PR head`],
+    'second secret': [(text) => text.replace('          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}\n', '          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}\n          OTHER: ${{ secrets.OTHER_TOKEN }}\n'), `${PROJECT_FLOW_FILE} must reference only the PROJECT_TOKEN secret`],
+    'GITHUB_TOKEN as the write token': [(text) => text.replace('GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}', 'GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}'), `${PROJECT_FLOW_FILE} must reference only the PROJECT_TOKEN secret`],
+    'project URL interpolated into run': [(text) => text.replace('--project "$PROJECT_URL"', '--project "${{ vars.PROJECT_URL }}"'), `${PROJECT_FLOW_FILE} run scripts must take every value from env, never from an expression`],
+    'write permission': [(text) => text.replace('permissions:\n  contents: read', 'permissions:\n  contents: write'), `${PROJECT_FLOW_FILE} must be read-only at workflow scope`],
+    'cancelling concurrency': [(text) => text.replace('cancel-in-progress: false', 'cancel-in-progress: true'), `${PROJECT_FLOW_FILE} must run in one group that never cancels a reconciliation`],
+    'pip install': [(text) => text.replace('          set -o pipefail\n', '          set -o pipefail\n          pip install requests\n'), `${PROJECT_FLOW_FILE} must install nothing`],
+    'npm install': [(text) => text.replace('          set -o pipefail\n', '          set -o pipefail\n          npm ci\n'), `${PROJECT_FLOW_FILE} must install nothing`],
+    'apt install': [(text) => text.replace('          set -o pipefail\n', '          set -o pipefail\n          sudo apt-get install -y jq\n'), `${PROJECT_FLOW_FILE} must install nothing`],
+    'ungated checkout': [(text) => text.replace(`        ${gate}\n        uses: actions/checkout`, '        uses: actions/checkout'), `every ${PROJECT_FLOW_FILE} step after the guard must be gated on ${PROJECT_FLOW_GATE}`],
+    'ungated sync': [(text) => text.replace(`        ${gate}\n        env:\n          GH_TOKEN`, '        env:\n          GH_TOKEN'), `every ${PROJECT_FLOW_FILE} step after the guard must be gated on ${PROJECT_FLOW_GATE}`],
+    'guard accepts URL only': [(text) => text.replace('[ -n "$PROJECT_URL" ] && [ "$HAS_TOKEN" = "true" ]', '[ -n "$PROJECT_URL" ]'), `the guard must write configured=false with PROJECT_URL set, HAS_TOKEN false`],
+    'guard accepts token only': [(text) => text.replace('[ -n "$PROJECT_URL" ] && [ "$HAS_TOKEN" = "true" ]', '[ "$HAS_TOKEN" = "true" ]'), `the guard must write configured=false with PROJECT_URL empty, HAS_TOKEN true`],
+    'guard accepts either': [(text) => text.replace('[ -n "$PROJECT_URL" ] && [ "$HAS_TOKEN" = "true" ]', '[ -n "$PROJECT_URL" ] || [ "$HAS_TOKEN" = "true" ]'), `the guard must write configured=false with PROJECT_URL set, HAS_TOKEN false`],
+    'silent guard': [(text) => text.replace('::notice::project-flow not configured', 'skipped'), `the guard must print the not-configured notice with PROJECT_URL empty, HAS_TOKEN false`],
+    'agent mode': [(text) => text.replace('--mode action', '--mode agent'), `sync must run: ${PROJECT_FLOW_SYNC}`],
+    'no summary': [(text) => text.replace(' | tee -a "$GITHUB_STEP_SUMMARY"', ''), `sync output must be teed to the job summary`],
+    'no stop-commands': [(text) => text.replace('          echo "::stop-commands::$token"\n', ''), 'sync output must be wrapped in ::stop-commands::'],
+    'commands never resumed': [(text) => text.replace('          echo "::$token::"\n', ''), 'sync output must sit between ::stop-commands:: and the resume line'],
+    'resumed before sync': [(text) => text.replace('          echo "::$token::"\n', '').replace('          status=0\n', '          echo "::$token::"\n          status=0\n'), 'sync output must sit between ::stop-commands:: and the resume line'],
+    'fixed token': [(text) => text.replace('token=$(openssl rand -hex 16)', 'token=0123456789abcdef0123456789abcdef'), 'the stop-commands token must be random on every run'],
+    'three-backtick fence': [(text) => text.replace(/````/g, '```'), 'the summary must carry the sync output of the exact action-mode command inside a four-backtick fence'],
+    'swallowed failure': [(text) => text.replace('exit "$status"', 'exit 0'), `the sync step must exit 1 when sync exits 1`],
+    'job-level skip': [(text) => text.replace('    runs-on: ubuntu-latest\n', "    if: github.event_name != 'issues'\n    runs-on: ubuntu-latest\n"), `${PROJECT_FLOW_FILE} must not skip events, depend on jobs or widen permissions`],
+    'no environment': [(text) => text.replace(`    environment: ${PROJECT_FLOW_ENVIRONMENT}\n`, ''), `${PROJECT_FLOW_FILE} must declare exactly one environment, at job level`],
+    'step-level environment': [(text) => text.replace(`    environment: ${PROJECT_FLOW_ENVIRONMENT}\n`, '').replace('        id: guard\n', `        id: guard\n        environment: ${PROJECT_FLOW_ENVIRONMENT}\n`), `${PROJECT_FLOW_FILE} must declare exactly one environment, at job level`],
+    'expression environment': [(text) => text.replace(`    environment: ${PROJECT_FLOW_ENVIRONMENT}\n`, "    environment: ${{ github.event_name == 'schedule' && 'project-actions' || 'other' }}\n"), `${PROJECT_FLOW_FILE} must enter the environment ${PROJECT_FLOW_ENVIRONMENT} by its plain name`],
+    'mapping environment': [(text) => text.replace(`    environment: ${PROJECT_FLOW_ENVIRONMENT}\n`, `    environment:\n      name: ${PROJECT_FLOW_ENVIRONMENT}\n`), `${PROJECT_FLOW_FILE} must enter the environment ${PROJECT_FLOW_ENVIRONMENT} by its plain name`],
+    'other environment': [(text) => text.replace(`    environment: ${PROJECT_FLOW_ENVIRONMENT}\n`, '    environment: release-publish\n'), `${PROJECT_FLOW_FILE} must enter the environment ${PROJECT_FLOW_ENVIRONMENT} by its plain name`],
+    'no timeout': [(text) => text.replace(/^    timeout-minutes: \d+\n/m, ''), `${PROJECT_FLOW_FILE} must bound the job with timeout-minutes`],
+  };
+  for (const [label, [mutate, reason]] of Object.entries(mutations)) {
+    const mutated = mutate(source);
+    assert.notEqual(mutated, source, `mutation "${label}" must change ${PROJECT_FLOW_FILE}`);
+    assert.throws(() => assertProjectFlowWorkflow(mutated), { name: 'AssertionError', message: new RegExp(`^${escapeRegexp(reason)}`) }, `the project-flow contract must reject "${label}" because: ${reason}`);
+  }
+});
+
+test('the default-branch checkout check rejects every other ref', () => {
+  const checkout = (withLines) => `jobs:\n  a:\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n        with:\n${withLines}`;
+  assert.doesNotThrow(() => assertDefaultBranchCheckouts(checkout(`          ref: ${DEFAULT_BRANCH_REF}\n          persist-credentials: false\n`), 'fixture'));
+  for (const [label, withLines] of Object.entries({
+    'missing ref': '          persist-credentials: false\n',
+    'github.sha': '          ref: ${{ github.sha }}\n          persist-credentials: false\n',
+    'github.ref': '          ref: ${{ github.ref }}\n          persist-credentials: false\n',
+    'PR head sha': '          ref: ${{ github.event.pull_request.head.sha }}\n          persist-credentials: false\n',
+    'persisted credentials': `          ref: ${DEFAULT_BRANCH_REF}\n`,
+  })) {
+    assert.throws(() => assertDefaultBranchCheckouts(checkout(withLines), 'fixture'), /must check out/, `the checkout check must reject ${label}`);
+  }
+  assert.throws(() => assertDefaultBranchCheckouts('jobs:\n  a:\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n', 'fixture'), /must check out ref/, 'a checkout without with: must be rejected');
+});
+
+test('the daily schedule check rejects every other cadence', () => {
+  const on = (cron) => `  schedule:\n    - cron: '${cron}'\n  workflow_dispatch:`;
+  for (const cron of ['23 4 * * *', '0 0 * * *', '59 23 * * *']) {
+    assert.doesNotThrow(() => assertDailySchedule(on(cron), 'fixture'), `${cron} is daily`);
+  }
+  for (const cron of ['0 * * * *', '*/30 4 * * *', '0 */6 * * *', '0 4,16 * * *', '0 4 * * 1', '0 4 1 * *', '0 4 * 1 *', '60 4 * * *', '0 24 * * *', '0 4 * * *  ']) {
+    assert.throws(() => assertDailySchedule(on(cron), 'fixture'), /once a day/, `the schedule check must reject '${cron}'`);
+  }
+  assert.throws(() => assertDailySchedule(`${on('0 4 * * *')}\n    - cron: '0 16 * * *'`, 'fixture'), /exactly one/, 'two schedules must be rejected');
+  assert.throws(() => assertDailySchedule('  workflow_dispatch:', 'fixture'), /exactly one/, 'a missing schedule must be rejected');
 });
 
 // publish-release.yml (design D4): the only release-producing workflow. It absorbed the retired

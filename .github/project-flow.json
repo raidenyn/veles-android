@@ -1,0 +1,14 @@
+{
+  "status_field": "Status",
+  "roles": {
+    "backlog": "Backlog",
+    "ready": "Ready",
+    "in_progress": "In Progress",
+    "in_review": "In Review",
+    "blocked": "Blocked",
+    "done": "Done"
+  },
+  "order_field": "Implementation order",
+  "blocked_label": "blocked",
+  "environment": "project-actions"
+}

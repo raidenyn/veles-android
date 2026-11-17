@@ -1,0 +1,77 @@
+name: project-flow
+
+# Reconciles the GitHub Project from facts on GitHub (issue state, the blocked label, closing PRs,
+# assignees and blockers) by running `scripts/project_flow.py sync` on every listed event, daily as a
+# safety net (GitHub emits no event for dependency changes) and on demand.
+#
+# Trusted code only: pull_request_target hands the job the PROJECT_TOKEN secret, so the job checks out the
+# repository's DEFAULT branch whatever the event and never fetches or runs pull request code; it reads PR
+# metadata through the API only. There is no `edited` trigger (only pr-title.yml may use one): a closing
+# keyword added by a later body edit is picked up by the next event or the daily run.
+#
+# The job enters the Actions environment named in .github/project-flow.json (a plain name, never an
+# expression), so the variable PROJECT_URL and the secret PROJECT_TOKEN resolve from that environment
+# (or from the repository level for a name the environment does not define). Until both are set, the
+# guard skips every other step with a notice, so an unconfigured repository runs no repository code at
+# all. The token reaches the script only through env. This is not a required check and not part of ci.yml.
+
+on:
+  issues:
+    types: [closed, reopened, labeled, unlabeled, assigned, unassigned]
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, converted_to_draft, closed]
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-flow
+  cancel-in-progress: false
+
+jobs:
+  project-flow:
+    name: project-flow
+    runs-on: ubuntu-latest
+    environment: project-actions
+    timeout-minutes: 15
+    steps:
+      - name: Check the configuration
+        id: guard
+        env:
+          PROJECT_URL: ${{ vars.PROJECT_URL }}
+          HAS_TOKEN: ${{ secrets.PROJECT_TOKEN != '' }}
+        run: |
+          if [ -n "$PROJECT_URL" ] && [ "$HAS_TOKEN" = "true" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::project-flow not configured"
+          fi
+      - name: Check out the default branch
+        if: steps.guard.outputs.configured == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Reconcile the project
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          PROJECT_URL: ${{ vars.PROJECT_URL }}
+        # sync prints text from GitHub (titles, logins, error texts). Workflow commands are switched off
+        # around it with a random token, so no printed line can act as one; sync itself replaces every
+        # backtick and control character, so its output cannot close the four-backtick fence it is teed
+        # into in the job summary. The step still fails with sync's exit code.
+        run: |
+          set -o pipefail
+          token=$(openssl rand -hex 16)
+          printf '## project-flow sync\n\n````text\n' >> "$GITHUB_STEP_SUMMARY"
+          echo "::stop-commands::$token"
+          status=0
+          python3 -I scripts/project_flow.py sync --mode action --repo "$GITHUB_REPOSITORY" --project "$PROJECT_URL" | tee -a "$GITHUB_STEP_SUMMARY" || status=$?
+          echo "::$token::"
+          printf '````\n' >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

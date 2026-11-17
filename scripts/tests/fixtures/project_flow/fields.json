@@ -1,0 +1,46 @@
+{
+  "data": {
+    "user": {
+      "projectV2": {
+        "id": "PVT_project1",
+        "order": {
+          "__typename": "ProjectV2Field",
+          "dataType": "NUMBER",
+          "id": "PVTF_field1",
+          "name": "Implementation order"
+        },
+        "status": {
+          "__typename": "ProjectV2SingleSelectField",
+          "id": "PVTSSF_field1",
+          "name": "Status",
+          "options": [
+            {
+              "id": "opt1",
+              "name": "Backlog"
+            },
+            {
+              "id": "opt2",
+              "name": "Ready"
+            },
+            {
+              "id": "opt3",
+              "name": "In Progress"
+            },
+            {
+              "id": "opt4",
+              "name": "In Review"
+            },
+            {
+              "id": "opt5",
+              "name": "Blocked"
+            },
+            {
+              "id": "opt6",
+              "name": "Done"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

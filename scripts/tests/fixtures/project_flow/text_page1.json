@@ -1,0 +1,23 @@
+{
+  "data": {
+    "repository": {
+      "issue": {
+        "body": "Scratch issue for project_flow fixtures: pf main item",
+        "comments": {
+          "nodes": [
+            {
+              "body": "First comment on the main item."
+            },
+            {
+              "body": "Second comment on the main item."
+            }
+          ],
+          "pageInfo": {
+            "endCursor": "cursor6",
+            "hasNextPage": true
+          }
+        }
+      }
+    }
+  }
+}

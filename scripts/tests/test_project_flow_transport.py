@@ -1,0 +1,273 @@
+"""Tests for GhTransport argument encoding and FakeTransport behaviour. No network."""
+import json
+import os
+import subprocess
+import sys
+import unittest
+from unittest import mock
+
+SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, SCRIPTS)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import project_flow  # noqa: E402
+from project_flow import Config, GhError, GhTransport  # noqa: E402
+import project_flow_fake  # noqa: E402
+from project_flow_fake import FakeTransport  # noqa: E402
+
+
+class GhTransportEncodingTest(unittest.TestCase):
+    """The mock is subprocess.run itself, so the real _run builds the gh command line and stdin."""
+
+    @staticmethod
+    def invoke(call, stdout="{}"):
+        """(argv, the subprocess.run keyword arguments) of one transport call."""
+        with mock.patch.object(project_flow.subprocess, "run",
+                               return_value=completed(0, stdout)) as run:
+            call(GhTransport())
+        run.assert_called_once()
+        return run.call_args[0][0], run.call_args[1]
+
+    @classmethod
+    def sent(cls, variables, query="query Q"):
+        """(argv after `gh`, decoded JSON body) of one graphql call."""
+        argv, kwargs = cls.invoke(lambda t: t.graphql(query, variables))
+        assert argv[0] == "gh", argv
+        assert kwargs == {"input": kwargs["input"], "capture_output": True, "text": True}, kwargs
+        return argv[1:], json.loads(kwargs["input"])
+
+    def test_rest_body_goes_on_stdin(self):
+        argv, kwargs = self.invoke(lambda t: t.rest("PATCH", "repos/o/r/issues/9", {"milestone": 4}))
+        self.assertEqual(argv, ["gh", "api", "-X", "PATCH", "repos/o/r/issues/9", "--input", "-"])
+        self.assertEqual(json.loads(kwargs["input"]), {"milestone": 4})
+        argv, kwargs = self.invoke(lambda t: t.rest("GET", "user"), '{"login": "me"}')
+        self.assertEqual(argv, ["gh", "api", "-X", "GET", "user"])
+        self.assertIsNone(kwargs["input"])
+
+    def test_decodes_stdout_and_maps_failures(self):
+        with mock.patch.object(project_flow.subprocess, "run",
+                               return_value=completed(0, '{"data": {"x": 1}}')):
+            self.assertEqual(GhTransport().graphql("query Q", {}), {"data": {"x": 1}})
+        with mock.patch.object(project_flow.subprocess, "run",
+                               return_value=completed(1, "", "HTTP 403: forbidden")):
+            with self.assertRaises(GhError) as caught:
+                GhTransport().rest("POST", "repos/o/r/issues", {"title": "t"})
+        self.assertEqual(caught.exception.message, "HTTP 403: forbidden")
+        with mock.patch.object(project_flow.subprocess, "run", side_effect=OSError("no gh")):
+            with self.assertRaises(GhError):
+                GhTransport().rest("GET", "user")
+
+    def test_variable_encoding(self):
+        # One path for every request: a JSON body on stdin, never -f/-F (gh -F sends 15.1 and a
+        # list as strings, which GitHub rejects; checked live on the scratch project).
+        args, body = self.sent({"after": None, "s": "x=1", "n": 5, "b": True})
+        self.assertEqual(args, ["api", "graphql", "--input", "-"])
+        self.assertEqual(body, {"query": "query Q",
+                                "variables": {"after": None, "s": "x=1", "n": 5, "b": True}})
+        self.assertIsNone(body["variables"]["after"])  # None arrives as JSON null
+
+    def test_variable_type_matrix(self):
+        cases = {
+            "null": None, "str": "Status", "str with =": "a=b", "int": 7, "zero": 0,
+            "bool true": True, "bool false": False, "float": 15.1, "whole float": 16.0,
+            "list of str": ["a", "b"], "list of int": [1, 2], "empty list": [],
+            "nested dict": {"k": [1, {"x": None}], "s": "v"},
+        }
+        for name, value in cases.items():
+            with self.subTest(name):
+                args, body = self.sent({"v": value}, "mutation M")
+                self.assertEqual(args, ["api", "graphql", "--input", "-"])
+                self.assertEqual(body["query"], "mutation M")
+                self.assertEqual(body["variables"], {"v": value})
+                self.assertIs(type(body["variables"]["v"]), type(value))
+
+    def test_no_variables_sends_empty_object(self):
+        args, body = self.sent(None)
+        self.assertEqual(body, {"query": "query Q", "variables": {}})
+
+
+def completed(code, stdout, stderr=""):
+    return subprocess.CompletedProcess(["gh"], code, stdout=stdout, stderr=stderr)
+
+
+# Recorded live (read-only) from the scratch project: a field(name:) lookup of an absent field.
+ABSENT_FIELD = {
+    "data": {"user": {"projectV2": {"id": "PVT_project1",
+                                    "status": {"__typename": "ProjectV2SingleSelectField"},
+                                    "order": None}}},
+    "errors": [{"type": "NOT_FOUND", "path": ["user", "projectV2", "order"],
+                "locations": [{"line": 1, "column": 113}],
+                "message": "Could not resolve to a Unions::ProjectV2FieldConfiguration with the name "
+                           "NoSuchFieldXYZ"}]}
+USER_FIELDS = project_flow.FIELDS_ABSENT_OK["user"]
+
+
+class GhTransportNotFoundTest(unittest.TestCase):
+    """gh exits 1 on a NOT_FOUND; the data is returned only for the caller's listed null paths."""
+
+    def graphql(self, code, payload, absent_ok=USER_FIELDS):
+        stdout = payload if isinstance(payload, str) else json.dumps(payload)
+        with mock.patch.object(project_flow.subprocess, "run",
+                               return_value=completed(code, stdout, "gh: Could not resolve")):
+            return GhTransport().graphql("query Q { x }", {}, absent_ok=absent_ok)
+
+    @staticmethod
+    def error(path, kind="NOT_FOUND"):
+        return {"type": kind, "path": list(path), "message": "x"}
+
+    def payload(self, data, *errors):
+        return {"data": data, "errors": list(errors)}
+
+    def test_recorded_absent_field_returns_data(self):
+        result = self.graphql(1, ABSENT_FIELD)
+        self.assertEqual(result["data"], ABSENT_FIELD["data"])
+        self.assertNotIn("errors", result)
+        self.assertEqual(result["_errors"], ABSENT_FIELD["errors"])
+
+    def test_listed_paths_are_exactly_the_field_lookups(self):
+        self.assertEqual(project_flow.FIELDS_ABSENT_OK, {
+            "user": frozenset({("user", "projectV2", "status"), ("user", "projectV2", "order")}),
+            "organization": frozenset({("organization", "projectV2", "status"),
+                                       ("organization", "projectV2", "order")})})
+        self.assertEqual(project_flow.ITEM_ABSENT_OK, frozenset({("node", "project", "order")}))
+
+    def test_each_real_absent_field_path_accepted(self):  # (a)
+        for owner, listed in project_flow.FIELDS_ABSENT_OK.items():
+            for key in ("status", "order"):
+                project = {"id": "PVT_project1", "status": {"__typename": "ProjectV2SingleSelectField"},
+                           "order": {"__typename": "ProjectV2Field"}}
+                project[key] = None
+                result = self.graphql(1, self.payload({owner: {"projectV2": project}},
+                                                      self.error((owner, "projectV2", key))), listed)
+                self.assertIsNone(result["data"][owner]["projectV2"][key], (owner, key))
+        node = {"id": "PVTI_x", "order": None, "project": {"order": None}}
+        result = self.graphql(1, self.payload({"node": node}, self.error(("node", "project", "order"))),
+                              project_flow.ITEM_ABSENT_OK)
+        self.assertIsNone(result["data"]["node"]["project"]["order"])
+
+    def test_unlisted_not_found_raises(self):  # (b)
+        data = {"user": None, "node": {"order": None, "project": {"order": {"id": "x"}}},
+                "organization": {"projectV2": {"order": None}}}
+        for path, listed in ((("user",), USER_FIELDS),  # owner lookup: the org fallback needs it
+                             (("node", "order"), project_flow.ITEM_ABSENT_OK),
+                             (("organization", "projectV2", "order"), USER_FIELDS),
+                             (("user", "projectV2", "order"), frozenset())):
+            with self.assertRaises(GhError, msg=repr(path)):
+                self.graphql(1, self.payload(data, self.error(path)), listed)
+
+    def test_listed_path_with_value_raises(self):  # (c)
+        payload = json.loads(json.dumps(ABSENT_FIELD))
+        payload["data"]["user"]["projectV2"]["order"] = {"__typename": "ProjectV2Field"}
+        with self.assertRaises(GhError):
+            self.graphql(1, payload)
+        payload["data"]["user"]["projectV2"] = None  # the path does not resolve
+        with self.assertRaises(GhError):
+            self.graphql(1, payload)
+
+    def test_other_error_types_at_listed_path_raise(self):  # (d)
+        for kind in ("FORBIDDEN", "INSUFFICIENT_SCOPES", "UNAUTHORIZED", None):
+            payload = self.payload({"user": {"projectV2": {"order": None}}},
+                                   self.error(("user", "projectV2", "order"), kind))
+            with self.assertRaises(GhError, msg=kind):
+                self.graphql(1, payload)
+
+    def test_mixed_errors_raise(self):  # (e)
+        payload = json.loads(json.dumps(ABSENT_FIELD))
+        payload["errors"].append(self.error(("user", "projectV2", "status"), "FORBIDDEN"))
+        with self.assertRaises(GhError):
+            self.graphql(1, payload)
+
+    def test_node_field_not_listed_raises(self):  # (f): nothing reads the query text
+        payload = self.payload({"node": {"field": None}}, self.error(("node", "field")))
+        for listed in (frozenset(), USER_FIELDS, project_flow.ITEM_ABSENT_OK):
+            with self.assertRaises(GhError):
+                self.graphql(1, payload, listed)
+
+    def test_default_accepts_nothing(self):
+        with mock.patch.object(project_flow.subprocess, "run",
+                               return_value=completed(1, json.dumps(ABSENT_FIELD))):
+            with self.assertRaises(GhError):
+                GhTransport().graphql("query Q { x }", {})
+
+    def test_non_json_failure_raises(self):
+        with self.assertRaises(GhError):
+            self.graphql(1, "HTTP 502: bad gateway")
+
+    def test_failure_without_data_raises(self):
+        with self.assertRaises(GhError):
+            self.graphql(1, {"errors": [self.error(("user", "projectV2", "order"))]})
+
+    def test_absent_fields_through_read_board(self):
+        """The whole read: an absent Status field is missing-option."""
+        cfg = Config("Status", {k: k for k in project_flow.ROLE_KEYS}, "NoSuchFieldXYZ", "blocked")
+        absent_status = json.loads(json.dumps(ABSENT_FIELD))
+        absent_status["data"]["user"]["projectV2"]["status"] = None
+        absent_status["errors"].append(dict(absent_status["errors"][0],
+                                            path=["user", "projectV2", "status"]))
+        with mock.patch.object(project_flow.subprocess, "run",
+                               return_value=completed(1, json.dumps(absent_status))):
+            with self.assertRaises(project_flow.Stop) as caught:
+                project_flow.read_board(GhTransport(), "https://github.com/users/o/projects/2", cfg)
+        self.assertEqual(caught.exception.reason, "missing-option")
+        self.assertIn("Status", caught.exception.detail)
+
+    def test_read_board_and_read_item_pass_their_paths(self):
+        fake = FakeTransport(project_flow_fake.board([]))
+        project_flow.read_board(fake, "https://github.com/users/o/projects/2", READ_CFG)
+        self.assertEqual(fake.calls[0]["absent_ok"], project_flow.FIELDS_ABSENT_OK["user"])
+        for call in fake.calls[1:]:
+            self.assertEqual(call["absent_ok"], frozenset())
+        node = project_flow_fake.item(project_flow_fake.issue(1))
+        fake = FakeTransport([("query ProjectItem(", project_flow_fake.item_response(node))])
+        project_flow.read_item(fake, node["id"], READ_CFG)
+        self.assertEqual(fake.calls[0]["absent_ok"], project_flow.ITEM_ABSENT_OK)
+
+    def test_org_fallback_passes_org_paths(self):
+        responses = [("query ProjectFields", GhError("Could not resolve to a User"))]
+        responses += project_flow_fake.board([], owner_key="organization")
+        fake = FakeTransport(responses)
+        project_flow.read_board(fake, "https://github.com/orgs/o/projects/2", READ_CFG)
+        self.assertEqual(fake.calls[1]["absent_ok"], project_flow.FIELDS_ABSENT_OK["organization"])
+
+
+READ_CFG = Config("Status", {k: k for k in project_flow.ROLE_KEYS}, "Implementation order", "blocked")
+
+
+class FakeTransportTest(unittest.TestCase):
+    def test_matcher_selection_and_consumption(self):
+        fake = FakeTransport([("alpha", 1), (lambda c: c["kind"] == "rest", 2), (None, 3)])
+        self.assertEqual(fake.graphql("beta"), 3)  # skips non-matching entries
+        self.assertEqual(fake.graphql("alpha"), 1)
+        self.assertEqual(fake.rest("GET", "/p"), 2)
+        with self.assertRaises(AssertionError):
+            fake.graphql("alpha")  # each response is consumed once
+
+    def test_unmatched_call_fails_loudly(self):
+        fake = FakeTransport([("alpha", 1)])
+        with self.assertRaises(AssertionError):
+            fake.graphql("zzz")
+        self.assertEqual(len(fake.calls), 1)
+
+    def test_raises_gh_error_for_matcher(self):
+        fake = FakeTransport([("boom", GhError("bad"))])
+        with self.assertRaises(GhError):
+            fake.graphql("boom")
+
+    def test_on_call_hook_runs_between_calls(self):
+        fake = FakeTransport([(None, "a"), (None, "b")])
+        seen = []
+        fake.on_call(lambda call: seen.append(len(fake.calls)))
+        fake.graphql("q1")
+        fake.graphql("q2")
+        self.assertEqual(seen, [1, 2])
+
+    def test_mutations_recorded(self):
+        fake = FakeTransport([(None, 1), (None, 2), (None, 3)])
+        fake.graphql("mutation { x }")
+        fake.graphql("query { x }")
+        fake.rest("PATCH", "/p", {"a": 1})
+        self.assertEqual(len(fake.mutations), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

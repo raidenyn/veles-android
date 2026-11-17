@@ -1,0 +1,25 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "closingIssuesReferences": {
+          "nodes": [
+            {
+              "milestone": {
+                "title": "M1 scratch"
+              },
+              "number": 1,
+              "repository": {
+                "nameWithOwner": "owner/repo"
+              }
+            }
+          ],
+          "pageInfo": {
+            "endCursor": "cursor3",
+            "hasNextPage": true
+          }
+        }
+      }
+    }
+  }
+}

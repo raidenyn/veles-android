@@ -1,0 +1,143 @@
+{
+  "data": {
+    "node": {
+      "content": {
+        "__typename": "Issue",
+        "assignees": {
+          "nodes": [
+            {
+              "login": "owner"
+            }
+          ],
+          "pageInfo": {
+            "endCursor": "cursor3",
+            "hasNextPage": false
+          }
+        },
+        "blockedBy": {
+          "nodes": [
+            {
+              "number": 4,
+              "repository": {
+                "nameWithOwner": "owner/repo"
+              },
+              "state": "CLOSED",
+              "stateReason": "DUPLICATE"
+            },
+            {
+              "number": 3,
+              "repository": {
+                "nameWithOwner": "owner/repo"
+              },
+              "state": "CLOSED",
+              "stateReason": "NOT_PLANNED"
+            },
+            {
+              "number": 2,
+              "repository": {
+                "nameWithOwner": "owner/repo"
+              },
+              "state": "CLOSED",
+              "stateReason": "COMPLETED"
+            }
+          ],
+          "pageInfo": {
+            "endCursor": "cursor2",
+            "hasNextPage": false
+          },
+          "totalCount": 3
+        },
+        "closedByPullRequestsReferences": {
+          "nodes": [
+            {
+              "authorAssociation": "OWNER",
+              "headRepository": {
+                "nameWithOwner": "owner/repo"
+              },
+              "isDraft": true,
+              "milestone": null,
+              "number": 9,
+              "repository": {
+                "nameWithOwner": "owner/repo"
+              },
+              "state": "OPEN"
+            },
+            {
+              "authorAssociation": "OWNER",
+              "headRepository": {
+                "nameWithOwner": "owner/repo"
+              },
+              "isDraft": false,
+              "milestone": null,
+              "number": 10,
+              "repository": {
+                "nameWithOwner": "owner/repo"
+              },
+              "state": "OPEN"
+            }
+          ],
+          "pageInfo": {
+            "endCursor": "cursor1",
+            "hasNextPage": false
+          }
+        },
+        "databaseId": 1001,
+        "id": "I_issue1",
+        "labels": {
+          "nodes": [
+            {
+              "name": "bug"
+            },
+            {
+              "name": "Feature-X"
+            }
+          ],
+          "pageInfo": {
+            "endCursor": "cursor1",
+            "hasNextPage": false
+          }
+        },
+        "milestone": {
+          "title": "M1 scratch"
+        },
+        "number": 1,
+        "parent": {
+          "number": 5,
+          "repository": {
+            "nameWithOwner": "owner/repo"
+          }
+        },
+        "repository": {
+          "nameWithOwner": "owner/repo"
+        },
+        "state": "OPEN",
+        "stateReason": null,
+        "subIssues": {
+          "nodes": [],
+          "pageInfo": {
+            "endCursor": null,
+            "hasNextPage": false
+          }
+        }
+      },
+      "id": "PVTI_item1",
+      "order": {
+        "__typename": "ProjectV2ItemFieldNumberValue",
+        "number": 10.0
+      },
+      "project": {
+        "order": {
+          "__typename": "ProjectV2Field",
+          "dataType": "NUMBER",
+          "id": "PVTF_field1"
+        }
+      },
+      "status": {
+        "__typename": "ProjectV2ItemFieldSingleSelectValue",
+        "name": "In Review",
+        "optionId": "opt4"
+      },
+      "type": "ISSUE"
+    }
+  }
+}

@@ -248,164 +248,163 @@ of the artifact as approved.
 
 ## Next task
 
+These are the rules of tracked intake. The commands that carry them out are in the `github-project` skill
+(`.agents/skills/github-project/SKILL.md`); the tool behind every board read and write is
+`scripts/project_flow.py`, and the project setup is in `docs/github-project-setup.md`.
+
 ### When this applies
 
-This section applies only when the user names a project URL, a view URL, an issue URL or an issue number as the
-source of work. Without such a reference nothing is tracked: create no board write and no issue write, and
-treat the work as ordinary. Run the reconcile procedure in *tracker.md* at the start of every intake.
+Work is **tracked** only when the user names a project URL, a view URL, an issue URL or an issue number as
+the **source** of the work. A project mentioned as an example, as background or as something to build does not
+make the work tracked. Without such a source nothing is tracked: there is no `tracker.md`, no claim and no
+board or issue write, at intake or at closeout.
 
-### 1. Precheck the tools
+A project takes part only while it is **enabled**: the `PROJECT_URL` variable (repository-level, or in the environment named in `.github/project-flow.json`) of this
+repository names it. `sync`, `next`, `start` and `followup` refuse any other project with the stop reason `not-enabled`,
+and the agent never sets the variable itself. Every tracked command needs the `gh` token's `project` scope;
+a missing scope is reported with the exact fix command (`gh auth refresh -s project`) and never worked
+around.
 
-Run `gh auth status` and confirm the token carries the `project` scope (it covers `read:project`). If a scope
-is missing, report the message and the fix command `gh auth refresh -s project`; never work around a missing
-scope. The message is `gh`'s own, for example:
+### Statuses are derived
 
-```text
-error: your authentication token is missing required scopes [project]
-To request it, run:  gh auth refresh -s project
-```
+The Status of every item whose content is an issue is a function of facts on GitHub, never of its previous
+Status. The first matching rule wins:
 
-The `gh api graphql` path prints GitHub's own scope message instead; the fix is the same.
+0. the issue is closed → Done;
+1. the issue carries the blocked label → Blocked;
+2. an open, **trusted** pull request that is **not a draft** closes the issue → In Review;
+3. the issue has an assignee → In Progress;
+4. every native "blocked by" issue is closed as completed, or there is none → Ready; otherwise → Backlog.
 
-### 2. Read every item
+A closing pull request is trusted when its branch is in the issue's own repository or its author is an owner,
+member or collaborator of the repository (with a deleted head repository, only the author counts). Anyone can
+open a fork pull request whose body closes an issue, so an untrusted one moves no Status and gets no milestone;
+`sync` reports it as `ignored untrusted PR <owner>/<repo>#<n>`. A blocker closed as not planned or as a
+duplicate does not count as closed, and `sync` reports it for every open issue, whichever rule decides its
+Status. Option names come from the role map in `.github/project-flow.json`.
+`sync` makes the board match the derivation; the repository's `project-flow` workflow runs it on issue and pull
+request events (in a public repository, from 2026-12-02, only where an Actions policy allows
+`pull_request_target`; see `docs/github-project-setup.md`) and daily, and the agent runs it at intake, after
+the claim and at the closeout.
 
-The URL gives the owner and the project number. Query `user(login: <owner>)`; when that returns null the
-owner is an organization, so query `organization(login: <owner>)` instead. Keep each item's id, its issue
-number, its issue's repository, its state, and its Status option name; the repository is copied into the
-`tracker.md` `Repository` line and every later issue write names it.
+`sync` prints its writes (`write: …`, or `would write: …` with `--dry-run`), its reports, one line
+`ready: <owner>/<repo>#<n> order=<value>` for **every** item that is Ready once its writes land — whoever made it
+Ready, sorted by order value then number, `order=-` when the item has none — then its summary line, and
+`rate-limit: cost=<n> remaining=<n>` (the GraphQL cost of its project read; `-` when unknown) as the last line
+before any `stop:` line. The summary is `sync: complete` when nothing was unreadable, conflicting, skipped or
+rejected, and otherwise `sync: partial (<n> unreadable, <m> conflicts, <k> skipped)`. A partial run still exits
+0, but its `ready:` lines and the Statuses it leaves are not the whole picture. A rejected write prints
+`failed write <ref>: <why>`; `sync` still attempts every other write and then stops with `write-failed`.
 
-```bash
-gh api graphql -f query='
-query($o: String!, $n: Int!, $cursor: String) {
-  user(login: $o) {
-    projectV2(number: $n) {
-      id
-      items(first: 100, after: $cursor) {
-        pageInfo { hasNextPage endCursor }
-        nodes {
-          id
-          content { ... on Issue { number state title repository { nameWithOwner } } }
-          fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name optionId } }
-        }
-      }
-    }
-  }
-}' -f o=<owner> -F n=<number>
-```
+**Convergence.** GitHub Projects has no compare-and-set, so writes converge instead of excluding each other: a
+stale Status written by any writer is undone by the next `sync`, because the facts it derives from are
+unchanged. `next` never selects an assigned item, whatever its Status says, so a stale Ready cannot cause a
+second pickup. Two sessions of the **same** account claiming one item at the same moment are not detected; each
+session is started by the user.
 
-Add `-f cursor=<endCursor>` from the previous response for the next page, and repeat until `hasNextPage` is
-false. A page that fails, or a `hasNextPage` that was not followed, is a partial read: select nothing and
-report the failure. A connection larger than one page is normal; a single page proves nothing.
+Consequences for the agent:
 
-### 3. Recover the order
+- it writes no Status except through the claim (`start`);
+- to mark work Blocked it adds the blocked label, and removing the label lets the Status be derived again;
+- to release a claim it removes its own assignment;
+- a pull request opened before finalize (a planning pre-review PR) is always a **draft**, so the item stays In
+  Progress until finalize marks the PR ready for review.
 
-- **The URL names a view with sort fields:** sort by those fields, in the configured direction. The API can
-  only order items by `POSITION`, so fetch each item's value for the sort field with `fieldValueByName` (the
-  matching value type, for example `ProjectV2ItemFieldNumberValue { number }` or
-  `ProjectV2ItemFieldSingleSelectValue { name }`) and sort locally.
-- **The view has no sort field, or the URL names no view:** use the project's item order, which is the
-  `POSITION` ascending order the items connection returns by default. This is the manual order the board
-  shows, and it is not issue-number order.
-- **Several sort keys, grouping, or an order that cannot be recovered:** ask the user to name the task.
-  Never substitute another order.
+### Selecting the task
 
-Read the views and their settings with:
+For a pickup request without a named task, the task is the one `project_flow.py next` selects: it runs `sync`
+first, then takes the Ready, unassigned, open issue with the **lowest order value** (the number field named in
+the configuration). Views, view filters and card positions are never read, and the agent never chooses by any
+other order. On success `next` prints `next: <owner>/<repo>#<n> order=<value>` and exits 0.
 
-```bash
-gh api graphql -f query='
-query($o: String!, $n: Int!) {
-  user(login: $o) {
-    projectV2(number: $n) {
-      views(first: 20) {
-        nodes {
-          number name layout filter
-          sortByFields(first: 5) { nodes { direction field { ... on ProjectV2FieldCommon { name } } } }
-          groupByFields(first: 5) { nodes { ... on ProjectV2FieldCommon { name } } }
-        }
-      }
-    }
-  }
-}' -f o=<owner> -F n=<number>
-```
+When `next` (or any other command) stops, it prints `stop: <reason>: <detail>` and exits 3; exit 2 is a usage
+error and exit 1 a `gh` error, reported as it stands. The agent reports the reason and the detail and responds:
 
-### 4. Decide what is completed
+| Reason | Agent response |
+| --- | --- |
+| `missing-order` | report the listed items and ask whether to continue with `next --skip-unordered` or to set their order values first |
+| `not-ready` | describe the state the detail names (Backlog with its open blockers, Blocked, In Review, Done or assigned) and ask; pass `start --force` only after the user explicitly authorizes it |
+| `nothing-ready`, `tie` | report it (a tie names every item that shares the lowest value) and ask the user to name the task |
+| `incomplete-read` | report it and ask the user to name the task. Some causes stay until someone acts, and the detail names the remedy: a `REDACTED` item (a card from a repository the token cannot see) — remove the card or grant the token access; a blocker closed without a state reason (closed before GitHub recorded reasons) — reopen and re-close it so a reason is recorded; inaccessible blockers — grant the token access to their repositories |
+| `not-enabled` | report that the project is not enabled and the enable step the detail names; the work is untracked unless the user enables the project; ask the user to name the task |
+| `variable-unreadable` | report the fix (the token needs the Actions variables read permission); assume no value; ask the user to name the task |
+| `collision` | another login is assigned as well; report it and ask before continuing; unassign nobody |
+| `assignment-failed` | the claim did not take (GitHub drops an assignee without push access); report it and ask; do not continue as if claimed |
+| `missing-option` | a configured Status option, the order field or a milestone is missing; stop and ask; never create or rename one |
+| `config-invalid` | the configuration, a URL or an argument is invalid; report it and correct the invocation, or ask; never edit the committed configuration to get past it |
+| `missing-scope` | report the exact fix command from the detail; never work around it |
+| `setup-incomplete` | `check` found setup facts; report them; the project must not be enabled until they are clean |
+| `parent-unordered`, `no-order-room` | `followup` could not allocate an order value; ask the user for one or for the parent's value |
+| `parent-as-blocker` | a follow-up is never blocked by its parent; drop the parent from the blockers and run it again |
+| `resume-disagrees` | an existing link of the follow-up disagrees with the arguments; nothing was written; report it and ask |
+| `write-failed` | GitHub rejected a write (each is printed as `failed write <ref>: <why>`, or by `followup` as `failed: <step>`); report it: the reconciliation is incomplete; retry after the cause is fixed; never proceed to selection or treat the claim as made |
+| any other | report it and ask the user to name the task |
 
-Completion is judged over **all** items and ignores the view's filter — a view that hides Done items would
-otherwise leave no completed item. An item is completed when its Status option is the one named Done **or**
-its underlying issue is closed. A draft or a pull-request item has no underlying issue and is completed only
-by its Status.
+### Naming, announcing and reading
 
-Because completion is an OR, only the **last completed item** can make the two signals matter. If they
-disagree for it — Status Done with an open issue, or a closed issue whose Status is not Done — report it and
-ask before choosing the next task. A disagreement on any other item does not block pickup.
+When the user names the task, it is used if it is Ready. A named task that is not Ready is described — Backlog
+with its open blockers, Blocked, In Review, Done or assigned — and the agent asks before any claim; `start`
+refuses it with `not-ready` unless `--force` is passed, and `--force` is passed only after the user explicitly
+authorizes it.
 
-### 5. Choose the successor
+**Resume.** A task recorded in the `tracker.md` of an active change of this repository
+(`openspec/changes/<name>/tracker.md`, archived changes excluded) is a **resume** of that change when it is In
+Progress and claimed by the authenticated user, or still Ready because an earlier intake stopped after writing
+`tracker.md` and before the claim. Reuse that change and create no other; report no conflict. When the issue is
+not yet assigned to the authenticated user, make the missing claim with `start` (*The claim*); otherwise repeat
+no claim. More than one active `tracker.md` recording the same issue, or a `tracker.md` whose `Repository` line
+names a different repository than the issue's: stop and ask the user.
 
-The task is the first item **after the last completed item** in the recovered order — not the first open item,
-because follow-up items may sit earlier in the order. When no completed item exists, stop and report rather
-than choosing the first item.
+Before creating the change, tell the user which task was chosen and why — its order value from `next`, or the
+user's naming. Then read the issue and follow its links — the RFC or specification section, pull requests,
+linked documents, specs, the parent and the sub-issues — until the context is complete, and write the
+substantive findings into the brainstorm.
 
-When the view's filter is a **single simple field match**, the task is the first later item that matches it;
-when no later item matches, stop and report. Any other filter means ask the user to name the task. Do not
-trust an unfamiliar filter: a filter string passed to `items(query:)` is accepted unvalidated, so an unknown
-qualifier or option silently matches nothing or everything, and passing a view's own filter string through
-was not verified end to end.
+### The claim
 
-Stop and report instead of choosing when:
-
-- there is no completed item;
-- a tie in the sort value makes the last completed item or the chosen task ambiguous (a tie elsewhere in the
-  order does not block);
-- the last completed item is the last item in the order;
-- the signals disagree for the last completed item;
-- the order or the filter cannot be recovered;
-- the items could not be read to the last page.
-
-### 6. Check, announce and read
-
-Before creating the change:
-
-- verify that the task's declared dependencies are completed; any unmet dependency means stop and ask;
-- verify that the task is not already In Progress. A task that is In Progress and recorded in the `tracker.md`
-  of an active change of this repository is a **resume** of that change, not a conflict; any other In Progress
-  state means stop and ask.
-
-Tell the user which task was chosen, which completed task precedes it, and why. Then read the issue and follow
-its links — linked documents, pull requests, specs and the relevant sections of any document they point at —
-until the context is complete, and write the substantive findings into the brainstorm.
+Create the change, write `tracker.md` (*tracker.md*), and only then claim the task with `project_flow.py
+start`. The claim assigns the authenticated user with the add-assignees operation (never replacing existing
+assignees), sets In Progress, re-reads the assignees and syncs that item; it prints `started:
+<owner>/<repo>#<n>`. Assignment means "started" on a board that uses this flow. A resume skips the claim.
 
 ### Issue-only intake
 
-When the user names an issue instead of a board, resolve the repository explicitly: from the issue URL, or
-from the checkout's remote for a bare issue number, asking when that is ambiguous. Record the resolved
-`<owner>/<repository>` in `tracker.md`; that issue's repository — never the checkout's — is what every issue
-write names. Then list the projects that contain the issue:
+When the user names an issue instead of a board:
 
-```bash
-gh api graphql -f query='
-query($o: String!, $r: String!, $num: Int!) {
-  repository(owner: $o, name: $r) {
-    issue(number: $num) {
-      number title
-      projectItems(first: 10) { nodes { id project { number title } } }
-    }
-  }
-}' -f o=<owner> -f r=<repository> -F num=<number>
-```
+1. resolve the repository explicitly: from the issue URL, or from the checkout's remote for a bare number,
+   asking when that is ambiguous;
+2. list the projects that contain the issue;
+3. use the only one, and ask when there are several.
 
-Use the only project found; ask when there are several. With none, read the issue for context only and write
-to no board.
+With no project, or with a project that `PROJECT_URL` does not name, the work is **untracked from then on**:
+report it, read the issue for context only, write no `tracker.md`, make no claim, and write nothing to any board
+or issue, at intake or at closeout. The pull request body may carry a non-closing reference such as
+`Refs <owner>/<repo>#<n>`.
+
+### Follow-up work
+
+During a tracked change, first finish the work that no open decision blocks. Work that changes the approved
+planning files no more than the review gate's non-triggering threshold (*Review passes and caps*) and needs no
+new brainstorm is done in the same change. Larger work is filed with `project_flow.py followup`, which creates
+the issue in the `--repo` repository, prints its number at once, makes it a sub-issue of the originating issue
+with that issue's milestone, adds native "blocked by" links only to the blockers given (never the parent), adds
+it to the project and gives it an order value after the parent's existing follow-ups. A failure after the issue
+exists prints `created: #<n>` and `missing: <steps>`; `--resume <n>` with the original arguments completes only
+the missing steps. The follow-up's body links the change's pull request, so when the change has none yet,
+first open it as a draft (with the closing keyword for the tracked issue in its body) and pass its real URL —
+never a placeholder. The pull request body lists every follow-up issue the change filed. When the size or the
+scope of a finding is unclear, ask the user.
 
 ## tracker.md
 
 ### Purpose and fields
 
-For tracked work, create `openspec/changes/<name>/tracker.md` right after the change is created and before the
-first status write, so an interrupted intake resumes from it. It records the tracked association:
+For tracked work, create `openspec/changes/<name>/tracker.md` right after the change is created and **before
+the claim**, so an interrupted intake resumes from it. It records the tracked association:
 
 ```markdown
 - Repository: <owner>/<repository>
-- Project: <project title> (<project number>)
+- Project: <project title> (<project URL>)
 - Issue: <owner>/<repository>#<number>
 - Source documents: <repo-relative paths or URLs read for the task>
 - Created: <YYYY-MM-DD>
@@ -414,87 +413,30 @@ first status write, so an interrupted intake resumes from it. It records the tra
 
 `tracker.md` is not a planning artifact: it is not reviewed, it is in no approval hash, and adding or changing
 it makes no record stale. Its `Repository` line is an issue write target, not a note: it records the issue's
-own repository, read at intake, and every issue write of the change names it with `--repo`. The implementation
-PR line is added after finalize confirms an open pull request, then committed and pushed as part of that PR
-before the merge. `openspec validate --all` tolerates `tracker.md` and `reviews/`.
+own repository, read at intake, and every issue write of the change names it with `--repo` (or an issue URL
+that carries it); the checkout's repository is never assumed for an issue write. When the issue's repository
+cannot be established — no `Repository` line, or an issue that does not resolve to one — stop and ask instead
+of writing. The `Project` line is the URL the tracked commands take as `--project`. The implementation PR line
+is added after finalize confirms an open pull request, then committed and pushed as part of that PR before the
+merge. `openspec validate --all` tolerates `tracker.md` and `reviews/`.
 
-### Statuses and their guards
+### Statuses and finalize outcomes
 
-Match Status options **by name** on the project's Status field. If the field or an option cannot be found, stop
-and ask — never create or rename one. If a write fails for a missing `gh` scope, report the message and the
-fix `gh auth refresh -s project` (see *Next task* step 1) and do not work around it.
+The item is In Progress from the claim. Every later Status follows the facts (*Next task*, *Statuses are
+derived*); the agent changes facts, never the Status:
 
-- **In Progress** — set after `tracker.md` is written, when the change is created. Nothing earlier.
-- **In Review** — set only when finalize has succeeded and an open pull request for the branch is confirmed
-  (`gh pr view <number> --json state,headRefOid` reports `OPEN`) and recorded in `tracker.md`. A pushed branch
-  with no pull request, and a planning pre-review pull request, leave the card In Progress.
-- **Done after a pull request** — owned by *Closeout*, which closes the issue first and sets Done last.
-- **Finalize outcome `merge-locally`** — follow the local-merge variant in *Closeout*: sync, archive once and
-  the doc review run on the default branch, the user is asked before any push, and the issue and Done follow
-  only a successful push.
-- **Finalize outcome `discarded`** — report and ask the user what the status becomes.
-- **Finalize outcome `kept-as-is`** — leave the card In Progress.
+- **In Review** follows when finalize marks the pull request ready for review; finalize confirms it after a
+  complete `sync` (one more when GitHub has not linked the closing keyword yet) and does not write it
+  (*Closeout*).
+- **Done** follows the closed issue; the post-merge check in *Closeout* confirms it.
+- **Finalize outcome `merge-locally`** — the local-merge variant in *Closeout*: after a successful push to the
+  default branch the issue is closed with a comment naming the pushed commit and `sync` derives Done.
+- **Finalize outcome `discarded`** — report it and ask whether to release the claim (remove the assignment) or
+  add the blocked label; then run `sync` once.
+- **Finalize outcome `kept-as-is`** — keep the claim, so the item stays In Progress.
 
-The item id, the project id, the Status field id and the option id come from the read in *Next task* step 2
-and from the field query:
-
-```bash
-gh api graphql -f query='
-query($o: String!, $n: Int!) {
-  user(login: $o) {
-    projectV2(number: $n) {
-      id
-      field(name: "Status") { ... on ProjectV2SingleSelectField { id name options { id name } } }
-    }
-  }
-}' -f o=<owner> -F n=<number>
-```
-
-The write forms — recorded from `gh`'s flags and the GraphQL input type, not from an executed run; if one
-fails, report it and stop rather than improvising another write:
-
-```bash
-# Set the item's Status by node ids.
-gh project item-edit --id <item-id> --project-id <project-id> \
-  --field-id <status-field-id> --single-select-option-id <option-id>
-
-# The same write as a GraphQL mutation.
-gh api graphql -f query='
-mutation($p: ID!, $i: ID!, $f: ID!, $v: String!) {
-  updateProjectV2ItemFieldValue(
-    input: {projectId: $p, itemId: $i, fieldId: $f, value: {singleSelectOptionId: $v}}
-  ) { projectV2Item { id } }
-}' -f p=<project-id> -f i=<item-id> -f f=<status-field-id> -f v=<option-id>
-
-# Close the issue with a closing comment. --repo is the issue's own repository
-# from tracker.md; the checkout's repository is never assumed for an issue write.
-gh issue close <number> --repo <owner>/<repository> --reason completed --comment "<text>"
-```
-
-Every issue write names the issue's repository with `--repo` (or an equivalent issue URL that carries it).
-When the issue's repository cannot be established — no `Repository` line, or an issue that does not resolve
-to one — stop and ask instead of writing.
-
-### Reconcile at the start of every intake
-
-Fetch first (`git fetch`), then read the `tracker.md` files of **archived** changes from the remote default
-branch, not from a possibly stale checkout.
-
-For every project item whose Status is In Review and whose recorded implementation PR is merged: make sure the
-issue is closed (closing it with a comment that links the PR if the merge did not, using the `Repository` line
-of that change's `tracker.md`), then set Status Done last.
-This is the only cross-item write authorized, it writes nothing to the repository, and it is idempotent — a
-session that finds the issue already closed or the card already Done treats that as success, so an overlap
-with a session that is still monitoring succeeds for both.
-
-Report instead of writing, and mark nothing Done, when:
-
-- an item records several implementation PRs;
-- its recorded PR was closed unmerged;
-- its change is not archived;
-- no archived `tracker.md` is found for an In Review item.
-
-In each report-only case say what was found and what the user must decide.
+The issue writes the agent may make are the claim (`start`), the blocked label, its own assignment, follow-up
+issues (`followup`) and closing the issue in the cases *Closeout* names.
 
 ## Closeout
 
@@ -502,10 +444,26 @@ In each report-only case say what was found and what the user must decide.
 
 The closeout starts when the last implementation commit is pushed and finalize has confirmed an open pull
 request, tracked or not. Finalize always creates the pull request when the feature branch has none, reusing an
-existing pre-review PR, and asks nothing; it then writes the receipt with the true `pr-created` or `pr-updated`
-outcome, records the PR in `tracker.md` for tracked work, sets the card In Review and hands off. A pull request
-that cannot be created or confirmed stops finalize with no outcome recorded. The steps that touch the board,
-the issue or `tracker.md` apply only to tracked work. Then stay in monitoring mode as *Monitoring* describes.
+existing pre-review PR (opened as a draft), and asks nothing. It marks a draft pull request ready for review and
+confirms with `gh pr view --json state,isDraft` that it is `OPEN` and not a draft; then it writes the receipt
+with the true `pr-created` or `pr-updated` outcome and hands off. A pull request that cannot be created,
+marked ready or confirmed stops finalize with no outcome recorded.
+
+For tracked work finalize also:
+
+- puts a closing keyword for the tracked issue in the PR body (`Closes <owner>/<repo>#<n>`), before marking it
+  ready, together with the list of follow-up issues the change filed;
+- records the PR in `tracker.md`, committed and pushed as part of the PR;
+- runs `project_flow.py sync` once and confirms the item is In Review, **without writing that Status**. Only a
+  run that exits 0 and prints `sync: complete` can confirm it; after `sync: partial` or any other exit it reports
+  that the Status could not be confirmed and why, and confirms nothing. GitHub links a closing keyword to the
+  issue asynchronously after the body edit, so when a complete run does not show In Review it runs `sync` once
+  more before reporting "not In Review", and names that indexing lag in the report. When the item is derived as
+  something else — for example Blocked because of the label — it reports the derived Status and the reason,
+  writes no Status, and the closeout still starts.
+
+The steps that touch the board, the issue or `tracker.md` apply only to tracked work. Then stay in monitoring
+mode as *Monitoring* describes.
 
 ### The ordered checklist
 
@@ -515,7 +473,7 @@ the issue or `tracker.md` apply only to tracked work. Then stay in monitoring mo
 4. Push the sync, archive and doc fixes.
 5. Babysit again until green.
 6. Answer comments and monitor to merge (below and *Monitoring*); meet the repository's merge requirements, such as a required update from master, and return to babysitting after any push; never merge unless the user asks.
-7. Do the applicable follow-ups for merged work: update the issue and the board, Done last (below).
+7. Do the applicable follow-ups for merged work: for tracked work, the post-merge check (below).
 
 A push at any step returns to babysitting. Every push runs the repository's pre-push checks.
 
@@ -596,28 +554,43 @@ After each push, return to babysitting.
 
 For finalize outcome `merge-locally`, tracked or not: after the local merge run the same sync, archive (once)
 and doc review on the default branch. Ask the user before any push to the default branch; after the user
-agrees, commit and push. For tracked work, close the issue in the repository recorded in `tracker.md` and then
-set Done only after that push succeeds.
+agrees, commit and push. For tracked work, only after that push succeeds, close the issue — in the repository
+recorded in `tracker.md`, with a comment naming the pushed commit — and then run `project_flow.py sync` so Done
+is derived. The agent never writes Done.
 
 - **Push rejected** (for example by branch protection): report it, do not retry and do not bypass the
-  protection, offer a follow-up pull request, and leave the issue open and the card In Progress.
-- **User declines the push:** leave the issue open and the card In Progress, and offer the same follow-up pull
+  protection, offer a follow-up pull request, and leave the issue open and the claim in place (the item stays
+  In Progress).
+- **User declines the push:** leave the issue open and the claim in place, and offer the same follow-up pull
   request.
 - **Follow-up pull request:** it goes through the normal closeout, with sync, archive and doc review counted
-  as already done; the card stays In Progress until an open pull request is confirmed and recorded, and Done
-  follows its merge.
+  as already done; In Review follows once it is open and ready for review, and Done follows its merge.
 
-### Done, last
+### Done, last: the post-merge check
 
-For tracked work, when the implementation pull request is merged and sync, archive and doc review are
-complete: make sure the issue is closed first — closing it with a comment that links the pull request if the
-merge did not, with `--repo` set to the `Repository` line of `tracker.md` — and then set the project item's
-Status to Done **last**, so the item stays In Review until both writes succeed. Both writes are idempotent. If
-closing the issue fails, the card stays In Review and a later reconcile retries.
+For tracked work, after the implementation pull request is merged:
 
-Report and mark nothing Done when the pull request was merged before sync, archive and doc review were
-completed, or was closed without merging; the user decides how to proceed. For untracked work there is no
-issue and no board write.
+1. **Issue still open:** the closing keyword should have closed it. If it did not (a keyword closes an issue
+   only on a merge into the default branch), close it with a comment linking the pull request, with `--repo`
+   set to the `Repository` line of `tracker.md`, and report that the automation missed it. If closing fails,
+   report it; the item is not Done until the issue is closed.
+2. **Done last:** run `project_flow.py sync` once and confirm the item is Done. If it still is not, report it.
+   Read `sync`'s own exit status, never a pipeline's: only an exit 0 together with the summary line
+   `sync: complete` is a complete reconciliation. Any other exit (for example `stop: write-failed`) or
+   `sync: partial (...)` means the reconciliation is incomplete: report it (the stop, or the partial summary
+   with its `unreadable`, conflict and `skipped` lines) and make no Ready report from its output.
+3. **Report**, only after a complete `sync` (exit 0 and `sync: complete`), the items the merge made Ready
+   and every follow-up issue the change filed. The items made Ready are those that are both in the `ready:`
+   lines of that `sync` (*Statuses are derived*) and in the merged issue's blocking list
+   (`gh api repos/<owner>/<repo>/issues/<n>/dependencies/blocking`, every page). Never rely on this
+   invocation's writes: the repository's workflow may have written Ready first.
+
+When the pull request was merged before sync, archive and doc review were completed, report it; the user
+decides how to proceed, for example with a follow-up pull request for the sync and archive. The item may
+already be Done, because Done follows the closed issue. A pull request closed without merging is reported, its
+issue is **not** closed, and the item's Status is derived again from the remaining facts (In Progress while the
+claim stays, no other ready closing pull request is open and there is no blocked label). For untracked work
+there is no issue and no board write.
 
 ## Monitoring
 
@@ -698,11 +671,19 @@ true or a count is short. A truncated read is not complete.
   green.
 - **Merge requirements:** `BEHIND` means the branch must be updated from the base; update it (`gh pr update-branch`, or merge the base branch and push), then return to babysitting. A blocker the agent cannot resolve — including conflicts, a missing or unreadable merge state, or `UNKNOWN` — is reported to the user; do not wait on it silently.
 - **Comments:** apply the *Closeout* trust rules, then fix and push or reply.
-- **Merged:** after a completed closeout, do the applicable follow-ups; if the merge came before sync, archive and doc review, report it and mark nothing Done.
-- **Closed without merging:** report it and mark nothing Done.
+- **Merged:** after a completed closeout, do the applicable follow-ups (for tracked work, the post-merge check
+  in *Closeout*); if the merge came before sync, archive and doc review, report it and let the user decide.
+- **Closed without merging:** report it; do not close the issue; its Status is derived again from the facts.
 
 ### When the user stops
 
-A user "stop" is handled like a session end: report the state — archived or not, open comments, and that the
-card stays In Review — and say that the next intake's reconcile step will finish the card if the change was
-archived and the pull request is merged, and otherwise report the unfinished closeout to the user.
+A user "stop" is handled like a session end. Report the state:
+
+- archived or not;
+- open comments;
+- for tracked work, that the item's Status is derived automatically from the facts — typically In Review while
+  the pull request is open and ready for review, and Done once the merge closes the issue.
+
+Then list what stays unfinished and needs a person or a later session: the sync and archive if not done, the
+doc review, and the post-merge check. Promise no later completion: no later intake finishes these steps by
+itself.

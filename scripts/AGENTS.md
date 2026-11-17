@@ -15,7 +15,20 @@ python3 -I scripts/commitlint.py --message "feat(app): add thing"   # validate a
 python3 -I scripts/components.py check                              # every tracked file is owned by a node in .github/components.json
 python3 -I scripts/components.py changed --base <sha>               # <node>=true|false per component for a diff
 python3 -I scripts/last_green.py --pr <n> --head <sha> --head-repo <owner/name> --head-ref <ref>  # per-node last green heads (CI; needs GITHUB_TOKEN)
+
+python3 -I scripts/project_flow.py check                                          # validate .github/project-flow.json offline (CI)
+python3 -I scripts/project_flow.py check --project <URL>                          # setup facts and warnings before enabling a project
+python3 -I scripts/project_flow.py sync --project <URL> --repo <owner/name> --dry-run   # derive every Status; print the writes only
+python3 -I scripts/project_flow.py next --project <URL> --repo <owner/name>       # sync, then the lowest-ordered Ready, unassigned issue
+python3 -I scripts/project_flow.py start <owner/repo#n> --project <URL> --repo <owner/name>  # claim by assignment, set In Progress
+python3 -I scripts/project_flow.py followup --help                                # file a linked follow-up issue; --resume N completes one
 ```
+
+`project_flow.py` exits 0 on success, 2 on a usage error, 1 on a `gh` error and 3 on a named stop
+(`stop: <reason>: <detail>`); `sync`, `next`, `start` and `followup` act only on the project
+the `PROJECT_URL` variable (repository-level, or in the environment named in `.github/project-flow.json`) names. Its tests run in `scriptsTest` from recorded fixtures. Setup:
+[`docs/github-project-setup.md`](../docs/github-project-setup.md); agent commands: the `github-project`
+skill.
 
 `scriptsTest` depends on `installGitCliff` and points `VELES_GIT_CLIFF` at the pinned binary.
 

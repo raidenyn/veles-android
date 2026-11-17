@@ -110,6 +110,8 @@ export const REMOTE_CODE_SCOPES = [
   '.github/workflows/check-native-host.yml', '.github/workflows/check-installer.yml',
   // The docs node's stdlib Python check scripts and its check workflow.
   'docs/checks/', '.github/workflows/check-docs.yml',
+  // The project-flow reconciliation workflow (it holds the PROJECT_TOKEN secret) and its script.
+  '.github/workflows/project-flow.yml', 'scripts/project_flow.py',
   'scripts', '.githooks',
   'build.gradle.kts', 'verify',
 ];

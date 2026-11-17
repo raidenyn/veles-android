@@ -1,0 +1,248 @@
+"""Test fake for the project_flow transport: records calls, serves canned responses."""
+import json
+import os
+import sys
+
+SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, SCRIPTS)
+
+from project_flow import GhError  # noqa: E402
+
+# The Actions environment the committed .github/project-flow.json names (None: the repository level).
+# Tests that run the CLI on the committed config serve PROJECT_URL at this environment's path.
+with open(os.path.join(os.path.dirname(SCRIPTS), ".github", "project-flow.json"), encoding="utf-8") as _f:
+    COMMITTED_ENVIRONMENT = json.load(_f).get("environment")
+
+
+class FakeTransport:
+    """Serves responses in order, or by matcher; records every call and mutation.
+
+    responses: list of (matcher, response). A matcher is None (matches any call), a
+    string (substring of the query or path) or a callable taking the call dict. A
+    response that is an Exception instance is raised (use GhError for gh failures).
+    A matched entry is consumed once served.
+    """
+
+    def __init__(self, responses=None):
+        self.responses = list(responses or [])
+        self.calls = []
+        self.mutations = []
+        self._hooks = []
+
+    def on_call(self, hook):
+        """Register hook(call) to run on every call, before the response is chosen."""
+        self._hooks.append(hook)
+
+    @staticmethod
+    def _matches(matcher, call):
+        if matcher is None:
+            return True
+        if callable(matcher):
+            return bool(matcher(call))
+        text = call.get("query") or call.get("path") or ""
+        return matcher in text
+
+    def _serve(self, call):
+        self.calls.append(call)
+        if call["kind"] == "rest" and call["method"].upper() != "GET":
+            self.mutations.append(call)
+        elif call["kind"] == "graphql" and call["query"].lstrip().startswith("mutation"):
+            self.mutations.append(call)
+        for hook in self._hooks:
+            hook(call)
+        for index, (matcher, response) in enumerate(self.responses):
+            if self._matches(matcher, call):
+                del self.responses[index]
+                if isinstance(response, Exception):
+                    raise response
+                return response
+        raise AssertionError("FakeTransport: no response for %r" % (call,))
+
+    def graphql(self, query, variables=None, *, absent_ok=frozenset()):
+        return self._serve({"kind": "graphql", "query": query, "variables": variables or {},
+                            "absent_ok": absent_ok})
+
+    def rest(self, method, path, body=None):
+        return self._serve({"kind": "rest", "method": method, "path": path, "body": body})
+
+
+# Builders: GraphQL-shaped dicts in the shape of the recorded fixtures under
+# fixtures/project_flow/, which read_board and read_item parse.
+
+REPO = "owner/repo"
+STATUS_OPTIONS = ("Backlog", "Ready", "In Progress", "In Review", "Blocked", "Done")
+
+
+def _conn(nodes, more=False, cursor="cursor-next"):
+    return {"nodes": list(nodes),
+            "pageInfo": {"hasNextPage": bool(more), "endCursor": cursor if more else None}}
+
+
+def _ref(ref):
+    """(repo, number) or number -> {number, repository}."""
+    repo, number = ref if isinstance(ref, tuple) else (REPO, ref)
+    return {"number": number, "repository": {"nameWithOwner": repo}}
+
+
+_SAME = object()
+
+
+def pr(number, state="OPEN", draft=False, repo=REPO, milestone=None, head_repo=_SAME,
+       association="MEMBER"):
+    """A closedByPullRequestsReferences node. head_repo: the head repository's nameWithOwner (default:
+    the PR's own repository, a same-repository branch; None: GitHub's null for a deleted fork);
+    association: the author's authorAssociation."""
+    head = repo if head_repo is _SAME else head_repo
+    return {"number": number, "state": state, "isDraft": draft,
+            "repository": {"nameWithOwner": repo},
+            "headRepository": None if head is None else {"nameWithOwner": head},
+            "authorAssociation": association,
+            "milestone": {"title": milestone} if milestone else None}
+
+
+def blocker(number, state="CLOSED", reason="COMPLETED", repo=REPO):
+    """A blockedBy node; an open blocker has reason None."""
+    return {"number": number, "state": state, "stateReason": reason,
+            "repository": {"nameWithOwner": repo}}
+
+
+def issue(number, repo=REPO, state="OPEN", state_reason=None, labels=(), assignees=(), prs=(),
+          blockers=(), parent=None, sub_issues=(), milestone=None, node_id=None, database_id=None,
+          more=(), blockers_total=None):
+    """An Issue content node (IssueFacts). blockers: blocker() dicts or (number, state, reason)
+    tuples; blockers_total: blockedBy.totalCount (default: the number of blockers given; more counts
+    a blocker the token cannot see); parent and sub_issues: number or (repo, number); more:
+    connection names whose pageInfo.hasNextPage is true."""
+    blockers = [b if isinstance(b, dict) else blocker(*b) for b in blockers]
+    blocked_by = dict(_conn(blockers, "blockedBy" in more),
+                      totalCount=len(blockers) if blockers_total is None else blockers_total)
+    return {
+        "__typename": "Issue",
+        "id": node_id or "I_issue%d" % number,
+        "databaseId": database_id if database_id is not None else 1000 + number,
+        "number": number, "state": state, "stateReason": state_reason,
+        "repository": {"nameWithOwner": repo},
+        "milestone": {"title": milestone} if milestone else None,
+        "labels": _conn([{"name": n} for n in labels], "labels" in more),
+        "assignees": _conn([{"login": n} for n in assignees], "assignees" in more),
+        "closedByPullRequestsReferences": _conn(prs, "closedByPullRequestsReferences" in more),
+        "blockedBy": blocked_by,
+        "parent": _ref(parent) if parent is not None else None,
+        "subIssues": _conn([_ref(r) for r in sub_issues], "subIssues" in more),
+    }
+
+
+def item(content, item_id=None, status=None, order=None, type=None):
+    """A ProjectV2Item node. content None (with type) is a draft or redacted card."""
+    if type is None:
+        type = "ISSUE" if content is not None else "DRAFT_ISSUE"
+    if item_id is None:
+        item_id = "PVTI_item%d" % content["number"] if content else "PVTI_draft"
+    if content is None and type == "DRAFT_ISSUE":
+        content = {"__typename": "DraftIssue"}
+    return {"id": item_id, "type": type,
+            "status": ({"__typename": "ProjectV2ItemFieldSingleSelectValue", "name": status,
+                        "optionId": "opt-" + status} if status else None),
+            "order": ({"__typename": "ProjectV2ItemFieldNumberValue", "number": float(order)}
+                      if order is not None else None),
+            "content": content,
+            # Read by ITEM_QUERY only; ITEMS_QUERY responses carry it harmlessly.
+            "project": item_project()}
+
+
+def item_project(order_type="NUMBER"):
+    """The `project` of an ITEM_QUERY node: the order field and its data type (None: no field)."""
+    if order_type is None:
+        return {"order": None}
+    return {"order": {"__typename": "ProjectV2Field", "id": "PVTF_field1", "dataType": order_type}}
+
+
+def items_page(nodes, more=False, cursor="cursor-next", owner_key="user", rate_limit=None):
+    """One ITEMS_QUERY response. rate_limit: the `rateLimit` object, absent when None (as in the
+    recorded fixtures)."""
+    data = {owner_key: {"projectV2": {"items": _conn(nodes, more, cursor)}}}
+    if rate_limit is not None:
+        data["rateLimit"] = rate_limit
+    return {"data": data}
+
+
+def rate(cost, remaining, reset_at="2026-01-01T00:00:00Z"):
+    """A GraphQL `rateLimit` object."""
+    return {"cost": cost, "remaining": remaining, "resetAt": reset_at}
+
+
+def fields(options=STATUS_OPTIONS, order=True, owner_key="user", status_name="Status",
+           order_name="Implementation order"):
+    """One FIELDS_QUERY response."""
+    status = {"__typename": "ProjectV2SingleSelectField", "id": "PVTSSF_field1", "name": status_name,
+              "options": [{"id": "opt-" + o, "name": o} for o in options]}
+    order_field = ({"__typename": "ProjectV2Field", "id": "PVTF_field1", "name": order_name,
+                    "dataType": "NUMBER"} if order else None)
+    return {"data": {owner_key: {"projectV2": {"id": "PVT_project1", "status": status,
+                                               "order": order_field}}}}
+
+
+def workflows(enabled=None, owner_key="user"):
+    """One WORKFLOWS_QUERY response; enabled maps name -> bool."""
+    enabled = {"Item closed": True, "Auto-add to project": True} if enabled is None else enabled
+    nodes = [{"name": n, "enabled": e} for n, e in enabled.items()]
+    return {"data": {owner_key: {"projectV2": {"workflows": _conn(nodes)}}}}
+
+
+def board(items, page_size=None, options=STATUS_OPTIONS, order=True, enabled=None, owner_key="user",
+          rate_limits=None):
+    """FakeTransport responses for one read_board: fields, workflows, then the item pages.
+    rate_limits: one `rateLimit` object (or None) per item page."""
+    items = list(items)
+    size = page_size or max(len(items), 1)
+    chunks = [items[i:i + size] for i in range(0, len(items), size)] or [[]]
+    responses = [("query ProjectFields", fields(options, order, owner_key)),
+                 ("query ProjectWorkflows", workflows(enabled, owner_key))]
+    for index, chunk in enumerate(chunks):
+        more = index < len(chunks) - 1
+        limit = rate_limits[index] if rate_limits is not None else None
+        responses.append(("query ProjectItems",
+                          items_page(chunk, more, "cursor%d" % (index + 1), owner_key, limit)))
+    return responses
+
+
+def item_response(node):
+    """One ITEM_QUERY response for an item() node."""
+    return {"data": {"node": node}}
+
+
+def closing_issues(refs, more=False, cursor="cursor-next"):
+    """One CLOSING_ISSUES_QUERY response; refs: (number or (repo, number), milestone title or None)."""
+    nodes = [dict(_ref(ref), milestone={"title": title} if title else None) for ref, title in refs]
+    return {"data": {"repository": {"pullRequest": {"closingIssuesReferences": _conn(nodes, more, cursor)}}}}
+
+
+def status_written(item_id="PVTI_item1"):
+    """An updateProjectV2ItemFieldValue response."""
+    return {"data": {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": item_id}}}}
+
+
+def milestone(number, title, open_issues=1, closed_issues=0):
+    """A REST milestone object, trimmed like fixtures/project_flow/milestones.json."""
+    return {"number": number, "title": title, "state": "open",
+            "open_issues": open_issues, "closed_issues": closed_issues}
+
+
+__all__ = ["FakeTransport", "GhError", "issue", "pr", "blocker", "item", "item_project", "items_page",
+           "fields", "workflows", "board", "rate", "item_response", "closing_issues", "status_written",
+           "milestone", "COMMITTED_ENVIRONMENT", "variable_path", "unset_variable"]
+
+
+def variable_path(repo="owner/repo", environment=None):
+    """The REST path of PROJECT_URL: in `environment`, else at the repository level."""
+    if environment is None:
+        return "repos/%s/actions/variables/PROJECT_URL" % repo
+    return "repos/%s/environments/%s/variables/PROJECT_URL" % (repo, environment)
+
+
+def unset_variable(repo="owner/repo", environment=None):
+    """Responses for an unset PROJECT_URL: the variable read answers 404 and the repository itself
+    is readable (a 404 on an invisible repository is not "unset")."""
+    path = variable_path(repo, environment)
+    return [(lambda call: call.get("path") == path, GhError("gh: Not Found (HTTP 404)")),
+            (lambda call: call.get("path") == "repos/%s" % repo, {"full_name": repo})]

@@ -1,0 +1,161 @@
+{
+  "data": {
+    "user": {
+      "projectV2": {
+        "items": {
+          "nodes": [
+            {
+              "content": {
+                "__typename": "Issue",
+                "assignees": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "blockedBy": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  },
+                  "totalCount": 0
+                },
+                "closedByPullRequestsReferences": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "databaseId": 1006,
+                "id": "I_issue6",
+                "labels": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "milestone": null,
+                "number": 6,
+                "parent": {
+                  "number": 5,
+                  "repository": {
+                    "nameWithOwner": "owner/repo"
+                  }
+                },
+                "repository": {
+                  "nameWithOwner": "owner/repo"
+                },
+                "state": "OPEN",
+                "stateReason": null,
+                "subIssues": {
+                  "nodes": [
+                    {
+                      "number": 7,
+                      "repository": {
+                        "nameWithOwner": "owner/repo"
+                      }
+                    }
+                  ],
+                  "pageInfo": {
+                    "endCursor": "cursor3",
+                    "hasNextPage": false
+                  }
+                }
+              },
+              "id": "PVTI_item6",
+              "order": {
+                "__typename": "ProjectV2ItemFieldNumberValue",
+                "number": 20.5
+              },
+              "status": {
+                "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                "name": "Backlog",
+                "optionId": "opt1"
+              },
+              "type": "ISSUE"
+            },
+            {
+              "content": {
+                "__typename": "Issue",
+                "assignees": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "blockedBy": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  },
+                  "totalCount": 0
+                },
+                "closedByPullRequestsReferences": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "databaseId": 1007,
+                "id": "I_issue7",
+                "labels": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "milestone": null,
+                "number": 8,
+                "parent": null,
+                "repository": {
+                  "nameWithOwner": "owner/repo"
+                },
+                "state": "OPEN",
+                "stateReason": null,
+                "subIssues": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                }
+              },
+              "id": "PVTI_item7",
+              "order": {
+                "__typename": "ProjectV2ItemFieldNumberValue",
+                "number": 30.0
+              },
+              "status": {
+                "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                "name": "Ready",
+                "optionId": "opt2"
+              },
+              "type": "ISSUE"
+            },
+            {
+              "content": {
+                "__typename": "DraftIssue"
+              },
+              "id": "PVTI_item8",
+              "order": null,
+              "status": null,
+              "type": "DRAFT_ISSUE"
+            }
+          ],
+          "pageInfo": {
+            "endCursor": "cursor5",
+            "hasNextPage": false
+          }
+        }
+      }
+    }
+  }
+}

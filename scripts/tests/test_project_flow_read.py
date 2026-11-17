@@ -1,0 +1,766 @@
+"""Tests for project_flow.py complete reads, on recorded fixtures. No network."""
+import contextlib
+import dataclasses
+import io
+import json
+import os
+import sys
+import unittest
+
+SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, SCRIPTS)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import project_flow  # noqa: E402
+from project_flow import Config, GhError, Stop  # noqa: E402
+import project_flow_fake  # noqa: E402
+from project_flow_fake import FakeTransport, blocker, board, issue, item, pr  # noqa: E402
+
+FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "project_flow")
+URL = "https://github.com/users/owner/projects/2"
+CFG = Config("Status", {"backlog": "Backlog", "ready": "Ready", "in_progress": "In Progress",
+                        "in_review": "In Review", "blocked": "Blocked", "done": "Done"},
+             "Implementation order", "blocked")
+SCOPE_ERROR = GhError("Your token has not been granted the required scopes; missing required scopes")
+
+
+def fixture(name):
+    with open(os.path.join(FIXTURES, name + ".json"), encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def recorded_board():
+    return [("query ProjectFields", fixture("fields")),
+            ("query ProjectWorkflows", fixture("workflows")),
+            ("query ProjectItems", fixture("items_page1")),
+            ("query ProjectItems", fixture("items_page2"))]
+
+
+class ReadBoardTest(unittest.TestCase):
+    def test_reads_all_pages(self):
+        fake = FakeTransport(recorded_board())
+        result = project_flow.read_board(fake, URL, CFG)
+        # 5 issues on page 1, 2 issues and a draft card on page 2; the draft is ignored.
+        self.assertEqual(len(result.items), 7)
+        self.assertEqual([f.number for f in result.items], [1, 2, 3, 4, 5, 6, 8])
+        self.assertEqual(result.unreadable, [])
+        item_calls = [c for c in fake.calls if "query ProjectItems" in c["query"]]
+        self.assertNotIn("after", item_calls[0]["variables"])
+        self.assertEqual(item_calls[1]["variables"]["after"],
+                         fixture("items_page1")["data"]["user"]["projectV2"]["items"]["pageInfo"]["endCursor"])
+        for call in fake.calls:
+            self.assertNotIn("first", call["variables"])  # production pages at the default 100
+            self.assertIn("user(login: $login)", call["query"])
+
+    def test_board_fields_and_workflows(self):
+        result = project_flow.read_board(FakeTransport(recorded_board()), URL, CFG)
+        self.assertEqual(result.project_id, "PVT_project1")
+        self.assertEqual(result.status_field_id, "PVTSSF_field1")
+        self.assertEqual(result.order_field_id, "PVTF_field1")
+        self.assertEqual(result.options["In Review"], "opt4")
+        self.assertEqual(len(result.options), 6)
+        self.assertIs(result.workflows["Auto-add sub-issues to project"], True)
+        self.assertIs(result.workflows["Item closed"], False)
+        by_number = {f.number: f for f in result.items}
+        self.assertEqual(by_number[6].order, 20.5)
+        self.assertEqual(by_number[6].status, "Backlog")
+        self.assertIsNone(by_number[4].status)
+        self.assertIsNone(by_number[4].order)
+        self.assertEqual(by_number[5].sub_issues, (("owner/repo", 1), ("owner/repo", 6)))
+        self.assertEqual(by_number[6].sub_issues, (("owner/repo", 7),))
+        self.assertEqual(by_number[8].item_id, "PVTI_item7")
+
+    def test_failing_page_is_incomplete(self):
+        responses = recorded_board()
+        responses[3] = ("query ProjectItems", GhError("HTTP 502"))
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_board(FakeTransport(responses), URL, CFG)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_missing_page_data_is_incomplete(self):
+        responses = recorded_board()
+        responses[3] = ("query ProjectItems", {"data": {"user": {"projectV2": None}}})
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_board(FakeTransport(responses), URL, CFG)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_scope_error_is_not_masked(self):
+        responses = recorded_board()
+        responses[3] = ("query ProjectItems", SCOPE_ERROR)
+        with self.assertRaises(GhError):
+            project_flow.read_board(FakeTransport(responses), URL, CFG)
+
+    def test_partial_blocker_read_marks_item_unreadable(self):
+        partial = issue(1, blockers=[(2, "CLOSED", "COMPLETED")], more=("blockedBy",))
+        items = [item(partial), item(issue(2)), item(issue(3))]
+        fake = FakeTransport(board(items) + [("IssueConnection_blockedBy", GhError("HTTP 502"))])
+        result = project_flow.read_board(fake, URL, CFG)
+        self.assertIn("PVTI_item1", result.unreadable)
+        self.assertIn("PVTI_item1", result.reasons)
+        self.assertEqual([f.item_id for f in result.items], ["PVTI_item2", "PVTI_item3"])
+
+    def test_nested_follow_up_pages_are_merged(self):
+        main = fixture("issue_facts")["data"]["node"]["content"]
+        main["blockedBy"] = fixture("blockers_page1")["data"]["node"]["blockedBy"]
+        main["blockedBy"]["totalCount"] = 3  # the follow-up query reads no total
+        node = item(main, item_id="PVTI_item1")
+        fake = FakeTransport(board([node]) + [("IssueConnection_blockedBy", fixture("blockers_page2"))])
+        result = project_flow.read_board(fake, URL, CFG)
+        reasons = [b.state_reason for b in result.items[0].blockers]
+        self.assertEqual(reasons, ["DUPLICATE", "NOT_PLANNED", "COMPLETED"])
+        follow = [c for c in fake.calls if "IssueConnection_blockedBy" in c["query"]][0]
+        self.assertEqual(follow["variables"], {"id": "I_issue1", "after": "cursor1"})
+
+    def test_redacted_item_is_unreadable(self):
+        items = [item(None, item_id="PVTI_hidden", type="REDACTED"), item(issue(2)),
+                 item(None, type="PULL_REQUEST", item_id="PVTI_pr")]
+        result = project_flow.read_board(FakeTransport(board(items)), URL, CFG)
+        self.assertEqual(result.unreadable, ["PVTI_hidden"])
+        self.assertEqual([f.number for f in result.items], [2])
+
+    def test_null_issue_content_names_the_remedy(self):
+        # Observed on real GitHub: a token that cannot see a private repository gets its issue cards
+        # as type ISSUE with content null (not REDACTED).
+        items = [item(None, item_id="PVTI_hidden", type="ISSUE"), item(issue(2))]
+        result = project_flow.read_board(FakeTransport(board(items)), URL, CFG)
+        self.assertEqual(result.unreadable, ["PVTI_hidden"])
+        self.assertEqual(result.reasons["PVTI_hidden"],
+                         "item PVTI_hidden: content not readable (null): "
+                         + project_flow.REDACTED_REMEDY)
+        self.assertEqual([f.number for f in result.items], [2])
+
+    def test_org_fallback(self):
+        responses = [("query ProjectFields", GhError("Could not resolve to a User with the login of 'o'."))]
+        responses += board([item(issue(1))], owner_key="organization")
+        fake = FakeTransport(responses)
+        result = project_flow.read_board(fake, "https://github.com/orgs/o/projects/3", CFG)
+        self.assertEqual([f.number for f in result.items], [1])
+        self.assertIn("user(login: $login)", fake.calls[0]["query"])
+        for call in fake.calls[1:]:
+            self.assertIn("organization(login: $login)", call["query"])
+
+    def test_both_owner_reads_failing_name_both_reasons(self):
+        # Observed on real GitHub: a token that cannot see a private user project gets "Could not
+        # resolve to a ProjectV2" as a user; the organization fallback's error alone misleads.
+        responses = [
+            ("query ProjectFields", GhError("gh: Could not resolve to a ProjectV2 with the number 2.")),
+            ("query ProjectFields",
+             GhError("gh: Could not resolve to an Organization with the login of 'owner'.")),
+        ]
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_board(FakeTransport(responses), URL, CFG)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+        self.assertIn("as a user: project fields: gh: Could not resolve to a ProjectV2 with the number 2.",
+                      caught.exception.detail)
+        self.assertIn("as an organization: project fields: gh: Could not resolve to an Organization",
+                      caught.exception.detail)
+
+    def test_missing_status_field_stops(self):
+        responses = board([])
+        responses[0] = ("query ProjectFields",
+                        {"data": {"user": {"projectV2": {"id": "PVT_project1", "status": None, "order": None}}}})
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_board(FakeTransport(responses), URL, CFG)
+        self.assertEqual(caught.exception.reason, "missing-option")
+
+    def test_missing_order_field_is_none(self):
+        result = project_flow.read_board(FakeTransport(board([], order=False)), URL, CFG)
+        self.assertIsNone(result.order_field_id)
+
+
+class FactsTest(unittest.TestCase):
+    def facts(self):
+        fake = FakeTransport([("query ProjectItem(", fixture("issue_facts"))])
+        return project_flow.read_item(fake, "PVTI_item1", CFG)
+
+    def test_facts_parse_fixture(self):
+        facts = self.facts()
+        self.assertEqual([b.state_reason for b in facts.blockers][::-1],
+                         ["COMPLETED", "NOT_PLANNED", "DUPLICATE"])
+        self.assertEqual(sorted(b.state_reason for b in facts.blockers),
+                         sorted(["COMPLETED", "NOT_PLANNED", "DUPLICATE"]))
+        self.assertEqual(facts.labels, frozenset({"bug", "feature-x"}))
+        self.assertEqual(facts.assignees, frozenset({"owner"}))
+        self.assertEqual(facts.item_id, "PVTI_item1")
+        self.assertEqual(facts.content_id, "I_issue1")
+        self.assertEqual((facts.repo, facts.number, facts.state), ("owner/repo", 1, "OPEN"))
+        self.assertEqual(facts.database_id, 1001)
+        self.assertEqual(facts.parent, ("owner/repo", 5))
+        self.assertEqual(facts.milestone, "M1 scratch")
+        self.assertEqual(facts.status, "In Review")
+        self.assertEqual(facts.order, 10.0)
+        self.assertEqual(facts.closing_prs, (
+            project_flow.PullRef("owner/repo", 9, "OPEN", True, None, "owner/repo", "OWNER"),
+            project_flow.PullRef("owner/repo", 10, "OPEN", False, None, "owner/repo", "OWNER")))
+        self.assertEqual(facts.blockers[0], project_flow.Blocker("owner/repo", 4, "CLOSED", "DUPLICATE"))
+
+    def test_inputs_cover_the_derivation_facts(self):
+        facts = self.facts()
+        inputs = facts.inputs()
+        self.assertEqual(inputs, self.facts().inputs())
+        changed = dataclasses.replace(
+            facts, closing_prs=(project_flow.PullRef("owner/repo", 9, "OPEN", False, None, "owner/repo",
+                                                     "OWNER"),))
+        self.assertNotEqual(changed.inputs(), inputs)
+        reordered = dataclasses.replace(facts, blockers=facts.blockers[::-1])
+        self.assertEqual(reordered.inputs(), inputs)
+        moved = dataclasses.replace(facts, status="Ready", order=99.0)
+        self.assertEqual(moved.inputs(), inputs)
+
+    def test_read_item_failure_is_incomplete(self):
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_item(FakeTransport([("query ProjectItem(", GhError("HTTP 502"))]),
+                                   "PVTI_item1", CFG)
+        self.assertEqual(caught.exception, Stop("incomplete-read", caught.exception.detail))
+
+    def test_read_item_partial_follow_up_is_incomplete(self):
+        node = item(issue(1, labels=["a"], more=("labels",)))
+        fake = FakeTransport([("query ProjectItem(", {"data": {"node": node}}),
+                              ("IssueConnection_labels", GhError("HTTP 502"))])
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_item(fake, "PVTI_item1", CFG)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_read_item_follows_pages(self):
+        node = item(issue(1, prs=[pr(3, draft=True)], more=("closedByPullRequestsReferences",)))
+        page2 = {"data": {"node": {"closedByPullRequestsReferences": {
+            "nodes": [pr(4, state="MERGED")], "pageInfo": {"hasNextPage": False, "endCursor": "x"}}}}}
+        fake = FakeTransport([("query ProjectItem(", {"data": {"node": node}}),
+                              ("IssueConnection_closedByPullRequestsReferences", page2)])
+        facts = project_flow.read_item(fake, "PVTI_item1", CFG)
+        self.assertEqual([(p.number, p.state, p.is_draft) for p in facts.closing_prs],
+                         [(3, "OPEN", True), (4, "MERGED", False)])
+        self.assertIn("includeClosedPrs: true", fake.calls[1]["query"])
+
+    def test_read_item_missing_node_is_incomplete(self):
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_item(FakeTransport([("query ProjectItem(", {"data": {"node": None}})]),
+                                   "PVTI_gone", CFG)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_blocker_builder_open(self):
+        node = item(issue(1, blockers=[blocker(2, state="OPEN", reason=None)]))
+        facts = project_flow.read_item(FakeTransport([("query ProjectItem(", {"data": {"node": node}})]),
+                                       "PVTI_item1", CFG)
+        self.assertEqual(facts.blockers, (project_flow.Blocker("owner/repo", 2, "OPEN", None),))
+
+
+def read_one(node, extra=()):
+    node = dict(node, project=project_flow_fake.item_project())
+    fake = FakeTransport([("query ProjectItem(", {"data": {"node": node}})] + list(extra))
+    return project_flow.read_item(fake, node["id"], CFG)
+
+
+class StrictFactsTest(unittest.TestCase):
+    """A missing key or a wrong type is an incomplete read; an explicit null is a fact."""
+
+    def assertIncomplete(self, node):
+        with self.assertRaises(Stop) as caught:
+            read_one(node)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+        # On a board the same item is unreadable and the others are still read.
+        result = project_flow.read_board(FakeTransport(board([node, item(issue(2))])), URL, CFG)
+        self.assertEqual(result.unreadable, [node["id"]])
+        self.assertIn(node["id"], result.reasons)
+        self.assertEqual([f.number for f in result.items], [2])
+
+    def test_missing_parent_key(self):
+        node = item(issue(1))
+        del node["content"]["parent"]
+        self.assertIncomplete(node)
+
+    def test_explicit_null_parent_is_none(self):
+        self.assertIsNone(read_one(item(issue(1))).parent)
+
+    def test_missing_milestone_key(self):
+        node = item(issue(1, milestone="M"))
+        del node["content"]["milestone"]
+        self.assertIncomplete(node)
+
+    def test_milestone_without_title(self):
+        node = item(issue(1))
+        node["content"]["milestone"] = {}
+        self.assertIncomplete(node)
+
+    def test_is_draft_null(self):
+        node = item(issue(1, prs=[pr(3)]))
+        node["content"]["closedByPullRequestsReferences"]["nodes"][0]["isDraft"] = None
+        self.assertIncomplete(node)
+
+    def test_is_draft_missing(self):
+        node = item(issue(1, prs=[pr(3)]))
+        del node["content"]["closedByPullRequestsReferences"]["nodes"][0]["isDraft"]
+        self.assertIncomplete(node)
+
+    def test_pr_milestone_missing(self):
+        node = item(issue(1, prs=[pr(3)]))
+        del node["content"]["closedByPullRequestsReferences"]["nodes"][0]["milestone"]
+        self.assertIncomplete(node)
+
+    def test_unknown_pr_state(self):
+        self.assertIncomplete(item(issue(1, prs=[pr(3, state="DRAFT")])))
+
+    def test_missing_status_value_key(self):
+        node = item(issue(1), status="Ready")
+        del node["status"]
+        self.assertIncomplete(node)
+
+    def test_status_value_without_name(self):
+        node = item(issue(1), status="Ready")
+        node["status"] = {"optionId": "opt-Ready"}
+        self.assertIncomplete(node)
+
+    def test_explicit_unset_status_and_order(self):
+        facts = read_one(item(issue(1)))
+        self.assertIsNone(facts.status)
+        self.assertIsNone(facts.order)
+
+    def test_missing_order_value_key(self):
+        node = item(issue(1), order=3)
+        del node["order"]
+        self.assertIncomplete(node)
+
+    def test_mistyped_order_value(self):
+        node = item(issue(1), order=3)
+        node["order"] = {"number": "3"}
+        self.assertIncomplete(node)
+
+    def test_unknown_issue_state(self):
+        self.assertIncomplete(item(issue(1, state="MERGED")))
+
+    def test_missing_issue_state(self):
+        node = item(issue(1))
+        del node["content"]["state"]
+        self.assertIncomplete(node)
+
+    def test_unknown_blocker_reason_when_closed(self):
+        self.assertIncomplete(item(issue(1, blockers=[(2, "CLOSED", "WONTFIX")])))
+
+    def test_closed_blocker_without_reason(self):
+        self.assertIncomplete(item(issue(1, blockers=[(2, "CLOSED", None)])))
+
+    def test_missing_blocker_reason_key(self):
+        node = item(issue(1, blockers=[(2, "CLOSED", "COMPLETED")]))
+        del node["content"]["blockedBy"]["nodes"][0]["stateReason"]
+        self.assertIncomplete(node)
+
+    def test_open_blocker_reasons(self):
+        node = item(issue(1, blockers=[(2, "OPEN", None), (3, "OPEN", "REOPENED")]))
+        self.assertEqual([b.state for b in read_one(node).blockers], ["OPEN", "OPEN"])
+
+    def test_wrong_typed_number(self):
+        node = item(issue(1))
+        node["content"]["number"] = "1"
+        self.assertIncomplete(node)
+
+    def test_wrong_typed_blocker_number(self):
+        node = item(issue(1, blockers=[(2, "CLOSED", "COMPLETED")]))
+        node["content"]["blockedBy"]["nodes"][0]["number"] = 2.0
+        self.assertIncomplete(node)
+
+    def test_bool_database_id(self):
+        node = item(issue(1))
+        node["content"]["databaseId"] = True
+        self.assertIncomplete(node)
+
+    def test_missing_repository(self):
+        node = item(issue(1))
+        del node["content"]["repository"]
+        self.assertIncomplete(node)
+
+    def test_sub_issue_without_repository(self):
+        node = item(issue(1, sub_issues=[2]))
+        node["content"]["subIssues"]["nodes"][0]["repository"] = None
+        self.assertIncomplete(node)
+
+    def test_label_name_not_a_string(self):
+        node = item(issue(1, labels=["a"]))
+        node["content"]["labels"]["nodes"][0]["name"] = None
+        self.assertIncomplete(node)
+
+    def test_workflow_enabled_must_be_bool(self):
+        responses = board([])
+        responses[1] = ("query ProjectWorkflows", project_flow_fake.workflows({"Item closed": None}))
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_board(FakeTransport(responses), URL, CFG)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_recorded_fixtures_still_read(self):
+        result = project_flow.read_board(FakeTransport(recorded_board()), URL, CFG)
+        self.assertEqual(result.unreadable, [])
+        self.assertEqual(len(result.items), 7)
+
+
+def read_one_typed(node, order_type="NUMBER"):
+    """read_item, where the item's project reports the order field's data type."""
+    node = dict(node, project=project_flow_fake.item_project(order_type))
+    fake = FakeTransport([("query ProjectItem(", {"data": {"node": node}})])
+    return project_flow.read_item(fake, node["id"], CFG)
+
+
+class OrderValueTest(unittest.TestCase):
+    """The order value is told apart by __typename: {} is only acceptable off a NUMBER field."""
+
+    def board_read(self, node, order=True):
+        return project_flow.read_board(
+            FakeTransport(board([node, item(issue(2))], order=order)), URL, CFG)
+
+    def assertUnreadable(self, node):
+        result = self.board_read(node)
+        self.assertEqual(result.unreadable, [node["id"]])
+        self.assertEqual([f.number for f in result.items], [2])
+        with self.assertRaises(Stop) as caught:
+            read_one_typed(node)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_empty_order_on_number_field_is_unreadable(self):
+        node = item(issue(1))
+        node["order"] = {}
+        self.assertUnreadable(node)
+
+    def test_empty_order_without_number_field_is_unset(self):
+        node = item(issue(1))
+        node["order"] = {}
+        result = self.board_read(node, order=False)
+        self.assertEqual(result.unreadable, [])
+        self.assertIsNone(result.items[0].order)
+        self.assertIsNone(read_one_typed(node, order_type="TEXT").order)
+        self.assertIsNone(read_one_typed(node, order_type=None).order)
+
+    def test_other_typed_value_without_number_field_is_unset(self):
+        node = item(issue(1))
+        node["order"] = {"__typename": "ProjectV2ItemFieldTextValue"}
+        self.assertIsNone(read_one_typed(node, order_type="TEXT").order)
+
+    def test_other_typed_value_on_number_field_is_unreadable(self):
+        node = item(issue(1))
+        node["order"] = {"__typename": "ProjectV2ItemFieldTextValue"}
+        self.assertUnreadable(node)
+
+    def test_number_value_missing_number(self):
+        node = item(issue(1))
+        node["order"] = {"__typename": "ProjectV2ItemFieldNumberValue"}
+        self.assertUnreadable(node)
+
+    def test_number_value_not_numeric(self):
+        for bad in ("3", True, None):
+            node = item(issue(1))
+            node["order"] = {"__typename": "ProjectV2ItemFieldNumberValue", "number": bad}
+            self.assertUnreadable(node)
+
+    def test_explicit_null_order_is_unset(self):
+        node = item(issue(1))
+        self.assertIsNone(self.board_read(node).items[0].order)
+        self.assertIsNone(read_one_typed(node).order)
+
+    def test_number_value_reads(self):
+        node = item(issue(1), order=7)
+        self.assertEqual(self.board_read(node).items[0].order, 7.0)
+        self.assertEqual(read_one_typed(node).order, 7.0)
+
+    def test_read_item_without_project_key_is_incomplete(self):
+        node = item(issue(1), order=7)
+        del node["project"]
+        fake = FakeTransport([("query ProjectItem(", {"data": {"node": node}})])
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_item(fake, node["id"], CFG)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_status_value_needs_its_type(self):
+        for value in ({}, {"__typename": "ProjectV2ItemFieldTextValue", "name": "Ready"},
+                      {"__typename": "ProjectV2ItemFieldSingleSelectValue"},
+                      {"__typename": "ProjectV2ItemFieldSingleSelectValue", "name": 3}):
+            node = item(issue(1))
+            node["status"] = value
+            self.assertUnreadable(node)
+
+    def test_queries_select_value_typenames(self):
+        for query in (project_flow.ITEMS_QUERY, project_flow.ITEM_QUERY):
+            self.assertIn("fieldValueByName(name: $order) { __typename", query)
+            self.assertIn("fieldValueByName(name: $status) { __typename", query)
+        self.assertIn("project { order: field(name: $order)", project_flow.ITEM_QUERY)
+
+
+class OrderFieldMetadataTest(unittest.TestCase):
+    """Only well-formed metadata may say the order field is not a NUMBER field."""
+
+    def read(self, order_field):
+        node = dict(item(issue(1), order=7), project={"order": order_field})
+        return project_flow.read_item(
+            FakeTransport([("query ProjectItem(", {"data": {"node": node}})]), node["id"], CFG)
+
+    def board_read(self, order_field):
+        responses = board([item(issue(1), order=7)])
+        response = project_flow_fake.fields()
+        response["data"]["user"]["projectV2"]["order"] = order_field
+        responses[0] = ("query ProjectFields", response)
+        return project_flow.read_board(FakeTransport(responses), URL, CFG)
+
+    MALFORMED = (
+        {},
+        {"__typename": "ProjectV2Field", "id": "PVTF_field1"},
+        {"__typename": "ProjectV2Field", "id": "PVTF_field1", "dataType": None},
+        {"__typename": "ProjectV2Field", "id": "PVTF_field1", "dataType": 3},
+        {"__typename": "ProjectV2Field", "dataType": "NUMBER"},
+        {"__typename": 3},
+        {"__typename": "SomethingElse"},
+        "NUMBER",
+        {"__typename": "ProjectV2Field", "id": "PVTF_x", "dataType": "BOGUS"},
+        {"__typename": "ProjectV2Field", "id": "PVTF_x", "dataType": "number"},
+        {"__typename": "ProjectV2Field", "id": "PVTF_x", "dataType": ""},
+        {"__typename": "ProjectV2Field", "id": "PVTF_x", "dataType": ["NUMBER"]},
+        {"__typename": "ProjectV2Field", "id": "PVTF_x", "dataType": {"name": "NUMBER"}},
+        {"__typename": "ProjectV2Field", "dataType": "TEXT"},
+        {"__typename": "ProjectV2Field", "id": None, "dataType": "TEXT"},
+        {"__typename": "ProjectV2Field", "id": 7, "dataType": "TEXT"},
+        {"__typename": "ProjectV2Field", "id": None, "dataType": "NUMBER"},
+        {"__typename": "ProjectV2Field", "id": 7, "dataType": "NUMBER"},
+        {"__typename": "ProjectV2Field", "id": ["PVTF_x"], "dataType": "NUMBER"},
+        {"__typename": "ProjectV2SingleSelectField"},
+        {"__typename": "ProjectV2SingleSelectField", "id": None},
+        {"__typename": "ProjectV2SingleSelectField", "id": 7},
+        {"__typename": "ProjectV2IterationField"},
+        {"__typename": "ProjectV2IterationField", "id": None},
+        {"__typename": "ProjectV2IterationField", "id": 7},
+        {"__typename": "ProjectV2FieldCommon", "id": "PVTF_x", "dataType": "NUMBER"},
+        {"__typename": "projectv2field", "id": "PVTF_x", "dataType": "NUMBER"},
+        ["ProjectV2Field"],
+        7,
+    )
+
+    # GitHub's ProjectV2FieldType enum (live introspection), without NUMBER.
+    OTHER_DATA_TYPES = (
+        "ASSIGNEES", "LINKED_PULL_REQUESTS", "REVIEWERS", "LABELS", "MILESTONE", "REPOSITORY", "TITLE",
+        "TEXT", "SINGLE_SELECT", "MULTI_SELECT", "DATE", "ITERATION", "TRACKS", "TRACKED_BY",
+        "ISSUE_TYPE", "PARENT_ISSUE", "SUB_ISSUES_PROGRESS", "CREATED", "UPDATED", "CLOSED",
+    )
+
+    def test_malformed_metadata_is_incomplete(self):
+        for order_field in self.MALFORMED:
+            with self.assertRaises(Stop, msg=repr(order_field)) as caught:
+                self.read(order_field)
+            self.assertEqual(caught.exception.reason, "incomplete-read")
+            with self.assertRaises(Stop, msg=repr(order_field)) as caught:
+                self.board_read(order_field)
+            self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_missing_order_key_is_incomplete(self):
+        node = dict(item(issue(1), order=7), project={})
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_item(FakeTransport([("query ProjectItem(", {"data": {"node": node}})]),
+                                   node["id"], CFG)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+        responses = board([item(issue(1))])
+        del responses[0][1]["data"]["user"]["projectV2"]["order"]
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_board(FakeTransport(responses), URL, CFG)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_number_field_reads_the_value(self):
+        field = {"__typename": "ProjectV2Field", "id": "PVTF_field1", "dataType": "NUMBER"}
+        self.assertEqual(self.read(field).order, 7.0)
+        result = self.board_read(field)
+        self.assertEqual((result.order_field_id, result.items[0].order), ("PVTF_field1", 7.0))
+
+    def test_other_fields_leave_order_unset(self):
+        for field in ({"__typename": "ProjectV2Field", "id": "PVTF_x", "dataType": "TEXT"},
+                      {"__typename": "ProjectV2SingleSelectField", "id": "PVTSSF_x"},
+                      {"__typename": "ProjectV2IterationField", "id": "PVTIF_x"},
+                      None):  # GitHub returns null for an absent field
+            self.assertIsNone(self.read(field).order, repr(field))
+            result = self.board_read(field)
+            self.assertIsNone(result.order_field_id, repr(field))
+            self.assertIsNone(result.items[0].order, repr(field))
+
+    def test_every_known_data_type_but_number_leaves_order_unset(self):
+        for data_type in self.OTHER_DATA_TYPES:
+            field = {"__typename": "ProjectV2Field", "id": "PVTF_x", "dataType": data_type}
+            self.assertIsNone(self.read(field).order, data_type)
+            result = self.board_read(field)
+            self.assertIsNone(result.order_field_id, data_type)
+            self.assertIsNone(result.items[0].order, data_type)
+
+    def test_known_data_types_match_the_github_enum(self):
+        self.assertEqual(project_flow._FIELD_DATA_TYPES, frozenset(self.OTHER_DATA_TYPES) | {"NUMBER"})
+
+    def test_queries_select_the_id_of_every_accepted_field_type(self):
+        for query in (project_flow.FIELDS_QUERY, project_flow.ITEM_QUERY):
+            order = query[query.index("order: field(name: $order)"):]
+            for selection in ("... on ProjectV2Field { id ", "... on ProjectV2SingleSelectField { id }",
+                              "... on ProjectV2IterationField { id }"):
+                self.assertIn(selection, order)
+
+
+class ParseProjectUrlTest(unittest.TestCase):
+    def test_parse_project_url_strips_view(self):
+        self.assertEqual(project_flow.parse_project_url("https://github.com/users/o/projects/3/views/2"),
+                         ("o", 3))
+
+    def test_parse_project_url_orgs(self):
+        self.assertEqual(project_flow.parse_project_url("https://github.com/orgs/acme/projects/12/"),
+                         ("acme", 12))
+
+    def test_parse_project_url_rejects_other_urls(self):
+        for url in ("https://github.com/acme/repo/issues/3", "https://github.com/users/o/projects/x",
+                    "users/o/projects/3", "https://example.com/users/o/projects/3"):
+            with self.assertRaises(Stop, msg=url) as caught:
+                project_flow.parse_project_url(url)
+            self.assertEqual(caught.exception.reason, "config-invalid")
+
+
+class ReadTextTest(unittest.TestCase):
+    def test_read_text_paginates_comments(self):
+        fake = FakeTransport([("query IssueText", fixture("text_page1")),
+                              ("query IssueText", fixture("text_page2"))])
+        text = project_flow.read_text(fake, "owner/repo", 1)
+        for part in ("pf main item", "First comment", "Second comment", "Third comment"):
+            self.assertIn(part, text)
+        self.assertLess(text.index("First"), text.index("Third"))
+        self.assertEqual(fake.calls[0]["variables"], {"owner": "owner", "name": "repo", "number": 1})
+        self.assertEqual(fake.calls[1]["variables"]["after"], "cursor6")
+
+    def test_read_text_failing_page_incomplete(self):
+        fake = FakeTransport([("query IssueText", fixture("text_page1")),
+                              ("query IssueText", GhError("HTTP 502"))])
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_text(fake, "owner/repo", 1)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+
+class StrictTextTest(unittest.TestCase):
+    def text(self, page):
+        return project_flow.read_text(FakeTransport([("query IssueText", page)]), "owner/repo", 1)
+
+    def page(self, body="b", comments=("c",)):
+        return {"data": {"repository": {"issue": {"body": body, "comments": {
+            "nodes": [{"body": c} for c in comments],
+            "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+
+    def assertIncomplete(self, page):
+        with self.assertRaises(Stop) as caught:
+            self.text(page)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_missing_issue_body_key(self):
+        page = self.page()
+        del page["data"]["repository"]["issue"]["body"]
+        self.assertIncomplete(page)
+
+    def test_missing_comment_body_key(self):
+        page = self.page()
+        del page["data"]["repository"]["issue"]["comments"]["nodes"][0]["body"]
+        self.assertIncomplete(page)
+
+    def test_null_body_is_incomplete(self):
+        self.assertIncomplete(self.page(body=None))
+        self.assertIncomplete(self.page(comments=(None,)))
+
+    def test_empty_body_is_text(self):
+        self.assertEqual(self.text(self.page(body="", comments=("c",))), "\n\nc")
+
+
+class ReadPrClosingIssuesTest(unittest.TestCase):
+    def test_read_pr_closing_issues_paginates_and_fails_closed(self):
+        fake = FakeTransport([("query PullClosingIssues", fixture("closing_issues_page1")),
+                              ("query PullClosingIssues", fixture("closing_issues_page2"))])
+        self.assertEqual(project_flow.read_pr_closing_issues(fake, "owner/repo", 10),
+                         [("owner/repo", 1, "M1 scratch"), ("owner/repo", 5, "M1 scratch")])
+        self.assertEqual(fake.calls[1]["variables"]["after"], "cursor3")
+        failing = FakeTransport([("query PullClosingIssues", fixture("closing_issues_page1")),
+                                 ("query PullClosingIssues", GhError("HTTP 502"))])
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_pr_closing_issues(failing, "owner/repo", 10)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+
+def sub_issue_responses():
+    def for_number(number):
+        return lambda call: ("query IssueSubIssues" in call["query"]
+                             and call["variables"]["number"] == number)
+    return [(for_number(n), fixture("sub_issues_%d" % n)) for n in (5, 1, 6, 7)]
+
+
+class ReadDescendantsTest(unittest.TestCase):
+    def test_read_descendants_two_depths_off_project(self):
+        result = project_flow.read_descendants(FakeTransport(sub_issue_responses()), "owner/repo", 5)
+        self.assertEqual(result, {("owner/repo", 1), ("owner/repo", 6), ("owner/repo", 7)})
+
+    def test_read_descendants_failing_page_incomplete(self):
+        responses = sub_issue_responses()
+        responses[2] = (responses[2][0], GhError("HTTP 502"))
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_descendants(FakeTransport(responses), "owner/repo", 5)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_read_descendants_follows_pages(self):
+        page1 = {"data": {"repository": {"issue": {"subIssues": {
+            "nodes": [{"number": 2, "repository": {"nameWithOwner": "owner/repo"}}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "c1"}}}}}}
+        page2 = {"data": {"repository": {"issue": {"subIssues": {
+            "nodes": [{"number": 3, "repository": {"nameWithOwner": "other/repo"}}],
+            "pageInfo": {"hasNextPage": False, "endCursor": "c2"}}}}}}
+        empty = {"data": {"repository": {"issue": {"subIssues": {
+            "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+        fake = FakeTransport([(None, page1), (None, page2), (None, empty), (None, empty)])
+        self.assertEqual(project_flow.read_descendants(fake, "owner/repo", 1),
+                         {("owner/repo", 2), ("other/repo", 3)})
+        self.assertEqual(fake.calls[1]["variables"]["after"], "c1")
+        self.assertEqual({(c["variables"]["owner"], c["variables"]["name"]) for c in fake.calls[2:]},
+                         {("owner", "repo"), ("other", "repo")})
+
+
+class InaccessibleBlockerTest(unittest.TestCase):
+    """GitHub counts a blocker the token cannot see in blockedBy.totalCount but leaves it out of the
+    nodes: the item could derive Ready while blocked, so it is an incomplete read."""
+
+    def test_query_selects_the_total(self):
+        self.assertIn("blockedBy(first: $first) { totalCount", project_flow.ITEMS_QUERY)
+        self.assertIn("blockedBy(first: $first) { totalCount", project_flow.ITEM_QUERY)
+
+    def test_hidden_blocker_makes_the_item_unreadable(self):
+        hidden = issue(1, blockers=[(2, "CLOSED", "COMPLETED")], blockers_total=2)
+        result = project_flow.read_board(FakeTransport(board([item(hidden), item(issue(3))])), URL, CFG)
+        self.assertEqual(result.unreadable, ["PVTI_item1"])
+        self.assertIn("inaccessible blockers", result.reasons["PVTI_item1"])
+        self.assertEqual([f.number for f in result.items], [3])
+        with self.assertRaises(Stop) as caught:
+            read_one(item(hidden))
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_total_after_every_page(self):
+        # The total is compared with the nodes of every page, not of the first one.
+        paged = issue(1, blockers=[(2, "CLOSED", "COMPLETED")], blockers_total=2, more=("blockedBy",))
+        page2 = {"data": {"node": {"blockedBy": {"nodes": [blocker(4)],
+                                                 "pageInfo": {"hasNextPage": False, "endCursor": "c"}}}}}
+        facts = read_one(item(paged), extra=[("IssueConnection_blockedBy", page2)])
+        self.assertEqual([b.number for b in facts.blockers], [2, 4])
+
+    def test_missing_or_mistyped_total_is_incomplete(self):
+        for value in (project_flow_fake._SAME, None, "1", True):
+            with self.subTest(value=value):
+                node = item(issue(1, blockers=[(2, "CLOSED", "COMPLETED")]))
+                if value is project_flow_fake._SAME:
+                    del node["content"]["blockedBy"]["totalCount"]
+                else:
+                    node["content"]["blockedBy"]["totalCount"] = value
+                with self.assertRaises(Stop) as caught:
+                    read_one(node)
+                self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_next_stops_instead_of_selecting_the_item(self):
+        hidden = item(issue(1, blockers=[(2, "CLOSED", "COMPLETED")], blockers_total=2),
+                      status="Ready", order=1)
+        fake = FakeTransport([("repos/owner/repo/actions/variables/PROJECT_URL",
+                               {"name": "PROJECT_URL", "value": URL})]
+                             + board([hidden, item(issue(3), status="Ready", order=2)])
+                             + [("repos/owner/repo/milestones?state=open", [])])
+        with self.assertRaises(Stop) as caught:
+            with contextlib.redirect_stdout(io.StringIO()):
+                project_flow.next_task(fake, CFG, URL, "owner/repo", skip_unordered=False, dry_run=False)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+        self.assertIn("PVTI_item1", caught.exception.detail)
+        self.assertEqual(fake.mutations, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
