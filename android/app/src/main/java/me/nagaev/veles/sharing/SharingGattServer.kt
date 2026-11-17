@@ -153,7 +153,7 @@ internal class SharingGattServer(
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) = post {
             onState(SharingAvailability.Advertising)
         }
-        override fun onStartFailure(errorCode: Int) = post { onState(SharingAvailability.Failed) }
+        override fun onStartFailure(errorCode: Int) = post { onState(advertiseFailureState(errorCode)) }
     }
     private val callbacks = object : BluetoothGattServerCallback() {
         override fun onServiceAdded(status: Int, service: BluetoothGattService) = post {
@@ -824,4 +824,14 @@ internal class SharingGattServer(
         /** Defensive cap on remembered unmatched callbacks per address; excess is immediately ambiguous. */
         private const val MAX_OUTSTANDING_STALE = 8
     }
+}
+
+/**
+ * The real advertising result is the capability signal: only a controller that reports the
+ * feature as unsupported is `Unsupported`. Every other code (including vendor codes) is a
+ * non-capability failure that keeps the transport's `Failed` outcome.
+ */
+internal fun advertiseFailureState(errorCode: Int): SharingAvailability = when (errorCode) {
+    AdvertiseCallback.ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> SharingAvailability.Unsupported
+    else -> SharingAvailability.Failed
 }
