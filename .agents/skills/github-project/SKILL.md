@@ -24,11 +24,11 @@ Add `--dry-run` to any writing command to print its writes without making them.
 
 ## Intake
 
-1. **Scope precheck** — see *Next task*, *When this applies*:
+1. **Scope precheck** — see *Next task*, *When this applies* (the missing-scope rule):
 
    ```bash
-   gh auth status                     # the token scopes must include project
-   gh auth refresh -s project         # the fix to report when it does not
+   gh auth status                     # lists the token scopes
+   gh auth refresh -s project         # the fix command that section names
    ```
 
 2. **Issue-only intake** — see *Next task*, *Issue-only intake*. List the issue's projects (page with
@@ -109,7 +109,7 @@ Add `--dry-run` to any writing command to print its writes without making them.
 
     It prints `created: #<m>` at once. After a later failure it prints `missing: <steps>` and
     `resume with the same arguments and --resume <m>`: re-run the exact command line with `--resume <m>` added.
-    Add the issue to the PR body (step 11).
+    The PR body's follow-up list is the template in step 11.
 
 ## Finalize
 
