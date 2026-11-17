@@ -17,25 +17,41 @@ from project_flow_fake import FakeTransport  # noqa: E402
 
 
 class GhTransportEncodingTest(unittest.TestCase):
-    def test_variable_encoding(self):
+    @staticmethod
+    def sent(variables, query="query Q"):
+        """(argv, decoded JSON body) of one graphql call."""
         with mock.patch.object(GhTransport, "_run", return_value="{}") as run:
-            GhTransport().graphql("query Q", {"after": None, "s": "x=1", "n": 5, "b": True})
-        args = run.call_args[0][0]
-        self.assertEqual(
-            args,
-            ["api", "graphql", "-f", "query=query Q", "-F", "after=null", "-f", "s=x=1",
-             "-F", "n=5", "-F", "b=true"],
-        )
+            GhTransport().graphql(query, variables)
+        args, stdin = run.call_args[0]
+        return args, json.loads(stdin)
 
-    def test_float_variable_sent_as_json(self):
-        # gh's -F sends "15.1" as a string, which GitHub rejects for a Float! variable (checked live
-        # on the scratch project), so a request with a float goes as a JSON body on stdin.
-        with mock.patch.object(GhTransport, "_run", return_value="{}") as run:
-            GhTransport().graphql("mutation M", {"value": 15.1, "item": "PVTI_x", "n": 2})
-        args, stdin = run.call_args[0][0], run.call_args[0][1]
+    def test_variable_encoding(self):
+        # One path for every request: a JSON body on stdin, never -f/-F (gh -F sends 15.1 and a
+        # list as strings, which GitHub rejects; checked live on the scratch project).
+        args, body = self.sent({"after": None, "s": "x=1", "n": 5, "b": True})
         self.assertEqual(args, ["api", "graphql", "--input", "-"])
-        self.assertEqual(json.loads(stdin), {"query": "mutation M",
-                                             "variables": {"value": 15.1, "item": "PVTI_x", "n": 2}})
+        self.assertEqual(body, {"query": "query Q",
+                                "variables": {"after": None, "s": "x=1", "n": 5, "b": True}})
+        self.assertIsNone(body["variables"]["after"])  # None arrives as JSON null
+
+    def test_variable_type_matrix(self):
+        cases = {
+            "null": None, "str": "Status", "str with =": "a=b", "int": 7, "zero": 0,
+            "bool true": True, "bool false": False, "float": 15.1, "whole float": 16.0,
+            "list of str": ["a", "b"], "list of int": [1, 2], "empty list": [],
+            "nested dict": {"k": [1, {"x": None}], "s": "v"},
+        }
+        for name, value in cases.items():
+            with self.subTest(name):
+                args, body = self.sent({"v": value}, "mutation M")
+                self.assertEqual(args, ["api", "graphql", "--input", "-"])
+                self.assertEqual(body["query"], "mutation M")
+                self.assertEqual(body["variables"], {"v": value})
+                self.assertIs(type(body["variables"]["v"]), type(value))
+
+    def test_no_variables_sends_empty_object(self):
+        args, body = self.sent(None)
+        self.assertEqual(body, {"query": "query Q", "variables": {}})
 
 
 def completed(code, stdout, stderr=""):

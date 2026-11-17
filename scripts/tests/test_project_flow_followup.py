@@ -98,6 +98,18 @@ def kinds(fake):
     return [kind(m) for m in fake.mutations]
 
 
+def concurrent(fake, trigger, links):
+    """When `fake` first sees a call matching `trigger`, a concurrent writer has changed the issue:
+    the next FollowupIssue read serves `links` (put ahead of the queued reads)."""
+    fired = []
+
+    def hook(call):
+        if not fired and trigger in (call.get("query") or call.get("path") or ""):
+            fired.append(True)
+            fake.responses.insert(0, links)
+    fake.on_call(hook)
+
+
 class BodyFile:
     def __enter__(self):
         handle = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8")
@@ -190,9 +202,13 @@ class AllocateOrderTest(unittest.TestCase):
 
 
 def fresh_responses():
-    return ([ENABLED] + parent_board() + [subs(), MILESTONES, CREATED, SUB_ADDED, MILESTONE_SET,
-                                          BLOCKED, state(parent=15, milestone_title="M3", blockers=[20]),
-                                          ITEM_ADDED, ORDER_SET])
+    """A complete run: each link step re-reads the issue right before its write."""
+    return ([ENABLED] + parent_board() + [
+        subs(), MILESTONES, CREATED, SUB_ADDED,
+        state(parent=15), MILESTONE_SET,                       # refresh before step 3
+        state(parent=15, milestone_title="M3"), BLOCKED,       # refresh before step 4 (#20)
+        state(parent=15, milestone_title="M3", blockers=[20]),  # project item lookup before step 5
+        ITEM_ADDED, ORDER_SET])
 
 
 class FollowupTest(unittest.TestCase):
@@ -282,7 +298,10 @@ class FollowupTest(unittest.TestCase):
 
     def test_failure_on_sub_issue_names_every_later_step(self):
         responses = fresh_responses()
-        responses[responses.index(SUB_ADDED)] = (is_rest("POST", "/sub_issues"), GhError("gh: HTTP 422"))
+        index = responses.index(SUB_ADDED)
+        # The POST fails and the fresh read shows no parent: the failure stands.
+        responses[index:index + 1] = [(is_rest("POST", "/sub_issues"), GhError("gh: HTTP 502")),
+                                      state()]
         fake = FakeTransport(responses)
         stop, out = run_followup(fake)
         self.assertIsInstance(stop, Stop)
@@ -296,7 +315,8 @@ class FollowupTest(unittest.TestCase):
         nodes = [item(issue(21), status="Ready", order=4)]
         resumed = state(parent=15, milestone_title="M3", blockers=[20])
         fake = FakeTransport([ENABLED] + parent_board(extra=nodes) + [
-            resumed, subs(NEW), subs(), (is_rest("POST", "/dependencies/blocked_by"), {"number": NEW}),
+            resumed, subs(NEW), subs(), resumed,  # the refresh right before the #21 link
+            (is_rest("POST", "/dependencies/blocked_by"), {"number": NEW}),
             state(parent=15, milestone_title="M3", blockers=[20, 21]), ITEM_ADDED, ORDER_SET])
         number, out = run_followup(fake, blockers=[(REPO, 20), (REPO, 21)], resume=NEW)
         self.assertEqual(number, NEW)
@@ -317,6 +337,96 @@ class FollowupTest(unittest.TestCase):
         self.assertEqual(number, NEW)
         self.assertEqual(fake.mutations, [])
         self.assertEqual(fake.responses, [])
+
+    def test_malformed_create_response_still_reports_number(self):
+        # The issue exists (a number came back) but the response lacks its ids: the number and
+        # every later step are still reported.
+        responses = fresh_responses()
+        responses[responses.index(CREATED)] = (CREATED[0], {"number": NEW})
+        fake = FakeTransport(responses)
+        stop, out = run_followup(fake)
+        self.assertEqual(stop.reason, "incomplete-read")
+        self.assertIn("created: #%d" % NEW, out)
+        self.assertIn("failed: create_issue", out)
+        self.assertIn("missing: add_sub_issue, set_milestone, add_blocked_by, add_project_item, set_order",
+                      out)
+        self.assertEqual(kinds(fake), ["create_issue"])
+
+    def test_failed_write_names_the_step(self):
+        responses = fresh_responses()
+        responses[responses.index(ITEM_ADDED)] = ("mutation AddProjectItem", GhError("gh: HTTP 502"))
+        _, out = run_followup(FakeTransport(responses))
+        self.assertIn("failed: add_project_item: ", out)
+        self.assertIn("HTTP 502", out)
+        self.assertLess(out.index("failed: "), out.index("missing: "))
+
+    def test_resume_milestone_set_concurrently_is_not_overwritten(self):
+        # The resume read shows no milestone; while the descendants are read a concurrent writer
+        # sets it. The refresh before step 3 sees it: no PATCH.
+        for title, reason in (("M3", None), ("Other", "resume-disagrees")):
+            with self.subTest(title=title):
+                responses = [ENABLED] + parent_board() + [
+                    state(parent=15, blockers=[20]), subs(), MILESTONES,
+                    state(parent=15, milestone_title="M3", blockers=[20]), ITEM_ADDED, ORDER_SET]
+                fake = FakeTransport(responses)
+                concurrent(fake, "query IssueSubIssues",
+                           state(parent=15, milestone_title=title, blockers=[20]))
+                result, out = run_followup(fake, resume=NEW)
+                self.assertNotIn("set_milestone", kinds(fake))
+                if reason is None:
+                    self.assertEqual(result, NEW)
+                    self.assertIn("skipped set_milestone: milestone already 'M3'", out)
+                    self.assertEqual(kinds(fake), ["add_project_item", "set_order"])
+                else:
+                    self.assertEqual(result.reason, reason)
+                    self.assertIn("Other", result.detail)
+                    self.assertEqual(fake.mutations, [])
+                    self.assertIn("missing: set_milestone, add_blocked_by", out)
+
+    def test_resume_blocker_added_concurrently_no_duplicate_post(self):
+        # #21 is missing at the resume read and linked by someone else before the write.
+        nodes = [item(issue(21), status="Ready", order=4)]
+        fake = FakeTransport([ENABLED] + parent_board(extra=nodes) + [
+            state(parent=15, milestone_title="M3", blockers=[20]), subs(),
+            state(parent=15, milestone_title="M3", blockers=[20, 21]), ITEM_ADDED, ORDER_SET])
+        concurrent(fake, "query IssueSubIssues", state(parent=15, milestone_title="M3", blockers=[20, 21]))
+        number, out = run_followup(fake, blockers=[(REPO, 20), (REPO, 21)], resume=NEW)
+        self.assertEqual(number, NEW)
+        self.assertEqual(kinds(fake), ["add_project_item", "set_order"])
+        self.assertIn("owner/repo#21 already linked", out)
+        self.assertEqual(fake.responses, [])
+
+    def test_duplicate_link_error_reconciles_through_fresh_read(self):
+        # The link landed between the refresh and the POST: GitHub answers 422; a fresh read shows
+        # the link, so the step is satisfied and the run goes on.
+        dup_blocker = GhError("gh: Validation failed: Target issue has already been taken (HTTP 422)")
+        responses = fresh_responses()
+        index = responses.index(BLOCKED)
+        responses[index:index + 1] = [(is_rest("POST", "/dependencies/blocked_by"), dup_blocker),
+                                      state(parent=15, milestone_title="M3", blockers=[20])]
+        fake = FakeTransport(responses)
+        number, out = run_followup(fake)
+        self.assertEqual(number, NEW)
+        self.assertEqual(kinds(fake), STEPS)  # one blocker POST, never a second
+        self.assertIn("owner/repo#20 already linked", out)
+        self.assertEqual(fake.responses, [])
+        # The same for the sub-issue link.
+        dup_sub = GhError("gh: Issue may not contain duplicate sub-issues (HTTP 422)")
+        responses = fresh_responses()
+        index = responses.index(SUB_ADDED)
+        responses[index:index + 1] = [(is_rest("POST", "/sub_issues"), dup_sub), state(parent=15)]
+        fake = FakeTransport(responses)
+        number, out = run_followup(fake)
+        self.assertEqual(number, NEW)
+        self.assertEqual(kinds(fake), STEPS)
+        self.assertIn("skipped add_sub_issue: already a sub-issue of owner/repo#15", out)
+        # A 422 whose fresh read shows another parent is a disagreement, not success.
+        responses = fresh_responses()
+        index = responses.index(SUB_ADDED)
+        responses[index:index + 1] = [(is_rest("POST", "/sub_issues"), dup_sub), state(parent=99)]
+        stop, out = run_followup(FakeTransport(responses))
+        self.assertEqual(stop.reason, "resume-disagrees")
+        self.assertIn("missing: add_sub_issue", out)
 
     def test_resume_disagreeing_parent(self):
         fake = FakeTransport([ENABLED] + parent_board() + [state(parent=99)])

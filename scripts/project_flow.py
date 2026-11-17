@@ -169,23 +169,12 @@ class GhTransport:
     def graphql(self, query: str, variables: Optional[dict] = None, *,
                 absent_ok: frozenset = frozenset()) -> dict:
         """absent_ok: the full response paths of field lookups whose absence (NOT_FOUND, null)
-        is an answer, not a failure."""
-        variables = variables or {}
-        stdin = None
-        if any(isinstance(value, float) for value in variables.values()):
-            # gh -F has no float form ("15.1" arrives as a string, rejected for Float!): send the
-            # whole request as a JSON body instead.
-            args = ["api", "graphql", "--input", "-"]
-            stdin = json.dumps({"query": query, "variables": variables})
-        else:
-            args = ["api", "graphql", "-f", "query=" + query]
-            for name, value in variables.items():
-                if value is None or isinstance(value, (int, bool)):
-                    args += ["-F", "%s=%s" % (name, json.dumps(value))]  # None -> null
-                else:
-                    args += ["-f", "%s=%s" % (name, value)]
+        is an answer, not a failure. The request always goes as one JSON body on stdin, so every
+        variable keeps its JSON type (null, string, number, boolean, list, object); gh's -f/-F would
+        send a float or a list as a string."""
+        body = json.dumps({"query": query, "variables": dict(variables or {})})
         try:
-            return self._decode(self._run(args, stdin))
+            return self._decode(self._run(["api", "graphql", "--input", "-"], body))
         except GhError as err:
             absent = _absent_field_response(err.stdout, absent_ok)
             if absent is None:
@@ -866,14 +855,14 @@ class Writer:
         self._emit("%s %s: %s" % (label or item_id, self.cfg.order_field, value))
 
     def create_issue(self, repo: str, title: str, body: str) -> Optional[tuple]:
-        """Create the issue; (number, REST id, node id), None on a dry run. A failure raises Stop."""
+        """Create the issue; (number, the whole response), None on a dry run. Only the number is
+        checked here, so the caller can report it before it checks the rest of the response."""
         created = None
         if not self.dry_run:
             what = "create issue in %s" % repo
             response = _rest(self.t, "POST", "repos/%s/issues" % repo, what,
                              {"title": title, "body": body})
-            created = (_field(response, "number", int, what), _field(response, "id", int, what),
-                       _field(response, "node_id", str, what))
+            created = (_field(response, "number", int, what), response)
         self._emit("create issue in %s: %s" % (repo, title))
         return created
 
@@ -1319,21 +1308,23 @@ def followup(t: Transport, cfg: Config, project_url: str, repo: str, *, parent: 
             print(line)
         del out[:]
 
+    # Completion is sequentially idempotent: every link step re-reads the issue right before its
+    # write, skips a link that already exists, refuses one that disagrees, and reconciles a
+    # duplicate-link error through a fresh read. GitHub has no compare-and-set, so a concurrent
+    # writer can still land between that last read and the write (a residual non-atomic window).
     number = resume
+    created = None
     if resume is None:
         created = writer.create_issue(repo, title, body)
         flush()
         if created is not None:
-            number, issue_id, content_id = created
+            number = created[0]
             print("created: #%d" % number)
             sys.stdout.flush()
-        else:
-            issue_id = content_id = None
-    else:
-        issue_id, content_id = links.database_id, links.content_id
-        print("resuming: %s#%d" % (repo, resume))
     ref = "%s#%s" % (repo, number if number is not None else "(new)")
     pending = list(FOLLOWUP_STEPS)
+    issue_id = content_id = None
+    failing = None  # a failure outside the pending steps
 
     def done(step: str, why: Optional[str] = None) -> None:
         if why is not None:
@@ -1341,25 +1332,80 @@ def followup(t: Transport, cfg: Config, project_url: str, repo: str, *, parent: 
         pending.remove(step)
         flush()
 
+    def refresh() -> Optional[IssueLinks]:
+        """The issue's links now; a newly observed disagreement stops before the write. None on a
+        dry run of a new issue (there is nothing to read)."""
+        if number is None:
+            return None
+        now = _issue_links(t, repo, number)
+        disagree = _disagreements(now, parent, parent_facts.milestone, blockers)
+        if disagree:
+            raise Stop("resume-disagrees", "%s: %s; not written" % (ref, "; ".join(disagree)))
+        return now
+
+    def reconcile(stop: Stop, linked) -> None:
+        """After a failed link write: satisfied when a fresh read shows the link, else re-raise."""
+        if stop.reason != "incomplete-read" or number is None:
+            raise stop
+        now = refresh()
+        if not linked(now):
+            raise stop
+
     try:
+        if resume is None:
+            if created is not None:
+                what = "create issue in %s" % repo
+                failing = "create_issue (its response)"
+                issue_id = _field(created[1], "id", int, what)
+                content_id = _field(created[1], "node_id", str, what)
+                failing = None
+        else:
+            issue_id, content_id = links.database_id, links.content_id
+            print("resuming: %s#%d" % (repo, resume))
         if links is not None and links.parent is not None:
             done("add_sub_issue", "already a sub-issue of %s" % parent_ref)
         else:
-            writer.add_sub_issue(tuple(parent), ref, issue_id)
+            try:
+                writer.add_sub_issue(tuple(parent), ref, issue_id)
+            except Stop as stop:
+                reconcile(stop, lambda now: now.parent is not None)  # refresh checked which parent
+                out.append("skipped add_sub_issue: already a sub-issue of %s" % parent_ref)
             done("add_sub_issue")
+        if parent_facts.milestone is not None and links is not None and links.milestone is not None:
+            now = links  # set before this run: no write, nothing to refresh
+        else:
+            now = refresh() if parent_facts.milestone is not None else None
         if parent_facts.milestone is None:
             done("set_milestone", "%s has no milestone" % parent_ref)
-        elif links is not None and links.milestone is not None:
-            done("set_milestone", "milestone already %r" % links.milestone)
+        elif now is not None and now.milestone is not None:
+            done("set_milestone", "milestone already %r" % now.milestone)
         else:
+            if milestone_number is None:  # resumed with a milestone a concurrent writer removed
+                numbers = {t_: n_ for n_, t_, _ in _milestones(t, repo, "all")}
+                milestone_number = numbers.get(parent_facts.milestone)
+                if milestone_number is None:
+                    raise Stop("missing-option", "milestone %r of %s not found in %s"
+                               % (parent_facts.milestone, parent_ref, repo))
             writer.set_issue_milestone(repo, number, ref, milestone_number, parent_facts.milestone)
             done("set_milestone")
+        wrote = False
         for b in blockers:
-            if b in blocker_ids:
-                writer.add_blocked_by(repo, number, ref, b, blocker_ids[b])
+            if b not in blocker_ids:
+                continue
+            now = refresh()
+            if now is not None and _key(b) in {_key(x) for x in now.blockers}:
+                out.append("skipped add_blocked_by: %s#%d already linked" % b)
                 flush()
+                continue
+            try:
+                writer.add_blocked_by(repo, number, ref, b, blocker_ids[b])
+                wrote = True
+            except Stop as stop:
+                reconcile(stop, lambda now, b=b: _key(b) in {_key(x) for x in now.blockers})
+                out.append("skipped add_blocked_by: %s#%d already linked" % b)
+            flush()
         done("add_blocked_by", "no blockers given" if not blockers else
-             None if blocker_ids else "every blocker already linked")
+             None if wrote else "every blocker already linked")
         if item_id is None and number is not None:
             # The project's auto-add workflows may have added it since: look it up first.
             item_id = _issue_links(t, repo, number).items.get(board.project_id)
@@ -1376,9 +1422,10 @@ def followup(t: Transport, cfg: Config, project_url: str, repo: str, *, parent: 
         else:
             writer.set_order(item_id, value, label=ref)
             done("set_order")
-    except (Stop, GhError):
+    except (Stop, GhError) as err:
         flush()
         if number is not None and not dry_run:
+            print("failed: %s: %s" % (failing or pending[0], err.detail if isinstance(err, Stop) else err.message))
             print("created: #%d" % number)
             print("missing: %s" % ", ".join(pending))
             print("resume with the same arguments and --resume %d" % number)

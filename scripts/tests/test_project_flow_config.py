@@ -141,15 +141,13 @@ class ConfigTest(unittest.TestCase):
     def test_gh_transport_graphql_arguments(self):
         seen = []
         with mock.patch.object(project_flow.GhTransport, "_run",
-                               side_effect=lambda args, stdin=None: seen.append(args) or "{}"):
+                               side_effect=lambda args, stdin=None: seen.append((args, stdin)) or "{}"):
             project_flow.GhTransport().graphql("query { a }", {"n": 3, "flag": True, "s": "x",
                                                                "after": None})
-        args = seen[0]
-        self.assertIn("n=3", args)
-        self.assertIn("flag=true", args)
-        self.assertEqual(args[args.index("s=x") - 1], "-f")
-        self.assertEqual(args[args.index("n=3") - 1], "-F")
-        self.assertEqual(args[args.index("after=null") - 1], "-F")
+        args, stdin = seen[0]
+        self.assertEqual(args, ["api", "graphql", "--input", "-"])
+        self.assertEqual(json.loads(stdin), {"query": "query { a }",
+                                             "variables": {"n": 3, "flag": True, "s": "x", "after": None}})
 
     def test_unimplemented_subcommand_exits_usage(self):
         err = io.StringIO()
