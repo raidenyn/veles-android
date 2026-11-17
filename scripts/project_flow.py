@@ -182,6 +182,55 @@ class GhTransport:
             raise GhError("invalid JSON from gh: %s" % exc)
 
 
+_GQL_TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|\.\.\.|\$?[_A-Za-z][_0-9A-Za-z]*|-?\d[\d.eE+-]*|[{}():@=!\[\],]|#[^\n]*|\S')
+
+
+def _field_lookup_paths(query: str) -> set:
+    """The full response paths, from the data root, of every `field(` lookup selected by the
+    query's operations (aliases resolved; lookups inside named fragments are not included)."""
+    tokens = [tok for tok in _GQL_TOKEN.findall(query) if not tok.startswith("#") and tok != ","]
+    paths, stack, i = set(), [], 0
+    pending = None  # response key of the last field at this level, None for a transparent block
+    skip_depth = None  # depth at which a fragment definition's body started
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok == "(":  # arguments or variable definitions: skip the balanced group
+            depth = 0
+            while i < len(tokens):
+                depth += {"(": 1, ")": -1}.get(tokens[i], 0)
+                i += 1
+                if depth == 0:
+                    break
+            continue
+        if not stack and tok == "fragment":
+            skip_depth = 0
+        if tok == "{":
+            stack.append(pending if stack else None)
+            pending = None
+        elif tok == "}":
+            if stack:
+                stack.pop()
+            if not stack:
+                skip_depth = None
+            pending = None
+        elif stack and tok == "...":
+            if i + 1 < len(tokens) and tokens[i + 1] == "on":
+                i += 2  # `... on Type {`: transparent
+            pending = None
+        elif stack and tok == "@":
+            i += 1  # a directive name; its arguments are skipped as a group
+        elif stack and re.fullmatch(r"[_A-Za-z]\w*", tok):
+            key, name = tok, tok
+            if i + 2 < len(tokens) and tokens[i + 1] == ":":
+                name = tokens[i + 2]
+                i += 2
+            pending = key
+            if name == "field" and skip_depth is None:
+                paths.add(tuple(seg for seg in stack if seg is not None) + (key,))
+        i += 1
+    return paths
+
+
 def _absent_field_response(query: str, stdout: str) -> Optional[dict]:
     """GitHub answers `field(name:)` for a field the project lacks with a null value and a
     NOT_FOUND error, and gh exits 1. When every error is such a lookup, the data is the answer:
@@ -195,15 +244,15 @@ def _absent_field_response(query: str, stdout: str) -> Optional[dict]:
     errors = response.get("errors")
     if not isinstance(errors, list) or not errors:
         return None
+    lookups = _field_lookup_paths(query)
     for error in errors:
         if not isinstance(error, dict) or error.get("type") != "NOT_FOUND":
             return None
         path = error.get("path")
         if not isinstance(path, list) or len(path) < 2 or not isinstance(path[-1], str):
             return None
-        # The path's last key is a field lookup: `field(` itself or an alias of it in the query.
-        name = path[-1]
-        if name != "field" and not re.search(r"(?<![\w$])%s\s*:\s*field\s*\(" % re.escape(name), query):
+        # The complete path, list indices aside, must be one of the query's `field(` lookups.
+        if tuple(seg for seg in path if not isinstance(seg, int)) not in lookups:
             return None
         value = response["data"]
         for key in path:
@@ -817,27 +866,28 @@ class Writer:
         self._emit("%s %s: %s" % (item_id, self.cfg.order_field, value))
 
     def set_pr_milestone(self, repo: str, number: int, milestone_title: str) -> bool:
-        """Set the PR's milestone by title, unless a fresh read shows it already has one or the
-        repository has no milestone of that title (both reported)."""
+        """Set the PR's milestone by title, unless the repository has no milestone of that title
+        or a fresh read shows the PR already has one (both reported). The milestone lookup comes
+        first, so the PR re-read is the last read before the PATCH."""
         ref = "%s#%d" % (repo, number)
         try:
+            if repo not in self._milestone_numbers:
+                self._milestone_numbers[repo] = {
+                    title: num for num, title, _ in _milestones(self.t, repo, "all")}
+            milestone_number = self._milestone_numbers[repo].get(milestone_title)
+            if milestone_number is None:
+                self.out.append("skipped %s: milestone %r not found in %s" % (ref, milestone_title, repo))
+                return False
             current = _rest(self.t, "GET", "repos/%s/issues/%d" % (repo, number), ref)
             if not isinstance(current, dict) or "milestone" not in current:
                 raise Stop("incomplete-read", "%s: no milestone in the response" % ref)
             if current["milestone"] is not None:
                 self.out.append("skipped %s: milestone already set" % ref)
                 return False
-            if repo not in self._milestone_numbers:
-                self._milestone_numbers[repo] = {
-                    title: num for num, title, _ in _milestones(self.t, repo, "all")}
         except Stop as stop:
             if stop.reason != "incomplete-read":
                 raise
             self.out.append("skipped %s: unreadable: %s" % (ref, stop.detail))
-            return False
-        milestone_number = self._milestone_numbers[repo].get(milestone_title)
-        if milestone_number is None:
-            self.out.append("skipped %s: milestone %r not found in %s" % (ref, milestone_title, repo))
             return False
         if not self.dry_run:
             try:

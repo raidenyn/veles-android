@@ -89,6 +89,49 @@ class GhTransportNotFoundTest(unittest.TestCase):
         with self.assertRaises(GhError):
             self.graphql(1, "HTTP 502: bad gateway")
 
+    @staticmethod
+    def not_found(data, path):
+        return {"data": data, "errors": [{"type": "NOT_FOUND", "path": path, "message": "x"}]}
+
+    def test_real_lookup_paths_are_accepted(self):
+        fields_query = project_flow._owner_query(project_flow.FIELDS_QUERY, "user")
+        for key in ("status", "order"):
+            project = {"id": "PVT_project1", "status": {"__typename": "ProjectV2SingleSelectField"},
+                       "order": None}
+            project[key] = None
+            result = self.graphql(1, self.not_found({"user": {"projectV2": project}},
+                                                    ["user", "projectV2", key]), fields_query)
+            self.assertIsNone(result["data"]["user"]["projectV2"][key], key)
+        node = {"id": "PVTI_x", "order": None, "project": {"order": None}}
+        result = self.graphql(1, self.not_found({"node": node}, ["node", "project", "order"]),
+                              project_flow.ITEM_QUERY)
+        self.assertIsNone(result["data"]["node"]["project"]["order"])
+
+    def test_alias_collision_with_value_lookup_raises(self):
+        """ITEM_QUERY's node.order is fieldValueByName; only node.project.order is a field lookup."""
+        node = {"id": "PVTI_x", "order": None, "project": {"order": {"__typename": "ProjectV2Field"}}}
+        with self.assertRaises(GhError):
+            self.graphql(1, self.not_found({"node": node}, ["node", "order"]), project_flow.ITEM_QUERY)
+
+    def test_unrelated_null_paths_raise(self):
+        fields_query = project_flow._owner_query(project_flow.FIELDS_QUERY, "user")
+        for path in (["user", "projectV2", "id"], ["projectV2", "order"], ["order"],
+                     ["user", "projectV2", "order", "id"], ["organization", "projectV2", "order"]):
+            data = {"user": {"projectV2": {"id": None, "order": None}}, "projectV2": {"order": None},
+                    "order": None, "organization": {"projectV2": {"order": None}}}
+            with self.assertRaises(GhError, msg=repr(path)):
+                self.graphql(1, self.not_found(data, path), fields_query)
+
+    def test_key_named_field_must_be_a_field_lookup(self):
+        query = 'query { node(id: "x") { field: fieldValueByName(name: "X") { __typename } } }'
+        with self.assertRaises(GhError):
+            self.graphql(1, self.not_found({"node": {"field": None}}, ["node", "field"]), query)
+
+    def test_lookup_inside_a_fragment_is_not_accepted(self):
+        query = 'query { node(id: "x") { ...F } } fragment F on ProjectV2 { order: field(name: "X") { id } }'
+        with self.assertRaises(GhError):
+            self.graphql(1, self.not_found({"node": {"order": None}}, ["node", "order"]), query)
+
     def test_failure_without_data_still_raises(self):
         with self.assertRaises(GhError):
             self.graphql(1, {"errors": [{"type": "NOT_FOUND", "path": ["user", "projectV2", "order"],

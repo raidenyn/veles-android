@@ -243,10 +243,34 @@ class SyncMilestoneTest(unittest.TestCase):
         node = item(issue(1, prs=[pr(9)], milestone="M1"), status="In Review")
         fake = FakeTransport(board([node])
                              + [("closingIssuesReferences", closing_issues([(1, "M1")])),
+                                all_milestones(milestones=[milestone(4, "M1")]),
                                 pr_issue(9, title="M0"), open_milestones()])
         result = run_sync(fake)
         self.assertEqual(fake.mutations, [])
         self.assertTrue(any("milestone already set" in line for line in result.reports), result.reports)
+
+    def test_pr_milestone_set_during_milestone_lookup_skipped(self):
+        """The PR re-read is the last read before the PATCH: a milestone set while the
+        repository's milestones are being looked up is not overwritten."""
+        node = item(issue(1, prs=[pr(9)], milestone="M1"), status="In Review")
+        fake = FakeTransport(board([node])
+                             + [("closingIssuesReferences", closing_issues([(1, "M1")])),
+                                all_milestones(milestones=[milestone(4, "M1")]),
+                                pr_issue(9), ("repos/owner/repo/issues/9", {"number": 9}),
+                                open_milestones()])
+
+        def set_milestone_during_lookup(call):
+            if call["kind"] == "rest" and "milestones?state=all" in call["path"]:
+                fake.responses.insert(0, pr_issue(9, title="M0"))
+        fake.on_call(set_milestone_during_lookup)
+        result = run_sync(fake)
+        self.assertEqual(patches(fake), [])
+        self.assertTrue(any("milestone already set" in line for line in result.reports), result.reports)
+        lookup = next(i for i, c in enumerate(fake.calls)
+                      if c["kind"] == "rest" and "milestones?state=all" in c["path"])
+        reread = next(i for i, c in enumerate(fake.calls)
+                      if c["kind"] == "rest" and c["path"] == "repos/owner/repo/issues/9")
+        self.assertLess(lookup, reread)
 
     def test_milestone_lookup_follows_pages(self):
         node = item(issue(1, prs=[pr(9)], milestone="M1"), status="In Review")
