@@ -176,6 +176,20 @@ class NextTest(unittest.TestCase):
             code = project_flow.main(["next", "--project", URL, "--repo", REPO], fake, env={})
         self.assertEqual(code, 3)
 
+    def test_failed_write_during_reconciliation_selects_nothing(self):
+        # Item 1 derives Ready and its Status write is rejected; item 2 is Ready already. Selection
+        # never follows a failed reconciliation.
+        stale = item(issue(1), status="Backlog", order=1)
+        fake = FakeTransport([ENABLED] + board([stale, ready(2, 2)]) + [
+            fresh(stale), ("mutation", GhError("gh: HTTP 403")), MILESTONES])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = project_flow.main(["next", "--project", URL, "--repo", REPO], fake, env={})
+        self.assertEqual(code, 3, out.getvalue())
+        self.assertNotIn("next:", out.getvalue())
+        self.assertIn("failed write owner/repo#1: ", out.getvalue())
+        self.assertEqual(out.getvalue().splitlines()[-1], "stop: write-failed: 1 write(s) failed")
+
 
 class StartTest(unittest.TestCase):
     def test_start_claims(self):
@@ -308,6 +322,28 @@ class StartTest(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(project_flow.main(["start", "nonsense", "--project", URL, "--repo", REPO],
                                                FakeTransport(), env={}), 2)
+
+    def test_start_own_status_write_failed(self):
+        node = ready(1, 3)
+        fake = FakeTransport([ENABLED] + board([node]) + [
+            fresh(node), USER, ASSIGNED, ("mutation", GhError("gh: HTTP 403"))])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = project_flow.main(["start", "#1", "--project", URL, "--repo", REPO], fake, env={})
+        self.assertEqual(code, 3, out.getvalue())
+        self.assertIn("write: owner/repo#1 assignees: +me", out.getvalue())
+        self.assertTrue(out.getvalue().rstrip().splitlines()[-1].startswith("stop: write-failed: "),
+                        out.getvalue())
+        self.assertNotIn("started:", out.getvalue())
+        self.assertEqual(fake.responses, [])  # no re-read, no reconcile
+
+    def test_start_failed_assignment_write(self):
+        node = ready(1, 3)
+        fake = FakeTransport([ENABLED] + board([node]) + [
+            fresh(node), USER, ("/assignees", GhError("gh: HTTP 403"))])
+        stop = stop_of(project_flow.start, fake, CFG, URL, REPO, (REPO, 1), force=False, dry_run=False)
+        self.assertEqual(stop.reason, "write-failed")
+        self.assertEqual(len(fake.mutations), 1)  # no Status write after a failed assignment
 
 
 if __name__ == "__main__":

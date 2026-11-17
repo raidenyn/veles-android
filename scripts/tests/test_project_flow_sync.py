@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import project_flow  # noqa: E402
 from project_flow import Config, GhError, Stop  # noqa: E402
 from project_flow_fake import (  # noqa: E402
-    FakeTransport, blocker, board, closing_issues, issue, item, item_response, milestone, pr,
+    FakeTransport, blocker, board, closing_issues, issue, item, item_response, milestone, pr, rate,
     status_written)
 
 URL = "https://github.com/users/owner/projects/2"
@@ -427,7 +427,9 @@ class WriterTest(unittest.TestCase):
         self.assertTrue(dry[0].startswith("would write: "), dry)
 
 
-class MainSyncTest(unittest.TestCase):
+class CliCase(unittest.TestCase):
+    """A config file on disk and the public CLI in action mode; holds no tests."""
+
     def setUp(self):
         handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
         json.dump({"status_field": CFG.status_field, "roles": CFG.roles,
@@ -436,6 +438,17 @@ class MainSyncTest(unittest.TestCase):
         self.config = handle.name
         self.addCleanup(os.unlink, handle.name)
 
+    def main_sync(self, fake, *extra, repo=REPO):
+        """The public CLI in action mode, PROJECT_URL in the environment: (exit code, stdout)."""
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = project_flow.main(["sync", "--project", URL, "--config", self.config,
+                                      "--mode", "action", "--repo", repo] + list(extra), fake,
+                                     env={"PROJECT_URL": URL})
+        return code, out.getvalue()
+
+
+class MainSyncTest(CliCase):
     def test_missing_scope_message_via_sync(self):
         fake = FakeTransport([(None, SCOPE_ERROR)])
         out = io.StringIO()
@@ -464,6 +477,185 @@ class MainSyncTest(unittest.TestCase):
         with contextlib.redirect_stderr(err):
             code = project_flow.main(["sync", "--config", self.config], FakeTransport([]))
         self.assertEqual(code, 2)
+
+    def test_action_mode_sync_writes_through_the_cli(self):
+        stale = item(issue(1), status="Backlog", order=2)
+        fake = FakeTransport(board([stale]) + [fresh(stale), ("mutation", status_written()),
+                                               open_milestones()])
+        code, out = self.main_sync(fake)
+        self.assertEqual(code, 0, out)
+        self.assertEqual([m["variables"]["option"] for m in status_mutations(fake)], ["opt-Ready"])
+        self.assertIn("write: owner/repo#1 Status: Backlog -> Ready\n", out)
+        self.assertNotIn("no changes", out)
+        self.assertEqual(fake.responses, [])
+        # No repository-variable read: action mode takes PROJECT_URL from the environment.
+        self.assertFalse(any("actions/variables" in (c.get("path") or "") for c in fake.calls))
+
+
+class WriteFailedTest(CliCase):
+    """A rejected mutation is a named stop (write-failed), never a skipped line and exit 0."""
+
+    def test_failed_status_write_stops_sync(self):
+        stale = item(issue(1), status="Backlog", order=2)
+        fake = FakeTransport(board([stale]) + [fresh(stale), ("mutation", GhError("gh: HTTP 403")),
+                                               open_milestones()])
+        code, out = self.main_sync(fake)
+        self.assertEqual(code, 3, out)
+        lines = out.splitlines()
+        self.assertEqual(lines[-1], "stop: write-failed: 1 write(s) failed")
+        self.assertTrue(any(line.startswith("failed write owner/repo#1") and "HTTP 403" in line
+                            for line in lines), out)
+        self.assertNotIn("no changes", out)
+        self.assertNotIn("ready: owner/repo#1", out)  # the write did not land
+
+    def test_failed_write_does_not_stop_other_writes(self):
+        one = item(issue(1), status="Backlog", order=1)
+        two = item(issue(2), status="Backlog", order=2)
+
+        def writes(item_id):
+            return lambda c: c["kind"] == "graphql" and c["query"].lstrip().startswith("mutation") \
+                and c["variables"]["item"] == item_id
+        fake = FakeTransport(board([one, two]) + [
+            fresh(one), fresh(two), (writes("PVTI_item1"), GhError("gh: HTTP 403")),
+            (writes("PVTI_item2"), status_written("PVTI_item2")), open_milestones()])
+        code, out = self.main_sync(fake)
+        self.assertEqual(code, 3, out)
+        self.assertEqual([m["variables"]["item"] for m in status_mutations(fake)],
+                         ["PVTI_item1", "PVTI_item2"])
+        self.assertIn("write: owner/repo#2 Status: Backlog -> Ready", out)
+        self.assertIn("failed write owner/repo#1", out)
+        self.assertLess(out.index("write: owner/repo#2"), out.index("stop: write-failed"))
+        self.assertTrue(out.rstrip().endswith("stop: write-failed: 1 write(s) failed"), out)
+        self.assertEqual(fake.responses, [])
+
+    def test_failed_milestone_patch_stops_sync(self):
+        node = item(issue(1, prs=[pr(9)], milestone="M1"), status="In Review")
+        fake = FakeTransport(board([node]) + [
+            ("closingIssuesReferences", closing_issues([(1, "M1")])),
+            all_milestones(milestones=[milestone(4, "M1")]), pr_issue(9),
+            (lambda c: c["kind"] == "rest" and c["method"] == "PATCH", GhError("gh: HTTP 403")),
+            open_milestones()])
+        code, out = self.main_sync(fake)
+        self.assertEqual(code, 3, out)
+        self.assertEqual(len(patches(fake)), 1)
+        self.assertIn("failed write owner/repo#9", out)
+        self.assertTrue(out.rstrip().endswith("stop: write-failed: 1 write(s) failed"), out)
+
+    def test_result_records_failures_structurally(self):
+        stale = item(issue(1), status="Backlog")
+        fake = FakeTransport(board([stale]) + [fresh(stale), ("mutation", GhError("gh: HTTP 403")),
+                                               open_milestones()])
+        result = run_sync(fake)
+        self.assertEqual(result.writes, [])
+        self.assertEqual([ref for ref, _ in result.failed], ["owner/repo#1"])
+        self.assertIn("HTTP 403", result.failed[0][1])
+
+    def test_completed_write_printed_before_a_fatal_error(self):
+        # Item 1 is written; item 2's guarded read then fails fatally (a scope error): the
+        # completed write is still on stdout before the stop line.
+        one = item(issue(1), status="Backlog", order=1)
+        two = item(issue(2), status="Backlog", order=2)
+        fake = FakeTransport(board([one, two]) + [fresh(one), ("mutation", status_written())])
+
+        def scope_error_on_second_read(call):
+            if call["kind"] == "graphql" and "query ProjectItem(" in call["query"] \
+                    and call["variables"]["item"] == "PVTI_item2":
+                fake.responses.insert(0, ("query ProjectItem(", SCOPE_ERROR))
+        fake.on_call(scope_error_on_second_read)
+        code, out = self.main_sync(fake)
+        self.assertEqual(code, 3, out)
+        self.assertEqual(len(status_mutations(fake)), 1)
+        self.assertIn("write: owner/repo#1 Status: Backlog -> Ready\n", out)
+        self.assertLess(out.index("write: owner/repo#1"), out.index("stop: missing-scope"))
+
+
+class ReadyLinesTest(CliCase):
+    """`ready: <repo>#<n> order=<v>` for every item Ready after the reconciliation."""
+
+    def test_already_ready_item_is_listed(self):
+        # Written Ready by someone else before this sync: no write, still listed.
+        nodes = [item(issue(1), status="Ready", order=5)]
+        fake = FakeTransport(board(nodes) + [open_milestones()])
+        code, out = self.main_sync(fake)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(fake.mutations, [])
+        self.assertIn("ready: owner/repo#1 order=5\n", out)
+
+    def test_sorted_by_order_then_number_unordered_last(self):
+        nodes = [item(issue(4), status="Ready", order=2), item(issue(3), status="Ready"),
+                 item(issue(2), status="Ready", order=2), item(issue(1), status="Ready", order=1.5),
+                 item(issue(5, assignees=["me"]), status="In Progress", order=0)]
+        fake = FakeTransport(board(nodes) + [open_milestones()])
+        code, out = self.main_sync(fake)
+        self.assertEqual(code, 0, out)
+        ready = [line for line in out.splitlines() if line.startswith("ready: ")]
+        self.assertEqual(ready, ["ready: owner/repo#1 order=1.5", "ready: owner/repo#2 order=2",
+                                 "ready: owner/repo#4 order=2", "ready: owner/repo#3 order=-"])
+
+    def test_written_ready_listed_and_stale_ready_not(self):
+        promoted = item(issue(1), status="Backlog", order=1)
+        demoted = item(issue(2, assignees=["me"]), status="Ready", order=2)
+        fake = FakeTransport(board([promoted, demoted]) + [
+            fresh(promoted), fresh(demoted), ("mutation", status_written()),
+            ("mutation", status_written("PVTI_item2")), open_milestones()])
+        code, out = self.main_sync(fake)
+        self.assertEqual(code, 0, out)
+        ready = [line for line in out.splitlines() if line.startswith("ready: ")]
+        self.assertEqual(ready, ["ready: owner/repo#1 order=1"])
+
+    def test_action_mode_lists_only_its_repository(self):
+        nodes = [item(issue(1, repo="o/A"), status="Ready", order=1),
+                 item(issue(2, repo="o/B"), status="Ready", order=2)]
+        fake = FakeTransport(board(nodes) + [open_milestones("o/A")])
+        code, out = self.main_sync(fake, repo="o/A")
+        self.assertEqual(code, 0, out)
+        ready = [line for line in out.splitlines() if line.startswith("ready: ")]
+        self.assertEqual(ready, ["ready: o/A#1 order=1"])
+
+    def test_dry_run_lists_what_would_be_ready(self):
+        nodes = [item(issue(1), status="Backlog", order=3)]
+        fake = FakeTransport(board(nodes) + [fresh(nodes[0]), open_milestones()])
+        code, out = self.main_sync(fake, "--dry-run")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(fake.mutations, [])
+        self.assertIn("would write: owner/repo#1 Status: Backlog -> Ready", out)
+        self.assertIn("ready: owner/repo#1 order=3\n", out)
+
+
+class RateLimitTest(CliCase):
+    """The items query reads the GraphQL rate limit; sync prints its total as the last line."""
+
+    def test_items_query_selects_rate_limit_only_there(self):
+        self.assertIn("rateLimit { cost remaining resetAt }", project_flow.ITEMS_QUERY)
+        for query in (project_flow.FIELDS_QUERY, project_flow.ITEM_QUERY,
+                      project_flow.WORKFLOWS_QUERY):
+            self.assertNotIn("rateLimit", query)
+
+    def test_cost_accumulates_across_pages(self):
+        nodes = [item(issue(1), status="Ready", order=1), item(issue(2), status="Ready", order=2)]
+        fake = FakeTransport(board(nodes, page_size=1, rate_limits=[rate(1, 4999), rate(2, 4997)])
+                             + [open_milestones()])
+        code, out = self.main_sync(fake)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.splitlines()[-1], "rate-limit: cost=3 remaining=4997")
+
+    def test_missing_or_malformed_rate_limit_is_unknown(self):
+        for limits in ([None], [{"cost": "x", "remaining": None}], ["nope"]):
+            with self.subTest(limits=limits):
+                fake = FakeTransport(board([item(issue(1), status="Ready", order=1)],
+                                           rate_limits=limits) + [open_milestones()])
+                code, out = self.main_sync(fake)
+                self.assertEqual(code, 0, out)
+                self.assertEqual(out.splitlines()[-1], "rate-limit: cost=0 remaining=-")
+
+    def test_rate_limit_line_precedes_a_stop(self):
+        stale = item(issue(1), status="Backlog")
+        fake = FakeTransport(board([stale], rate_limits=[rate(1, 10)])
+                             + [fresh(stale), ("mutation", GhError("gh: HTTP 403")), open_milestones()])
+        code, out = self.main_sync(fake)
+        self.assertEqual(code, 3, out)
+        self.assertEqual(out.splitlines()[-2:], ["rate-limit: cost=1 remaining=10",
+                                                 "stop: write-failed: 1 write(s) failed"])
 
 
 if __name__ == "__main__":

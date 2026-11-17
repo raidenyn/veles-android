@@ -9,7 +9,7 @@ values carry `__typename`, which tells a number value from a value of a field of
 | --- | --- | --- | --- |
 | `fields.json` | `FIELDS_QUERY` | `Status`, `Implementation order` | project id, Status options, NUMBER order field |
 | `workflows.json` | `WORKFLOWS_QUERY` | default | built-in workflows with `enabled` |
-| `items_page1.json`, `items_page2.json` | `ITEMS_QUERY` | `first: 5` | `hasNextPage` true, then false; a draft issue card |
+| `items_page1.json`, `items_page2.json` | `ITEMS_QUERY` | `first: 5` | `hasNextPage` true, then false; a draft issue card; recorded before the query selected `rateLimit`, which the reader treats as optional (absent: cost 0, remaining unknown) |
 | `issue_facts.json` | `ITEM_QUERY` | default | item 1 with its project's order field type (NUMBER): blockers closed as DUPLICATE, NOT_PLANNED, COMPLETED; a draft and a ready closing PR; assignee; mixed-case labels; parent; milestone |
 | `blockers_page1.json`, `blockers_page2.json` | `ISSUE_CONNECTION_QUERY` for `blockedBy` | `first: 2` | a nested connection's follow-up pages |
 | `text_page1.json`, `text_page2.json` | `TEXT_QUERY` | issue 1, `first: 2` | body and three comments over two pages |

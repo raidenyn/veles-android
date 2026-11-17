@@ -45,6 +45,21 @@ class DeriveTest(unittest.TestCase):
         self.assertEqual(role, "backlog")
         self.assertTrue(any("duplicate" in l for l in lines))
 
+    def test_abandoned_blocker_reported_whichever_rule_wins(self):
+        # The role is unchanged; the abandoned blocker is reported for every open issue.
+        for name, kw, role in (("assigned", {"assignees": ["a"]}, "in_progress"),
+                               ("labelled", {"labels": ["blocked"]}, "blocked"),
+                               ("in review", {"prs": [pull()]}, "in_review")):
+            for reason, text in (("NOT_PLANNED", "not planned"), ("DUPLICATE", "duplicate")):
+                with self.subTest(name=name, reason=reason):
+                    got, lines = project_flow.derive(facts(blockers=[blk(reason=reason)], **kw), CFG)
+                    self.assertEqual(got, role)
+                    self.assertEqual(lines, ["blocker o/r#5 closed as %s" % text])
+
+    def test_closed_issue_reports_no_blocker(self):
+        role, lines = project_flow.derive(facts(state="CLOSED", blockers=[blk(reason="NOT_PLANNED")]), CFG)
+        self.assertEqual((role, lines), ("done", []))
+
     def test_open_blocker_backlog(self):
         role, _ = project_flow.derive(facts(blockers=[blk("OPEN", None)]), CFG)
         self.assertEqual(role, "backlog")

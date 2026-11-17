@@ -139,9 +139,18 @@ def item_project(order_type="NUMBER"):
     return {"order": {"__typename": "ProjectV2Field", "id": "PVTF_field1", "dataType": order_type}}
 
 
-def items_page(nodes, more=False, cursor="cursor-next", owner_key="user"):
-    """One ITEMS_QUERY response."""
-    return {"data": {owner_key: {"projectV2": {"items": _conn(nodes, more, cursor)}}}}
+def items_page(nodes, more=False, cursor="cursor-next", owner_key="user", rate_limit=None):
+    """One ITEMS_QUERY response. rate_limit: the `rateLimit` object, absent when None (as in the
+    recorded fixtures)."""
+    data = {owner_key: {"projectV2": {"items": _conn(nodes, more, cursor)}}}
+    if rate_limit is not None:
+        data["rateLimit"] = rate_limit
+    return {"data": data}
+
+
+def rate(cost, remaining, reset_at="2026-01-01T00:00:00Z"):
+    """A GraphQL `rateLimit` object."""
+    return {"cost": cost, "remaining": remaining, "resetAt": reset_at}
 
 
 def fields(options=STATUS_OPTIONS, order=True, owner_key="user", status_name="Status",
@@ -162,8 +171,10 @@ def workflows(enabled=None, owner_key="user"):
     return {"data": {owner_key: {"projectV2": {"workflows": _conn(nodes)}}}}
 
 
-def board(items, page_size=None, options=STATUS_OPTIONS, order=True, enabled=None, owner_key="user"):
-    """FakeTransport responses for one read_board: fields, workflows, then the item pages."""
+def board(items, page_size=None, options=STATUS_OPTIONS, order=True, enabled=None, owner_key="user",
+          rate_limits=None):
+    """FakeTransport responses for one read_board: fields, workflows, then the item pages.
+    rate_limits: one `rateLimit` object (or None) per item page."""
     items = list(items)
     size = page_size or max(len(items), 1)
     chunks = [items[i:i + size] for i in range(0, len(items), size)] or [[]]
@@ -171,8 +182,9 @@ def board(items, page_size=None, options=STATUS_OPTIONS, order=True, enabled=Non
                  ("query ProjectWorkflows", workflows(enabled, owner_key))]
     for index, chunk in enumerate(chunks):
         more = index < len(chunks) - 1
+        limit = rate_limits[index] if rate_limits is not None else None
         responses.append(("query ProjectItems",
-                          items_page(chunk, more, "cursor%d" % (index + 1), owner_key)))
+                          items_page(chunk, more, "cursor%d" % (index + 1), owner_key, limit)))
     return responses
 
 
@@ -199,5 +211,5 @@ def milestone(number, title, open_issues=1, closed_issues=0):
 
 
 __all__ = ["FakeTransport", "GhError", "issue", "pr", "blocker", "item", "item_project", "items_page",
-           "fields", "workflows", "board", "item_response", "closing_issues", "status_written",
+           "fields", "workflows", "board", "rate", "item_response", "closing_issues", "status_written",
            "milestone"]

@@ -355,10 +355,30 @@ class FollowupTest(unittest.TestCase):
     def test_failed_write_names_the_step(self):
         responses = fresh_responses()
         responses[responses.index(ITEM_ADDED)] = ("mutation AddProjectItem", GhError("gh: HTTP 502"))
-        _, out = run_followup(FakeTransport(responses))
+        stop, out = run_followup(FakeTransport(responses))
+        self.assertEqual(stop.reason, "write-failed")
         self.assertIn("failed: add_project_item: ", out)
         self.assertIn("HTTP 502", out)
+        self.assertIn("created: #%d" % NEW, out)
         self.assertLess(out.index("failed: "), out.index("missing: "))
+
+    def test_every_failed_link_write_is_write_failed(self):
+        # A rejected write after the creation; the link steps re-read and still find no link.
+        cases = (("add_sub_issue", SUB_ADDED, [state()]),
+                 ("set_milestone", MILESTONE_SET, []),
+                 ("add_blocked_by", BLOCKED, [state(parent=15, milestone_title="M3")]),
+                 ("set_order", ORDER_SET, []))
+        for step, target, reread in cases:
+            with self.subTest(step=step):
+                responses = fresh_responses()
+                index = responses.index(target)
+                responses[index:index + 1] = [(target[0], GhError("gh: HTTP 403"))] + reread
+                fake = FakeTransport(responses)
+                stop, out = run_followup(fake)
+                self.assertEqual(stop.reason, "write-failed", out)
+                self.assertIn("failed: %s: " % step, out)
+                self.assertIn("created: #%d" % NEW, out)
+                self.assertIn("missing: %s" % step, out)
 
     def test_resume_milestone_set_concurrently_is_not_overwritten(self):
         # The resume read shows no milestone; while the descendants are read a concurrent writer

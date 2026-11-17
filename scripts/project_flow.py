@@ -5,7 +5,9 @@ Run as `python3 -I scripts/project_flow.py <sync|next|start|followup|check> ...`
 Exit 0 success, 1 a gh error, 2 usage, 3 a stop (`stop: <reason>: <detail>` on stdout;
 `check` with setup facts ends in `stop: setup-incomplete`; `start` ends in `stop: collision` when
 another login is assigned and `stop: assignment-failed` when its own assignment did not take effect;
-every reason is in STOP_REASONS). sync, next, start and followup run
+`stop: write-failed` when a write was rejected: sync after attempting and printing every other write,
+next and start before any selection or claim, followup after its created:/missing: lines; every
+reason is in STOP_REASONS). sync, next, start and followup run
 only on the project the repository variable PROJECT_URL names; each public entry point gates itself.
 """
 import argparse
@@ -24,7 +26,7 @@ STOP_REASONS = (
     "not-enabled", "variable-unreadable", "nothing-ready", "tie", "missing-order",
     "incomplete-read", "not-ready", "collision", "missing-option", "config-invalid",
     "resume-disagrees", "no-order-room", "parent-unordered", "parent-as-blocker",
-    "missing-scope", "setup-incomplete", "assignment-failed",
+    "missing-scope", "setup-incomplete", "assignment-failed", "write-failed",
 )
 SCOPE_FIX = "run gh auth refresh -s project"
 
@@ -74,6 +76,7 @@ ITEMS_QUERY = """query ProjectItems($login: String!, $number: Int!, $status: Str
   OWNER(login: $login) { projectV2(number: $number) {
     items(first: $first, after: $after) { %s nodes { %s } }
   } }
+  rateLimit { cost remaining resetAt }
 }""" % (_PAGE, _ITEM_FIELDS) + _ISSUE_FACTS
 ITEM_QUERY = """query ProjectItem($item: ID!, $status: String!, $order: String!, $first: Int = 100) {
   node(id: $item) { ... on ProjectV2Item { %s
@@ -364,6 +367,8 @@ class Board:
     unreadable: list  # item ids; the reason for each is in `reasons`
     workflows: dict
     reasons: dict = field(default_factory=dict)  # item id -> why it could not be read
+    rate_cost: int = 0                     # summed GraphQL cost of the items pages
+    rate_remaining: Optional[int] = None   # the last remaining budget reported, None if unknown
 
 
 _PROJECT_URL = re.compile(
@@ -374,18 +379,19 @@ def derive(f: Facts, cfg: Config) -> tuple[str, list[str]]:
     """The role key a Facts snapshot maps to, plus report lines. Pure; first match wins."""
     if f.state == "CLOSED":
         return "done", []
-    if cfg.blocked_label.lower() in f.labels:
-        return "blocked", []
-    if any(p.state == "OPEN" and not p.is_draft for p in f.closing_prs):
-        return "in_review", []
-    if f.assignees:
-        return "in_progress", []
+    # An abandoned blocker is reported for every open issue, whichever rule decides the role.
     lines = []
     for b in f.blockers:
         if b.state == "CLOSED" and b.state_reason == "NOT_PLANNED":
             lines.append("blocker %s#%d closed as not planned" % (b.repo, b.number))
         elif b.state == "CLOSED" and b.state_reason == "DUPLICATE":
             lines.append("blocker %s#%d closed as duplicate" % (b.repo, b.number))
+    if cfg.blocked_label.lower() in f.labels:
+        return "blocked", lines
+    if any(p.state == "OPEN" and not p.is_draft for p in f.closing_prs):
+        return "in_review", lines
+    if f.assignees:
+        return "in_progress", lines
     if all(b.state == "CLOSED" and b.state_reason == "COMPLETED" for b in f.blockers):
         return "ready", lines
     return "backlog", lines
@@ -445,14 +451,18 @@ def _connection(data: Any, what: str) -> tuple:
     return data["nodes"], more, page.get("endCursor")
 
 
-def _paginate(t: Transport, query: str, variables: dict, path: tuple, what: str) -> list:
-    """Every node of the connection at `path`, following hasNextPage to the last page."""
+def _paginate(t: Transport, query: str, variables: dict, path: tuple, what: str,
+              on_page=None) -> list:
+    """Every node of the connection at `path`, following hasNextPage to the last page.
+    on_page(data): called with each page's data root."""
     nodes, after = [], None
     while True:
         page_vars = dict(variables)
         if after is not None:
             page_vars["after"] = after
         data = _query(t, query, page_vars, what)
+        if on_page is not None:
+            on_page(data)
         page_nodes, more, after = _connection(_dig(data, path, what), what)
         nodes.extend(page_nodes)
         if not more:
@@ -646,9 +656,23 @@ def read_board(t: Transport, project_url: str, cfg: Config) -> Board:
                       (owner_key, "projectV2", "workflows"), "project workflows")
     workflows = {_field(w, "name", str, "project workflow"): _field(w, "enabled", bool, "project workflow")
                  for w in flows}
+    rate = {"cost": 0, "remaining": None}
+
+    def note_rate(data: dict) -> None:
+        """Best effort: a missing or malformed rateLimit is unknown, never an incomplete read."""
+        limit = data.get("rateLimit")
+        if not isinstance(limit, dict):
+            return
+        cost, remaining = limit.get("cost"), limit.get("remaining")
+        if isinstance(cost, int) and not isinstance(cost, bool):
+            rate["cost"] += cost
+        if isinstance(remaining, int) and not isinstance(remaining, bool):
+            rate["remaining"] = remaining
+
     nodes = _paginate(t, _owner_query(ITEMS_QUERY, owner_key), dict(base, **names),
-                      (owner_key, "projectV2", "items"), "project items")
-    board = Board(project_id, status_id, options, order_id, [], [], workflows)
+                      (owner_key, "projectV2", "items"), "project items", note_rate)
+    board = Board(project_id, status_id, options, order_id, [], [], workflows,
+                  rate_cost=rate["cost"], rate_remaining=rate["remaining"])
     for node in nodes:
         item_id = _field(node, "id", str, "project items")
         kind = node.get("type")
@@ -780,20 +804,46 @@ def _milestones(t: Transport, repo: str, state: str) -> list:
             for m in _rest_pages(t, "repos/%s/milestones?state=%s" % (repo, state), what)]
 
 
+def _write_failed(stop: Stop) -> Stop:
+    """A failed mutating call is a rejected write (write-failed), not an incomplete read."""
+    return Stop("write-failed", stop.detail) if stop.reason == "incomplete-read" else stop
+
+
 def _mutate(t: Transport, query: str, variables: dict, what: str) -> None:
-    data = _query(t, query, variables, what)
-    _dig(data, ("updateProjectV2ItemFieldValue", "projectV2Item", "id"), what)
+    """One field-value mutation; a failure or an unconfirmed response raises write-failed."""
+    try:
+        data = _query(t, query, variables, what)
+        _dig(data, ("updateProjectV2ItemFieldValue", "projectV2Item", "id"), what)
+    except Stop as stop:
+        raise _write_failed(stop)
+
+
+def _rest_write(t: Transport, method: str, path: str, what: str, body: Optional[dict] = None) -> Any:
+    """One mutating REST call; a failure (other than a scope error) raises write-failed."""
+    try:
+        return _rest(t, method, path, what, body)
+    except Stop as stop:
+        raise _write_failed(stop)
 
 
 class Writer:
     """Every write sync, start, next and followup make. Each method appends `write: ...`,
-    `would write: ...` (dry run) or `skipped ...` to `out`."""
+    `would write: ...` (dry run), `skipped ...` or `failed write ...` to `out`. A rejected write
+    raises Stop("write-failed"); set_role and set_pr_milestone record it in `write_failures`
+    instead, so the caller attempts every other write first."""
 
     def __init__(self, t: Transport, board: Board, cfg: Config, dry_run: bool, out: list):
         self.t, self.board, self.cfg, self.dry_run, self.out = t, board, cfg, dry_run, out
         self._milestone_numbers = {}  # repo -> {title: number}
         self.fresh = {}   # item id -> the Facts of its guarded fresh read
         self.failed = {}  # item id -> why its guarded fresh read failed
+        self.write_failures = []  # (issue or PR ref, why) of every rejected write
+        self.written = {}  # item id -> the Status option written (on a dry run: to be written)
+
+    def _record_failure(self, ref: str, stop: Stop) -> None:
+        why = stop.detail[len(ref) + 2:] if stop.detail.startswith(ref + ": ") else stop.detail
+        self.write_failures.append((ref, why))
+        self.out.append("failed write %s: %s" % (ref, why))
 
     def _emit(self, text: str) -> None:
         self.out.append(("would write: " if self.dry_run else "write: ") + text)
@@ -818,9 +868,9 @@ class Writer:
         try:
             self.write_role(fresh, role)
         except Stop as stop:
-            if stop.reason != "incomplete-read":
+            if stop.reason != "write-failed":
                 raise
-            self.out.append("skipped %s: write failed: %s" % (ref, stop.detail))
+            self._record_failure(ref, stop)
             return False
         return True
 
@@ -833,6 +883,7 @@ class Writer:
             _mutate(self.t, SET_FIELD_MUTATION, {
                 "project": self.board.project_id, "item": f.item_id,
                 "field": self.board.status_field_id, "option": self.board.options[name]}, ref)
+        self.written[f.item_id] = name
         self._emit("%s Status: %s -> %s" % (ref, f.status or "(none)", name))
 
     def add_assignee(self, repo: str, number: int, login: str) -> None:
@@ -840,8 +891,8 @@ class Writer:
         replaces the existing ones; a failed write raises Stop."""
         ref = "%s#%d" % (repo, number)
         if not self.dry_run:
-            _rest(self.t, "POST", "repos/%s/issues/%d/assignees" % (repo, number), ref,
-                  {"assignees": [login]})
+            _rest_write(self.t, "POST", "repos/%s/issues/%d/assignees" % (repo, number), ref,
+                        {"assignees": [login]})
         self._emit("%s assignees: +%s" % (ref, login))
 
     def set_order(self, item_id: Optional[str], value: float, label: Optional[str] = None) -> None:
@@ -860,8 +911,8 @@ class Writer:
         created = None
         if not self.dry_run:
             what = "create issue in %s" % repo
-            response = _rest(self.t, "POST", "repos/%s/issues" % repo, what,
-                             {"title": title, "body": body})
+            response = _rest_write(self.t, "POST", "repos/%s/issues" % repo, what,
+                                   {"title": title, "body": body})
             created = (_field(response, "number", int, what), response)
         self._emit("create issue in %s: %s" % (repo, title))
         return created
@@ -869,32 +920,35 @@ class Writer:
     def add_sub_issue(self, parent: tuple, ref: str, issue_id: Optional[int]) -> None:
         """Attach the issue (by its REST id) as a sub-issue of `parent` (repo, number)."""
         if not self.dry_run:
-            _rest(self.t, "POST", "repos/%s/issues/%d/sub_issues" % parent, ref,
-                  {"sub_issue_id": issue_id})
+            _rest_write(self.t, "POST", "repos/%s/issues/%d/sub_issues" % parent, ref,
+                        {"sub_issue_id": issue_id})
         self._emit("%s sub-issue of %s#%d" % ((ref,) + tuple(parent)))
 
     def set_issue_milestone(self, repo: str, number: Optional[int], ref: str, milestone_number: int,
                             title: str) -> None:
         if not self.dry_run:
-            _rest(self.t, "PATCH", "repos/%s/issues/%d" % (repo, number), ref,
-                  {"milestone": milestone_number})
+            _rest_write(self.t, "PATCH", "repos/%s/issues/%d" % (repo, number), ref,
+                        {"milestone": milestone_number})
         self._emit("%s milestone: %s" % (ref, title))
 
     def add_blocked_by(self, repo: str, number: Optional[int], ref: str, blocker: tuple,
                        blocker_id: int) -> None:
         """A native blocked-by link from the issue to `blocker` (repo, number), by its REST id."""
         if not self.dry_run:
-            _rest(self.t, "POST", "repos/%s/issues/%d/dependencies/blocked_by" % (repo, number), ref,
-                  {"issue_id": blocker_id})
+            _rest_write(self.t, "POST", "repos/%s/issues/%d/dependencies/blocked_by" % (repo, number),
+                        ref, {"issue_id": blocker_id})
         self._emit("%s blocked by %s#%d" % ((ref,) + tuple(blocker)))
 
     def add_project_item(self, content_id: Optional[str], ref: str) -> Optional[str]:
         """Add the issue to the project; the new item id, None on a dry run."""
         item_id = None
         if not self.dry_run:
-            data = _query(self.t, ADD_ITEM_MUTATION, {"project": self.board.project_id,
-                                                       "content": content_id}, ref)
-            item_id = _field(_dig(data, ("addProjectV2ItemById", "item"), ref), "id", str, ref)
+            try:
+                data = _query(self.t, ADD_ITEM_MUTATION, {"project": self.board.project_id,
+                                                           "content": content_id}, ref)
+                item_id = _field(_dig(data, ("addProjectV2ItemById", "item"), ref), "id", str, ref)
+            except Stop as stop:
+                raise _write_failed(stop)
         self._emit("%s added to the project" % ref)
         return item_id
 
@@ -924,10 +978,12 @@ class Writer:
             return False
         if not self.dry_run:
             try:
-                _rest(self.t, "PATCH", "repos/%s/issues/%d" % (repo, number), ref,
-                      {"milestone": milestone_number})
+                _rest_write(self.t, "PATCH", "repos/%s/issues/%d" % (repo, number), ref,
+                            {"milestone": milestone_number})
             except Stop as stop:
-                self.out.append("skipped %s: write failed: %s" % (ref, stop.detail))
+                if stop.reason != "write-failed":
+                    raise
+                self._record_failure(ref, stop)
                 return False
         self._emit("%s milestone: %s" % (ref, milestone_title))
         return True
@@ -940,6 +996,10 @@ class SyncResult:
     unreadable: list  # item ids unreadable on the board read or on a guarded fresh read
     reasons: dict = field(default_factory=dict)  # item id -> why it could not be read
     fresh: dict = field(default_factory=dict)    # item id -> Facts of its fresh read, when newer
+    failed: list = field(default_factory=list)   # (issue or PR ref, why) of every rejected write
+    ready: list = field(default_factory=list)    # `ready: <repo>#<n> order=<v>` lines
+    rate_cost: int = 0                           # see Board
+    rate_remaining: Optional[int] = None
 
 
 _WRITE_PREFIXES = ("write: ", "would write: ")
@@ -972,11 +1032,27 @@ def _reconcile(t: Transport, cfg: Config, project_url: str, *, mode: str, repo: 
         board = read_board(t, project_url, cfg)
     preflight(board, cfg, needs_order=False)
 
+    out = []
+    writer = Writer(t, board, cfg, dry_run, out)
+    try:
+        return _reconcile_pass(t, cfg, board, writer, out, mode=mode, repo=repo, only=only)
+    except BaseException:
+        # A fatal error after a completed write: print the writes made so far before it propagates,
+        # so no completed write goes unreported.
+        for line in out:
+            if line.startswith(_WRITE_PREFIXES):
+                print(line)
+        sys.stdout.flush()
+        raise
+
+
+def _reconcile_pass(t: Transport, cfg: Config, board: Board, writer: "Writer", out: list, *,
+                    mode: str, repo: Optional[str], only: Optional[tuple]) -> SyncResult:
+    """The body of _reconcile on a read and preflighted board; `out` is the writer's output."""
     def in_scope(r: str) -> bool:
         return mode == "agent" or r == repo
 
-    out, reports = [], []
-    writer = Writer(t, board, cfg, dry_run, out)
+    reports = []
     for item_id in board.unreadable:
         reports.append("unreadable %s: %s; not written" % (item_id, board.reasons.get(item_id, "")))
     targets = [f for f in board.items
@@ -1012,6 +1088,22 @@ def _reconcile(t: Transport, cfg: Config, project_url: str, *, mode: str, repo: 
         elif titles:
             writer.set_pr_milestone(pr_repo, pr_number, titles[0])
 
+    # Every item that is Ready once this reconciliation's writes land, whoever wrote it: the facts
+    # derive Ready and the Status is Ready (read, or written by this run; on a dry run, to be written).
+    ready = []
+    for f in targets:
+        if not in_scope(f.repo):
+            continue
+        latest = writer.fresh.get(f.item_id, f)
+        status = writer.written.get(f.item_id, latest.status)
+        if status == cfg.roles["ready"] and derive(latest, cfg)[0] == "ready":
+            ready.append(latest)
+    ready.sort(key=lambda f: (f.order is None, round(f.order, 3) if f.order is not None else 0.0,
+                              f.repo.lower(), f.number))
+    ready_lines = ["ready: %s#%d order=%s" % (f.repo, f.number,
+                                             "-" if f.order is None else _order_text(f.order))
+                   for f in ready]
+
     if only is None:
         repos = sorted({f.repo for f in board.items if in_scope(f.repo)})
         for r in repos:
@@ -1033,7 +1125,9 @@ def _reconcile(t: Transport, cfg: Config, project_url: str, *, mode: str, repo: 
     reports = [line for line in out if not line.startswith(_WRITE_PREFIXES)] + reports
     unreadable = list(dict.fromkeys(list(board.unreadable) + list(writer.failed)))
     reasons = {i: board.reasons.get(i) or writer.failed.get(i, "") for i in unreadable}
-    return SyncResult(writes, reports, unreadable, reasons, dict(writer.fresh))
+    return SyncResult(writes, reports, unreadable, reasons, dict(writer.fresh),
+                      list(writer.write_failures), ready_lines, board.rate_cost,
+                      board.rate_remaining)
 
 
 def _order_text(value: float) -> str:
@@ -1043,6 +1137,13 @@ def _order_text(value: float) -> str:
 def _print_result(result: SyncResult) -> None:
     for line in result.writes + result.reports:
         print(line)
+
+
+def _stop_on_failed_writes(result: SyncResult) -> None:
+    """Stop("write-failed") when the reconciliation had a rejected write; it is incomplete. Each
+    rejected write is already on stdout as a `failed write <ref>: <why>` line."""
+    if result.failed:
+        raise Stop("write-failed", "%d write(s) failed" % len(result.failed))
 
 
 def next_task(t: Transport, cfg: Config, project_url: str, repo: str, *, skip_unordered: bool,
@@ -1056,13 +1157,16 @@ def next_task(t: Transport, cfg: Config, project_url: str, repo: str, *, skip_un
     preflight(board, cfg, needs_order=True)
     result = _reconcile(t, cfg, project_url, mode=mode, repo=repo, dry_run=dry_run, board=board)
     _print_result(result)
+    _stop_on_failed_writes(result)  # never select after a failed reconciliation
     # Any item unreadable on the board read or on a fresh read during the reconciliation.
     if result.unreadable:
         raise Stop("incomplete-read", "unreadable items, nothing selected: " + ", ".join(
             "%s (%s)" % (i, result.reasons.get(i, "")) for i in result.unreadable))
-    # Derived from the freshest facts (a fresh read during the reconciliation replaces the board
-    # read), so a stale Ready or a concurrent claim never counts and a dry run selects what the
-    # reconciliation would leave Ready.
+    # Derived from the freshest facts this run read (a fresh read during the reconciliation replaces
+    # the board read), so a stale Ready Status never counts and a dry run selects what the
+    # reconciliation would leave Ready. This is a snapshot-consistent selection, not a linearizable
+    # claim: a claim that lands after these reads is not seen here; start's re-read of the assignees
+    # after its own assignment is what detects it (collision).
     latest = [result.fresh.get(f.item_id, f) for f in board.items]
     candidates = [f for f in latest
                   if f.state == "OPEN" and not f.assignees and derive(f, cfg)[0] == "ready"]
@@ -1151,8 +1255,10 @@ def start(t: Transport, cfg: Config, project_url: str, repo: str, issue: tuple, 
     if login.lower() not in {a.lower() for a in after.assignees}:
         raise Stop("assignment-failed", "%s: %s is not assigned after the claim; GitHub drops an "
                    "assignee without push access to %s" % (ref, login, current.repo))
-    _print_result(_reconcile(t, cfg, project_url, mode=mode, repo=repo, dry_run=False,
-                             only=(current.repo, current.number)))
+    result = _reconcile(t, cfg, project_url, mode=mode, repo=repo, dry_run=False,
+                        only=(current.repo, current.number))
+    _print_result(result)
+    _stop_on_failed_writes(result)
     print("started: %s" % ref)
 
 
@@ -1345,7 +1451,7 @@ def followup(t: Transport, cfg: Config, project_url: str, repo: str, *, parent: 
 
     def reconcile(stop: Stop, linked) -> None:
         """After a failed link write: satisfied when a fresh read shows the link, else re-raise."""
-        if stop.reason != "incomplete-read" or number is None:
+        if stop.reason not in ("incomplete-read", "write-failed") or number is None:
             raise stop
         now = refresh()
         if not linked(now):
@@ -1562,10 +1668,13 @@ def _sync(args, transport: Transport, env: Mapping[str, str]) -> int:
     cfg = load_config(args.config)
     result = sync(transport, cfg, args.project, mode=args.mode, repo=args.repo, env=env,
                   dry_run=args.dry_run)
-    for line in result.writes + result.reports:
+    for line in result.writes + result.reports + result.ready:
         print(line)
-    if not result.writes:
+    if not result.writes and not result.failed:
         print("no changes" + (" would be written" if args.dry_run else " written"))
+    print("rate-limit: cost=%d remaining=%s" % (
+        result.rate_cost, "-" if result.rate_remaining is None else result.rate_remaining))
+    _stop_on_failed_writes(result)
     return 0
 
 

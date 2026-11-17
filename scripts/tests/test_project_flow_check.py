@@ -318,7 +318,8 @@ class CheckTest(unittest.TestCase):
     def test_setup_incomplete_is_a_named_reason(self):
         self.assertIn("setup-incomplete", project_flow.STOP_REASONS)
         self.assertIn("assignment-failed", project_flow.STOP_REASONS)
-        self.assertEqual(len(project_flow.STOP_REASONS), 17)
+        self.assertIn("write-failed", project_flow.STOP_REASONS)
+        self.assertEqual(len(project_flow.STOP_REASONS), 18)
 
 
 def project_flow_fields_without_status():
