@@ -276,10 +276,16 @@ Status. The first matching rule wins:
 4. the issue has an assignee → In Progress;
 5. every native "blocked by" issue is closed as completed, or there is none → Ready; otherwise → Backlog.
 
-A blocker closed as not planned or as a duplicate does not count as closed, and `sync` reports it. Option names
-come from the role map in `.github/project-flow.json`. `sync` makes the board match the derivation; the
-repository's `project-flow` workflow runs it on issue and pull request events and daily, and the agent runs it
-at intake, after the claim and at the closeout.
+A blocker closed as not planned or as a duplicate does not count as closed, and `sync` reports it for every open
+issue, whichever rule decides its Status. Option names come from the role map in `.github/project-flow.json`.
+`sync` makes the board match the derivation; the repository's `project-flow` workflow runs it on issue and pull
+request events and daily, and the agent runs it at intake, after the claim and at the closeout.
+
+`sync` prints its writes (`write: …`, or `would write: …` with `--dry-run`), its reports, one line
+`ready: <owner>/<repo>#<n> order=<value>` for **every** item that is Ready once its writes land — whoever made it
+Ready, sorted by order value then number, `order=-` when the item has none — and last
+`rate-limit: cost=<n> remaining=<n>` (the GraphQL cost of its project read; `-` when unknown). A rejected write
+prints `failed write <ref>: <why>`; `sync` still attempts every other write and then stops with `write-failed`.
 
 **Convergence.** GitHub Projects has no compare-and-set, so writes converge instead of excluding each other: a
 stale Status written by any writer is undone by the next `sync`, because the facts it derives from are
@@ -321,6 +327,7 @@ error and exit 1 a `gh` error, reported as it stands. The agent reports the reas
 | `parent-unordered`, `no-order-room` | `followup` could not allocate an order value; ask the user for one or for the parent's value |
 | `parent-as-blocker` | a follow-up is never blocked by its parent; drop the parent from the blockers and run it again |
 | `resume-disagrees` | an existing link of the follow-up disagrees with the arguments; nothing was written; report it and ask |
+| `write-failed` | GitHub rejected a write (each is printed as `failed write <ref>: <why>`, or by `followup` as `failed: <step>`); report it: the reconciliation is incomplete; retry after the cause is fixed; never proceed to selection or treat the claim as made |
 | any other | report it and ask the user to name the task |
 
 ### Naming, announcing and reading
@@ -330,9 +337,13 @@ with its open blockers, Blocked, In Review, Done or assigned — and the agent a
 refuses it with `not-ready` unless `--force` is passed, and `--force` is passed only after the user explicitly
 authorizes it.
 
-**Resume.** A task that is In Progress and recorded in the `tracker.md` of an active change of this repository
-(`openspec/changes/<name>/tracker.md`, archived changes excluded) is a **resume** of that change: continue it,
-repeat no claim and report no conflict.
+**Resume.** A task recorded in the `tracker.md` of an active change of this repository
+(`openspec/changes/<name>/tracker.md`, archived changes excluded) is a **resume** of that change when it is In
+Progress and claimed by the authenticated user, or still Ready because an earlier intake stopped after writing
+`tracker.md` and before the claim. Reuse that change and create no other; report no conflict. When the issue is
+not yet assigned to the authenticated user, make the missing claim with `start` (*The claim*); otherwise repeat
+no claim. More than one active `tracker.md` recording the same issue, or a `tracker.md` whose `Repository` line
+names a different repository than the issue's: stop and ask the user.
 
 Before creating the change, tell the user which task was chosen and why — its order value from `next`, or the
 user's naming. Then read the issue and follow its links — the RFC or specification section, pull requests,
@@ -549,8 +560,10 @@ For tracked work, after the implementation pull request is merged:
    set to the `Repository` line of `tracker.md`, and report that the automation missed it. If closing fails,
    report it; the item is not Done until the issue is closed.
 2. **Done last:** run `project_flow.py sync` once and confirm the item is Done. If it still is not, report it.
-3. **Report** the items the merge made Ready (the `sync` writes to Ready) and every follow-up issue the change
-   filed.
+3. **Report** the items the merge made Ready and every follow-up issue the change filed. The items made Ready
+   are those that are both in the `ready:` lines of that `sync` (*Statuses are derived*) and in the merged
+   issue's blocking list (`gh api repos/<owner>/<repo>/issues/<n>/dependencies/blocking`, every page). Never
+   rely on this invocation's writes: the repository's workflow may have written Ready first.
 
 When the pull request was merged before sync, archive and doc review were completed, report it; the user
 decides how to proceed, for example with a follow-up pull request for the sync and archive. The item may

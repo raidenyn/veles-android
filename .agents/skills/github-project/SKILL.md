@@ -53,11 +53,15 @@ Add `--dry-run` to any writing command to print its writes without making them.
 
    Success ends with `next: <owner>/<repo>#<n> order=<value>`.
 
-4. **Resume check** — see *Next task*, *Naming, announcing and reading*. Lists the active changes that record
-   the issue:
+4. **Resume check** — see *Next task*, *Naming, announcing and reading* (*Resume*). Lists the active changes
+   that record the issue, the `Repository` line of each, and the issue's assignees and the authenticated
+   user; a claim the *Resume* paragraph calls for is step 7:
 
    ```bash
    grep -l "Issue: <owner>/<repo>#<n>$" openspec/changes/*/tracker.md
+   grep -H "^- Repository:" <each tracker.md found>
+   gh issue view <n> --repo <owner>/<repo> --json assignees --jq '[.assignees[].login]'
+   gh api user --jq .login
    ```
 
 5. **Read the issue** — see *Next task*, *Naming, announcing and reading*:
@@ -152,12 +156,16 @@ Add `--dry-run` to any writing command to print its writes without making them.
 ## After the merge
 
 14. **Post-merge check** — see *Closeout*, *Done, last: the post-merge check*. Read the Status back as in
-    step 13:
+    step 13. Its step 3 compares this `sync`'s `ready: <owner>/<repo>#<n> order=<value>` lines with the
+    blocking list (the line formats are in *Next task*, *Statuses are derived*):
 
     ```bash
     gh issue view <n> --repo <owner>/<repo> --json state
     gh issue close <n> --repo <owner>/<repo> --reason completed --comment "Completed by <PR URL>"
-    $PF sync --project "<project URL>" --repo "$THIS_REPO"
+    $PF sync --project "<project URL>" --repo "$THIS_REPO" | tee <sync.out>
+    grep '^ready: ' <sync.out>
+    gh api --paginate repos/<owner>/<repo>/issues/<n>/dependencies/blocking \
+      --jq '.[] | "\(.repository_url | sub("^https://api.github.com/repos/"; ""))#\(.number)"'
     ```
 
 15. **Local merge** — see *Closeout*, *Local merge*:
