@@ -230,9 +230,10 @@ The committed `.github/project-flow.json` SHALL hold only names:
 - the Status field name;
 - the role → option-name map (`backlog`, `ready`, `in_progress`, `in_review`, `blocked`, `done`);
 - the order field name;
-- the blocked label name.
+- the blocked label name;
+- optionally, the name of the Actions environment that holds the variable and the secret.
 
-It MUST NOT hold any project id, project number, owner, field id or option id. The served project SHALL be named only by the repository variable `PROJECT_URL`, and the write token only by the repository secret `PROJECT_TOKEN`. While `PROJECT_URL` is unset or names a different project, the Action MUST be a successful no-op, and `sync`, `next`, `start` and `followup` MUST refuse that project with a named reason. If the variable cannot be read, the script MUST report it with the fix and MUST NOT assume a value.
+It MUST NOT hold any project id, project number, owner, field id or option id. The served project SHALL be named only by the variable `PROJECT_URL`, and the write token only by the secret `PROJECT_TOKEN`, both in the environment the config names or, when it names none, at the repository level. While `PROJECT_URL` is unset or names a different project, the Action MUST be a successful no-op, and `sync`, `next`, `start` and `followup` MUST refuse that project with a named reason. If the variable cannot be read, the script MUST report it with the fix and MUST NOT assume a value.
 
 #### Scenario: Not enabled
 - **WHEN** the agent runs `next` for a project URL that differs from `PROJECT_URL`
@@ -245,6 +246,14 @@ It MUST NOT hold any project id, project number, owner, field id or option id. T
 #### Scenario: Identifier committed
 - **WHEN** `.github/project-flow.json` contains a project number, an owner or a node id
 - **THEN** `check` fails
+
+#### Scenario: Environment-scoped settings
+- **WHEN** `.github/project-flow.json` names an environment
+- **THEN** the agent commands read `PROJECT_URL` from that environment, and the workflow job declares the same environment
+
+#### Scenario: No environment configured
+- **WHEN** `.github/project-flow.json` names no environment
+- **THEN** the agent commands read the repository variable `PROJECT_URL`
 
 ### Requirement: The setup check separates facts from heuristics
 `project_flow.py check` SHALL validate `.github/project-flow.json` without network access. Given a project URL, it SHALL also report two kinds of findings.
@@ -281,7 +290,7 @@ The output MUST state that a clean warning list does not prove that dependencies
 - a daily `schedule`;
 - `workflow_dispatch`.
 
-It MUST NOT trigger on `edited`. Every run SHALL execute the same `sync` and write a job summary. It MUST use a single concurrency group with `cancel-in-progress: false`. It MUST check out only the base branch, MUST NOT execute code from the pull request, MUST pass the token only through the secret, and MUST NOT be a required check. The workflow SHALL be owned by the `tooling` node in `.github/components.json`. It MUST be added to the workflow contract suites and the scanner scopes in the same commit, with a negative test that fails if the workflow checks out the PR head or adds an `edited` trigger.
+It MUST NOT trigger on `edited`. Every run SHALL execute the same `sync` and write a job summary. It MUST use a single concurrency group with `cancel-in-progress: false`. It MUST check out only the base branch, MUST NOT execute code from the pull request, MUST pass the token only through the secret, and MUST NOT be a required check. Its job SHALL declare, by plain name, the environment `.github/project-flow.json` names, when it names one. The workflow SHALL be owned by the `tooling` node in `.github/components.json`. It MUST be added to the workflow contract suites and the scanner scopes in the same commit, with a negative test that fails if the workflow checks out the PR head or adds an `edited` trigger.
 
 #### Scenario: Fork PR
 - **WHEN** a pull request from a fork triggers the workflow
@@ -306,7 +315,7 @@ It MUST NOT trigger on `edited`. Every run SHALL execute the same `sync` and wri
 `docs/github-project-setup.md` SHALL describe, for any project and without naming a concrete one:
 - the fields and Status options the flow needs and how to map their names;
 - the built-in workflows to enable (*Item closed*, *Auto-add to project*);
-- the variable `PROJECT_URL`, the secret `PROJECT_TOKEN` and its minimum verified permissions;
+- the variable `PROJECT_URL`, the secret `PROJECT_TOKEN` and its minimum verified permissions, and the optional environment that holds them;
 - the conventions: assignment means started, Blocked is the label, order is a field and not card position, pre-review PRs are drafts, and milestones are feature-level and set during planning;
 - converting prose dependencies to native links;
 - the ordered enable steps, ending with setting `PROJECT_URL`;
