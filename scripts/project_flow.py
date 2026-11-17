@@ -908,6 +908,7 @@ class Writer:
         self.failed = {}  # item id -> why its guarded fresh read failed
         self.write_failures = []  # (issue or PR ref, why) of every rejected write
         self.written = {}  # item id -> the Status option written (on a dry run: to be written)
+        self.skipped = 0   # writes skipped because the facts changed or a re-read failed
 
     def _record_failure(self, ref: str, stop: Stop) -> None:
         why = stop.detail[len(ref) + 2:] if stop.detail.startswith(ref + ": ") else stop.detail
@@ -930,6 +931,7 @@ class Writer:
             return False
         self.fresh[f.item_id] = fresh
         if fresh.inputs() != f.inputs():
+            self.skipped += 1
             self.out.append("skipped %s: inputs changed" % ref)
             return False
         if fresh.status == self.cfg.roles[role]:
@@ -1043,6 +1045,7 @@ class Writer:
         except Stop as stop:
             if stop.reason != "incomplete-read":
                 raise
+            self.skipped += 1
             self.out.append("skipped %s: unreadable: %s" % (ref, stop.detail))
             return False
         if not self.dry_run:
@@ -1069,6 +1072,9 @@ class SyncResult:
     ready: list = field(default_factory=list)    # `ready: <repo>#<n> order=<v>` lines
     rate_cost: int = 0                           # see Board
     rate_remaining: Optional[int] = None
+    conflicts: int = 0  # PRs whose closing issues carry conflicting milestones
+    skipped: int = 0    # other incomplete steps: a skipped write, an unreadable closing-issue,
+    #                     PR or milestone read, an `only` issue not readable on the project
 
 
 _WRITE_PREFIXES = ("write: ", "would write: ")
@@ -1122,11 +1128,13 @@ def _reconcile_pass(t: Transport, cfg: Config, board: Board, writer: "Writer", o
         return mode == "agent" or r == repo
 
     reports = []
+    conflicts = skipped = 0
     for item_id in board.unreadable:
         reports.append("unreadable %s: %s; not written" % (item_id, board.reasons.get(item_id, "")))
     targets = [f for f in board.items
                if only is None or (f.repo, f.number) == tuple(only)]
     if only is not None and not targets:
+        skipped += 1
         reports.append("%s#%d: not a readable issue on the project" % tuple(only))
 
     for f in targets:
@@ -1154,10 +1162,12 @@ def _reconcile_pass(t: Transport, cfg: Config, board: Board, writer: "Writer", o
         except Stop as stop:
             if stop.reason != "incomplete-read":
                 raise
+            skipped += 1
             reports.append("%s: closing issues unreadable, no milestone set: %s" % (ref, stop.detail))
             continue
         titles = sorted({title for _, _, title in closing if title is not None})
         if len(titles) > 1:
+            conflicts += 1
             reports.append("%s: conflicting milestones %s; none set" % (ref, ", ".join(titles)))
         elif titles:
             writer.set_pr_milestone(pr_repo, pr_number, titles[0])
@@ -1188,6 +1198,7 @@ def _reconcile_pass(t: Transport, cfg: Config, board: Board, writer: "Writer", o
             except Stop as stop:
                 if stop.reason != "incomplete-read":
                     raise
+                skipped += 1
                 reports.append("%s milestones unreadable: %s" % (r, stop.detail))
                 continue
             for _, title, open_issues in found:
@@ -1201,11 +1212,21 @@ def _reconcile_pass(t: Transport, cfg: Config, board: Board, writer: "Writer", o
     reasons = {i: board.reasons.get(i) or writer.failed.get(i, "") for i in unreadable}
     return SyncResult(writes, reports, unreadable, reasons, dict(writer.fresh),
                       list(writer.write_failures), ready_lines, board.rate_cost,
-                      board.rate_remaining)
+                      board.rate_remaining, conflicts, skipped + writer.skipped)
 
 
 def _order_text(value: float) -> str:
     return str(int(value)) if float(value).is_integer() else repr(float(value))
+
+
+def _summary(result: SyncResult) -> str:
+    """`sync: complete` only when nothing was unreadable, conflicting, skipped or rejected (a rejected
+    write counts as skipped); a partial run's Ready lines and Statuses are not the whole picture."""
+    skipped = result.skipped + len(result.failed)
+    if not result.unreadable and not result.conflicts and not skipped:
+        return "sync: complete"
+    return "sync: partial (%d unreadable, %d conflicts, %d skipped)" % (
+        len(result.unreadable), result.conflicts, skipped)
 
 
 def _print_result(result: SyncResult) -> None:
@@ -1749,6 +1770,7 @@ def _sync(args, transport: Transport, env: Mapping[str, str]) -> int:
         print(line)
     if not result.writes and not result.failed:
         print("no changes" + (" would be written" if args.dry_run else " written"))
+    print(_summary(result))
     print("rate-limit: cost=%d remaining=%s" % (
         result.rate_cost, "-" if result.rate_remaining is None else result.rate_remaining))
     _stop_on_failed_writes(result)

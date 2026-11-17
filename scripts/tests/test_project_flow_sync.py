@@ -672,5 +672,78 @@ class RateLimitTest(CliCase):
                                                  "stop: write-failed: 1 write(s) failed"])
 
 
+class SummaryLineTest(CliCase):
+    """`sync: complete` only when nothing was unreadable, conflicting, skipped or rejected; otherwise
+    `sync: partial (...)`. It precedes `rate-limit:`, which stays the last line before any stop."""
+
+    def summary(self, out):
+        lines = out.splitlines()
+        index = next(i for i, line in enumerate(lines) if line.startswith("rate-limit: "))
+        return lines[index - 1]
+
+    def test_clean_run_is_complete(self):
+        fake = FakeTransport(board([item(issue(1), status="Ready", order=1)]) + [open_milestones()])
+        code, out = self.main_sync(fake)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.splitlines()[-2:], ["sync: complete", "rate-limit: cost=0 remaining=-"])
+
+    def test_dry_run_with_writes_is_complete(self):
+        stale = item(issue(1), status="Backlog", order=1)
+        fake = FakeTransport(board([stale]) + [fresh(stale), open_milestones()])
+        code, out = self.main_sync(fake, "--dry-run")
+        self.assertEqual((code, self.summary(out)), (0, "sync: complete"), out)
+
+    def test_partial_cases_exit_zero(self):
+        conflict = [item(issue(1, prs=[pr(9)], milestone="M1"), status="In Review"),
+                    item(issue(2, prs=[pr(9)], milestone="M2"), status="In Review")]
+        changed_before = item(issue(1), status="Backlog", order=1)
+        changed_after = item(issue(1, assignees=["x"]), status="Backlog", order=1)
+        cases = {
+            "unreadable item": (
+                board([item(issue(1), status="Ready"), item(None, item_id="PVTI_hidden", type="REDACTED")])
+                + [open_milestones()], "sync: partial (1 unreadable, 0 conflicts, 0 skipped)"),
+            "guarded read failed": (
+                board([changed_before]) + [("query ProjectItem(", GhError("gh: HTTP 502")),
+                                           open_milestones()],
+                "sync: partial (1 unreadable, 0 conflicts, 0 skipped)"),
+            "conflicting milestones": (
+                board(conflict) + [("closingIssuesReferences", closing_issues([(1, "M1"), (2, "M2")])),
+                                   open_milestones()],
+                "sync: partial (0 unreadable, 1 conflicts, 0 skipped)"),
+            "closing issues unreadable": (
+                board(conflict[:1]) + [("closingIssuesReferences", GhError("gh: HTTP 502")),
+                                       open_milestones()],
+                "sync: partial (0 unreadable, 0 conflicts, 1 skipped)"),
+            "PR re-read unreadable": (
+                board(conflict[:1]) + [("closingIssuesReferences", closing_issues([(1, "M1")])),
+                                       all_milestones(milestones=[milestone(4, "M1")]),
+                                       ("repos/owner/repo/issues/9", GhError("gh: HTTP 502")),
+                                       open_milestones()],
+                "sync: partial (0 unreadable, 0 conflicts, 1 skipped)"),
+            "milestones unreadable": (
+                board([item(issue(1), status="Ready")]) + [("milestones?state=open", GhError("gh: HTTP 502"))],
+                "sync: partial (0 unreadable, 0 conflicts, 1 skipped)"),
+            "inputs changed": (
+                board([changed_before]) + [fresh(changed_after), open_milestones()],
+                "sync: partial (0 unreadable, 0 conflicts, 1 skipped)"),
+        }
+        for label, (responses, expected) in cases.items():
+            with self.subTest(label):
+                code, out = self.main_sync(FakeTransport(responses))
+                self.assertEqual(code, 0, out)
+                self.assertEqual(self.summary(out), expected, out)
+                self.assertTrue(out.splitlines()[-1].startswith("rate-limit: "), out)
+
+    def test_failed_write_is_partial_and_stops_after_rate_limit(self):
+        stale = item(issue(1), status="Backlog", order=1)
+        fake = FakeTransport(board([stale]) + [fresh(stale), ("mutation", GhError("gh: HTTP 403")),
+                                               open_milestones()])
+        code, out = self.main_sync(fake)
+        self.assertEqual(code, 3, out)
+        self.assertEqual(out.splitlines()[-3:], [
+            "sync: partial (0 unreadable, 0 conflicts, 1 skipped)", "rate-limit: cost=0 remaining=-",
+            "stop: write-failed: 1 write(s) failed"])
+
+
 if __name__ == "__main__":
     unittest.main()
