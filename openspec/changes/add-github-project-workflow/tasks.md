@@ -165,9 +165,9 @@
 
 ## 8. Real-environment verification (before the PR is marked ready for review)
 
-- [ ] 8.1 In the scratch repository from 0.2, copy in the workflow, config and script. Set up the scratch project with the setup guide: fields, options, built-in workflows and the `PROJECT_TOKEN` secret, with `PROJECT_URL` set last.
-- [ ] 8.2 Settle the minimum token type and permissions empirically: try a fine-grained token on the user-owned project, and fall back to a classic PAT with `project`. Fill the result into the setup guide, then re-run 7.2–7.4.
-- [ ] 8.3 Drive the full loop through the real Action:
+- [x] 8.1 In the scratch repository from 0.2, copy in the workflow, config and script. Set up the scratch project with the setup guide: fields, options, built-in workflows and the `PROJECT_TOKEN` secret, with `PROJECT_URL` set last.
+- [x] 8.2 Settle the minimum token type and permissions empirically: try a fine-grained token on the user-owned project, and fall back to a classic PAT with `project`. Fill the result into the setup guide, then re-run 7.2–7.4.
+- [x] 8.3 Drive the full loop through the real Action:
   - Backlog ↔ Ready on blocker add and close (and not-planned);
   - a claim with `start`, and a refused Backlog claim;
   - draft PR → ready → In Review → back to draft → In Progress;
@@ -180,7 +180,7 @@
   - an unset `PROJECT_URL` making the Action a no-op.
 
   Write the observed outcomes to `verification-notes.md` in the change directory.
-- [ ] 8.4 Do not touch the real board or this repository's issues before merge. Put the scratch repository and project and each covered transition with its outcome in the PR description. Only then may finalize mark the PR ready for review.
+- [x] 8.4 Do not touch the real board or this repository's issues before merge. Put the scratch repository and project and each covered transition with its outcome in the PR description. Only then may finalize mark the PR ready for review.
 
 ## 9. Post-merge: apply to this repository's board (closeout follow-up)
 
