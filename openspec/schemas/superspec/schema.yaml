@@ -34,8 +34,10 @@ description: >
   confirms it open and not a draft (`gh pr view`), writes the
   receipt with the true outcome, and for tracked work puts the
   closing keyword in the PR body, records the PR in tracker.md
-  (committed and pushed as part of the PR), runs one
-  `project_flow.py sync` and confirms In Review without writing it;
+  (committed and pushed as part of the PR), runs
+  `project_flow.py sync` and confirms In Review without writing it
+  (only after exit 0 and `sync: complete`; one re-run when GitHub
+  has not linked the closing keyword yet);
   then it hands off to the closeout rule,
   which monitors to green, syncs and archives once, reviews the
   docs, pushes, monitors to merge and completes the applicable
@@ -511,11 +513,17 @@ artifacts:
             the PR in `tracker.md` as the tracker capability
             specifies, commit that edit and push it as part of the
             PR, then run `python3 -I scripts/project_flow.py sync
-            --project <project URL> --repo <this repository>` once
-            and confirm the item is In Review. Never write that
-            Status: when the item is derived as something else (for
-            example Blocked because of the label), report the derived
-            Status and the reason and still start the closeout. The
+            --project <project URL> --repo <this repository>` and
+            confirm the item is In Review. Only a run that exits 0
+            and prints `sync: complete` confirms anything; on
+            `sync: partial` or any other exit, report it and confirm
+            nothing. When a complete run does not show In Review, run
+            sync one more time (GitHub links the closing keyword with
+            a lag) and only then report the derived Status, the
+            reason and that lag. Never write that Status: when the
+            item is derived as something else (for example Blocked
+            because of the label), report it and still start the
+            closeout. The
             commands are in the `github-project` skill. Then hand off to
             `.agents/rules/repo-superspec-closeout.md` and stay in
             monitoring mode. Before acting, read the *Closeout* and

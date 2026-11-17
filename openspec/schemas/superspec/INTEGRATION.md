@@ -91,7 +91,7 @@ There is also one **fallback**:
 - `design` is an **optional leaf**. Brainstorm still attempts to pre-populate design.md, but tasks no longer hard-depend on it (`tasks.requires: [specs]`). Per OpenSpec conventions: `design.md` is only written when non-trivial technical decisions need explanation.
 - `apply` is a **real DAG node** as of schema v2. It generates `apply.md` (a minimal receipt — iteration counter, worktree, branch, commit range, task counts) so the DAG can honestly express "verify depends on apply having run." The canonical `/openspec-apply-change` instruction body still lives in the top-level `apply:` phase block; the apply artifact's own instruction is a short redirect to avoid drift.
 - `verify` requires `apply` (was `plan` in v1). The OpenSpec CLI will refuse to surface verify as a `ready` artifact until `apply.md` exists.
-- `finalize` is a **real DAG node** as of schema v3. It generates `finalize.md` (a minimal git-closeout receipt: outcome, PR URL, final branch state) and requires `verify`. `/openspec-continue-change` surfaces finalize's instruction after verify completes. As of schema v4 (see §4 Step 4 and §6 Design Choice #6), that instruction executes the git-side closeout directly (merge worktree → feature branch, push the branch, create the PR when none exists and update an existing one, and post the code-reviewer comment); `superpowers:finishing-a-development-branch` is retained as a manual escape hatch only. As of schema v5, finalize then marks a draft PR ready for review and confirms it open and not a draft; for tracked work it puts the closing keyword in the PR body, records the PR in `tracker.md` (committed and pushed as part of the PR), runs one `project_flow.py sync` and confirms In Review without writing it; then it hands off to the closeout. `/openspec-archive-change` is the lifecycle close that the closeout runs exactly once, when the required checks are green; it is not in the DAG (it remains an OpenSpec CLI command).
+- `finalize` is a **real DAG node** as of schema v3. It generates `finalize.md` (a minimal git-closeout receipt: outcome, PR URL, final branch state) and requires `verify`. `/openspec-continue-change` surfaces finalize's instruction after verify completes. As of schema v4 (see §4 Step 4 and §6 Design Choice #6), that instruction executes the git-side closeout directly (merge worktree → feature branch, push the branch, create the PR when none exists and update an existing one, and post the code-reviewer comment); `superpowers:finishing-a-development-branch` is retained as a manual escape hatch only. As of schema v5, finalize then marks a draft PR ready for review and confirms it open and not a draft; for tracked work it puts the closing keyword in the PR body, records the PR in `tracker.md` (committed and pushed as part of the PR), runs `project_flow.py sync` and confirms In Review without writing it — only after exit 0 and `sync: complete`, with one re-run when GitHub has not linked the closing keyword yet; then it hands off to the closeout. `/openspec-archive-change` is the lifecycle close that the closeout runs exactly once, when the required checks are green; it is not in the DAG (it remains an OpenSpec CLI command).
 - The convergence loop (apply → verify → loop back on code-fixable FAILs, capped at 5 iterations) is documented in `docs/workflow-details.md`. The schema enforces the file-existence dependency; the iteration decision is made by the agent or by a future loop-runner command (not in scope for v2 or v3).
 
 ---
@@ -237,7 +237,7 @@ If any check fails, go back to the corresponding artifact, fix it, and re-run ve
 11. Post (or edit in place) a single code-reviewer onboarding comment on the PR, summarizing the change for a reviewer who did not see the spec pre-review, and keep its result for the receipt.
 12. Write `finalize.md` on the feature branch with the true outcome — `pr-created` when step 9 created the PR, `pr-updated` when it reused one — plus the PR URL, branch state and comment status. No receipt is written before step 10 succeeds.
 13. Commit the receipt on the feature branch and push it.
-14. For tracked work record the PR in `tracker.md`, commit and push that edit as part of the PR, run `python3 -I scripts/project_flow.py sync` once and confirm the item is In Review without writing that Status; when it is derived as something else (for example Blocked because of the label), report the derived Status and the reason and still start the closeout. Then hand off to the closeout rule, which monitors the PR to green, syncs and archives once, reviews the docs, pushes, and monitors to merge, completing the applicable follow-ups.
+14. For tracked work record the PR in `tracker.md`, commit and push that edit as part of the PR, run `python3 -I scripts/project_flow.py sync` and confirm the item is In Review without writing that Status. Only a run that exits 0 and prints `sync: complete` confirms anything; on `sync: partial` or any other exit, report it and confirm nothing. When a complete run does not show In Review, run sync one more time (GitHub links the closing keyword with a lag) and only then report the derived Status, the reason and that lag (for example Blocked because of the label); still start the closeout. Then hand off to the closeout rule, which monitors the PR to green, syncs and archives once, reviews the docs, pushes, and monitors to merge, completing the applicable follow-ups.
 
 The comment uses a marker (`<!-- superspec:finalize-comment -->`) for idempotent upsert; re-running finalize edits the existing comment rather than duplicating it. The body is **summarized in the agent's own words** from the change artifacts; verbatim paste is forbidden.
 
@@ -282,8 +282,10 @@ Behavior:
    code-reviewer onboarding comment, then finalize.md records the true
    outcome and Final state; worktree is removed during finalize; for
    tracked work the PR body carries the closing keyword, the PR is
-   marked ready for review and recorded in tracker.md, and one
-   project_flow.py sync confirms In Review without writing it; then
+   marked ready for review and recorded in tracker.md, and a
+   complete project_flow.py sync (exit 0 and `sync: complete`; one
+   re-run for the closing-keyword lag) confirms In Review without
+   writing it; then
    finalize hands off to the closeout)
 3. The closeout monitors the PR to green (its required checks on the
    current head commit)
@@ -296,7 +298,8 @@ Behavior:
 8. Answer comments and wait for approval; the user merges
    (gh pr merge --squash --delete-branch or GitHub UI)
 9. The post-merge check for tracked work: close the issue if the
-   merge did not, run project_flow.py sync once and confirm Done
+   merge did not, run project_flow.py sync and confirm Done (only
+   after exit 0 and `sync: complete`)
 ```
 
 This golden path applies whether or not the team opened a spec pre-review PR: finalize creates the code-review PR when none exists. The canonical path has **no no-PR variant** — only the explicit escape hatch can leave a branch without a PR, and only when the user chooses a non-canonical flow such as a local merge, whose closeout runs the sync, archive once and doc review and asks before any push to the default branch.
