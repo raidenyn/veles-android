@@ -85,13 +85,19 @@ the next successful `sync` derives the Status again.
   Only the workflow uses it; the agents use the user's own `gh` login, which needs the `project` scope
   (`gh auth refresh -s project`).
 
-**Verified permissions.** The agent commands (`check`, `sync`, `next`, `start` and `followup`) were verified
-against a real user-owned project with a classic token that has the `project` and `repo` scopes. The token
-behind `PROJECT_TOKEN` must belong to an account that can see both the project and the repository: a
-private user-owned project is invisible to any other account, and a classic token with only `public_repo`
-cannot read a private repository. A token that cannot see the project makes the workflow fail visibly with
-`stop: incomplete-read: cannot read project …`. A working `PROJECT_TOKEN` for the workflow and fine-grained
-tokens are **not verified** yet.
+**Verified permissions.** Against a real user-owned project:
+
+- A **classic token of the project owner with the `project` and `public_repo` scopes** ran the workflow
+  (as `PROJECT_TOKEN`) and every agent command on a **public** repository.
+- A classic token with `project` and `repo` ran every agent command on a **private** repository. That such a
+  token runs the workflow on a private repository is expected but **not verified**.
+- **Fine-grained tokens are not verified.**
+
+The token must belong to an account that can see both the project and the repository. A private
+user-owned project is invisible to any other account, and the workflow then fails with
+`stop: incomplete-read: cannot read project …`. A token without `repo` cannot read a private repository:
+the agent commands stop with `missing-scope`, but the workflow still succeeds, reporting every card as
+unreadable (`sync: partial`) and writing nothing, so read the job summary after changing the token.
 
 **Security.** Anyone with write access to the repository can run a workflow on a branch that reads
 `PROJECT_TOKEN`; that is GitHub's model for repository secrets. The project-flow workflow itself checks out only
