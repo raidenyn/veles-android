@@ -84,4 +84,4 @@ Approved content: specs/github-project-automation/spec.md sha256 af61fd5016fbe32
 Approved content: specs/superspec-tracker-intake/spec.md sha256 d58d36e42c00d40a523137131468f42f300e829fd68a0e207a75e8e28953db2d (pass 3, unchanged since pass 2)
 
 ### specs/superspec-closeout/spec.md
-Approved content: specs/superspec-closeout/spec.md sha256 a5b7f0db76e7386b814c7618649e359b215f92936fb6dda1a7db0137a9903925 (pass 3; re-pointed after 1 minor fix made after the approval: the partial-sync finalize clause and scenario)
+Approved content: specs/superspec-closeout/spec.md sha256 96d3d86652b73150904ca155db8f329589fd938a2ada660c7c308306be539fba (pass 3; re-pointed after 2 minor fixes made after the approval: the partial-sync finalize clause and scenario, and the post-merge steps requiring `sync: complete`)

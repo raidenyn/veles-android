@@ -132,8 +132,8 @@ It also reports what stays unfinished and needs a person or a later session: syn
 ### Requirement: After a merge the applicable follow-ups are completed, Done last
 After the implementation PR is merged, the agent SHALL complete the applicable follow-up steps. For tracked work it SHALL run the post-merge check:
 - **Issue still open:** the merge should have closed it through the closing keyword. If it did not, the agent closes it with a comment linking the PR and reports that the automation missed it.
-- **Done last:** the agent runs `project_flow.py sync` once and confirms the item is Done. If the item is still not Done, it reports that.
-- **Report:** the agent reports the items the merge made Ready, and every follow-up issue the change filed.
+- **Done last:** the agent runs `project_flow.py sync` and confirms the item is Done only after a run that exits 0 and prints `sync: complete`. If the item is still not Done, it reports that; after `sync: partial` or a non-zero exit it reports that it could not confirm.
+- **Report:** after a `sync: complete` run, the agent reports the items the merge made Ready (the `ready:` lines that are in the merged issue's blocking list), and every follow-up issue the change filed; after a partial run it says the Ready report is incomplete.
 
 If the PR merged before sync, archive and doc review were completed, the agent MUST report it, and the user decides how to proceed, for example with a follow-up PR for the sync and archive. The item may already be Done, because Done follows the closed issue. A PR closed without merging MUST be reported, and the issue MUST NOT be closed.
 

@@ -10,7 +10,7 @@
   - design.md sha256 c350e1488ff4b27ebd570ae1bfcb6f3ed7d042e829cab7dbbf3582a72739bdd4
   - specs/github-project-automation/spec.md sha256 af61fd5016fbe326fd652565b8c0252c95a0bca37b178dc48e485c3553656c09
   - specs/superspec-tracker-intake/spec.md sha256 d58d36e42c00d40a523137131468f42f300e829fd68a0e207a75e8e28953db2d
-  - specs/superspec-closeout/spec.md sha256 a5b7f0db76e7386b814c7618649e359b215f92936fb6dda1a7db0137a9903925
+  - specs/superspec-closeout/spec.md sha256 96d3d86652b73150904ca155db8f329589fd938a2ada660c7c308306be539fba
 
 ## Pass 1
 
