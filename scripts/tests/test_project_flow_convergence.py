@@ -105,6 +105,51 @@ class ConvergenceTest(unittest.TestCase):
         run_sync(nxt)
         self.assertEqual(options(nxt), ["opt-In Review"])
 
+    def lands_after_fresh_read(self, before, concurrent_facts, concurrent_status, stale_option):
+        """Sync reads `before` on the board and again on its guarded fresh read (unchanged). Between
+        that fresh read and its Status write, another writer changes the facts and writes
+        `concurrent_status`; the stale write then lands over it. Returns the Status left on the
+        board and the next sync's fake."""
+        board_status = [before["status"]["name"] if before["status"] else None]
+        fake = FakeTransport(board([before]) + [fresh(before), ("mutation", status_written("PVTI_item1")),
+                                                MILESTONES])
+        events = []
+
+        def hook(call):
+            if call in fake.mutations and not events:
+                board_status[0] = concurrent_status   # the other writer, after our fresh read
+                events.append("concurrent " + concurrent_status)
+                board_status[0] = call["variables"]["option"][len("opt-"):]  # ours lands last
+                events.append("stale " + board_status[0])
+        fake.on_call(hook)
+        run_sync(fake)
+        self.assertEqual(options(fake), [stale_option])
+        self.assertEqual(events, ["concurrent " + concurrent_status, "stale " + stale_option[4:]])
+        reads = [i for i, c in enumerate(fake.calls) if "query ProjectItem(" in (c.get("query") or "")]
+        self.assertLess(reads[-1], fake.calls.index(fake.mutations[0]))  # after the guarded read
+        landed = item(concurrent_facts, status=board_status[0])
+        nxt = FakeTransport(board([landed]) + [fresh(landed), ("mutation", status_written("PVTI_item1")),
+                                               MILESTONES])
+        run_sync(nxt)
+        return board_status[0], nxt
+
+    def test_stale_write_lands_over_blocked_after_fresh_read(self):
+        # The blocked label and Blocked land after the guarded fresh read; the stale Ready lands
+        # last. The next sync derives Blocked from the label and repairs it.
+        left, nxt = self.lands_after_fresh_read(item(issue(1), status="Backlog"),
+                                                issue(1, labels=["blocked"]), "Blocked", "opt-Ready")
+        self.assertEqual(left, "Ready")
+        self.assertEqual(options(nxt), ["opt-Blocked"])
+
+    def test_stale_write_lands_over_done_after_fresh_read(self):
+        # The issue closes (Done) after the guarded fresh read; the stale In Progress lands last.
+        left, nxt = self.lands_after_fresh_read(
+            item(issue(1, assignees=["me"]), status="Ready"),
+            issue(1, assignees=["me"], state="CLOSED", state_reason="COMPLETED"), "Done",
+            "opt-In Progress")
+        self.assertEqual(left, "In Progress")
+        self.assertEqual(options(nxt), ["opt-Done"])
+
     def test_sync_dry_run_two_changes(self):
         nodes = [item(issue(1), status="Backlog"),
                  item(issue(2, state="CLOSED", state_reason="COMPLETED"), status="Ready")]

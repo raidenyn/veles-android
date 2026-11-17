@@ -17,13 +17,45 @@ from project_flow_fake import FakeTransport  # noqa: E402
 
 
 class GhTransportEncodingTest(unittest.TestCase):
+    """The mock is subprocess.run itself, so the real _run builds the gh command line and stdin."""
+
     @staticmethod
-    def sent(variables, query="query Q"):
-        """(argv, decoded JSON body) of one graphql call."""
-        with mock.patch.object(GhTransport, "_run", return_value="{}") as run:
-            GhTransport().graphql(query, variables)
-        args, stdin = run.call_args[0]
-        return args, json.loads(stdin)
+    def invoke(call, stdout="{}"):
+        """(argv, the subprocess.run keyword arguments) of one transport call."""
+        with mock.patch.object(project_flow.subprocess, "run",
+                               return_value=completed(0, stdout)) as run:
+            call(GhTransport())
+        run.assert_called_once()
+        return run.call_args[0][0], run.call_args[1]
+
+    @classmethod
+    def sent(cls, variables, query="query Q"):
+        """(argv after `gh`, decoded JSON body) of one graphql call."""
+        argv, kwargs = cls.invoke(lambda t: t.graphql(query, variables))
+        assert argv[0] == "gh", argv
+        assert kwargs == {"input": kwargs["input"], "capture_output": True, "text": True}, kwargs
+        return argv[1:], json.loads(kwargs["input"])
+
+    def test_rest_body_goes_on_stdin(self):
+        argv, kwargs = self.invoke(lambda t: t.rest("PATCH", "repos/o/r/issues/9", {"milestone": 4}))
+        self.assertEqual(argv, ["gh", "api", "-X", "PATCH", "repos/o/r/issues/9", "--input", "-"])
+        self.assertEqual(json.loads(kwargs["input"]), {"milestone": 4})
+        argv, kwargs = self.invoke(lambda t: t.rest("GET", "user"), '{"login": "me"}')
+        self.assertEqual(argv, ["gh", "api", "-X", "GET", "user"])
+        self.assertIsNone(kwargs["input"])
+
+    def test_decodes_stdout_and_maps_failures(self):
+        with mock.patch.object(project_flow.subprocess, "run",
+                               return_value=completed(0, '{"data": {"x": 1}}')):
+            self.assertEqual(GhTransport().graphql("query Q", {}), {"data": {"x": 1}})
+        with mock.patch.object(project_flow.subprocess, "run",
+                               return_value=completed(1, "", "HTTP 403: forbidden")):
+            with self.assertRaises(GhError) as caught:
+                GhTransport().rest("POST", "repos/o/r/issues", {"title": "t"})
+        self.assertEqual(caught.exception.message, "HTTP 403: forbidden")
+        with mock.patch.object(project_flow.subprocess, "run", side_effect=OSError("no gh")):
+            with self.assertRaises(GhError):
+                GhTransport().rest("GET", "user")
 
     def test_variable_encoding(self):
         # One path for every request: a JSON body on stdin, never -f/-F (gh -F sends 15.1 and a
