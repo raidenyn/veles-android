@@ -3,7 +3,9 @@
 
 Run as `python3 -I scripts/project_flow.py <sync|next|start|followup|check> ...`.
 Exit 0 success, 1 a gh error, 2 usage, 3 a stop (`stop: <reason>: <detail>` on stdout;
-`check` with setup facts ends in `stop: setup-incomplete`). sync, next, start and followup run
+`check` with setup facts ends in `stop: setup-incomplete`; `start` ends in `stop: collision` when
+another login is assigned and `stop: assignment-failed` when its own assignment did not take effect;
+every reason is in STOP_REASONS). sync, next, start and followup run
 only on the project the repository variable PROJECT_URL names; each public entry point gates itself.
 """
 import argparse
@@ -22,7 +24,7 @@ STOP_REASONS = (
     "not-enabled", "variable-unreadable", "nothing-ready", "tie", "missing-order",
     "incomplete-read", "not-ready", "collision", "missing-option", "config-invalid",
     "resume-disagrees", "no-order-room", "parent-unordered", "parent-as-blocker",
-    "missing-scope", "setup-incomplete",
+    "missing-scope", "setup-incomplete", "assignment-failed",
 )
 SCOPE_FIX = "run gh auth refresh -s project"
 
@@ -783,6 +785,8 @@ class Writer:
     def __init__(self, t: Transport, board: Board, cfg: Config, dry_run: bool, out: list):
         self.t, self.board, self.cfg, self.dry_run, self.out = t, board, cfg, dry_run, out
         self._milestone_numbers = {}  # repo -> {title: number}
+        self.fresh = {}   # item id -> the Facts of its guarded fresh read
+        self.failed = {}  # item id -> why its guarded fresh read failed
 
     def _emit(self, text: str) -> None:
         self.out.append(("would write: " if self.dry_run else "write: ") + text)
@@ -795,8 +799,10 @@ class Writer:
         except Stop as stop:
             if stop.reason != "incomplete-read":
                 raise
+            self.failed[f.item_id] = stop.detail
             self.out.append("skipped %s: unreadable: %s" % (ref, stop.detail))
             return False
+        self.fresh[f.item_id] = fresh
         if fresh.inputs() != f.inputs():
             self.out.append("skipped %s: inputs changed" % ref)
             return False
@@ -879,7 +885,9 @@ class Writer:
 class SyncResult:
     writes: list
     reports: list
-    unreadable: list
+    unreadable: list  # item ids unreadable on the board read or on a guarded fresh read
+    reasons: dict = field(default_factory=dict)  # item id -> why it could not be read
+    fresh: dict = field(default_factory=dict)    # item id -> Facts of its fresh read, when newer
 
 
 _WRITE_PREFIXES = ("write: ", "would write: ")
@@ -971,7 +979,9 @@ def _reconcile(t: Transport, cfg: Config, project_url: str, *, mode: str, repo: 
 
     writes = [line for line in out if line.startswith(_WRITE_PREFIXES)]
     reports = [line for line in out if not line.startswith(_WRITE_PREFIXES)] + reports
-    return SyncResult(writes, reports, list(board.unreadable))
+    unreadable = list(dict.fromkeys(list(board.unreadable) + list(writer.failed)))
+    reasons = {i: board.reasons.get(i) or writer.failed.get(i, "") for i in unreadable}
+    return SyncResult(writes, reports, unreadable, reasons, dict(writer.fresh))
 
 
 def _order_text(value: float) -> str:
@@ -994,13 +1004,15 @@ def next_task(t: Transport, cfg: Config, project_url: str, repo: str, *, skip_un
     preflight(board, cfg, needs_order=True)
     result = _reconcile(t, cfg, project_url, mode=mode, repo=repo, dry_run=dry_run, board=board)
     _print_result(result)
-    unreadable = list(dict.fromkeys(board.unreadable + result.unreadable))
-    if unreadable:
+    # Any item unreadable on the board read or on a fresh read during the reconciliation.
+    if result.unreadable:
         raise Stop("incomplete-read", "unreadable items, nothing selected: " + ", ".join(
-            "%s (%s)" % (i, board.reasons.get(i, "")) for i in unreadable))
-    # Derived from the facts, so a stale Ready on an assigned item never counts and a dry run
-    # selects what the reconciliation would leave Ready.
-    candidates = [f for f in board.items
+            "%s (%s)" % (i, result.reasons.get(i, "")) for i in result.unreadable))
+    # Derived from the freshest facts (a fresh read during the reconciliation replaces the board
+    # read), so a stale Ready or a concurrent claim never counts and a dry run selects what the
+    # reconciliation would leave Ready.
+    latest = [result.fresh.get(f.item_id, f) for f in board.items]
+    candidates = [f for f in latest
                   if f.state == "OPEN" and not f.assignees and derive(f, cfg)[0] == "ready"]
     if not candidates:
         raise Stop("nothing-ready", "no Ready, unassigned open issue on the project")
@@ -1085,7 +1097,8 @@ def start(t: Transport, cfg: Config, project_url: str, repo: str, issue: tuple, 
         raise Stop("collision", "%s is also assigned to %s; ask before continuing"
                    % (ref, ", ".join(others)))
     if login.lower() not in {a.lower() for a in after.assignees}:
-        raise Stop("collision", "%s: the assignment of %s did not take effect" % (ref, login))
+        raise Stop("assignment-failed", "%s: %s is not assigned after the claim; GitHub drops an "
+                   "assignee without push access to %s" % (ref, login, current.repo))
     _print_result(_reconcile(t, cfg, project_url, mode=mode, repo=repo, dry_run=False,
                              only=(current.repo, current.number)))
     print("started: %s" % ref)

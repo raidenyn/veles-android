@@ -222,6 +222,34 @@ class StartTest(unittest.TestCase):
         self.assertEqual(len(fake.mutations), 2)  # no reconcile after the collision
         self.assertEqual(fake.responses, [])
 
+    def test_start_assignment_failed(self):
+        # GitHub silently drops an assignee without push access: nobody is assigned on re-read.
+        node = ready(1, 3)
+        nobody = item(issue(1), status="In Progress", order=3)
+        fake = FakeTransport([ENABLED] + board([node]) + [fresh(node), USER, ASSIGNED,
+                                                          ("mutation", status_written()), fresh(nobody)])
+        stop = stop_of(project_flow.start, fake, CFG, URL, REPO, (REPO, 1), force=False, dry_run=False)
+        self.assertEqual(stop.reason, "assignment-failed")
+        self.assertIn("me", stop.detail)
+        self.assertEqual(fake.responses, [])  # no reconcile
+        code = None
+        fake = FakeTransport([ENABLED] + board([node]) + [fresh(node), USER, ASSIGNED,
+                                                          ("mutation", status_written()), fresh(nobody)])
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            code = project_flow.main(["start", "#1", "--project", URL, "--repo", REPO], fake, env={})
+        self.assertEqual(code, 3)
+        self.assertIn("stop: assignment-failed", out.getvalue())
+
+    def test_start_other_login_only_is_collision(self):
+        # My assignment was dropped but another login holds the issue: that is a collision.
+        node = ready(1, 3)
+        theirs = item(issue(1, assignees=["other"]), status="In Progress", order=3)
+        fake = FakeTransport([ENABLED] + board([node]) + [fresh(node), USER, ASSIGNED,
+                                                          ("mutation", status_written()), fresh(theirs)])
+        stop = stop_of(project_flow.start, fake, CFG, URL, REPO, (REPO, 1), force=False, dry_run=False)
+        self.assertEqual(stop.reason, "collision")
+        self.assertIn("other", stop.detail)
+
     def test_start_refuses_assigned_in_review_blocked_done(self):
         cases = {
             "assigned": item(issue(1, assignees=["someone"]), status="In Progress", order=1),

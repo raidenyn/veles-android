@@ -241,6 +241,48 @@ class ClaimConvergenceTest(unittest.TestCase):
         self.assertEqual(theirs.responses, [])  # the other claim ran to the end
         self.assertEqual(mine.responses, [])    # no reconcile after the collision
 
+    def test_next_uses_facts_refreshed_during_reconciliation(self):
+        # Item 1 derives Ready from the board read; before its guarded fresh read it is assigned
+        # (or gains an open blocker). The write is skipped and next must not select it.
+        unassigned = item(issue(1), status="Backlog", order=1)
+        later = item(issue(2), status="Ready", order=2)
+        for name, changed in (("assigned", item(issue(1, assignees=["someone"]), status="Backlog", order=1)),
+                              ("blocked", item(issue(1, blockers=[(7, "OPEN", None)]), status="Backlog",
+                                               order=1))):
+            with self.subTest(name):
+                fake = FakeTransport([ENABLED] + board([unassigned, later]) + [MILESTONES])
+                change_at_fresh_read(fake, changed)
+                chosen, out = quiet(project_flow.next_task, fake, CFG, URL, "owner/repo",
+                                    skip_unordered=False, dry_run=False)
+                self.assertEqual(chosen.number, 2)
+                self.assertIn("inputs changed", out)
+                self.assertEqual(fake.mutations, [])
+                # Alone on the board, nothing is Ready.
+                fake = FakeTransport([ENABLED] + board([unassigned]) + [MILESTONES])
+                change_at_fresh_read(fake, changed)
+                with self.assertRaises(project_flow.Stop) as ctx:
+                    quiet(project_flow.next_task, fake, CFG, URL, "owner/repo", skip_unordered=False,
+                          dry_run=False)
+                self.assertEqual(ctx.exception.reason, "nothing-ready")
+                self.assertEqual(fake.mutations, [])
+
+    def test_fresh_read_failure_stops_next_not_sync(self):
+        # Item 1 is readable on the board read; its fresh read during reconciliation fails.
+        node = item(issue(1), status="Backlog", order=1)
+        failing = ("query ProjectItem(", project_flow.GhError("gh: HTTP 502"))
+        fake = FakeTransport([ENABLED] + board([node, item(issue(2), status="Ready", order=2)])
+                             + [failing, MILESTONES])
+        with self.assertRaises(project_flow.Stop) as ctx:
+            quiet(project_flow.next_task, fake, CFG, URL, "owner/repo", skip_unordered=False, dry_run=False)
+        self.assertEqual(ctx.exception.reason, "incomplete-read")
+        self.assertIn("PVTI_item1", ctx.exception.detail)
+        self.assertEqual(fake.mutations, [])
+        # sync reports the same failure structurally and still completes.
+        fake = FakeTransport(board([node]) + [failing, MILESTONES])
+        result = run_sync(fake)
+        self.assertEqual(result.unreadable, ["PVTI_item1"])
+        self.assertTrue(any("unreadable" in line for line in result.reports), result.reports)
+
     def test_next_dry_run_no_mutation(self):
         nodes = [item(issue(1), status="Backlog", order=4),
                  item(issue(2, state="CLOSED", state_reason="COMPLETED"), status="Ready", order=1)]
