@@ -9,9 +9,11 @@ name: project-flow
 # metadata through the API only. There is no `edited` trigger (only pr-title.yml may use one): a closing
 # keyword added by a later body edit is picked up by the next event or the daily run.
 #
-# Until both the repository variable PROJECT_URL and the secret PROJECT_TOKEN are set, the guard skips
-# every other step with a notice, so an unconfigured repository runs no repository code at all. The token
-# reaches the script only through env. This is not a required check and not part of ci.yml.
+# The job enters the Actions environment named in .github/project-flow.json (a plain name, never an
+# expression), so the variable PROJECT_URL and the secret PROJECT_TOKEN resolve from that environment
+# (or from the repository level for a name the environment does not define). Until both are set, the
+# guard skips every other step with a notice, so an unconfigured repository runs no repository code at
+# all. The token reaches the script only through env. This is not a required check and not part of ci.yml.
 
 on:
   issues:
@@ -33,6 +35,7 @@ jobs:
   project-flow:
     name: project-flow
     runs-on: ubuntu-latest
+    environment: project-actions
     timeout-minutes: 15
     steps:
       - name: Check the configuration

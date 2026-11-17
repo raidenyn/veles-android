@@ -1364,8 +1364,10 @@ test('the remote-code scan scopes exist and cover the CI, tooling and hook sourc
 // project-flow.yml (design D8): reconciles the GitHub Project from facts on GitHub. pull_request_target
 // hands the job the PROJECT_TOKEN secret, so the job may only ever run the default branch's code, never
 // the PR's; it triggers on no `edited` event, and a guard skips every other step until both PROJECT_URL
-// and PROJECT_TOKEN are set.
+// and PROJECT_TOKEN are set. The job enters the environment named in .github/project-flow.json by its
+// plain name, so the secret and the variable resolve from there (scripts/tests checks the two agree).
 const PROJECT_FLOW_FILE = 'project-flow.yml';
+const PROJECT_FLOW_ENVIRONMENT = 'project-actions';
 const PROJECT_FLOW_EVENTS = {
   issues: ['closed', 'reopened', 'labeled', 'unlabeled', 'assigned', 'unassigned'],
   pull_request_target: ['opened', 'reopened', 'ready_for_review', 'converted_to_draft', 'closed'],
@@ -1530,7 +1532,10 @@ function assertProjectFlowWorkflow(source) {
   const job = jobs['project-flow'];
   assert.equal(jobRunner(job), 'ubuntu-latest', `${name} must run on ubuntu-latest`);
   assert.match(job, /^    timeout-minutes: \d+\s*$/m, `${name} must bound the job with timeout-minutes`);
-  assert.doesNotMatch(job, /^    (?:if|needs|permissions|environment):/m, `${name} must not skip events, depend on jobs, widen permissions or enter an environment`);
+  assert.doesNotMatch(job, /^    (?:if|needs|permissions):/m, `${name} must not skip events, depend on jobs or widen permissions`);
+  const environments = [...executableYaml(source).matchAll(/^(\s*)environment:(.*)$/gm)].map((match) => [match[1].length, match[2].trim()]);
+  assert.deepEqual(environments.map(([indent]) => indent), [4], `${name} must declare exactly one environment, at job level`);
+  assert.equal(environments[0][1], PROJECT_FLOW_ENVIRONMENT, `${name} must enter the environment ${PROJECT_FLOW_ENVIRONMENT} by its plain name`);
   const stepTexts = jobStepTexts(job);
   const guardIndex = stepTexts.findIndex((step) => stepKey(step, 'id') === 'guard');
   assert.equal(guardIndex, 0, `${name} must run the guard first, before it needs any repository file`);
@@ -1600,7 +1605,12 @@ test('project-flow workflow reconciles on safe events only', async () => {
     'fixed token': [(text) => text.replace('token=$(openssl rand -hex 16)', 'token=0123456789abcdef0123456789abcdef'), 'the stop-commands token must be random on every run'],
     'three-backtick fence': [(text) => text.replace(/````/g, '```'), 'the summary must carry the sync output of the exact action-mode command inside a four-backtick fence'],
     'swallowed failure': [(text) => text.replace('exit "$status"', 'exit 0'), `the sync step must exit 1 when sync exits 1`],
-    'job-level skip': [(text) => text.replace('    runs-on: ubuntu-latest\n', "    if: github.event_name != 'issues'\n    runs-on: ubuntu-latest\n"), `${PROJECT_FLOW_FILE} must not skip events, depend on jobs, widen permissions or enter an environment`],
+    'job-level skip': [(text) => text.replace('    runs-on: ubuntu-latest\n', "    if: github.event_name != 'issues'\n    runs-on: ubuntu-latest\n"), `${PROJECT_FLOW_FILE} must not skip events, depend on jobs or widen permissions`],
+    'no environment': [(text) => text.replace(`    environment: ${PROJECT_FLOW_ENVIRONMENT}\n`, ''), `${PROJECT_FLOW_FILE} must declare exactly one environment, at job level`],
+    'step-level environment': [(text) => text.replace(`    environment: ${PROJECT_FLOW_ENVIRONMENT}\n`, '').replace('        id: guard\n', `        id: guard\n        environment: ${PROJECT_FLOW_ENVIRONMENT}\n`), `${PROJECT_FLOW_FILE} must declare exactly one environment, at job level`],
+    'expression environment': [(text) => text.replace(`    environment: ${PROJECT_FLOW_ENVIRONMENT}\n`, "    environment: ${{ github.event_name == 'schedule' && 'project-actions' || 'other' }}\n"), `${PROJECT_FLOW_FILE} must enter the environment ${PROJECT_FLOW_ENVIRONMENT} by its plain name`],
+    'mapping environment': [(text) => text.replace(`    environment: ${PROJECT_FLOW_ENVIRONMENT}\n`, `    environment:\n      name: ${PROJECT_FLOW_ENVIRONMENT}\n`), `${PROJECT_FLOW_FILE} must enter the environment ${PROJECT_FLOW_ENVIRONMENT} by its plain name`],
+    'other environment': [(text) => text.replace(`    environment: ${PROJECT_FLOW_ENVIRONMENT}\n`, '    environment: release-publish\n'), `${PROJECT_FLOW_FILE} must enter the environment ${PROJECT_FLOW_ENVIRONMENT} by its plain name`],
     'no timeout': [(text) => text.replace(/^    timeout-minutes: \d+\n/m, ''), `${PROJECT_FLOW_FILE} must bound the job with timeout-minutes`],
   };
   for (const [label, [mutate, reason]] of Object.entries(mutations)) {

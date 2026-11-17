@@ -1465,16 +1465,20 @@ class Callers(unittest.TestCase):
     def test_project_flow_stays_outside_the_release_boundary(self):
         # project-flow.yml holds the PROJECT_TOKEN secret on pull_request_target; as an enumerated workflow
         # it must pass the boundary, and a copy that signs, enters a release environment or publishes must not.
+        # Its own environment (project-actions) holds only the project token and is not a release environment.
         workflows = self.workflows()
         self.assertIn("project-flow.yml", workflows)
         self.assertEqual(check_gate_boundary(workflows), [])
         flow = workflows["project-flow.yml"]
+        self.assertRegex(flow, r"(?m)^    environment: project-actions$")
         anchor = "          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}\n"
         self.assertIn(anchor, flow)
         for label, mutated in (
             ("keystore secret", flow.replace(anchor, anchor + "          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}\n", 1)),
             ("native signing secret", flow.replace(anchor, anchor + "          VELES_WIN_PFX_BASE64: ${{ secrets.VELES_WIN_PFX_BASE64 }}\n", 1)),
             ("release environment", flow.replace("    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    environment: release-publish\n", 1)),
+            ("release environment in place of project-actions", flow.replace("    environment: project-actions\n", "    environment: release-publish\n", 1)),
+            ("android release environment", flow.replace("    environment: project-actions\n", "    environment: android-release\n", 1)),
             ("release publication", flow + "      - run: gh release create v1\n"),
             ("tag push", flow + "      - run: git push origin --tags\n"),
         ):
