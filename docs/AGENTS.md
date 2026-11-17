@@ -104,7 +104,7 @@ A reinstall also drops the fork's own edits, so re-apply each divergence as well
    carry its note, and a re-point without it or a triggering edit that was not re-reviewed is FAIL.
 3. **Finalize hand-off**: the `finalize` instruction's always-create PR step (no prompt, no skip), the
    open-PR confirmation and the fail-closed stop, the receipt written only after confirmation, the
-   `tracker.md` record (committed and pushed as part of the PR) and the In Review step, the per-outcome
+   `tracker.md` record (committed and pushed as part of the PR) and the In Review confirmation, the per-outcome
    hand-off to `.agents/rules/repo-superspec-closeout.md`, and the matching "Next step" bullets in
    `templates/finalize.md`.
 4. **Archive once, in the closeout**: the replaced direct-archive directions in the `verify` and
@@ -113,6 +113,11 @@ A reinstall also drops the fork's own edits, so re-apply each divergence as well
    once, inside the closeout, when the required checks are green.
 5. **Version bump**: `version: 5` in `schema.yaml` with its "v5 (current)" description entry, and
    the current-version mentions in `README.md`, `INTEGRATION.md` and this file.
+6. **Derived project statuses**: the draft spec pre-review PR (`gh pr create --draft`), finalize's
+   `gh pr ready` step and its `state,isDraft` confirmation, the closing keyword and follow-up list
+   in the PR body, the single `project_flow.py sync` that confirms In Review without writing it,
+   the `merge-locally` close-the-issue-then-`sync` step and the claim-based `discarded` and
+   `kept-as-is` bullets, in `schema.yaml`, `INTEGRATION.md` and `templates/finalize.md`.
 
 ## OpenCode and the `opencode-rules` plugin
 

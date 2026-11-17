@@ -30,10 +30,13 @@ description: >
   as the canonical starting state (previously the schema recommended
   starting on the integration branch). v5 (current): finalize
   always creates the pull request when none exists, without asking
-  and without a skip choice, confirms it open (`gh pr view`), writes
-  the receipt with the true outcome, records it in
-  tracker.md for tracked work (committed and pushed as part of the
-  PR), sets the card In Review and hands off to the closeout rule,
+  and without a skip choice, marks a draft PR ready for review,
+  confirms it open and not a draft (`gh pr view`), writes the
+  receipt with the true outcome, and for tracked work puts the
+  closing keyword in the PR body, records the PR in tracker.md
+  (committed and pushed as part of the PR), runs one
+  `project_flow.py sync` and confirms In Review without writing it;
+  then it hands off to the closeout rule,
   which monitors to green, syncs and archives once, reviews the
   docs, pushes, monitors to merge and completes the applicable
   follow-ups. Verify and finalize
@@ -319,8 +322,10 @@ artifacts:
       Pull request state: an open PR for this feature branch is
       optional at the start of finalize. This is the spec pre-review
       PR, opened manually between plan and apply so the logic reviewer
-      can approve the proposal/specs/plan before code is written. If
-      one exists, finalize reuses and updates it. If none exists,
+      can approve the proposal/specs/plan before code is written. It
+      is always opened as a draft (`gh pr create --draft`), so a
+      tracked item stays In Progress until finalize marks the PR
+      ready for review. If one exists, finalize reuses and updates it. If none exists,
       finalize creates the code-review PR itself, without asking; a
       branch without a PR never takes a non-canonical outcome.
 
@@ -440,14 +445,33 @@ artifacts:
               failure is reported and finalize stops with no outcome.
 
          If PR_NUMBER is non-empty: a PR already exists (likely the
-         spec pre-review PR). Reuse it and create no duplicate.
+         draft spec pre-review PR). Reuse it and create no duplicate.
 
-      10. Confirm the open PR:
+         For tracked work (a `tracker.md` in the change directory),
+         the PR body must carry a closing keyword for the tracked
+         issue and list the follow-up issues the change filed, as
+         the `github-project` skill's PR-body template shows:
 
-          gh pr view "$FEATURE_BRANCH" --json state,url,number
+              Closes <owner>/<repo>#<n>
 
-          A missing PR, or a state other than `OPEN`, is an error:
-          report it, record no outcome and stop; do not hand off.
+              ## Follow-up issues
+              - <owner>/<repo>#<m> — <title>
+
+         Put it in the body when creating the PR, or set it on a
+         reused PR with `gh pr edit "$FEATURE_BRANCH" --body-file
+         <body>`, before step 10 marks the PR ready for review.
+
+      10. Mark the PR ready for review and confirm it:
+
+          gh pr view "$FEATURE_BRANCH" --json isDraft --jq .isDraft
+          # when it reports true:
+          gh pr ready "$FEATURE_BRANCH"
+          gh pr view "$FEATURE_BRANCH" --json state,isDraft,url,number
+
+          The PR must report state `OPEN` and isDraft `false`. A
+          missing PR, a failed `gh pr ready`, a state other than
+          `OPEN` or a PR that is still a draft is an error: report
+          it, record no outcome and stop; do not hand off.
 
       11. Run the comment-posting subroutine (see "Code-reviewer
           onboarding comment subroutine" below) and keep its result
@@ -486,9 +510,13 @@ artifacts:
           - `pr-created` and `pr-updated`: for tracked work, record
             the PR in `tracker.md` as the tracker capability
             specifies, commit that edit and push it as part of the
-            PR, then set the item to In Review
-            (matched by name; stop and ask when the field or an
-            option is missing). Then hand off to
+            PR, then run `python3 -I scripts/project_flow.py sync
+            --project <project URL> --repo <this repository>` once
+            and confirm the item is In Review. Never write that
+            Status: when the item is derived as something else (for
+            example Blocked because of the label), report the derived
+            Status and the reason and still start the closeout. The
+            commands are in the `github-project` skill. Then hand off to
             `.agents/rules/repo-superspec-closeout.md` and stay in
             monitoring mode. Before acting, read the *Closeout* and
             *Monitoring* sections of `docs/superspec-workflow.md` as
@@ -499,21 +527,25 @@ artifacts:
           - `merge-locally`: after the local merge run the same sync,
             archive (once) and doc review on the default branch.
             Ask the user before any push to the default branch. For
-            tracked work, close the issue and set Done only after
-            that push succeeds. If the push is rejected (for example
-            by branch protection), report it, never retry and never
-            bypass the protection, offer a follow-up pull request,
-            and leave the issue open and the card In Progress. If the
-            user declines the push, leave the issue open and the card
-            In Progress and offer the same follow-up pull request; a
+            tracked work, only after that push succeeds, close the
+            issue with a comment naming the pushed commit, then run
+            `project_flow.py sync` so Done is derived; never write
+            Done. If the push is rejected (for example by branch
+            protection), report it, never retry and never bypass the
+            protection, offer a follow-up pull request, and leave the
+            issue open and the claim in place (In Progress). If the
+            user declines the push, leave the issue open and the claim
+            in place and offer the same follow-up pull request; a
             follow-up PR then runs the normal closeout, with sync,
             archive and doc review counted as already done.
 
-          - `discarded`: report the outcome and ask the user what the
-            status becomes; write nothing to the board.
+          - `discarded`: report the outcome and, for tracked work,
+            ask whether to release the claim (remove the assignment)
+            or add the blocked label; never write a Status.
 
-          - `kept-as-is`: leave the card In Progress and say the work
-            resumes when the user re-enters finalize.
+          - `kept-as-is`: keep the claim, so the item stays In
+            Progress, and say the work resumes when the user
+            re-enters finalize.
 
          `merge-locally`, `kept-as-is` and `discarded` are only for
          an explicitly user-chosen non-canonical flow (the escape
@@ -664,14 +696,16 @@ artifacts:
       git-side closeout creates the PR.
 
       After the skill returns:
-      1. For a `pr-created` or `pr-updated` outcome, confirm the PR is
-         open before writing the receipt:
+      1. For a `pr-created` or `pr-updated` outcome, mark a draft PR
+         ready for review (`gh pr ready`) and confirm it is open and
+         not a draft before writing the receipt:
 
-           gh pr view "$FEATURE_BRANCH" --json state,url,number
+           gh pr view "$FEATURE_BRANCH" --json state,isDraft,url,number
 
-         A missing PR, or a state other than `OPEN`, is an error:
-         report it, record no outcome and stop; do not write the
-         receipt, update `tracker.md`, set In Review or hand off.
+         A missing PR, a state other than `OPEN` or a draft PR is an
+         error: report it, record no outcome and stop; do not write
+         the receipt, update `tracker.md`, confirm In Review or hand
+         off.
          Then hand-write finalize.md from
          openspec/schemas/superspec/templates/finalize.md, picking
          the matching Outcome value (`merge-locally`, `pr-created`,
