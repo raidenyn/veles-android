@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import project_flow  # noqa: E402
 from project_flow import Config, Facts, GhError, Stop  # noqa: E402
 from project_flow_fake import (FakeTransport, board, issue, item, item_response, milestone,  # noqa: E402
-                               status_written)
+                               status_written, unset_variable)
 
 URL = "https://github.com/users/owner/projects/2"
 OTHER = "https://github.com/users/owner/projects/3"
@@ -463,11 +463,11 @@ class FollowupTest(unittest.TestCase):
                 self.assertEqual(fake.mutations, [])
 
     def test_direct_followup_refuses_when_not_enabled(self):
-        for responses in ([(VARIABLE, NOT_FOUND)], [(VARIABLE, {"name": "PROJECT_URL", "value": OTHER})]):
+        for responses in (unset_variable(), [(VARIABLE, {"name": "PROJECT_URL", "value": OTHER})]):
             fake = FakeTransport(list(responses))
             stop, _ = run_followup(fake)
             self.assertEqual(stop.reason, "not-enabled")
-            self.assertEqual(len(fake.calls), 1)
+            self.assertEqual(len(fake.calls), len(responses))  # the gate reads only
             self.assertEqual(fake.mutations, [])
 
     def test_followup_is_gated(self):

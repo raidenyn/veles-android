@@ -118,6 +118,17 @@ class ReadBoardTest(unittest.TestCase):
         self.assertEqual(result.unreadable, ["PVTI_hidden"])
         self.assertEqual([f.number for f in result.items], [2])
 
+    def test_null_issue_content_names_the_remedy(self):
+        # Observed on real GitHub: a token that cannot see a private repository gets its issue cards
+        # as type ISSUE with content null (not REDACTED).
+        items = [item(None, item_id="PVTI_hidden", type="ISSUE"), item(issue(2))]
+        result = project_flow.read_board(FakeTransport(board(items)), URL, CFG)
+        self.assertEqual(result.unreadable, ["PVTI_hidden"])
+        self.assertEqual(result.reasons["PVTI_hidden"],
+                         "item PVTI_hidden: content not readable (null): "
+                         + project_flow.REDACTED_REMEDY)
+        self.assertEqual([f.number for f in result.items], [2])
+
     def test_org_fallback(self):
         responses = [("query ProjectFields", GhError("Could not resolve to a User with the login of 'o'."))]
         responses += board([item(issue(1))], owner_key="organization")

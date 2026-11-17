@@ -790,6 +790,10 @@ def read_board(t: Transport, project_url: str, cfg: Config) -> Board:
             if kind == "REDACTED":
                 raise Stop("incomplete-read", "item %s: content not readable (REDACTED): %s"
                            % (item_id, REDACTED_REMEDY))
+            if kind == "ISSUE" and node.get("content", _MISSING) is None:
+                # What a token that cannot see a private repository gets for its issue cards.
+                raise Stop("incomplete-read", "item %s: content not readable (null): %s"
+                           % (item_id, REDACTED_REMEDY))
             if kind != "ISSUE":
                 raise Stop("incomplete-read", "item %s: content not readable (%s)"
                            % (item_id, _safe(kind)))
@@ -1687,6 +1691,22 @@ VARIABLE_FIX = "needs the Actions variables read permission"
 ENABLE_STEP = "set the repository variable PROJECT_URL to this project to enable it"
 
 
+def _require_visible_repo(t: Transport, repo: str) -> None:
+    """After a 404 on the variable: the variable is unset only when the repository itself is visible.
+    GitHub answers 404, with no scope hint, for a private repository a token cannot see (a classic
+    token without the repo scope), so that 404 must not read as "PROJECT_URL is not set"."""
+    try:
+        t.rest("GET", "repos/%s" % repo)
+    except GhError as err:
+        scope = map_gh_error(err)
+        if scope is not None:
+            raise scope
+        if "HTTP 404" in err.message:
+            raise Stop("variable-unreadable", "%s is not visible to the token; a classic token needs the "
+                       "repo scope for a private repository" % repo)
+        raise Stop("variable-unreadable", VARIABLE_FIX)
+
+
 def enabled_url(t: Transport, repo: str, *, mode: str, env: Mapping[str, str]) -> Optional[str]:
     """The project PROJECT_URL names, None when it is unset. Mode "action" reads the environment;
     "agent" reads the repository variable over REST, where a 404 means unset and any other failure
@@ -1702,6 +1722,7 @@ def enabled_url(t: Transport, repo: str, *, mode: str, env: Mapping[str, str]) -
         if scope is not None:
             raise scope
         if "HTTP 404" in err.message:
+            _require_visible_repo(t, repo)
             return None
         raise Stop("variable-unreadable", VARIABLE_FIX)
     if not isinstance(response, dict) or not isinstance(response.get("value"), str):

@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import project_flow  # noqa: E402
 from project_flow import Config, GhError, Stop  # noqa: E402
-from project_flow_fake import FakeTransport, blocker, board, issue, item  # noqa: E402
+from project_flow_fake import FakeTransport, blocker, board, issue, item, unset_variable  # noqa: E402
 
 URL = "https://github.com/users/owner/projects/2"
 OTHER = "https://github.com/users/owner/projects/3"
@@ -46,9 +46,9 @@ def run_main(argv, fake, env=None):
 
 class EnabledUrlTest(unittest.TestCase):
     def test_unset_variable_not_enabled(self):
-        fake = FakeTransport([(VARIABLE, NOT_FOUND)])
+        fake = FakeTransport(unset_variable())
         self.assertIsNone(project_flow.enabled_url(fake, REPO, mode="agent", env={}))
-        fake = FakeTransport([(VARIABLE, NOT_FOUND)])
+        fake = FakeTransport(unset_variable())
         with self.assertRaises(Stop) as ctx:
             project_flow.require_enabled(fake, URL, REPO, mode="agent", env={})
         self.assertEqual(ctx.exception.reason, "not-enabled")
@@ -85,6 +85,22 @@ class EnabledUrlTest(unittest.TestCase):
         project_flow.require_enabled(FakeTransport(), URL + "/", REPO, mode="action",
                                      env={"PROJECT_URL": URL + "/views/7?layout=board"})
 
+    def test_variable_404_on_an_invisible_repository_is_not_unset(self):
+        # Observed on real GitHub: a classic token without `repo` gets a plain 404 for a private
+        # repository's variable, with no scope hint; that is not "PROJECT_URL is not set".
+        fake = FakeTransport([(VARIABLE, NOT_FOUND),
+                              (lambda c: c.get("path") == "repos/owner/repo", NOT_FOUND)])
+        with self.assertRaises(Stop) as ctx:
+            project_flow.require_enabled(fake, URL, REPO, mode="agent", env={})
+        self.assertEqual(ctx.exception.reason, "variable-unreadable")
+        self.assertIn("owner/repo is not visible to the token", ctx.exception.detail)
+        self.assertIn("repo scope", ctx.exception.detail)
+
+    def test_variable_404_on_a_visible_repository_is_unset(self):
+        fake = FakeTransport(unset_variable())
+        self.assertIsNone(project_flow.enabled_url(fake, REPO, mode="agent", env={}))
+        self.assertEqual([c["path"] for c in fake.calls], [VARIABLE, "repos/owner/repo"])
+
     def test_variable_read_error_reported(self):
         with self.assertRaises(Stop) as ctx:
             project_flow.enabled_url(FakeTransport([(VARIABLE, FORBIDDEN)]), REPO, mode="agent", env={})
@@ -103,11 +119,11 @@ class EnabledUrlTest(unittest.TestCase):
 
 class GateTest(unittest.TestCase):
     def test_sync_refuses_when_not_enabled(self):
-        fake = FakeTransport([(VARIABLE, NOT_FOUND)])
+        fake = FakeTransport(unset_variable())
         code, out, _ = run_main(["sync", "--project", URL, "--repo", REPO], fake)
         self.assertEqual(code, 3)
         self.assertIn("stop: not-enabled", out)
-        self.assertEqual(len(fake.calls), 1)  # only the variable read; no board read, no write
+        self.assertEqual(len(fake.calls), 2)  # the variable and repository reads; no board read, no write
 
     def test_sync_runs_when_enabled(self):
         fake = FakeTransport([variable(URL + "/views/1")] + board([]) +
@@ -127,7 +143,7 @@ class GateTest(unittest.TestCase):
                       "followup": ["--parent", "#1", "--title", "T", "--body-file", DEFAULTS,
                                    "--pr", "https://github.com/owner/repo/pull/2",
                                    "--change-dir", "openspec/changes/x", "--found-at", "here"]}
-        cases = (("agent", [(VARIABLE, NOT_FOUND)], {}),
+        cases = (("agent", unset_variable(), {}),
                  ("agent", [variable(OTHER)], {}),
                  ("action", [], {}),
                  ("action", [], {"PROJECT_URL": OTHER}))
@@ -144,7 +160,7 @@ class GateTest(unittest.TestCase):
 
     def test_direct_sync_refuses_when_not_enabled(self):
         """The public sync() gates itself: a direct call reads only the variable, never the board."""
-        cases = (("agent", [(VARIABLE, NOT_FOUND)], {}),
+        cases = (("agent", unset_variable(), {}),
                  ("agent", [variable(OTHER)], {}),
                  ("action", [], {}),
                  ("action", [], {"PROJECT_URL": OTHER}))

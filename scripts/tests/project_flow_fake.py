@@ -225,3 +225,10 @@ def milestone(number, title, open_issues=1, closed_issues=0):
 __all__ = ["FakeTransport", "GhError", "issue", "pr", "blocker", "item", "item_project", "items_page",
            "fields", "workflows", "board", "rate", "item_response", "closing_issues", "status_written",
            "milestone"]
+
+
+def unset_variable(repo="owner/repo"):
+    """Responses for an unset PROJECT_URL: the variable read answers 404 and the repository itself
+    is readable (a 404 on an invisible repository is not "unset")."""
+    return [("repos/%s/actions/variables/PROJECT_URL" % repo, GhError("gh: Not Found (HTTP 404)")),
+            (lambda call: call.get("path") == "repos/%s" % repo, {"full_name": repo})]

@@ -12,7 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import project_flow  # noqa: E402
 from project_flow import Config, GhError, Stop  # noqa: E402
-from project_flow_fake import FakeTransport, board, issue, item, item_response, status_written  # noqa: E402
+from project_flow_fake import (FakeTransport, board, issue, item, item_response,  # noqa: E402
+                               status_written, unset_variable)
 
 URL = "https://github.com/users/owner/projects/2"
 OTHER = "https://github.com/users/owner/projects/3"
@@ -156,12 +157,12 @@ class NextTest(unittest.TestCase):
         self.assertEqual(fake.mutations, [])
 
     def test_direct_next_refuses_when_not_enabled(self):
-        for responses in ([(VARIABLE, NOT_FOUND)], [(VARIABLE, {"name": "PROJECT_URL", "value": OTHER})]):
+        for responses in (unset_variable(), [(VARIABLE, {"name": "PROJECT_URL", "value": OTHER})]):
             fake = FakeTransport(list(responses))
             stop = stop_of(project_flow.next_task, fake, CFG, URL, REPO, skip_unordered=False,
                            dry_run=False)
             self.assertEqual(stop.reason, "not-enabled")
-            self.assertEqual(len(fake.calls), 1)
+            self.assertEqual(len(fake.calls), len(responses))  # the gate reads only
             self.assertEqual(fake.mutations, [])
 
     def test_main_next(self):
@@ -300,11 +301,11 @@ class StartTest(unittest.TestCase):
         self.assertEqual(fake.mutations, [])
 
     def test_direct_start_refuses_when_not_enabled(self):
-        for responses in ([(VARIABLE, NOT_FOUND)], [(VARIABLE, {"name": "PROJECT_URL", "value": OTHER})]):
+        for responses in (unset_variable(), [(VARIABLE, {"name": "PROJECT_URL", "value": OTHER})]):
             fake = FakeTransport(list(responses))
             stop = stop_of(project_flow.start, fake, CFG, URL, REPO, (REPO, 1), force=True, dry_run=False)
             self.assertEqual(stop.reason, "not-enabled")
-            self.assertEqual(len(fake.calls), 1)
+            self.assertEqual(len(fake.calls), len(responses))  # the gate reads only
             self.assertEqual(fake.mutations, [])
 
     def test_main_start(self):
