@@ -160,8 +160,8 @@ class FactsTest(unittest.TestCase):
         self.assertEqual(facts.status, "In Review")
         self.assertEqual(facts.order, 10.0)
         self.assertEqual(facts.closing_prs, (
-            project_flow.PullRef("owner/repo", 9, "OPEN", True, None),
-            project_flow.PullRef("owner/repo", 10, "OPEN", False, None)))
+            project_flow.PullRef("owner/repo", 9, "OPEN", True, None, "owner/repo", "OWNER"),
+            project_flow.PullRef("owner/repo", 10, "OPEN", False, None, "owner/repo", "OWNER")))
         self.assertEqual(facts.blockers[0], project_flow.Blocker("owner/repo", 4, "CLOSED", "DUPLICATE"))
 
     def test_inputs_cover_the_derivation_facts(self):
@@ -169,7 +169,8 @@ class FactsTest(unittest.TestCase):
         inputs = facts.inputs()
         self.assertEqual(inputs, self.facts().inputs())
         changed = dataclasses.replace(
-            facts, closing_prs=(project_flow.PullRef("owner/repo", 9, "OPEN", False, None),))
+            facts, closing_prs=(project_flow.PullRef("owner/repo", 9, "OPEN", False, None, "owner/repo",
+                                                     "OWNER"),))
         self.assertNotEqual(changed.inputs(), inputs)
         reordered = dataclasses.replace(facts, blockers=facts.blockers[::-1])
         self.assertEqual(reordered.inputs(), inputs)

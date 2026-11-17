@@ -41,6 +41,9 @@ _DIGITS = re.compile(r"\d+")
 # GraphQL queries. Every connection reads `first: $first`, which defaults to 100; only the
 # fixture recording passes a smaller page size. `OWNER` is replaced by `user` or `organization`.
 _PAGE = "pageInfo { hasNextPage endCursor }"
+# A closing pull request: its head repository and author association decide whether it is trusted.
+_PULL_NODE = ("number state isDraft repository { nameWithOwner } headRepository { nameWithOwner } "
+              "authorAssociation milestone { title }")
 _ISSUE_FACTS = """
 fragment IssueFacts on Issue {
   id databaseId number state stateReason(enableDuplicate: true)
@@ -49,12 +52,12 @@ fragment IssueFacts on Issue {
   labels(first: $first) { %(page)s nodes { name } }
   assignees(first: $first) { %(page)s nodes { login } }
   closedByPullRequestsReferences(first: $first, includeClosedPrs: true) {
-    %(page)s nodes { number state isDraft repository { nameWithOwner } milestone { title } } }
+    %(page)s nodes { %(pull)s } }
   blockedBy(first: $first) {
     %(page)s nodes { number state stateReason(enableDuplicate: true) repository { nameWithOwner } } }
   parent { number repository { nameWithOwner } }
   subIssues(first: $first) { %(page)s nodes { number repository { nameWithOwner } } }
-}""" % {"page": _PAGE}
+}""" % {"page": _PAGE, "pull": _PULL_NODE}
 _ITEM_FIELDS = """
   id type
   status: fieldValueByName(name: $status) { __typename
@@ -94,8 +97,7 @@ ITEM_ABSENT_OK = frozenset({("node", "project", "order")})
 _CONNECTION_NODES = {
     "labels": "nodes { name }",
     "assignees": "nodes { login }",
-    "closedByPullRequestsReferences": (
-        "nodes { number state isDraft repository { nameWithOwner } milestone { title } }"),
+    "closedByPullRequestsReferences": "nodes { %s }" % _PULL_NODE,
     "blockedBy": (
         "nodes { number state stateReason(enableDuplicate: true) repository { nameWithOwner } }"),
     "subIssues": "nodes { number repository { nameWithOwner } }",
@@ -366,6 +368,20 @@ class PullRef:
     state: str  # OPEN | CLOSED | MERGED
     is_draft: bool
     milestone: Optional[str]
+    head_repo: Optional[str]  # the head repository's owner/name; None when GitHub returns null
+    author_association: str   # GitHub's authorAssociation, verbatim (an unknown value is untrusted)
+
+
+# The author associations whose closing pull requests count from any head repository.
+TRUSTED_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
+
+
+def trusted(p: PullRef, issue_repo: str) -> bool:
+    """A closing PR counts (In Review, milestone copy) only from a branch of the issue's own
+    repository or from an author associated as OWNER, MEMBER or COLLABORATOR; a null head repository
+    counts only through the association. Anyone can open a fork PR whose body closes an issue."""
+    same_repo = p.head_repo is not None and p.head_repo.lower() == issue_repo.lower()
+    return same_repo or p.author_association in TRUSTED_ASSOCIATIONS
 
 
 @dataclass(frozen=True)
@@ -392,7 +408,8 @@ class Facts:
             self.state,
             tuple(sorted(self.labels)),
             tuple(sorted(self.assignees)),
-            tuple(sorted((p.repo, p.number, p.state, p.is_draft) for p in self.closing_prs)),
+            tuple(sorted((p.repo, p.number, p.state, p.is_draft, p.head_repo or "",
+                          p.author_association) for p in self.closing_prs)),
             tuple(sorted((b.repo, b.number, b.state, b.state_reason or "") for b in self.blockers)),
         )
 
@@ -428,7 +445,7 @@ def derive(f: Facts, cfg: Config) -> tuple[str, list[str]]:
             lines.append("blocker %s#%d closed as duplicate" % (b.repo, b.number))
     if cfg.blocked_label.lower() in f.labels:
         return "blocked", lines
-    if any(p.state == "OPEN" and not p.is_draft for p in f.closing_prs):
+    if any(p.state == "OPEN" and not p.is_draft and trusted(p, f.repo) for p in f.closing_prs):
         return "in_review", lines
     if f.assignees:
         return "in_progress", lines
@@ -580,8 +597,11 @@ def _blocker(node: dict, what: str) -> Blocker:
 
 def _pull(node: dict, what: str) -> PullRef:
     repo, number = _ref(node, what)
+    head = _field(node, "headRepository", dict, what, nullable=True)
     return PullRef(repo, number, _enum(node, "state", _PR_STATES, what),
-                   _field(node, "isDraft", bool, what), _title(node, what))
+                   _field(node, "isDraft", bool, what), _title(node, what),
+                   None if head is None else _field(head, "nameWithOwner", str, what + " head"),
+                   _field(node, "authorAssociation", str, what))
 
 
 _NUMBER_VALUE = "ProjectV2ItemFieldNumberValue"
@@ -1108,13 +1128,18 @@ def _reconcile_pass(t: Transport, cfg: Config, board: Board, writer: "Writer", o
             continue
         role, lines = derive(f, cfg)
         reports.extend("%s#%d: %s" % (f.repo, f.number, line) for line in lines)
+        # An untrusted closing PR (see trusted) neither makes the issue In Review nor gets a milestone.
+        reports.extend("%s#%d: ignored untrusted PR %s#%d" % (f.repo, f.number, p.repo, p.number)
+                       for p in f.closing_prs
+                       if p.state in ("OPEN", "MERGED") and not trusted(p, f.repo))
         if f.status != cfg.roles[role]:
             writer.set_role(f, role)
 
     pulls = {}
     for f in targets:
         for p in f.closing_prs:
-            if p.state in ("OPEN", "MERGED") and p.milestone is None and in_scope(p.repo):
+            if p.state in ("OPEN", "MERGED") and p.milestone is None and in_scope(p.repo) \
+                    and trusted(p, f.repo):
                 pulls.setdefault((p.repo, p.number), p)
     for (pr_repo, pr_number) in pulls:
         ref = "%s#%d" % (pr_repo, pr_number)

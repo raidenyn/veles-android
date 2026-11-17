@@ -53,6 +53,10 @@
                 "closedByPullRequestsReferences": {
                   "nodes": [
                     {
+                      "authorAssociation": "OWNER",
+                      "headRepository": {
+                        "nameWithOwner": "owner/repo"
+                      },
                       "isDraft": true,
                       "milestone": null,
                       "number": 9,
@@ -62,6 +66,10 @@
                       "state": "OPEN"
                     },
                     {
+                      "authorAssociation": "OWNER",
+                      "headRepository": {
+                        "nameWithOwner": "owner/repo"
+                      },
                       "isDraft": false,
                       "milestone": null,
                       "number": 10,
@@ -323,6 +331,10 @@
                 "closedByPullRequestsReferences": {
                   "nodes": [
                     {
+                      "authorAssociation": "OWNER",
+                      "headRepository": {
+                        "nameWithOwner": "owner/repo"
+                      },
                       "isDraft": false,
                       "milestone": null,
                       "number": 10,

@@ -78,10 +78,19 @@ def _ref(ref):
     return {"number": number, "repository": {"nameWithOwner": repo}}
 
 
-def pr(number, state="OPEN", draft=False, repo=REPO, milestone=None):
-    """A closedByPullRequestsReferences node."""
+_SAME = object()
+
+
+def pr(number, state="OPEN", draft=False, repo=REPO, milestone=None, head_repo=_SAME,
+       association="MEMBER"):
+    """A closedByPullRequestsReferences node. head_repo: the head repository's nameWithOwner (default:
+    the PR's own repository, a same-repository branch; None: GitHub's null for a deleted fork);
+    association: the author's authorAssociation."""
+    head = repo if head_repo is _SAME else head_repo
     return {"number": number, "state": state, "isDraft": draft,
             "repository": {"nameWithOwner": repo},
+            "headRepository": None if head is None else {"nameWithOwner": head},
+            "authorAssociation": association,
             "milestone": {"title": milestone} if milestone else None}
 
 

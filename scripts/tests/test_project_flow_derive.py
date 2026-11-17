@@ -23,7 +23,8 @@ def facts(state="OPEN", labels=(), assignees=(), prs=(), blockers=(), status=Non
 
 
 def pull(state="OPEN", draft=False, number=9):
-    return PullRef(REPO, number, state, draft, None)
+    """A same-repository closing PR (trusted; see test_project_flow_trust)."""
+    return PullRef(REPO, number, state, draft, None, REPO, "MEMBER")
 
 
 def blk(state="CLOSED", reason="COMPLETED", number=5):

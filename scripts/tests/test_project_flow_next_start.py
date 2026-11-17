@@ -268,7 +268,9 @@ class StartTest(unittest.TestCase):
         cases = {
             "assigned": item(issue(1, assignees=["someone"]), status="In Progress", order=1),
             "in review": item(issue(1, prs=[{"number": 9, "state": "OPEN", "isDraft": False,
-                                             "repository": {"nameWithOwner": REPO}, "milestone": None}]),
+                                             "repository": {"nameWithOwner": REPO},
+                                             "headRepository": {"nameWithOwner": REPO},
+                                             "authorAssociation": "MEMBER", "milestone": None}]),
                               status="In Review", order=1),
             "blocked": item(issue(1, labels=["blocked"]), status="Blocked", order=1),
             "done": item(issue(1, state="CLOSED", state_reason="COMPLETED"), status="Done", order=1),

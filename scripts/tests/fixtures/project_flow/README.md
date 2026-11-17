@@ -17,6 +17,10 @@ values carry `__typename`, which tells a number value from a value of a field of
 | `sub_issues_<n>.json` | `SUB_ISSUES_QUERY` | issues 5, 1, 6, 7 | 5 has 1 and 6; 6 has 7, which is not on the project |
 | `milestones.json` | REST `repos/{owner}/{repo}/milestones?state=all` | | trimmed to the fields the tool reads |
 
+Added by hand after recording, when the queries started selecting them: each closing pull request's
+`headRepository` (its own repository: a same-repository branch) and `authorAssociation` (`OWNER`, the
+scratch owner opened them).
+
 Scrubbing: node ids became `PVT_project1`, `PVTI_item<n>`, `PVTSSF_field1`, `PVTF_field1`, `I_issue<n>`
 and `MI_milestone1`; cursors became `cursor<n>`; option ids `opt<n>`; database ids `1001`...; the login and
 owner became `owner` and the repository `owner/repo`. Items 1 to 6 hold issues 1 to 6 (`I_issue<n>`,
