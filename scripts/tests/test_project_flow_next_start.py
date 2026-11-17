@@ -339,6 +339,32 @@ class StartTest(unittest.TestCase):
         self.assertNotIn("started:", out.getvalue())
         self.assertEqual(fake.responses, [])  # no re-read, no reconcile
 
+    def test_start_failed_reconciliation_write(self):
+        # The claim lands; the reconciliation of that item after it then has a rejected write (its
+        # Status reads Ready again, so it derives In Progress and the write fails): write-failed,
+        # exit 3, no started: line, and the claim's writes stay as made.
+        node = ready(1, 3)
+        claimed = item(issue(1, assignees=["me"]), status="In Progress", order=3)
+        reverted = item(issue(1, assignees=["me"]), status="Ready", order=3)
+        fake = FakeTransport([ENABLED] + board([node]) + [
+            fresh(node), USER, ASSIGNED, ("mutation", status_written()), fresh(claimed)]
+            + board([reverted]) + [fresh(reverted), ("mutation", GhError("gh: HTTP 403"))])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = project_flow.main(["start", "#1", "--project", URL, "--repo", REPO], fake, env={})
+        lines = out.getvalue().splitlines()
+        self.assertEqual(code, 3, out.getvalue())
+        self.assertEqual(lines[-1], "stop: write-failed: 1 write(s) failed")
+        self.assertIn("write: owner/repo#1 assignees: +me", lines)
+        self.assertIn("write: owner/repo#1 Status: Ready -> In Progress", lines)
+        self.assertTrue(any(line.startswith("failed write owner/repo#1: ") and "HTTP 403" in line
+                            for line in lines), lines)
+        self.assertNotIn("started:", out.getvalue())
+        self.assertEqual(kinds(fake), [
+            "POST repos/owner/repo/issues/1/assignees {'assignees': ['me']}",
+            "status opt-In Progress", "status opt-In Progress"])
+        self.assertEqual(fake.responses, [])
+
     def test_start_failed_assignment_write(self):
         node = ready(1, 3)
         fake = FakeTransport([ENABLED] + board([node]) + [
