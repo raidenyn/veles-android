@@ -450,6 +450,70 @@ class OrderValueTest(unittest.TestCase):
         self.assertIn("project { order: field(name: $order)", project_flow.ITEM_QUERY)
 
 
+class OrderFieldMetadataTest(unittest.TestCase):
+    """Only well-formed metadata may say the order field is not a NUMBER field."""
+
+    def read(self, order_field):
+        node = dict(item(issue(1), order=7), project={"order": order_field})
+        return project_flow.read_item(
+            FakeTransport([("query ProjectItem(", {"data": {"node": node}})]), node["id"], CFG)
+
+    def board_read(self, order_field):
+        responses = board([item(issue(1), order=7)])
+        response = project_flow_fake.fields()
+        response["data"]["user"]["projectV2"]["order"] = order_field
+        responses[0] = ("query ProjectFields", response)
+        return project_flow.read_board(FakeTransport(responses), URL, CFG)
+
+    MALFORMED = (
+        {},
+        {"__typename": "ProjectV2Field", "id": "PVTF_field1"},
+        {"__typename": "ProjectV2Field", "id": "PVTF_field1", "dataType": None},
+        {"__typename": "ProjectV2Field", "id": "PVTF_field1", "dataType": 3},
+        {"__typename": "ProjectV2Field", "dataType": "NUMBER"},
+        {"__typename": 3},
+        {"__typename": "SomethingElse"},
+        "NUMBER",
+    )
+
+    def test_malformed_metadata_is_incomplete(self):
+        for order_field in self.MALFORMED:
+            with self.assertRaises(Stop, msg=repr(order_field)) as caught:
+                self.read(order_field)
+            self.assertEqual(caught.exception.reason, "incomplete-read")
+            with self.assertRaises(Stop, msg=repr(order_field)) as caught:
+                self.board_read(order_field)
+            self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_missing_order_key_is_incomplete(self):
+        node = dict(item(issue(1), order=7), project={})
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_item(FakeTransport([("query ProjectItem(", {"data": {"node": node}})]),
+                                   node["id"], CFG)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+        responses = board([item(issue(1))])
+        del responses[0][1]["data"]["user"]["projectV2"]["order"]
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_board(FakeTransport(responses), URL, CFG)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_number_field_reads_the_value(self):
+        field = {"__typename": "ProjectV2Field", "id": "PVTF_field1", "dataType": "NUMBER"}
+        self.assertEqual(self.read(field).order, 7.0)
+        result = self.board_read(field)
+        self.assertEqual((result.order_field_id, result.items[0].order), ("PVTF_field1", 7.0))
+
+    def test_other_fields_leave_order_unset(self):
+        for field in ({"__typename": "ProjectV2Field", "id": "PVTF_x", "dataType": "TEXT"},
+                      {"__typename": "ProjectV2SingleSelectField"},
+                      {"__typename": "ProjectV2IterationField"},
+                      None):  # GitHub returns null for an absent field
+            self.assertIsNone(self.read(field).order, repr(field))
+            result = self.board_read(field)
+            self.assertIsNone(result.order_field_id, repr(field))
+            self.assertIsNone(result.items[0].order, repr(field))
+
+
 class ParseProjectUrlTest(unittest.TestCase):
     def test_parse_project_url_strips_view(self):
         self.assertEqual(project_flow.parse_project_url("https://github.com/users/o/projects/3/views/2"),

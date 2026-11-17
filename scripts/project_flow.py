@@ -454,9 +454,24 @@ _NUMBER_VALUE = "ProjectV2ItemFieldNumberValue"
 _SELECT_VALUE = "ProjectV2ItemFieldSingleSelectValue"
 
 
-def _is_number_field(field_node: Any) -> bool:
-    return (isinstance(field_node, dict) and field_node.get("__typename") == "ProjectV2Field"
-            and field_node.get("dataType") == "NUMBER")
+_OTHER_FIELDS = ("ProjectV2SingleSelectField", "ProjectV2IterationField")
+
+
+def _number_field_id(field_node: Any, what: str) -> Optional[str]:
+    """The order field's id when it is a NUMBER field, None when it is absent (GitHub's explicit
+    null) or a well-formed field of another type. Malformed metadata is an incomplete read."""
+    if field_node is None:
+        return None
+    if not isinstance(field_node, dict):
+        raise Stop("incomplete-read", "%s: order field metadata is not an object" % what)
+    kind = _field(field_node, "__typename", str, what + " order field")
+    if kind in _OTHER_FIELDS:
+        return None
+    if kind != "ProjectV2Field":
+        raise Stop("incomplete-read", "%s: unknown order field type %r" % (what, kind))
+    if _field(field_node, "dataType", str, what + " order field") != "NUMBER":
+        return None
+    return _field(field_node, "id", str, what + " order field")
 
 
 def _facts(t: Transport, node: dict, what: str, order_is_number: bool) -> Facts:
@@ -530,8 +545,8 @@ def read_board(t: Transport, project_url: str, cfg: Config) -> Board:
     status = project.get("status")
     if not isinstance(status, dict) or status.get("__typename") != "ProjectV2SingleSelectField":
         raise Stop("missing-option", "single-select field %r not found on the project" % cfg.status_field)
-    order = project.get("order")
-    order_id = order.get("id") if _is_number_field(order) else None
+    order_id = _number_field_id(_field(project, "order", dict, "project fields", nullable=True),
+                                "project fields")
     try:
         options = {o["name"]: o["id"] for o in status["options"]}
         project_id, status_id = project["id"], status["id"]
@@ -571,7 +586,7 @@ def read_item(t: Transport, item_id: str, cfg: Config) -> Facts:
         raise Stop("incomplete-read", "%s: not an issue item (%s)" % (what, node.get("type")))
     project = _field(node, "project", dict, what)
     order_field = _field(project, "order", dict, what + " project", nullable=True)
-    return _facts(t, node, what, _is_number_field(order_field))
+    return _facts(t, node, what, _number_field_id(order_field, what) is not None)
 
 
 def read_text(t: Transport, repo: str, number: int) -> str:
