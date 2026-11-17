@@ -55,7 +55,8 @@ _ITEM_FIELDS = """
 FIELDS_QUERY = """query ProjectFields($login: String!, $number: Int!, $status: String!, $order: String!) {
   OWNER(login: $login) { projectV2(number: $number) { id
     status: field(name: $status) { __typename ... on ProjectV2SingleSelectField { id name options { id name } } }
-    order: field(name: $order) { __typename ... on ProjectV2Field { id name dataType } }
+    order: field(name: $order) { __typename ... on ProjectV2Field { id name dataType }
+      ... on ProjectV2SingleSelectField { id } ... on ProjectV2IterationField { id } }
   } }
 }"""
 WORKFLOWS_QUERY = """query ProjectWorkflows($login: String!, $number: Int!, $first: Int = 100, $after: String) {
@@ -71,7 +72,8 @@ ITEMS_QUERY = """query ProjectItems($login: String!, $number: Int!, $status: Str
 }""" % (_PAGE, _ITEM_FIELDS) + _ISSUE_FACTS
 ITEM_QUERY = """query ProjectItem($item: ID!, $status: String!, $order: String!, $first: Int = 100) {
   node(id: $item) { ... on ProjectV2Item { %s
-    project { order: field(name: $order) { __typename ... on ProjectV2Field { id dataType } } } } }
+    project { order: field(name: $order) { __typename ... on ProjectV2Field { id dataType }
+      ... on ProjectV2SingleSelectField { id } ... on ProjectV2IterationField { id } } } } }
 }""" % _ITEM_FIELDS + _ISSUE_FACTS
 # Follow-up page of one nested connection of an issue, by the issue node id.
 _CONNECTION_NODES = {
@@ -455,23 +457,32 @@ _SELECT_VALUE = "ProjectV2ItemFieldSingleSelectValue"
 
 
 _OTHER_FIELDS = ("ProjectV2SingleSelectField", "ProjectV2IterationField")
+# Every member of GitHub's ProjectV2FieldType enum, the type of ProjectV2Field.dataType. Only NUMBER
+# can hold the order; a string outside this set is not a field type GitHub is known to return.
+_FIELD_DATA_TYPES = frozenset((
+    "ASSIGNEES", "LINKED_PULL_REQUESTS", "REVIEWERS", "LABELS", "MILESTONE", "REPOSITORY", "TITLE",
+    "TEXT", "SINGLE_SELECT", "MULTI_SELECT", "NUMBER", "DATE", "ITERATION", "TRACKS", "TRACKED_BY",
+    "ISSUE_TYPE", "PARENT_ISSUE", "SUB_ISSUES_PROGRESS", "CREATED", "UPDATED", "CLOSED"))
 
 
 def _number_field_id(field_node: Any, what: str) -> Optional[str]:
     """The order field's id when it is a NUMBER field, None when it is absent (GitHub's explicit
-    null) or a well-formed field of another type. Malformed metadata is an incomplete read."""
+    null) or a well-formed field of another type: a single-select or iteration field, or a
+    ProjectV2Field of another known data type, each with its id. Anything else is an incomplete read."""
     if field_node is None:
         return None
     if not isinstance(field_node, dict):
         raise Stop("incomplete-read", "%s: order field metadata is not an object" % what)
     kind = _field(field_node, "__typename", str, what + " order field")
+    if kind != "ProjectV2Field" and kind not in _OTHER_FIELDS:
+        raise Stop("incomplete-read", "%s: unknown order field type %r" % (what, kind))
+    field_id = _field(field_node, "id", str, what + " order field")
     if kind in _OTHER_FIELDS:
         return None
-    if kind != "ProjectV2Field":
-        raise Stop("incomplete-read", "%s: unknown order field type %r" % (what, kind))
-    if _field(field_node, "dataType", str, what + " order field") != "NUMBER":
-        return None
-    return _field(field_node, "id", str, what + " order field")
+    data_type = _field(field_node, "dataType", str, what + " order field")
+    if data_type not in _FIELD_DATA_TYPES:
+        raise Stop("incomplete-read", "%s: unknown order field data type %r" % (what, data_type))
+    return field_id if data_type == "NUMBER" else None
 
 
 def _facts(t: Transport, node: dict, what: str, order_is_number: bool) -> Facts:

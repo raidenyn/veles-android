@@ -474,6 +474,34 @@ class OrderFieldMetadataTest(unittest.TestCase):
         {"__typename": 3},
         {"__typename": "SomethingElse"},
         "NUMBER",
+        {"__typename": "ProjectV2Field", "id": "PVTF_x", "dataType": "BOGUS"},
+        {"__typename": "ProjectV2Field", "id": "PVTF_x", "dataType": "number"},
+        {"__typename": "ProjectV2Field", "id": "PVTF_x", "dataType": ""},
+        {"__typename": "ProjectV2Field", "id": "PVTF_x", "dataType": ["NUMBER"]},
+        {"__typename": "ProjectV2Field", "id": "PVTF_x", "dataType": {"name": "NUMBER"}},
+        {"__typename": "ProjectV2Field", "dataType": "TEXT"},
+        {"__typename": "ProjectV2Field", "id": None, "dataType": "TEXT"},
+        {"__typename": "ProjectV2Field", "id": 7, "dataType": "TEXT"},
+        {"__typename": "ProjectV2Field", "id": None, "dataType": "NUMBER"},
+        {"__typename": "ProjectV2Field", "id": 7, "dataType": "NUMBER"},
+        {"__typename": "ProjectV2Field", "id": ["PVTF_x"], "dataType": "NUMBER"},
+        {"__typename": "ProjectV2SingleSelectField"},
+        {"__typename": "ProjectV2SingleSelectField", "id": None},
+        {"__typename": "ProjectV2SingleSelectField", "id": 7},
+        {"__typename": "ProjectV2IterationField"},
+        {"__typename": "ProjectV2IterationField", "id": None},
+        {"__typename": "ProjectV2IterationField", "id": 7},
+        {"__typename": "ProjectV2FieldCommon", "id": "PVTF_x", "dataType": "NUMBER"},
+        {"__typename": "projectv2field", "id": "PVTF_x", "dataType": "NUMBER"},
+        ["ProjectV2Field"],
+        7,
+    )
+
+    # GitHub's ProjectV2FieldType enum (live introspection), without NUMBER.
+    OTHER_DATA_TYPES = (
+        "ASSIGNEES", "LINKED_PULL_REQUESTS", "REVIEWERS", "LABELS", "MILESTONE", "REPOSITORY", "TITLE",
+        "TEXT", "SINGLE_SELECT", "MULTI_SELECT", "DATE", "ITERATION", "TRACKS", "TRACKED_BY",
+        "ISSUE_TYPE", "PARENT_ISSUE", "SUB_ISSUES_PROGRESS", "CREATED", "UPDATED", "CLOSED",
     )
 
     def test_malformed_metadata_is_incomplete(self):
@@ -505,13 +533,31 @@ class OrderFieldMetadataTest(unittest.TestCase):
 
     def test_other_fields_leave_order_unset(self):
         for field in ({"__typename": "ProjectV2Field", "id": "PVTF_x", "dataType": "TEXT"},
-                      {"__typename": "ProjectV2SingleSelectField"},
-                      {"__typename": "ProjectV2IterationField"},
+                      {"__typename": "ProjectV2SingleSelectField", "id": "PVTSSF_x"},
+                      {"__typename": "ProjectV2IterationField", "id": "PVTIF_x"},
                       None):  # GitHub returns null for an absent field
             self.assertIsNone(self.read(field).order, repr(field))
             result = self.board_read(field)
             self.assertIsNone(result.order_field_id, repr(field))
             self.assertIsNone(result.items[0].order, repr(field))
+
+    def test_every_known_data_type_but_number_leaves_order_unset(self):
+        for data_type in self.OTHER_DATA_TYPES:
+            field = {"__typename": "ProjectV2Field", "id": "PVTF_x", "dataType": data_type}
+            self.assertIsNone(self.read(field).order, data_type)
+            result = self.board_read(field)
+            self.assertIsNone(result.order_field_id, data_type)
+            self.assertIsNone(result.items[0].order, data_type)
+
+    def test_known_data_types_match_the_github_enum(self):
+        self.assertEqual(project_flow._FIELD_DATA_TYPES, frozenset(self.OTHER_DATA_TYPES) | {"NUMBER"})
+
+    def test_queries_select_the_id_of_every_accepted_field_type(self):
+        for query in (project_flow.FIELDS_QUERY, project_flow.ITEM_QUERY):
+            order = query[query.index("order: field(name: $order)"):]
+            for selection in ("... on ProjectV2Field { id ", "... on ProjectV2SingleSelectField { id }",
+                              "... on ProjectV2IterationField { id }"):
+                self.assertIn(selection, order)
 
 
 class ParseProjectUrlTest(unittest.TestCase):
