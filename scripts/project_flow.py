@@ -25,8 +25,8 @@ SCOPE_FIX = "run gh auth refresh -s project"
 
 _URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
 _ISSUE_REF = re.compile(r"#\d+")
-_NODE_ID = re.compile(r"^[A-Z]{1,4}_[A-Za-z0-9_-]{8,}$")
-_DIGITS = re.compile(r"^\d+$")
+_NODE_ID = re.compile(r"[A-Z]{1,4}_[A-Za-z0-9_-]{8,}")
+_DIGITS = re.compile(r"\d+")
 
 
 # GraphQL queries. Every connection reads `first: $first`, which defaults to 100; only the
@@ -111,6 +111,8 @@ class GhError(Exception):
 
 class Stop(Exception):
     def __init__(self, reason: str, detail: str = ""):
+        if reason not in STOP_REASONS:
+            raise ValueError("unknown stop reason: %r" % (reason,))
         super().__init__("%s: %s" % (reason, detail))
         self.reason = reason
         self.detail = detail
@@ -144,7 +146,9 @@ class GhTransport:
     def graphql(self, query: str, variables: Optional[dict] = None) -> dict:
         args = ["api", "graphql", "-f", "query=" + query]
         for name, value in (variables or {}).items():
-            if isinstance(value, (int, bool)) and not isinstance(value, str):
+            if value is None:
+                continue  # an omitted variable takes the query's default
+            if isinstance(value, (int, bool)):
                 args += ["-F", "%s=%s" % (name, json.dumps(value))]
             else:
                 args += ["-f", "%s=%s" % (name, value)]
@@ -183,9 +187,11 @@ def _bad_value(value: Any) -> Optional[str]:
         return "must not be a URL"
     if _ISSUE_REF.search(value):
         return "must not contain an issue reference"
-    if _NODE_ID.match(value):
+    if value != value.strip():
+        return "must not have leading or trailing whitespace"
+    if _NODE_ID.fullmatch(value):
         return "must not be a node id"
-    if _DIGITS.match(value):
+    if _DIGITS.fullmatch(value):
         return "must not be all digits"
     return None
 

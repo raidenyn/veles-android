@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SCRIPTS)
@@ -57,6 +58,21 @@ class ConfigTest(unittest.TestCase):
             raw["status_field"] = value
             self.assertEqual(len(project_flow.validate_config(raw)), 1, value)
 
+    def test_surrounding_whitespace_rejected(self):
+        for value in (" Status", "Status ", "Status\n"):
+            raw = default_raw()
+            raw["status_field"] = value
+            self.assertEqual(len(project_flow.validate_config(raw)), 1, repr(value))
+            raw = default_raw()
+            raw["roles"]["ready"] = value
+            self.assertEqual(len(project_flow.validate_config(raw)), 1, repr(value))
+
+    def test_identifier_checks_match_whole_value(self):
+        for value in ("PVT_kwHOAbc12345 board", "12 items", "In Review 2"):
+            raw = default_raw()
+            raw["status_field"] = value
+            self.assertEqual(project_flow.validate_config(raw), [], value)
+
     def test_unknown_top_level_key_rejected(self):
         raw = default_raw()
         raw["project"] = "x"
@@ -89,6 +105,51 @@ class ConfigTest(unittest.TestCase):
         stop = project_flow.map_gh_error(GhError("gh: missing required scopes [project]"))
         self.assertEqual((stop.reason, stop.detail), ("missing-scope", "run gh auth refresh -s project"))
         self.assertIsNone(project_flow.map_gh_error(GhError("boom")))
+
+    def test_stop_equality_used_by_map_gh_error(self):
+        stop = project_flow.map_gh_error(GhError("gh: missing required scopes [project]"))
+        self.assertEqual(stop, Stop("missing-scope", "run gh auth refresh -s project"))
+        self.assertEqual(hash(stop), hash(Stop("missing-scope", "run gh auth refresh -s project")))
+        self.assertNotEqual(stop, Stop("missing-scope", "other"))
+        self.assertNotEqual(stop, Stop("incomplete-read", "run gh auth refresh -s project"))
+        self.assertNotEqual(stop, ("missing-scope", "run gh auth refresh -s project"))
+
+    def test_stop_rejects_unknown_reason(self):
+        for reason in project_flow.STOP_REASONS:
+            self.assertEqual(Stop(reason).reason, reason)
+        with self.assertRaises(ValueError):
+            Stop("not-a-reason")
+
+    def test_main_gh_error_exits_one(self):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(project_flow, "_check", side_effect=GhError("HTTP 502 from api")), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = project_flow.main(["check", "--config", DEFAULTS])
+        self.assertEqual(code, 1)
+        self.assertIn("HTTP 502 from api", err.getvalue())
+        self.assertEqual(out.getvalue(), "")
+
+    def test_main_scope_gh_error_is_a_stop(self):
+        out = io.StringIO()
+        with mock.patch.object(project_flow, "_check",
+                               side_effect=GhError("missing required scopes [project]")), \
+                contextlib.redirect_stdout(out):
+            code = project_flow.main(["check", "--config", DEFAULTS])
+        self.assertEqual(code, 3)
+        self.assertIn("stop: missing-scope: run gh auth refresh -s project", out.getvalue())
+
+    def test_gh_transport_graphql_arguments(self):
+        seen = []
+        with mock.patch.object(project_flow.GhTransport, "_run",
+                               side_effect=lambda args, stdin=None: seen.append(args) or "{}"):
+            project_flow.GhTransport().graphql("query { a }", {"n": 3, "flag": True, "s": "x",
+                                                               "after": None})
+        args = seen[0]
+        self.assertIn("n=3", args)
+        self.assertIn("flag=true", args)
+        self.assertEqual(args[args.index("s=x") - 1], "-f")
+        self.assertEqual(args[args.index("n=3") - 1], "-F")
+        self.assertFalse(any(a.startswith("after=") for a in args))
 
     def test_unimplemented_subcommand_exits_usage(self):
         err = io.StringIO()
