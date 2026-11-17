@@ -1,0 +1,40 @@
+{
+  "data": {
+    "user": {
+      "projectV2": {
+        "workflows": {
+          "nodes": [
+            {
+              "enabled": true,
+              "name": "Auto-add sub-issues to project"
+            },
+            {
+              "enabled": false,
+              "name": "Auto-close issue"
+            },
+            {
+              "enabled": false,
+              "name": "Item added to project"
+            },
+            {
+              "enabled": false,
+              "name": "Item closed"
+            },
+            {
+              "enabled": false,
+              "name": "Pull request linked to issue"
+            },
+            {
+              "enabled": false,
+              "name": "Pull request merged"
+            }
+          ],
+          "pageInfo": {
+            "endCursor": "cursor8",
+            "hasNextPage": false
+          }
+        }
+      }
+    }
+  }
+}

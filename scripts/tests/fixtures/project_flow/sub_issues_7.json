@@ -1,0 +1,15 @@
+{
+  "data": {
+    "repository": {
+      "issue": {
+        "subIssues": {
+          "nodes": [],
+          "pageInfo": {
+            "endCursor": null,
+            "hasNextPage": false
+          }
+        }
+      }
+    }
+  }
+}

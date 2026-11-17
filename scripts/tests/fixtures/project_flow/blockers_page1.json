@@ -1,0 +1,30 @@
+{
+  "data": {
+    "node": {
+      "blockedBy": {
+        "nodes": [
+          {
+            "number": 4,
+            "repository": {
+              "nameWithOwner": "owner/repo"
+            },
+            "state": "CLOSED",
+            "stateReason": "DUPLICATE"
+          },
+          {
+            "number": 3,
+            "repository": {
+              "nameWithOwner": "owner/repo"
+            },
+            "state": "CLOSED",
+            "stateReason": "NOT_PLANNED"
+          }
+        ],
+        "pageInfo": {
+          "endCursor": "cursor1",
+          "hasNextPage": true
+        }
+      }
+    }
+  }
+}

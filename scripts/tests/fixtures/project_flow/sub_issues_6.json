@@ -1,0 +1,22 @@
+{
+  "data": {
+    "repository": {
+      "issue": {
+        "subIssues": {
+          "nodes": [
+            {
+              "number": 7,
+              "repository": {
+                "nameWithOwner": "owner/repo"
+              }
+            }
+          ],
+          "pageInfo": {
+            "endCursor": "cursor3",
+            "hasNextPage": false
+          }
+        }
+      }
+    }
+  }
+}

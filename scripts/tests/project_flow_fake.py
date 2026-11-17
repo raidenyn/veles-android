@@ -59,4 +59,110 @@ class FakeTransport:
         return self._serve({"kind": "rest", "method": method, "path": path, "body": body})
 
 
-__all__ = ["FakeTransport", "GhError"]
+# Builders: GraphQL-shaped dicts in the shape of the recorded fixtures under
+# fixtures/project_flow/, which read_board and read_item parse.
+
+REPO = "owner/repo"
+STATUS_OPTIONS = ("Backlog", "Ready", "In Progress", "In Review", "Blocked", "Done")
+
+
+def _conn(nodes, more=False, cursor="cursor-next"):
+    return {"nodes": list(nodes),
+            "pageInfo": {"hasNextPage": bool(more), "endCursor": cursor if more else None}}
+
+
+def _ref(ref):
+    """(repo, number) or number -> {number, repository}."""
+    repo, number = ref if isinstance(ref, tuple) else (REPO, ref)
+    return {"number": number, "repository": {"nameWithOwner": repo}}
+
+
+def pr(number, state="OPEN", draft=False, repo=REPO, milestone=None):
+    """A closedByPullRequestsReferences node."""
+    return {"number": number, "state": state, "isDraft": draft,
+            "repository": {"nameWithOwner": repo},
+            "milestone": {"title": milestone} if milestone else None}
+
+
+def blocker(number, state="CLOSED", reason="COMPLETED", repo=REPO):
+    """A blockedBy node; an open blocker has reason None."""
+    return {"number": number, "state": state, "stateReason": reason,
+            "repository": {"nameWithOwner": repo}}
+
+
+def issue(number, repo=REPO, state="OPEN", state_reason=None, labels=(), assignees=(), prs=(),
+          blockers=(), parent=None, sub_issues=(), milestone=None, node_id=None, database_id=None,
+          more=()):
+    """An Issue content node (IssueFacts). blockers: blocker() dicts or (number, state, reason)
+    tuples; parent and sub_issues: number or (repo, number); more: connection names whose
+    pageInfo.hasNextPage is true."""
+    blockers = [b if isinstance(b, dict) else blocker(*b) for b in blockers]
+    return {
+        "__typename": "Issue",
+        "id": node_id or "I_issue%d" % number,
+        "databaseId": database_id if database_id is not None else 1000 + number,
+        "number": number, "state": state, "stateReason": state_reason,
+        "repository": {"nameWithOwner": repo},
+        "milestone": {"title": milestone} if milestone else None,
+        "labels": _conn([{"name": n} for n in labels], "labels" in more),
+        "assignees": _conn([{"login": n} for n in assignees], "assignees" in more),
+        "closedByPullRequestsReferences": _conn(prs, "closedByPullRequestsReferences" in more),
+        "blockedBy": _conn(blockers, "blockedBy" in more),
+        "parent": _ref(parent) if parent is not None else None,
+        "subIssues": _conn([_ref(r) for r in sub_issues], "subIssues" in more),
+    }
+
+
+def item(content, item_id=None, status=None, order=None, type=None):
+    """A ProjectV2Item node. content None (with type) is a draft or redacted card."""
+    if type is None:
+        type = "ISSUE" if content is not None else "DRAFT_ISSUE"
+    if item_id is None:
+        item_id = "PVTI_item%d" % content["number"] if content else "PVTI_draft"
+    if content is None and type == "DRAFT_ISSUE":
+        content = {"__typename": "DraftIssue"}
+    return {"id": item_id, "type": type,
+            "status": {"name": status, "optionId": "opt-" + status} if status else None,
+            "order": {"number": float(order)} if order is not None else None,
+            "content": content}
+
+
+def items_page(nodes, more=False, cursor="cursor-next", owner_key="user"):
+    """One ITEMS_QUERY response."""
+    return {"data": {owner_key: {"projectV2": {"items": _conn(nodes, more, cursor)}}}}
+
+
+def fields(options=STATUS_OPTIONS, order=True, owner_key="user", status_name="Status",
+           order_name="Implementation order"):
+    """One FIELDS_QUERY response."""
+    status = {"__typename": "ProjectV2SingleSelectField", "id": "PVTSSF_field1", "name": status_name,
+              "options": [{"id": "opt-" + o, "name": o} for o in options]}
+    order_field = ({"__typename": "ProjectV2Field", "id": "PVTF_field1", "name": order_name,
+                    "dataType": "NUMBER"} if order else None)
+    return {"data": {owner_key: {"projectV2": {"id": "PVT_project1", "status": status,
+                                               "order": order_field}}}}
+
+
+def workflows(enabled=None, owner_key="user"):
+    """One WORKFLOWS_QUERY response; enabled maps name -> bool."""
+    enabled = {"Item closed": True, "Auto-add to project": True} if enabled is None else enabled
+    nodes = [{"name": n, "enabled": e} for n, e in enabled.items()]
+    return {"data": {owner_key: {"projectV2": {"workflows": _conn(nodes)}}}}
+
+
+def board(items, page_size=None, options=STATUS_OPTIONS, order=True, enabled=None, owner_key="user"):
+    """FakeTransport responses for one read_board: fields, workflows, then the item pages."""
+    items = list(items)
+    size = page_size or max(len(items), 1)
+    chunks = [items[i:i + size] for i in range(0, len(items), size)] or [[]]
+    responses = [("query ProjectFields", fields(options, order, owner_key)),
+                 ("query ProjectWorkflows", workflows(enabled, owner_key))]
+    for index, chunk in enumerate(chunks):
+        more = index < len(chunks) - 1
+        responses.append(("query ProjectItems",
+                          items_page(chunk, more, "cursor%d" % (index + 1), owner_key)))
+    return responses
+
+
+__all__ = ["FakeTransport", "GhError", "issue", "pr", "blocker", "item", "items_page", "fields",
+           "workflows", "board"]

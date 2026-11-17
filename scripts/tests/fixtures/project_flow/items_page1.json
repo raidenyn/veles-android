@@ -1,0 +1,390 @@
+{
+  "data": {
+    "user": {
+      "projectV2": {
+        "items": {
+          "nodes": [
+            {
+              "content": {
+                "__typename": "Issue",
+                "assignees": {
+                  "nodes": [
+                    {
+                      "login": "owner"
+                    }
+                  ],
+                  "pageInfo": {
+                    "endCursor": "cursor3",
+                    "hasNextPage": false
+                  }
+                },
+                "blockedBy": {
+                  "nodes": [
+                    {
+                      "number": 4,
+                      "repository": {
+                        "nameWithOwner": "owner/repo"
+                      },
+                      "state": "CLOSED",
+                      "stateReason": "DUPLICATE"
+                    },
+                    {
+                      "number": 3,
+                      "repository": {
+                        "nameWithOwner": "owner/repo"
+                      },
+                      "state": "CLOSED",
+                      "stateReason": "NOT_PLANNED"
+                    },
+                    {
+                      "number": 2,
+                      "repository": {
+                        "nameWithOwner": "owner/repo"
+                      },
+                      "state": "CLOSED",
+                      "stateReason": "COMPLETED"
+                    }
+                  ],
+                  "pageInfo": {
+                    "endCursor": "cursor2",
+                    "hasNextPage": false
+                  }
+                },
+                "closedByPullRequestsReferences": {
+                  "nodes": [
+                    {
+                      "isDraft": true,
+                      "milestone": null,
+                      "number": 9,
+                      "repository": {
+                        "nameWithOwner": "owner/repo"
+                      },
+                      "state": "OPEN"
+                    },
+                    {
+                      "isDraft": false,
+                      "milestone": null,
+                      "number": 10,
+                      "repository": {
+                        "nameWithOwner": "owner/repo"
+                      },
+                      "state": "OPEN"
+                    }
+                  ],
+                  "pageInfo": {
+                    "endCursor": "cursor1",
+                    "hasNextPage": false
+                  }
+                },
+                "databaseId": 1001,
+                "id": "I_issue1",
+                "labels": {
+                  "nodes": [
+                    {
+                      "name": "bug"
+                    },
+                    {
+                      "name": "Feature-X"
+                    }
+                  ],
+                  "pageInfo": {
+                    "endCursor": "cursor1",
+                    "hasNextPage": false
+                  }
+                },
+                "milestone": {
+                  "title": "M1 scratch"
+                },
+                "number": 1,
+                "parent": {
+                  "number": 5,
+                  "repository": {
+                    "nameWithOwner": "owner/repo"
+                  }
+                },
+                "repository": {
+                  "nameWithOwner": "owner/repo"
+                },
+                "state": "OPEN",
+                "stateReason": null,
+                "subIssues": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                }
+              },
+              "id": "PVTI_item1",
+              "order": {
+                "number": 10.0
+              },
+              "status": {
+                "name": "In Review",
+                "optionId": "opt4"
+              },
+              "type": "ISSUE"
+            },
+            {
+              "content": {
+                "__typename": "Issue",
+                "assignees": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "blockedBy": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "closedByPullRequestsReferences": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "databaseId": 1002,
+                "id": "I_issue2",
+                "labels": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "milestone": null,
+                "number": 2,
+                "parent": null,
+                "repository": {
+                  "nameWithOwner": "owner/repo"
+                },
+                "state": "CLOSED",
+                "stateReason": "COMPLETED",
+                "subIssues": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                }
+              },
+              "id": "PVTI_item2",
+              "order": {
+                "number": 1.0
+              },
+              "status": {
+                "name": "Done",
+                "optionId": "opt6"
+              },
+              "type": "ISSUE"
+            },
+            {
+              "content": {
+                "__typename": "Issue",
+                "assignees": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "blockedBy": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "closedByPullRequestsReferences": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "databaseId": 1003,
+                "id": "I_issue3",
+                "labels": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "milestone": null,
+                "number": 3,
+                "parent": null,
+                "repository": {
+                  "nameWithOwner": "owner/repo"
+                },
+                "state": "CLOSED",
+                "stateReason": "NOT_PLANNED",
+                "subIssues": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                }
+              },
+              "id": "PVTI_item3",
+              "order": {
+                "number": 2.0
+              },
+              "status": {
+                "name": "Done",
+                "optionId": "opt6"
+              },
+              "type": "ISSUE"
+            },
+            {
+              "content": {
+                "__typename": "Issue",
+                "assignees": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "blockedBy": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "closedByPullRequestsReferences": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "databaseId": 1004,
+                "id": "I_issue4",
+                "labels": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "milestone": null,
+                "number": 4,
+                "parent": null,
+                "repository": {
+                  "nameWithOwner": "owner/repo"
+                },
+                "state": "CLOSED",
+                "stateReason": "DUPLICATE",
+                "subIssues": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                }
+              },
+              "id": "PVTI_item4",
+              "order": null,
+              "status": null,
+              "type": "ISSUE"
+            },
+            {
+              "content": {
+                "__typename": "Issue",
+                "assignees": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "blockedBy": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "closedByPullRequestsReferences": {
+                  "nodes": [
+                    {
+                      "isDraft": false,
+                      "milestone": null,
+                      "number": 10,
+                      "repository": {
+                        "nameWithOwner": "owner/repo"
+                      },
+                      "state": "OPEN"
+                    }
+                  ],
+                  "pageInfo": {
+                    "endCursor": "cursor3",
+                    "hasNextPage": false
+                  }
+                },
+                "databaseId": 1005,
+                "id": "I_issue5",
+                "labels": {
+                  "nodes": [],
+                  "pageInfo": {
+                    "endCursor": null,
+                    "hasNextPage": false
+                  }
+                },
+                "milestone": {
+                  "title": "M1 scratch"
+                },
+                "number": 5,
+                "parent": null,
+                "repository": {
+                  "nameWithOwner": "owner/repo"
+                },
+                "state": "OPEN",
+                "stateReason": null,
+                "subIssues": {
+                  "nodes": [
+                    {
+                      "number": 1,
+                      "repository": {
+                        "nameWithOwner": "owner/repo"
+                      }
+                    },
+                    {
+                      "number": 6,
+                      "repository": {
+                        "nameWithOwner": "owner/repo"
+                      }
+                    }
+                  ],
+                  "pageInfo": {
+                    "endCursor": "cursor1",
+                    "hasNextPage": false
+                  }
+                }
+              },
+              "id": "PVTI_item5",
+              "order": {
+                "number": 5.0
+              },
+              "status": null,
+              "type": "ISSUE"
+            }
+          ],
+          "pageInfo": {
+            "endCursor": "cursor4",
+            "hasNextPage": true
+          }
+        }
+      }
+    }
+  }
+}
