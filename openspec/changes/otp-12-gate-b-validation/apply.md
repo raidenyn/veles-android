@@ -34,7 +34,9 @@ a scheduled push, and the pushed event did not join the history. Step 3 measured
 window: the 1200 s push fired 20 min 0.013 s after scheduling while the phone was asleep and
 locked, inside the 19..21 minute window; the post-minute-15 pull returned no events. ColorOS
 recents would not dismiss the task, so task-removal survival and the "foreground indication
-throughout" check were not established; that deviation is recorded in
+throughout" check were not established; a repeat on the OnePlus 6T was impossible because that
+device reports the transport unsupported (no multiple BLE advertisements), and the OnePlus 10
+recents still refused scripted dismissal. The deviation is recorded in
 `.superpowers/sdd/plan/task-9-report.md`. Step 4 is conditional on a missed window and is not
 applicable. Nothing from this run is Gate B evidence and the committed matrix stays
 `decision: OPEN`, `gate_b_accepted: false`.
