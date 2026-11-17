@@ -52,8 +52,9 @@ class FakeTransport:
                 return response
         raise AssertionError("FakeTransport: no response for %r" % (call,))
 
-    def graphql(self, query, variables=None):
-        return self._serve({"kind": "graphql", "query": query, "variables": variables or {}})
+    def graphql(self, query, variables=None, *, absent_ok=frozenset()):
+        return self._serve({"kind": "graphql", "query": query, "variables": variables or {},
+                            "absent_ok": absent_ok})
 
     def rest(self, method, path, body=None):
         return self._serve({"kind": "rest", "method": method, "path": path, "body": body})

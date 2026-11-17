@@ -75,6 +75,11 @@ ITEM_QUERY = """query ProjectItem($item: ID!, $status: String!, $order: String!,
     project { order: field(name: $order) { __typename ... on ProjectV2Field { id dataType }
       ... on ProjectV2SingleSelectField { id } ... on ProjectV2IterationField { id } } } } }
 }""" % _ITEM_FIELDS + _ISSUE_FACTS
+# The field(name:) lookups whose NOT_FOUND means "the project has no such field": the complete
+# response paths from the data root, per query, passed to the transport as `absent_ok`.
+FIELDS_ABSENT_OK = {owner: frozenset({(owner, "projectV2", "status"), (owner, "projectV2", "order")})
+                    for owner in ("user", "organization")}
+ITEM_ABSENT_OK = frozenset({("node", "project", "order")})
 # Follow-up page of one nested connection of an issue, by the issue node id.
 _CONNECTION_NODES = {
     "labels": "nodes { name }",
@@ -130,7 +135,7 @@ class Stop(Exception):
 
 
 class Transport(Protocol):
-    def graphql(self, query: str, variables: dict) -> dict: ...
+    def graphql(self, query: str, variables: dict, *, absent_ok: frozenset = frozenset()) -> dict: ...
 
     def rest(self, method: str, path: str, body: Optional[dict] = None) -> Any: ...
 
@@ -149,7 +154,10 @@ class GhTransport:
                           done.stdout or "")
         return done.stdout
 
-    def graphql(self, query: str, variables: Optional[dict] = None) -> dict:
+    def graphql(self, query: str, variables: Optional[dict] = None, *,
+                absent_ok: frozenset = frozenset()) -> dict:
+        """absent_ok: the full response paths of field lookups whose absence (NOT_FOUND, null)
+        is an answer, not a failure."""
         args = ["api", "graphql", "-f", "query=" + query]
         for name, value in (variables or {}).items():
             if value is None or isinstance(value, (int, bool)):
@@ -159,7 +167,7 @@ class GhTransport:
         try:
             return self._decode(self._run(args))
         except GhError as err:
-            absent = _absent_field_response(query, err.stdout)
+            absent = _absent_field_response(err.stdout, absent_ok)
             if absent is None:
                 raise
             return absent
@@ -182,59 +190,13 @@ class GhTransport:
             raise GhError("invalid JSON from gh: %s" % exc)
 
 
-_GQL_TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|\.\.\.|\$?[_A-Za-z][_0-9A-Za-z]*|-?\d[\d.eE+-]*|[{}():@=!\[\],]|#[^\n]*|\S')
-
-
-def _field_lookup_paths(query: str) -> set:
-    """The full response paths, from the data root, of every `field(` lookup selected by the
-    query's operations (aliases resolved; lookups inside named fragments are not included)."""
-    tokens = [tok for tok in _GQL_TOKEN.findall(query) if not tok.startswith("#") and tok != ","]
-    paths, stack, i = set(), [], 0
-    pending = None  # response key of the last field at this level, None for a transparent block
-    skip_depth = None  # depth at which a fragment definition's body started
-    while i < len(tokens):
-        tok = tokens[i]
-        if tok == "(":  # arguments or variable definitions: skip the balanced group
-            depth = 0
-            while i < len(tokens):
-                depth += {"(": 1, ")": -1}.get(tokens[i], 0)
-                i += 1
-                if depth == 0:
-                    break
-            continue
-        if not stack and tok == "fragment":
-            skip_depth = 0
-        if tok == "{":
-            stack.append(pending if stack else None)
-            pending = None
-        elif tok == "}":
-            if stack:
-                stack.pop()
-            if not stack:
-                skip_depth = None
-            pending = None
-        elif stack and tok == "...":
-            if i + 1 < len(tokens) and tokens[i + 1] == "on":
-                i += 2  # `... on Type {`: transparent
-            pending = None
-        elif stack and tok == "@":
-            i += 1  # a directive name; its arguments are skipped as a group
-        elif stack and re.fullmatch(r"[_A-Za-z]\w*", tok):
-            key, name = tok, tok
-            if i + 2 < len(tokens) and tokens[i + 1] == ":":
-                name = tokens[i + 2]
-                i += 2
-            pending = key
-            if name == "field" and skip_depth is None:
-                paths.add(tuple(seg for seg in stack if seg is not None) + (key,))
-        i += 1
-    return paths
-
-
-def _absent_field_response(query: str, stdout: str) -> Optional[dict]:
+def _absent_field_response(stdout: str, absent_ok: frozenset) -> Optional[dict]:
     """GitHub answers `field(name:)` for a field the project lacks with a null value and a
-    NOT_FOUND error, and gh exits 1. When every error is such a lookup, the data is the answer:
-    return it with the errors moved to `_errors`. Anything else is None (the failure stands)."""
+    NOT_FOUND error, and gh exits 1. When every error is a NOT_FOUND whose complete path is one
+    the caller listed in `absent_ok`, and the value there is null, the data is the answer: return
+    it with the errors moved to `_errors`. Anything else is None (the failure stands)."""
+    if not absent_ok:
+        return None
     try:
         response = json.loads(stdout)
     except ValueError:
@@ -244,24 +206,17 @@ def _absent_field_response(query: str, stdout: str) -> Optional[dict]:
     errors = response.get("errors")
     if not isinstance(errors, list) or not errors:
         return None
-    lookups = _field_lookup_paths(query)
     for error in errors:
         if not isinstance(error, dict) or error.get("type") != "NOT_FOUND":
             return None
         path = error.get("path")
-        if not isinstance(path, list) or len(path) < 2 or not isinstance(path[-1], str):
-            return None
-        # The complete path, list indices aside, must be one of the query's `field(` lookups.
-        if tuple(seg for seg in path if not isinstance(seg, int)) not in lookups:
+        if not isinstance(path, list) or tuple(path) not in absent_ok:
             return None
         value = response["data"]
         for key in path:
-            if isinstance(value, dict) and key in value:
-                value = value[key]
-            elif isinstance(value, list) and isinstance(key, int) and 0 <= key < len(value):
-                value = value[key]
-            else:
+            if not isinstance(value, dict) or key not in value:
                 return None
+            value = value[key]
         if value is not None:
             return None
     return {"data": response["data"], "_errors": errors}
@@ -444,11 +399,12 @@ def _split_repo(repo: str) -> tuple:
     return owner, name
 
 
-def _query(t: Transport, query: str, variables: dict, what: str) -> dict:
+def _query(t: Transport, query: str, variables: dict, what: str,
+           absent_ok: frozenset = frozenset()) -> dict:
     """One GraphQL read. A scope error propagates (main maps it); any other failure, or a
-    response with errors or without data, is an incomplete read."""
+    response with errors or without data, is an incomplete read. absent_ok: see GhTransport."""
     try:
-        response = t.graphql(query, variables)
+        response = t.graphql(query, variables, absent_ok=absent_ok)
     except GhError as err:
         if map_gh_error(err) is not None:
             raise
@@ -658,7 +614,7 @@ def read_board(t: Transport, project_url: str, cfg: Config) -> Board:
     for candidate in ("user", "organization"):
         try:
             data = _query(t, _owner_query(FIELDS_QUERY, candidate), dict(base, **names),
-                          "project fields")
+                          "project fields", FIELDS_ABSENT_OK[candidate])
             project = _dig(data, (candidate, "projectV2"), "project fields")
         except Stop as stop:
             if candidate == "organization":
@@ -705,7 +661,7 @@ def read_item(t: Transport, item_id: str, cfg: Config) -> Facts:
     """A fresh, complete read of one item; any failure raises Stop("incomplete-read")."""
     what = "item %s" % item_id
     data = _query(t, ITEM_QUERY, {"item": item_id, "status": cfg.status_field,
-                                   "order": cfg.order_field}, what)
+                                   "order": cfg.order_field}, what, ITEM_ABSENT_OK)
     node = _dig(data, ("node",), what)
     if node.get("type") != "ISSUE":
         raise Stop("incomplete-read", "%s: not an issue item (%s)" % (what, node.get("type")))
