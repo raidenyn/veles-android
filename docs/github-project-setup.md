@@ -85,7 +85,13 @@ the next successful `sync` derives the Status again.
   Only the workflow uses it; the agents use the user's own `gh` login, which needs the `project` scope
   (`gh auth refresh -s project`).
 
-<!-- minimum permissions: filled by verification (Task 12) -->
+**Verified permissions.** The agent commands (`check`, `sync`, `next`, `start` and `followup`) were verified
+against a real user-owned project with a classic token that has the `project` and `repo` scopes. The token
+behind `PROJECT_TOKEN` must belong to an account that can see both the project and the repository: a
+private user-owned project is invisible to any other account, and a classic token with only `public_repo`
+cannot read a private repository. A token that cannot see the project makes the workflow fail visibly with
+`stop: incomplete-read: cannot read project …`. A working `PROJECT_TOKEN` for the workflow and fine-grained
+tokens are **not verified** yet.
 
 **Security.** Anyone with write access to the repository can run a workflow on a branch that reads
 `PROJECT_TOKEN`; that is GitHub's model for repository secrets. The project-flow workflow itself checks out only
