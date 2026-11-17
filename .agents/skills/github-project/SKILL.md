@@ -16,7 +16,8 @@ tracked issue, in its own repository. Every command runs from the repository roo
 the task*.
 
 ```bash
-THIS_REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)   # --repo: where PROJECT_URL is read and follow-ups are created
+THIS_REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner) && [ -n "$THIS_REPO" ] \
+  || echo "THIS_REPO unresolved: stop"   # --repo: where PROJECT_URL is read and follow-ups are created
 PF="python3 -I scripts/project_flow.py"
 ```
 
@@ -162,8 +163,8 @@ Add `--dry-run` to any writing command to print its writes without making them.
     ```bash
     gh issue view <n> --repo <owner>/<repo> --json state
     gh issue close <n> --repo <owner>/<repo> --reason completed --comment "Completed by <PR URL>"
-    $PF sync --project "<project URL>" --repo "$THIS_REPO" | tee <sync.out>
-    grep '^ready: ' <sync.out>
+    $PF sync --project "<project URL>" --repo "$THIS_REPO" > <sync.out>; rc=$?; cat <sync.out>; echo "sync exit $rc"
+    [ "$rc" -eq 0 ] && grep '^ready: ' <sync.out>   # any other exit: reconciliation incomplete, no report
     gh api --paginate repos/<owner>/<repo>/issues/<n>/dependencies/blocking \
       --jq '.[] | "\(.repository_url | sub("^https://api.github.com/repos/"; ""))#\(.number)"'
     ```

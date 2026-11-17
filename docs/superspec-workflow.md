@@ -560,8 +560,11 @@ For tracked work, after the implementation pull request is merged:
    set to the `Repository` line of `tracker.md`, and report that the automation missed it. If closing fails,
    report it; the item is not Done until the issue is closed.
 2. **Done last:** run `project_flow.py sync` once and confirm the item is Done. If it still is not, report it.
-3. **Report** the items the merge made Ready and every follow-up issue the change filed. The items made Ready
-   are those that are both in the `ready:` lines of that `sync` (*Statuses are derived*) and in the merged
+   Read `sync`'s own exit status, never a pipeline's: only an exit 0 is a complete reconciliation. Any other
+   exit (for example `stop: write-failed`) means the reconciliation is incomplete: report the stop and make no
+   Ready report from its output.
+3. **Report**, only after a successful (exit 0) `sync`, the items the merge made Ready and every follow-up
+   issue the change filed. The items made Ready are those that are both in the `ready:` lines of that `sync` (*Statuses are derived*) and in the merged
    issue's blocking list (`gh api repos/<owner>/<repo>/issues/<n>/dependencies/blocking`, every page). Never
    rely on this invocation's writes: the repository's workflow may have written Ready first.
 
