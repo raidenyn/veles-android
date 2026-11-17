@@ -139,7 +139,8 @@ Add `--dry-run` to any writing command to print its writes without making them.
     `.github/project-flow.json`:
 
     ```bash
-    $PF sync --project "<project URL>" --repo "$THIS_REPO"
+    $PF sync --project "<project URL>" --repo "$THIS_REPO" > <sync.out>; rc=$?; cat <sync.out>; echo "sync exit $rc"
+    [ "$rc" -eq 0 ] && grep -qx 'sync: complete' <sync.out>   # else (sync: partial or a stop): confirm nothing
     gh api graphql -f query='
     query($o: String!, $r: String!, $num: Int!, $cursor: String) {
       repository(owner: $o, name: $r) { issue(number: $num) { state
@@ -152,7 +153,9 @@ Add `--dry-run` to any writing command to print its writes without making them.
 
     Take only the node whose `project.url` is the enabled project (the `PROJECT_URL` value). While it is not
     found and `hasNextPage` is true, repeat with `-f cursor=<endCursor>`. A node that is never found, a failed
-    page or an empty Status confirms nothing: report "could not confirm" with the reason.
+    page or an empty Status confirms nothing: report "could not confirm" with the reason. A complete run that
+    reads back another Status: run this step once more (GitHub links the closing keyword asynchronously)
+    before reporting "not In Review", and name that lag in the report.
 
 ## After the merge
 
@@ -164,7 +167,7 @@ Add `--dry-run` to any writing command to print its writes without making them.
     gh issue view <n> --repo <owner>/<repo> --json state
     gh issue close <n> --repo <owner>/<repo> --reason completed --comment "Completed by <PR URL>"
     $PF sync --project "<project URL>" --repo "$THIS_REPO" > <sync.out>; rc=$?; cat <sync.out>; echo "sync exit $rc"
-    [ "$rc" -eq 0 ] && grep '^ready: ' <sync.out>   # any other exit: reconciliation incomplete, no report
+    [ "$rc" -eq 0 ] && grep -qx 'sync: complete' <sync.out> && grep '^ready: ' <sync.out>   # else: incomplete, no report
     gh api --paginate repos/<owner>/<repo>/issues/<n>/dependencies/blocking \
       --jq '.[] | "\(.repository_url | sub("^https://api.github.com/repos/"; ""))#\(.number)"'
     ```

@@ -11,11 +11,15 @@ skill. It works for any project; nothing here names a concrete one. The rules th
 Every Status is derived from facts on GitHub, never set by hand. For an item whose content is an issue, the
 first matching rule wins:
 
-1. the issue is closed → Done;
-2. the issue carries the blocked label → Blocked;
-3. an open pull request that is not a draft closes the issue → In Review;
-4. the issue has an assignee → In Progress;
-5. every native "blocked by" issue is closed as completed, or there is none → Ready; otherwise → Backlog.
+0. the issue is closed → Done;
+1. the issue carries the blocked label → Blocked;
+2. an open, trusted pull request that is not a draft closes the issue → In Review;
+3. the issue has an assignee → In Progress;
+4. every native "blocked by" issue is closed as completed, or there is none → Ready; otherwise → Backlog.
+
+A closing pull request is trusted when its branch is in the issue's repository or its author is an owner,
+member or collaborator. A fork pull request from anyone else moves no Status and gets no milestone; `sync`
+reports it as `ignored untrusted PR <owner>/<repo>#<n>`.
 
 `project_flow.py sync` makes the board match these rules. The workflow runs it on issue and pull request events
 and once a day, and the agents run it at intake and at the closeout. It also copies an issue's milestone onto
@@ -149,6 +153,20 @@ native link, as **warnings**. A clean warning list does not prove the conversion
    ```
 
    or run the workflow by hand (`workflow_dispatch`).
+
+## Items that stay unreadable
+
+`sync` never writes an item it cannot read completely, and `next` and `followup` stop with `incomplete-read`
+while any item is unreadable. `check --project <URL>` lists each one as a fact. Three causes stay until
+someone acts; the reason names the remedy:
+
+- **A `REDACTED` item**: a card from a repository the token cannot see. Remove the card from the project, or
+  grant the token access to that repository.
+- **A blocker closed without a state reason**: GitHub returns no reason for some issues closed before it
+  recorded reasons, so the blocker is neither completed nor abandoned. Reopen the blocker and close it again,
+  so that a reason is recorded.
+- **Inaccessible blockers**: an issue counts more blockers than the token can read. Grant the token access to
+  the blockers' repositories.
 
 ## Rollback
 

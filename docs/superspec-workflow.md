@@ -270,22 +270,29 @@ around.
 The Status of every item whose content is an issue is a function of facts on GitHub, never of its previous
 Status. The first matching rule wins:
 
-1. the issue is closed → Done;
-2. the issue carries the blocked label → Blocked;
-3. an open pull request that is **not a draft** closes the issue → In Review;
-4. the issue has an assignee → In Progress;
-5. every native "blocked by" issue is closed as completed, or there is none → Ready; otherwise → Backlog.
+0. the issue is closed → Done;
+1. the issue carries the blocked label → Blocked;
+2. an open, **trusted** pull request that is **not a draft** closes the issue → In Review;
+3. the issue has an assignee → In Progress;
+4. every native "blocked by" issue is closed as completed, or there is none → Ready; otherwise → Backlog.
 
-A blocker closed as not planned or as a duplicate does not count as closed, and `sync` reports it for every open
-issue, whichever rule decides its Status. Option names come from the role map in `.github/project-flow.json`.
+A closing pull request is trusted when its branch is in the issue's own repository or its author is an owner,
+member or collaborator of the repository (with a deleted head repository, only the author counts). Anyone can
+open a fork pull request whose body closes an issue, so an untrusted one moves no Status and gets no milestone;
+`sync` reports it as `ignored untrusted PR <owner>/<repo>#<n>`. A blocker closed as not planned or as a
+duplicate does not count as closed, and `sync` reports it for every open issue, whichever rule decides its
+Status. Option names come from the role map in `.github/project-flow.json`.
 `sync` makes the board match the derivation; the repository's `project-flow` workflow runs it on issue and pull
 request events and daily, and the agent runs it at intake, after the claim and at the closeout.
 
 `sync` prints its writes (`write: …`, or `would write: …` with `--dry-run`), its reports, one line
 `ready: <owner>/<repo>#<n> order=<value>` for **every** item that is Ready once its writes land — whoever made it
-Ready, sorted by order value then number, `order=-` when the item has none — and last
-`rate-limit: cost=<n> remaining=<n>` (the GraphQL cost of its project read; `-` when unknown). A rejected write
-prints `failed write <ref>: <why>`; `sync` still attempts every other write and then stops with `write-failed`.
+Ready, sorted by order value then number, `order=-` when the item has none — then its summary line, and
+`rate-limit: cost=<n> remaining=<n>` (the GraphQL cost of its project read; `-` when unknown) as the last line
+before any `stop:` line. The summary is `sync: complete` when nothing was unreadable, conflicting, skipped or
+rejected, and otherwise `sync: partial (<n> unreadable, <m> conflicts, <k> skipped)`. A partial run still exits
+0, but its `ready:` lines and the Statuses it leaves are not the whole picture. A rejected write prints
+`failed write <ref>: <why>`; `sync` still attempts every other write and then stops with `write-failed`.
 
 **Convergence.** GitHub Projects has no compare-and-set, so writes converge instead of excluding each other: a
 stale Status written by any writer is undone by the next `sync`, because the facts it derives from are
@@ -315,7 +322,8 @@ error and exit 1 a `gh` error, reported as it stands. The agent reports the reas
 | --- | --- |
 | `missing-order` | report the listed items and ask whether to continue with `next --skip-unordered` or to set their order values first |
 | `not-ready` | describe the state the detail names (Backlog with its open blockers, Blocked, In Review, Done or assigned) and ask; pass `start --force` only after the user explicitly authorizes it |
-| `nothing-ready`, `tie`, `incomplete-read` | report it (a tie names every item that shares the lowest value) and ask the user to name the task |
+| `nothing-ready`, `tie` | report it (a tie names every item that shares the lowest value) and ask the user to name the task |
+| `incomplete-read` | report it and ask the user to name the task. Some causes stay until someone acts, and the detail names the remedy: a `REDACTED` item (a card from a repository the token cannot see) — remove the card or grant the token access; a blocker closed without a state reason (closed before GitHub recorded reasons) — reopen and re-close it so a reason is recorded; inaccessible blockers — grant the token access to their repositories |
 | `not-enabled` | report that the project is not enabled and the enable step the detail names; the work is untracked unless the user enables the project; ask the user to name the task |
 | `variable-unreadable` | report the fix (the token needs the Actions variables read permission); assume no value; ask the user to name the task |
 | `collision` | another login is assigned as well; report it and ask before continuing; unassign nobody |
@@ -415,8 +423,9 @@ merge. `openspec validate --all` tolerates `tracker.md` and `reviews/`.
 The item is In Progress from the claim. Every later Status follows the facts (*Next task*, *Statuses are
 derived*); the agent changes facts, never the Status:
 
-- **In Review** follows when finalize marks the pull request ready for review; finalize confirms it after one
-  `sync` and does not write it (*Closeout*).
+- **In Review** follows when finalize marks the pull request ready for review; finalize confirms it after a
+  complete `sync` (one more when GitHub has not linked the closing keyword yet) and does not write it
+  (*Closeout*).
 - **Done** follows the closed issue; the post-merge check in *Closeout* confirms it.
 - **Finalize outcome `merge-locally`** — the local-merge variant in *Closeout*: after a successful push to the
   default branch the issue is closed with a comment naming the pushed commit and `sync` derives Done.
@@ -443,9 +452,13 @@ For tracked work finalize also:
 - puts a closing keyword for the tracked issue in the PR body (`Closes <owner>/<repo>#<n>`), before marking it
   ready, together with the list of follow-up issues the change filed;
 - records the PR in `tracker.md`, committed and pushed as part of the PR;
-- runs `project_flow.py sync` once and confirms the item is In Review, **without writing that Status**. When
-  the item is derived as something else — for example Blocked because of the label — it reports the derived
-  Status and the reason, writes no Status, and the closeout still starts.
+- runs `project_flow.py sync` once and confirms the item is In Review, **without writing that Status**. Only a
+  run that exits 0 and prints `sync: complete` can confirm it; after `sync: partial` or any other exit it reports
+  that the Status could not be confirmed and why, and confirms nothing. GitHub links a closing keyword to the
+  issue asynchronously after the body edit, so when a complete run does not show In Review it runs `sync` once
+  more before reporting "not In Review", and names that indexing lag in the report. When the item is derived as
+  something else — for example Blocked because of the label — it reports the derived Status and the reason,
+  writes no Status, and the closeout still starts.
 
 The steps that touch the board, the issue or `tracker.md` apply only to tracked work. Then stay in monitoring
 mode as *Monitoring* describes.
@@ -560,13 +573,15 @@ For tracked work, after the implementation pull request is merged:
    set to the `Repository` line of `tracker.md`, and report that the automation missed it. If closing fails,
    report it; the item is not Done until the issue is closed.
 2. **Done last:** run `project_flow.py sync` once and confirm the item is Done. If it still is not, report it.
-   Read `sync`'s own exit status, never a pipeline's: only an exit 0 is a complete reconciliation. Any other
-   exit (for example `stop: write-failed`) means the reconciliation is incomplete: report the stop and make no
-   Ready report from its output.
-3. **Report**, only after a successful (exit 0) `sync`, the items the merge made Ready and every follow-up
-   issue the change filed. The items made Ready are those that are both in the `ready:` lines of that `sync` (*Statuses are derived*) and in the merged
-   issue's blocking list (`gh api repos/<owner>/<repo>/issues/<n>/dependencies/blocking`, every page). Never
-   rely on this invocation's writes: the repository's workflow may have written Ready first.
+   Read `sync`'s own exit status, never a pipeline's: only an exit 0 together with the summary line
+   `sync: complete` is a complete reconciliation. Any other exit (for example `stop: write-failed`) or
+   `sync: partial (...)` means the reconciliation is incomplete: report it (the stop, or the partial summary
+   with its `unreadable`, conflict and `skipped` lines) and make no Ready report from its output.
+3. **Report**, only after a complete `sync` (exit 0 and `sync: complete`), the items the merge made Ready
+   and every follow-up issue the change filed. The items made Ready are those that are both in the `ready:`
+   lines of that `sync` (*Statuses are derived*) and in the merged issue's blocking list
+   (`gh api repos/<owner>/<repo>/issues/<n>/dependencies/blocking`, every page). Never rely on this
+   invocation's writes: the repository's workflow may have written Ready first.
 
 When the pull request was merged before sync, archive and doc review were completed, report it; the user
 decides how to proceed, for example with a follow-up pull request for the sync and archive. The item may
