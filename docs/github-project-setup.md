@@ -22,8 +22,9 @@ member or collaborator. A fork pull request from anyone else moves no Status and
 reports it as `ignored untrusted PR <owner>/<repo>#<n>`.
 
 `project_flow.py sync` makes the board match these rules. The workflow runs it on issue and pull request events
-and once a day, and the agents run it at intake and at the closeout. It also copies an issue's milestone onto
-the pull request that closes it, and reports open milestones that have no open issue left. Draft-issue and
+(in a public repository the latter need an Actions policy, see
+[below](#pull_request_target-in-public-repositories-from-2026-12-02)) and once a day, and the agents run it at
+intake and at the closeout. It also copies an issue's milestone onto the pull request that closes it, and reports open milestones that have no open issue left. Draft-issue and
 pull-request cards are ignored.
 
 ## Fields and Status options
@@ -128,16 +129,36 @@ The variable and the secret can live in an Actions environment instead of at the
 
 Under *Deployment branches and tags*, limit the environment to the default branch: a workflow run on any other
 branch then cannot read the token, which closes the write-access exposure above. Issue, schedule and manual
-runs on the default branch are allowed, and so are `pull_request_target` runs for pull requests into the
-default branch (they run on the base branch); a run for a pull request into another branch, or a manual run on
-another branch, fails at the environment check instead. Do not add required reviewers: every run, on every
-issue and pull request event, would wait until a reviewer approves it. Do not add a wait timer either: it would
-delay every run by the timer's length before the job starts. Each job run is recorded as a deployment of the
+runs on the default branch are allowed. For `pull_request_target`, GitHub evaluates the environment's branch
+rule against the default branch whatever the pull request's base
+([changelog, 2025-11-07](https://github.blog/changelog/2025-11-07-actions-pull_request_target-and-environment-branch-protections-changes/)),
+so pull requests into any base are allowed too. A manual run on another branch is denied, as intended. Do not
+add required reviewers: every run, on every issue and pull request event, would wait until a reviewer approves
+it. Do not add a wait timer either: it would delay every run by the timer's length before the job starts. Each job run is recorded as a deployment of the
 environment, under the repository's *Deployments*.
 
 A project that spans several repositories installs the workflow, the configuration, the variable and the
 secret in each one. Each repository's workflow writes only the items whose issue lives in it (it still reads
 blockers from anywhere), so their item sets do not overlap. The agent's commands cover the whole project.
+
+## pull_request_target in public repositories (from 2026-12-02)
+
+From 2026-12-02 GitHub blocks `pull_request_target` by default in public repositories unless an Actions event
+policy allows it; private and internal repositories are not affected. The project-flow workflow depends on it
+for its pull request events (opened, reopened, ready for review, converted to draft, closed). Before that date,
+the owner of a public repository must allow `pull_request_target` for `.github/workflows/project-flow.yml` in
+the repository's Actions policies (*Settings → Actions → Policies*: an event rule, targeted at this workflow
+file).
+
+Until it is allowed, the pull request events are blocked (failed runs with an annotation). The issue,
+schedule and manual events and the agent's own `sync` keep working, and the daily run reconciles what the
+blocked events missed.
+
+The exact steps for a user-owned repository were **not verified** here; the first real run after the merge
+confirms them. Sources:
+[default block, 2026-11-02](https://github.blog/changelog/2026-11-02-pull_request_target-blocked-by-default-december-2/),
+[workflow execution protections, 2026-06-18](https://github.blog/changelog/2026-06-18-control-who-and-what-triggers-github-actions-workflows/),
+[Controlling workflow execution](https://docs.github.com/actions/how-tos/administer/control-workflow-execution).
 
 ## Conventions
 
