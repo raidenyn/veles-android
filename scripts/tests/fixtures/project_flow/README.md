@@ -19,7 +19,8 @@ values carry `__typename`, which tells a number value from a value of a field of
 
 Added by hand after recording, when the queries started selecting them: each closing pull request's
 `headRepository` (its own repository: a same-repository branch) and `authorAssociation` (`OWNER`, the
-scratch owner opened them).
+scratch owner opened them), and each first page of `blockedBy` its `totalCount` (the number of its nodes:
+every recorded blocker was readable).
 
 Scrubbing: node ids became `PVT_project1`, `PVTI_item<n>`, `PVTSSF_field1`, `PVTF_field1`, `I_issue<n>`
 and `MI_milestone1`; cursors became `cursor<n>`; option ids `opt<n>`; database ids `1001`...; the login and

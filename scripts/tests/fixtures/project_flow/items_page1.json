@@ -48,7 +48,8 @@
                   "pageInfo": {
                     "endCursor": "cursor2",
                     "hasNextPage": false
-                  }
+                  },
+                  "totalCount": 3
                 },
                 "closedByPullRequestsReferences": {
                   "nodes": [
@@ -150,7 +151,8 @@
                   "pageInfo": {
                     "endCursor": null,
                     "hasNextPage": false
-                  }
+                  },
+                  "totalCount": 0
                 },
                 "closedByPullRequestsReferences": {
                   "nodes": [],
@@ -211,7 +213,8 @@
                   "pageInfo": {
                     "endCursor": null,
                     "hasNextPage": false
-                  }
+                  },
+                  "totalCount": 0
                 },
                 "closedByPullRequestsReferences": {
                   "nodes": [],
@@ -272,7 +275,8 @@
                   "pageInfo": {
                     "endCursor": null,
                     "hasNextPage": false
-                  }
+                  },
+                  "totalCount": 0
                 },
                 "closedByPullRequestsReferences": {
                   "nodes": [],
@@ -326,7 +330,8 @@
                   "pageInfo": {
                     "endCursor": null,
                     "hasNextPage": false
-                  }
+                  },
+                  "totalCount": 0
                 },
                 "closedByPullRequestsReferences": {
                   "nodes": [

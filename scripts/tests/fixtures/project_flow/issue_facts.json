@@ -44,7 +44,8 @@
           "pageInfo": {
             "endCursor": "cursor2",
             "hasNextPage": false
-          }
+          },
+          "totalCount": 3
         },
         "closedByPullRequestsReferences": {
           "nodes": [

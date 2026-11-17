@@ -102,11 +102,14 @@ def blocker(number, state="CLOSED", reason="COMPLETED", repo=REPO):
 
 def issue(number, repo=REPO, state="OPEN", state_reason=None, labels=(), assignees=(), prs=(),
           blockers=(), parent=None, sub_issues=(), milestone=None, node_id=None, database_id=None,
-          more=()):
+          more=(), blockers_total=None):
     """An Issue content node (IssueFacts). blockers: blocker() dicts or (number, state, reason)
-    tuples; parent and sub_issues: number or (repo, number); more: connection names whose
-    pageInfo.hasNextPage is true."""
+    tuples; blockers_total: blockedBy.totalCount (default: the number of blockers given; more counts
+    a blocker the token cannot see); parent and sub_issues: number or (repo, number); more:
+    connection names whose pageInfo.hasNextPage is true."""
     blockers = [b if isinstance(b, dict) else blocker(*b) for b in blockers]
+    blocked_by = dict(_conn(blockers, "blockedBy" in more),
+                      totalCount=len(blockers) if blockers_total is None else blockers_total)
     return {
         "__typename": "Issue",
         "id": node_id or "I_issue%d" % number,
@@ -117,7 +120,7 @@ def issue(number, repo=REPO, state="OPEN", state_reason=None, labels=(), assigne
         "labels": _conn([{"name": n} for n in labels], "labels" in more),
         "assignees": _conn([{"login": n} for n in assignees], "assignees" in more),
         "closedByPullRequestsReferences": _conn(prs, "closedByPullRequestsReferences" in more),
-        "blockedBy": _conn(blockers, "blockedBy" in more),
+        "blockedBy": blocked_by,
         "parent": _ref(parent) if parent is not None else None,
         "subIssues": _conn([_ref(r) for r in sub_issues], "subIssues" in more),
     }

@@ -53,7 +53,7 @@ fragment IssueFacts on Issue {
   assignees(first: $first) { %(page)s nodes { login } }
   closedByPullRequestsReferences(first: $first, includeClosedPrs: true) {
     %(page)s nodes { %(pull)s } }
-  blockedBy(first: $first) {
+  blockedBy(first: $first) { totalCount
     %(page)s nodes { number state stateReason(enableDuplicate: true) repository { nameWithOwner } } }
   parent { number repository { nameWithOwner } }
   subIssues(first: $first) { %(page)s nodes { number repository { nameWithOwner } } }
@@ -668,6 +668,12 @@ def _facts(t: Transport, node: dict, what: str, order_is_number: bool) -> Facts:
     assignees = _issue_connection(t, issue, "assignees", what)
     prs = _issue_connection(t, issue, "closedByPullRequestsReferences", what)
     blockers = _issue_connection(t, issue, "blockedBy", what)
+    # GitHub counts a blocker the token cannot see but leaves it out of the nodes; deriving without it
+    # could make a blocked item Ready.
+    total = _field(issue["blockedBy"], "totalCount", int, what + " blockedBy")
+    if total != len(blockers):
+        raise Stop("incomplete-read", "%s: %d of %d blockers readable (inaccessible blockers: grant the "
+                   "token access to their repositories)" % (what, len(blockers), total))
     subs = _issue_connection(t, issue, "subIssues", what)
     return Facts(
         item_id=item_id, content_id=content_id, repo=repo, number=number, state=state,

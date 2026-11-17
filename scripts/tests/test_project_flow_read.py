@@ -1,5 +1,7 @@
 """Tests for project_flow.py complete reads, on recorded fixtures. No network."""
+import contextlib
 import dataclasses
+import io
 import json
 import os
 import sys
@@ -100,6 +102,7 @@ class ReadBoardTest(unittest.TestCase):
     def test_nested_follow_up_pages_are_merged(self):
         main = fixture("issue_facts")["data"]["node"]["content"]
         main["blockedBy"] = fixture("blockers_page1")["data"]["node"]["blockedBy"]
+        main["blockedBy"]["totalCount"] = 3  # the follow-up query reads no total
         node = item(main, item_id="PVTI_item1")
         fake = FakeTransport(board([node]) + [("IssueConnection_blockedBy", fixture("blockers_page2"))])
         result = project_flow.read_board(fake, URL, CFG)
@@ -677,6 +680,59 @@ class ReadDescendantsTest(unittest.TestCase):
         self.assertEqual(fake.calls[1]["variables"]["after"], "c1")
         self.assertEqual({(c["variables"]["owner"], c["variables"]["name"]) for c in fake.calls[2:]},
                          {("owner", "repo"), ("other", "repo")})
+
+
+class InaccessibleBlockerTest(unittest.TestCase):
+    """GitHub counts a blocker the token cannot see in blockedBy.totalCount but leaves it out of the
+    nodes: the item could derive Ready while blocked, so it is an incomplete read."""
+
+    def test_query_selects_the_total(self):
+        self.assertIn("blockedBy(first: $first) { totalCount", project_flow.ITEMS_QUERY)
+        self.assertIn("blockedBy(first: $first) { totalCount", project_flow.ITEM_QUERY)
+
+    def test_hidden_blocker_makes_the_item_unreadable(self):
+        hidden = issue(1, blockers=[(2, "CLOSED", "COMPLETED")], blockers_total=2)
+        result = project_flow.read_board(FakeTransport(board([item(hidden), item(issue(3))])), URL, CFG)
+        self.assertEqual(result.unreadable, ["PVTI_item1"])
+        self.assertIn("inaccessible blockers", result.reasons["PVTI_item1"])
+        self.assertEqual([f.number for f in result.items], [3])
+        with self.assertRaises(Stop) as caught:
+            read_one(item(hidden))
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_total_after_every_page(self):
+        # The total is compared with the nodes of every page, not of the first one.
+        paged = issue(1, blockers=[(2, "CLOSED", "COMPLETED")], blockers_total=2, more=("blockedBy",))
+        page2 = {"data": {"node": {"blockedBy": {"nodes": [blocker(4)],
+                                                 "pageInfo": {"hasNextPage": False, "endCursor": "c"}}}}}
+        facts = read_one(item(paged), extra=[("IssueConnection_blockedBy", page2)])
+        self.assertEqual([b.number for b in facts.blockers], [2, 4])
+
+    def test_missing_or_mistyped_total_is_incomplete(self):
+        for value in (project_flow_fake._SAME, None, "1", True):
+            with self.subTest(value=value):
+                node = item(issue(1, blockers=[(2, "CLOSED", "COMPLETED")]))
+                if value is project_flow_fake._SAME:
+                    del node["content"]["blockedBy"]["totalCount"]
+                else:
+                    node["content"]["blockedBy"]["totalCount"] = value
+                with self.assertRaises(Stop) as caught:
+                    read_one(node)
+                self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_next_stops_instead_of_selecting_the_item(self):
+        hidden = item(issue(1, blockers=[(2, "CLOSED", "COMPLETED")], blockers_total=2),
+                      status="Ready", order=1)
+        fake = FakeTransport([("repos/owner/repo/actions/variables/PROJECT_URL",
+                               {"name": "PROJECT_URL", "value": URL})]
+                             + board([hidden, item(issue(3), status="Ready", order=2)])
+                             + [("repos/owner/repo/milestones?state=open", [])])
+        with self.assertRaises(Stop) as caught:
+            with contextlib.redirect_stdout(io.StringIO()):
+                project_flow.next_task(fake, CFG, URL, "owner/repo", skip_unordered=False, dry_run=False)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+        self.assertIn("PVTI_item1", caught.exception.detail)
+        self.assertEqual(fake.mutations, [])
 
 
 if __name__ == "__main__":

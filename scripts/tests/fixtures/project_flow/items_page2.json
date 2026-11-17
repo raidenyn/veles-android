@@ -19,7 +19,8 @@
                   "pageInfo": {
                     "endCursor": null,
                     "hasNextPage": false
-                  }
+                  },
+                  "totalCount": 0
                 },
                 "closedByPullRequestsReferences": {
                   "nodes": [],
@@ -92,7 +93,8 @@
                   "pageInfo": {
                     "endCursor": null,
                     "hasNextPage": false
-                  }
+                  },
+                  "totalCount": 0
                 },
                 "closedByPullRequestsReferences": {
                   "nodes": [],
