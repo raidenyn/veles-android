@@ -119,9 +119,11 @@ class GateTest(unittest.TestCase):
 
     def test_gated_commands_refuse_when_not_enabled(self):
         """Every gated command refuses an unset or a different PROJECT_URL before any other call.
-        Tasks 7 and 8 add next, start and followup to GATED_COMMANDS."""
-        self.assertIn("sync", project_flow.GATED_COMMANDS)
+        Task 8 adds followup to GATED_COMMANDS."""
+        for command in ("sync", "next", "start"):
+            self.assertIn(command, project_flow.GATED_COMMANDS)
         self.assertNotIn("check", project_flow.GATED_COMMANDS)
+        positional = {"start": [REPO + "#1"]}
         cases = (("agent", [(VARIABLE, NOT_FOUND)], {}),
                  ("agent", [variable(OTHER)], {}),
                  ("action", [], {}),
@@ -130,8 +132,8 @@ class GateTest(unittest.TestCase):
             for mode, responses, env in cases:
                 with self.subTest(command=command, mode=mode, env=env, responses=responses):
                     fake = FakeTransport(list(responses))
-                    code, out, _ = run_main([command, "--project", URL, "--repo", REPO,
-                                             "--mode", mode, "--config", DEFAULTS], fake, env)
+                    code, out, _ = run_main([command] + positional.get(command, []) + [
+                        "--project", URL, "--repo", REPO, "--mode", mode, "--config", DEFAULTS], fake, env)
                     self.assertEqual(code, 3)
                     self.assertIn("stop: not-enabled", out)
                     self.assertEqual(len(fake.calls), len(responses))

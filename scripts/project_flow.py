@@ -800,20 +800,36 @@ class Writer:
         if fresh.inputs() != f.inputs():
             self.out.append("skipped %s: inputs changed" % ref)
             return False
-        name = self.cfg.roles[role]
-        if fresh.status == name:
+        if fresh.status == self.cfg.roles[role]:
             return False
-        line = "%s Status: %s -> %s" % (ref, fresh.status or "(none)", name)
-        if not self.dry_run:
-            try:
-                _mutate(self.t, SET_FIELD_MUTATION, {
-                    "project": self.board.project_id, "item": f.item_id,
-                    "field": self.board.status_field_id, "option": self.board.options[name]}, ref)
-            except Stop as stop:
-                self.out.append("skipped %s: write failed: %s" % (ref, stop.detail))
-                return False
-        self._emit(line)
+        try:
+            self.write_role(fresh, role)
+        except Stop as stop:
+            if stop.reason != "incomplete-read":
+                raise
+            self.out.append("skipped %s: write failed: %s" % (ref, stop.detail))
+            return False
         return True
+
+    def write_role(self, f: Facts, role: str) -> None:
+        """Write the role's Status option without the fresh-read guard (start's own claim); a failed
+        write raises Stop. f.status is the Status the write replaces."""
+        ref = "%s#%d" % (f.repo, f.number)
+        name = self.cfg.roles[role]
+        if not self.dry_run:
+            _mutate(self.t, SET_FIELD_MUTATION, {
+                "project": self.board.project_id, "item": f.item_id,
+                "field": self.board.status_field_id, "option": self.board.options[name]}, ref)
+        self._emit("%s Status: %s -> %s" % (ref, f.status or "(none)", name))
+
+    def add_assignee(self, repo: str, number: int, login: str) -> None:
+        """Add `login` to the issue's assignees with the add-assignees operation, which never
+        replaces the existing ones; a failed write raises Stop."""
+        ref = "%s#%d" % (repo, number)
+        if not self.dry_run:
+            _rest(self.t, "POST", "repos/%s/issues/%d/assignees" % (repo, number), ref,
+                  {"assignees": [login]})
+        self._emit("%s assignees: +%s" % (ref, login))
 
     def set_order(self, item_id: str, value: float) -> None:
         if self.board.order_field_id is None:
@@ -878,19 +894,22 @@ def sync(t: Transport, cfg: Config, project_url: str, *, mode: str, repo: Option
 
 
 def _reconcile(t: Transport, cfg: Config, project_url: str, *, mode: str, repo: Optional[str],
-               dry_run: bool, only: Optional[tuple] = None) -> SyncResult:
-    """Ungated; only for callers that already ran require_enabled. The complete reconciliation: every in-scope item's Status, the milestone of every open or
-    merged in-scope PR closing a board issue, and the report of empty open milestones.
+               dry_run: bool, only: Optional[tuple] = None,
+               board: Optional[Board] = None) -> SyncResult:
+    """Ungated; only for callers that already ran require_enabled. The complete reconciliation:
+    every in-scope item's Status, the milestone of every open or merged in-scope PR closing a board
+    issue, and the report of empty open milestones.
     mode "action" writes only items and PRs of `repo`; "agent" covers the whole project.
     `only` (repo, number) limits the status and milestone pass to one issue and skips the
-    milestone report."""
+    milestone report. `board`: a board the caller just read and preflighted (next), else read here."""
     if mode not in ("action", "agent"):
         raise Stop("config-invalid", "unknown mode %r" % mode)
     if mode == "action":
         owner, _, name = (repo or "").partition("/")
         if not owner or not name or "/" in name:
             raise Stop("config-invalid", "action mode needs --repo OWNER/NAME")
-    board = read_board(t, project_url, cfg)
+    if board is None:
+        board = read_board(t, project_url, cfg)
     preflight(board, cfg, needs_order=False)
 
     def in_scope(r: str) -> bool:
@@ -953,6 +972,123 @@ def _reconcile(t: Transport, cfg: Config, project_url: str, *, mode: str, repo: 
     writes = [line for line in out if line.startswith(_WRITE_PREFIXES)]
     reports = [line for line in out if not line.startswith(_WRITE_PREFIXES)] + reports
     return SyncResult(writes, reports, list(board.unreadable))
+
+
+def _order_text(value: float) -> str:
+    return str(int(value)) if float(value).is_integer() else repr(float(value))
+
+
+def _print_result(result: SyncResult) -> None:
+    for line in result.writes + result.reports:
+        print(line)
+
+
+def next_task(t: Transport, cfg: Config, project_url: str, repo: str, *, skip_unordered: bool,
+              dry_run: bool, mode: str = "agent", env: Optional[Mapping[str, str]] = None) -> Facts:
+    """The gated public entry point of `next`: sync, then the Ready, unassigned, open-issue item
+    with the lowest order value (compared after round(x, 3)); prints `next: <repo>#<n> order=<v>`.
+    Stops (never chooses) on a partial board, nothing Ready, an unordered candidate (unless
+    skip_unordered) or a tie. Views and board positions are never read."""
+    require_enabled(t, project_url, repo, mode=mode, env={} if env is None else env)
+    board = read_board(t, project_url, cfg)
+    preflight(board, cfg, needs_order=True)
+    result = _reconcile(t, cfg, project_url, mode=mode, repo=repo, dry_run=dry_run, board=board)
+    _print_result(result)
+    unreadable = list(dict.fromkeys(board.unreadable + result.unreadable))
+    if unreadable:
+        raise Stop("incomplete-read", "unreadable items, nothing selected: " + ", ".join(
+            "%s (%s)" % (i, board.reasons.get(i, "")) for i in unreadable))
+    # Derived from the facts, so a stale Ready on an assigned item never counts and a dry run
+    # selects what the reconciliation would leave Ready.
+    candidates = [f for f in board.items
+                  if f.state == "OPEN" and not f.assignees and derive(f, cfg)[0] == "ready"]
+    if not candidates:
+        raise Stop("nothing-ready", "no Ready, unassigned open issue on the project")
+    unordered = ["%s#%d" % (f.repo, f.number) for f in candidates if f.order is None]
+    if unordered and not skip_unordered:
+        raise Stop("missing-order", "Ready, unassigned items without a %r value: %s"
+                   % (cfg.order_field, ", ".join(unordered)))
+    for ref in unordered:
+        print("skipped %s: no %r value" % (ref, cfg.order_field))
+    ordered = [f for f in candidates if f.order is not None]
+    if not ordered:
+        raise Stop("nothing-ready", "no Ready, unassigned item has a %r value" % cfg.order_field)
+    lowest = min(round(f.order, 3) for f in ordered)
+    chosen = [f for f in ordered if round(f.order, 3) == lowest]
+    if len(chosen) > 1:
+        raise Stop("tie", "%s share the lowest %r value %s" % (
+            " and ".join("%s#%d" % (f.repo, f.number) for f in chosen), cfg.order_field,
+            _order_text(lowest)))
+    f = chosen[0]
+    print("next: %s#%d order=%s" % (f.repo, f.number, _order_text(f.order)))
+    return f
+
+
+def _authenticated_login(t: Transport) -> str:
+    user = _rest(t, "GET", "user", "authenticated user")
+    if not isinstance(user, dict) or not isinstance(user.get("login"), str) or not user["login"]:
+        raise Stop("incomplete-read", "authenticated user: no login in the response")
+    return user["login"]
+
+
+def _not_ready(f: Facts, cfg: Config, role: str, lines: list) -> str:
+    ref = "%s#%d" % (f.repo, f.number)
+    if role == "backlog":
+        open_blockers = ["%s#%d" % (b.repo, b.number) for b in f.blockers if b.state == "OPEN"]
+        parts = []
+        if open_blockers:
+            parts.append("open blockers " + ", ".join(open_blockers))
+        parts.extend(lines)  # blockers closed as not planned or duplicate
+        return "%s is %s: %s" % (ref, cfg.roles[role], "; ".join(parts) or "blocked")
+    if role == "in_progress":
+        return "%s is assigned to %s" % (ref, ", ".join(sorted(f.assignees)))
+    return "%s is %s" % (ref, cfg.roles[role])
+
+
+def start(t: Transport, cfg: Config, project_url: str, repo: str, issue: tuple, *, force: bool,
+          dry_run: bool, mode: str = "agent", env: Optional[Mapping[str, str]] = None) -> None:
+    """The gated public entry point of `start`: claim the issue by assignment. Derive its status
+    afresh and refuse anything not Ready unless `force`; add the authenticated user as an assignee
+    (never replacing), set In Progress, re-read the assignees (any other login: collision), then
+    reconcile that item. A dry run lists the two writes and stops there."""
+    require_enabled(t, project_url, repo, mode=mode, env={} if env is None else env)
+    issue_repo, number = issue
+    ref = "%s#%d" % (issue_repo, number)
+    board = read_board(t, project_url, cfg)
+    preflight(board, cfg, needs_order=False)
+    found = [f for f in board.items if (f.repo.lower(), f.number) == (issue_repo.lower(), number)]
+    if not found:
+        if board.unreadable:
+            raise Stop("incomplete-read", "%s not found among the readable items; unreadable: %s"
+                       % (ref, ", ".join(board.unreadable)))
+        raise Stop("not-ready", "%s is not an issue on the project" % ref)
+    current = read_item(t, found[0].item_id, cfg)
+    role, lines = derive(current, cfg)
+    if role != "ready":
+        if not force:
+            raise Stop("not-ready", _not_ready(current, cfg, role, lines))
+        print("forced: " + _not_ready(current, cfg, role, lines))
+    login = _authenticated_login(t)
+    out = []
+    writer = Writer(t, board, cfg, dry_run, out)
+    try:
+        writer.add_assignee(current.repo, current.number, login)
+        writer.write_role(current, "in_progress")
+    finally:
+        for line in out:
+            print(line)
+    if dry_run:
+        return
+    after = read_item(t, current.item_id, cfg)
+    others = sorted(a for a in after.assignees if a.lower() != login.lower())
+    if others:
+        raise Stop("collision", "%s is also assigned to %s; ask before continuing"
+                   % (ref, ", ".join(others)))
+    if login.lower() not in {a.lower() for a in after.assignees}:
+        raise Stop("collision", "%s: the assignment of %s did not take effect" % (ref, login))
+    _print_result(_reconcile(t, cfg, project_url, mode=mode, repo=repo, dry_run=False,
+                             only=(current.repo, current.number)))
+    print("started: %s" % ref)
 
 
 VARIABLE_FIX = "needs the Actions variables read permission"
@@ -1101,7 +1237,39 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--mode", choices=("action", "agent"), default="agent")
         p.add_argument("--config", default=DEFAULT_CONFIG, metavar="PATH")
         p.add_argument("--dry-run", action="store_true")
+        if name == "next":
+            p.add_argument("--skip-unordered", action="store_true",
+                           help="select past Ready items without an order value (after the user agrees)")
+        if name == "start":
+            p.add_argument("issue", type=_issue_arg, metavar="OWNER/REPO#N")
+            p.add_argument("--force", action="store_true",
+                           help="claim an item that is not Ready (only after the user authorizes it)")
     return parser
+
+
+_ISSUE_ARG = re.compile(r"(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?#?(\d+)")
+
+
+def _issue_arg(text: str) -> tuple:
+    """`owner/repo#n`, or `#n` / `n` for an issue of --repo (repo None until resolved)."""
+    match = _ISSUE_ARG.fullmatch(text.strip())
+    if not match:
+        raise argparse.ArgumentTypeError("expected OWNER/REPO#N or #N, got %r" % text)
+    return match.group(1), int(match.group(2))
+
+
+def _next(args, transport: Transport, env: Mapping[str, str]) -> int:
+    next_task(transport, load_config(args.config), args.project, args.repo,
+              skip_unordered=args.skip_unordered, dry_run=args.dry_run, mode=args.mode, env=env)
+    return 0
+
+
+def _start(args, transport: Transport, env: Mapping[str, str]) -> int:
+    issue_repo, number = args.issue
+    start(transport, load_config(args.config), args.project, args.repo,
+          (issue_repo or args.repo or "", number), force=args.force, dry_run=args.dry_run,
+          mode=args.mode, env=env)
+    return 0
 
 
 def _check(args, transport: Transport) -> int:
@@ -1126,9 +1294,9 @@ def _check(args, transport: Transport) -> int:
 
 # The commands that act on a project only while PROJECT_URL names it. Each one's public entry point
 # calls require_enabled itself before any other call; the CLI table test runs every name here.
-# Tasks 7 and 8 add next, start and followup.
-GATED_COMMANDS = ("sync",)
-_COMMANDS = {"sync": _sync}
+# Task 8 adds followup.
+GATED_COMMANDS = ("sync", "next", "start")
+_COMMANDS = {"sync": _sync, "next": _next, "start": _start}
 
 
 def main(argv: list, transport: Optional[Transport] = None,

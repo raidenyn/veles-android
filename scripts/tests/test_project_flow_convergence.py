@@ -2,8 +2,10 @@
 
 GitHub Projects has no compare-and-set, so a stale write must be skipped by the Writer's fresh
 read or undone by the next sync. Each test changes the facts between a read and a write with an
-on_call hook. The cases that need next, start or followup live with those commands. No network,
-no clock."""
+on_call hook; a claim racing a sync runs `start` on its own fake from inside the sync's hook, so
+the order the writes land in is the order of the calls. No network, no clock."""
+import contextlib
+import io
 import os
 import sys
 import unittest
@@ -111,6 +113,155 @@ class ConvergenceTest(unittest.TestCase):
         self.assertEqual(fake.mutations, [])
         self.assertEqual(len(result.writes), 2)
         self.assertTrue(all(line.startswith("would write: ") for line in result.writes), result.writes)
+
+
+VARIABLE = "repos/owner/repo/actions/variables/PROJECT_URL"
+ENABLED = (VARIABLE, {"name": "PROJECT_URL", "value": URL})
+ASSIGNED = ("/assignees", {"number": 1})
+
+
+def user(login):
+    return (lambda c: c["kind"] == "rest" and c["path"] == "user", {"login": login})
+
+
+def quiet(fn, *args, **kwargs):
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        result = fn(*args, **kwargs)
+    return result, out.getvalue()
+
+
+def start(fake, dry_run=False):
+    return quiet(project_flow.start, fake, CFG, URL, "owner/repo", ("owner/repo", 1), force=False,
+                 dry_run=dry_run)
+
+
+def claim_responses(before, after, login="me"):
+    """A complete start on item 1: the board and fresh read show `before`, the re-read and the
+    final reconcile show `after`."""
+    return ([ENABLED] + board([before]) + [fresh(before), user(login), ASSIGNED,
+                                           ("mutation", status_written())]
+            + [fresh(after)] + board([after]))
+
+
+def log_mutations(fake, name, log):
+    def hook(call):
+        if call in fake.mutations and call is fake.mutations[-1]:
+            log.append((name, "status " + call["variables"]["option"] if call["kind"] == "graphql"
+                        else "assign " + call["body"]["assignees"][0]))
+    fake.on_call(hook)
+
+
+def before_first_mutation(fake, action):
+    """Run action() once, when `fake` sends its first mutation, before it lands."""
+    done = []
+
+    def hook(call):
+        if not done and call in fake.mutations:
+            done.append(True)
+            action()
+    fake.on_call(hook)
+
+
+class ClaimConvergenceTest(unittest.TestCase):
+    def test_stale_ready_after_claim_converges(self):
+        # Sync A reads item 1 unassigned (its blocker just completed) and re-reads it unchanged;
+        # start claims it before A's Ready write lands; A's write lands last.
+        unblocked = item(issue(1, blockers=[(5, "CLOSED", "COMPLETED")]), status="Backlog", order=1)
+        claimed = item(issue(1, blockers=[(5, "CLOSED", "COMPLETED")], assignees=["me"]),
+                       status="In Progress", order=1)
+        log = []
+        claim = FakeTransport(claim_responses(unblocked, claimed))
+        sync_a = FakeTransport(board([unblocked]) + [fresh(unblocked), ("mutation", status_written()),
+                                                     MILESTONES])
+        before_first_mutation(sync_a, lambda: start(claim))
+        log_mutations(claim, "start", log)
+        log_mutations(sync_a, "sync A", log)
+        run_sync(sync_a)
+        self.assertEqual(log, [("start", "assign me"), ("start", "status opt-In Progress"),
+                               ("sync A", "status opt-Ready")])
+
+        # The board now says Ready on an assigned item. next skips it (dry run lists the repair) ...
+        stale = item(issue(1, blockers=[(5, "CLOSED", "COMPLETED")], assignees=["me"]),
+                     status="Ready", order=1)
+        other = item(issue(2), status="Ready", order=2)
+        nxt = FakeTransport([ENABLED] + board([stale, other]) + [fresh(stale), MILESTONES])
+        chosen, out = quiet(project_flow.next_task, nxt, CFG, URL, "owner/repo", skip_unordered=False,
+                            dry_run=True)
+        self.assertEqual(chosen.number, 2)
+        self.assertIn("would write: owner/repo#1 Status: Ready -> In Progress", out)
+        self.assertEqual(nxt.mutations, [])
+        # ... and the next sync writes In Progress.
+        repair = FakeTransport(board([stale, other]) + [fresh(stale), ("mutation", status_written()),
+                                                        MILESTONES])
+        run_sync(repair)
+        self.assertEqual(options(repair), ["opt-In Progress"])
+
+    def test_backlog_demotion_racing_claim(self):
+        # Start claims a Ready item; a sync that saw a newly added open blocker demotes it to
+        # Backlog. Assignment outranks blockers, so the next sync restores In Progress.
+        free = item(issue(1), status="Ready", order=1)
+        claimed = item(issue(1, assignees=["me"]), status="In Progress", order=1)
+        gated = item(issue(1, blockers=[(7, "OPEN", None)]), status="Ready", order=1)
+        log = []
+        claim = FakeTransport(claim_responses(free, claimed))
+        sync_b = FakeTransport(board([gated]) + [fresh(gated), ("mutation", status_written()), MILESTONES])
+        before_first_mutation(sync_b, lambda: start(claim))
+        log_mutations(claim, "start", log)
+        log_mutations(sync_b, "sync B", log)
+        run_sync(sync_b)
+        self.assertEqual(log[-1], ("sync B", "status opt-Backlog"))
+        demoted = item(issue(1, blockers=[(7, "OPEN", None)], assignees=["me"]), status="Backlog", order=1)
+        repair = FakeTransport(board([demoted]) + [fresh(demoted), ("mutation", status_written()),
+                                                   MILESTONES])
+        run_sync(repair)
+        self.assertEqual(options(repair), ["opt-In Progress"])
+
+        # When the claim lands before the demoting sync's fresh read, that write is skipped.
+        racing = FakeTransport(board([gated]) + [MILESTONES])
+        change_at_fresh_read(racing, item(issue(1, blockers=[(7, "OPEN", None)], assignees=["me"]),
+                                          status="In Progress", order=1))
+        result = run_sync(racing)
+        self.assertEqual(racing.mutations, [])
+        self.assertTrue(any("inputs changed" in line for line in result.reports), result.reports)
+
+    def test_two_accounts_claim(self):
+        # Account "other" claims between my assignment and my re-read: the other claim completes
+        # with only itself visible, my re-read sees both and stops. At most one proceeds.
+        free = item(issue(1), status="Ready", order=1)
+        theirs = FakeTransport(claim_responses(free, item(issue(1, assignees=["other"]),
+                                                          status="In Progress", order=1), login="other"))
+        mine = FakeTransport([ENABLED] + board([free]) + [
+            fresh(free), user("me"), ASSIGNED, ("mutation", status_written()),
+            fresh(item(issue(1, assignees=["me", "other"]), status="In Progress", order=1))])
+        before_first_mutation(mine, lambda: start(theirs))
+        with self.assertRaises(project_flow.Stop) as ctx:
+            start(mine)
+        self.assertEqual(ctx.exception.reason, "collision")
+        self.assertIn("other", ctx.exception.detail)
+        self.assertEqual(theirs.responses, [])  # the other claim ran to the end
+        self.assertEqual(mine.responses, [])    # no reconcile after the collision
+
+    def test_next_dry_run_no_mutation(self):
+        nodes = [item(issue(1), status="Backlog", order=4),
+                 item(issue(2, state="CLOSED", state_reason="COMPLETED"), status="Ready", order=1)]
+        fake = FakeTransport([ENABLED] + board(nodes) + [fresh(nodes[0]), fresh(nodes[1]), MILESTONES])
+        chosen, out = quiet(project_flow.next_task, fake, CFG, URL, "owner/repo", skip_unordered=False,
+                            dry_run=True)
+        self.assertEqual(fake.mutations, [])
+        self.assertEqual(chosen.number, 1)
+        self.assertIn("would write: owner/repo#1 Status: Backlog -> Ready", out)
+        self.assertIn("would write: owner/repo#2 Status: Ready -> Done", out)
+        self.assertNotIn("\nwrite: ", "\n" + out)
+
+    def test_start_dry_run_no_mutation(self):
+        node = item(issue(1), status="Ready", order=1)
+        fake = FakeTransport([ENABLED] + board([node]) + [fresh(node), user("me")])
+        _, out = start(fake, dry_run=True)
+        self.assertEqual(fake.mutations, [])
+        self.assertIn("would write: owner/repo#1 assignees: +me", out)
+        self.assertIn("would write: owner/repo#1 Status: Ready -> In Progress", out)
+        self.assertNotIn("\nwrite: ", "\n" + out)
+        self.assertEqual(fake.responses, [])
 
 
 if __name__ == "__main__":
