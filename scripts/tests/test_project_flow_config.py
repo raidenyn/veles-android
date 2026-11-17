@@ -149,7 +149,7 @@ class ConfigTest(unittest.TestCase):
         self.assertIn("flag=true", args)
         self.assertEqual(args[args.index("s=x") - 1], "-f")
         self.assertEqual(args[args.index("n=3") - 1], "-F")
-        self.assertFalse(any(a.startswith("after=") for a in args))
+        self.assertEqual(args[args.index("after=null") - 1], "-F")
 
     def test_unimplemented_subcommand_exits_usage(self):
         err = io.StringIO()

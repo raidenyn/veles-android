@@ -146,10 +146,8 @@ class GhTransport:
     def graphql(self, query: str, variables: Optional[dict] = None) -> dict:
         args = ["api", "graphql", "-f", "query=" + query]
         for name, value in (variables or {}).items():
-            if value is None:
-                continue  # an omitted variable takes the query's default
-            if isinstance(value, (int, bool)):
-                args += ["-F", "%s=%s" % (name, json.dumps(value))]
+            if value is None or isinstance(value, (int, bool)):
+                args += ["-F", "%s=%s" % (name, json.dumps(value))]  # None -> null
             else:
                 args += ["-f", "%s=%s" % (name, value)]
         return self._decode(self._run(args))
