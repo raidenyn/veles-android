@@ -30,4 +30,4 @@
 
 ## Next step
 
-Run /openspec-verify-change. Real-environment evidence: `verification-notes.md` (63 scenarios on a scratch repo and project: 26 through the real Action, 37 through agent commands, 0 failed, 7 not verified). Not run in the local checks (reported, never as passes): `protocolCheck` (no JDK / Android SDK on this machine) and the full supply-chain verifier (Node pin 26.8.1 vs 26.13.1) — CI runs them.
+Run /openspec-verify-change. Real-environment evidence: `verification-notes.md` (63 scenarios on a scratch repo and project: 26 through the real Action, 37 through agent commands, 0 failed, 7 not verified). Not run in the local checks (reported, never as passes): `protocolCheck` (no JDK on this machine: `javac` is absent from both installed JVMs, only a JRE; the Android SDK itself is present) and the full supply-chain verifier (Node pin 26.8.1 vs 26.13.1) — CI runs them.
