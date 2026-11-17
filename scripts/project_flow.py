@@ -942,7 +942,7 @@ class Writer:
         self.failed = {}  # item id -> why its guarded fresh read failed
         self.write_failures = []  # (issue or PR ref, why) of every rejected write
         self.written = {}  # item id -> the Status option written (on a dry run: to be written)
-        self.skipped = 0   # writes skipped because the facts changed or a re-read failed
+        self.skipped = 0   # writes skipped: the facts changed, a re-read failed, no such milestone
 
     def _record_failure(self, ref: str, stop: Stop) -> None:
         why = stop.detail[len(ref) + 2:] if stop.detail.startswith(ref + ": ") else stop.detail
@@ -1068,6 +1068,7 @@ class Writer:
                     title: num for num, title, _ in _milestones(self.t, repo, "all")}
             milestone_number = self._milestone_numbers[repo].get(milestone_title)
             if milestone_number is None:
+                self.skipped += 1
                 self.out.append("skipped %s: milestone %s not found in %s"
                                 % (ref, _safe(repr(milestone_title)), repo))
                 return False
@@ -1108,8 +1109,9 @@ class SyncResult:
     rate_cost: int = 0                           # see Board
     rate_remaining: Optional[int] = None
     conflicts: int = 0  # PRs whose closing issues carry conflicting milestones
-    skipped: int = 0    # other incomplete steps: a skipped write, an unreadable closing-issue,
-    #                     PR or milestone read, an `only` issue not readable on the project
+    skipped: int = 0    # other incomplete steps: a skipped write, a milestone missing in the PR's
+    #                     repository, an unreadable closing-issue, PR or milestone read, an `only`
+    #                     issue not readable on the project
 
 
 _WRITE_PREFIXES = ("write: ", "would write: ")

@@ -239,6 +239,8 @@ class SyncMilestoneTest(unittest.TestCase):
         self.assertEqual(fake.mutations, [])
         self.assertTrue(any("not found" in line and "owner/other" in line for line in result.reports),
                         result.reports)
+        self.assertEqual(project_flow._summary(result),
+                         "sync: partial (0 unreadable, 0 conflicts, 1 skipped)")
 
     def test_pr_milestone_set_between_read_and_patch_skipped(self):
         node = item(issue(1, prs=[pr(9)], milestone="M1"), status="In Review")
@@ -719,6 +721,11 @@ class SummaryLineTest(CliCase):
                 board(conflict[:1]) + [("closingIssuesReferences", closing_issues([(1, "M1")])),
                                        all_milestones(milestones=[milestone(4, "M1")]),
                                        ("repos/owner/repo/issues/9", GhError("gh: HTTP 502")),
+                                       open_milestones()],
+                "sync: partial (0 unreadable, 0 conflicts, 1 skipped)"),
+            "milestone not found": (
+                board(conflict[:1]) + [("closingIssuesReferences", closing_issues([(1, "M1")])),
+                                       all_milestones(milestones=[milestone(4, "M9")]),
                                        open_milestones()],
                 "sync: partial (0 unreadable, 0 conflicts, 1 skipped)"),
             "milestones unreadable": (
