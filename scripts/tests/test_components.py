@@ -154,6 +154,19 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual({n for n, v in a.items() if v}, {"android", "installer", "tooling"})
         self.assertEqual(unaccounted([path], CMAP), [])
 
+    def test_project_flow_files_select_tooling(self):
+        expected = {
+            ".github/workflows/project-flow.yml": {"tooling", "supply-chain"},
+            ".github/project-flow.json": {"tooling"},
+        }
+        for path, nodes in expected.items():
+            with self.subTest(path=path):
+                self.assertEqual(sorted(CMAP["global-overrides"][path]), sorted(nodes))
+                self.assertEqual(owner_nodes(path, CMAP), nodes)
+                a = affected([path], CMAP)
+                self.assertEqual({n for n, v in a.items() if v}, nodes)
+                self.assertEqual(unaccounted([path], CMAP), [])
+
     def test_other_workflows_stay_global(self):
         for path in (
             ".github/workflows/ci.yml",

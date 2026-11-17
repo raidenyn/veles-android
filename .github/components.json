@@ -16,6 +16,9 @@
       "tooling",
       "docs"
     ],
+    ".github/project-flow.json": [
+      "tooling"
+    ],
     ".github/workflows/build-android.yml": [
       "android",
       "tooling",
@@ -30,6 +33,10 @@
       "docs",
       "tooling",
       "installer",
+      "supply-chain"
+    ],
+    ".github/workflows/project-flow.yml": [
+      "tooling",
       "supply-chain"
     ],
     "android/AGENTS.md": [
