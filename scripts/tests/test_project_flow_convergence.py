@@ -28,7 +28,7 @@ def fresh(node):
 
 
 def run_sync(fake, dry_run=False):
-    return project_flow.sync(fake, CFG, URL, mode="agent", repo=None, dry_run=dry_run)
+    return project_flow._reconcile(fake, CFG, URL, mode="agent", repo=None, dry_run=dry_run)
 
 
 def options(fake):

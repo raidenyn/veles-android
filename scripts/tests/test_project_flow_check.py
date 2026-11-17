@@ -137,6 +137,35 @@ class GateTest(unittest.TestCase):
                     self.assertEqual(len(fake.calls), len(responses))
                     self.assertEqual(fake.mutations, [])
 
+    def test_direct_sync_refuses_when_not_enabled(self):
+        """The public sync() gates itself: a direct call reads only the variable, never the board."""
+        cases = (("agent", [(VARIABLE, NOT_FOUND)], {}),
+                 ("agent", [variable(OTHER)], {}),
+                 ("action", [], {}),
+                 ("action", [], {"PROJECT_URL": OTHER}))
+        for mode, responses, env in cases:
+            with self.subTest(mode=mode, env=env, responses=responses):
+                fake = FakeTransport(list(responses))
+                with self.assertRaises(Stop) as ctx:
+                    project_flow.sync(fake, CFG, URL, mode=mode, repo=REPO, env=env, dry_run=False)
+                self.assertEqual(ctx.exception.reason, "not-enabled")
+                self.assertEqual(len(fake.calls), len(responses))
+                self.assertFalse(any(c["kind"] == "graphql" for c in fake.calls))
+                self.assertEqual(fake.mutations, [])
+
+    def test_direct_sync_runs_when_enabled(self):
+        fake = FakeTransport([variable(URL)] + board([]))  # empty board: no repo, no milestone read
+        result = project_flow.sync(fake, CFG, URL + "/views/3", mode="agent", repo=REPO, env={},
+                                   dry_run=False)
+        self.assertEqual(result.writes, [])
+        self.assertEqual(fake.responses, [])
+
+    def test_sync_reads_variable_once(self):
+        fake = FakeTransport([variable(URL)] + board([]) + [("milestones?state=open", [])])
+        code, _, _ = run_main(["sync", "--project", URL, "--repo", REPO], fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(len([c for c in fake.calls if c.get("path") == VARIABLE]), 1)
+
     def test_gated_command_needs_repo(self):
         code, out, _ = run_main(["sync", "--project", URL], FakeTransport())
         self.assertEqual(code, 3)
@@ -190,13 +219,36 @@ class CheckTest(unittest.TestCase):
 
     def test_check_fact_texts(self):
         result = self._check([item(issue(1), order=1)], enabled={"Item closed": False})
-        self.assertEqual(len(result.facts), 2, result.facts)
-        self.assertTrue(all("enable it in the project UI (Workflows)" in f for f in result.facts))
-        self.assertTrue(any("'Item closed'" in f for f in result.facts))
-        self.assertTrue(any("'Auto-add to project'" in f for f in result.facts))
+        self.assertEqual(len(result.facts), 1, result.facts)
+        self.assertIn("'Item closed'", result.facts[0])
+        self.assertIn("enable it in the project UI (Workflows)", result.facts[0])
+        self.assertEqual(len(result.warnings), 1, result.warnings)
+        self.assertIn("Auto-add to project", result.warnings[0])
         result = self._check([item(issue(1), order=1)], options=("Backlog", "Ready", "Done"))
         self.assertEqual(len(result.facts), 3, result.facts)
         self.assertTrue(any("'In Progress'" in f for f in result.facts))
+
+    def test_check_auto_add_is_a_hint_never_a_fact(self):
+        """The real project lists these workflows and no Auto-add to project: a manually populated
+        board with Item closed enabled has clean facts and one hint."""
+        real = {"Auto-add sub-issues to project": True, "Auto-close issue": False,
+                "Item added to project": False, "Item closed": True,
+                "Pull request linked to issue": False, "Pull request merged": False}
+        for enabled in (real, dict(real, **{"Auto-add to project": False})):
+            with self.subTest(enabled=enabled):
+                result = self._check([item(issue(1), order=1)], enabled=enabled)
+                self.assertEqual(result.facts, [])
+                self.assertEqual(len(result.warnings), 1, result.warnings)
+                self.assertIn("consider enabling Auto-add to project, issues only", result.warnings[0])
+                self.assertIn("cards can also be added manually", result.warnings[0])
+        result = self._check([item(issue(1), order=1)],
+                             enabled=dict(real, **{"Auto-add to project": True}))
+        self.assertEqual((result.facts, result.warnings), ([], []))
+
+    def test_check_item_closed_missing_is_a_fact(self):
+        result = self._check([item(issue(1), order=1)], enabled={"Auto-add to project": True})
+        self.assertEqual(len(result.facts), 1, result.facts)
+        self.assertIn("'Item closed' is missing", result.facts[0])
 
     def test_check_missing_status_field_is_a_fact(self):
         fields = project_flow_fields_without_status()
@@ -243,11 +295,24 @@ class CheckTest(unittest.TestCase):
     def test_main_check_with_project(self):
         fake = FakeTransport(board([item(issue(1))]) + [text("Depends on #12")])
         code, out, _ = run_main(["check", "--config", DEFAULTS, "--project", URL], fake)
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 3)
         self.assertIn("fact: ", out)
         self.assertIn("warning: ", out)
         self.assertIn("does not prove", out)
+        self.assertTrue(out.rstrip().endswith("stop: setup-incomplete: 1 setup facts need attention"), out)
         self.assertEqual(fake.mutations, [])
+
+    def test_main_check_warnings_alone_exit_zero(self):
+        fake = FakeTransport(board([item(issue(1), order=1)]) + [text("Depends on #12")])
+        code, out, _ = run_main(["check", "--config", DEFAULTS, "--project", URL], fake)
+        self.assertEqual(code, 0, out)
+        self.assertIn("warning: ", out)
+        self.assertIn("facts clean", out)
+        self.assertNotIn("stop:", out)
+
+    def test_setup_incomplete_is_a_named_reason(self):
+        self.assertIn("setup-incomplete", project_flow.STOP_REASONS)
+        self.assertEqual(len(project_flow.STOP_REASONS), 16)
 
 
 def project_flow_fields_without_status():

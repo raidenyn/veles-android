@@ -2,9 +2,9 @@
 """project_flow: derive GitHub Project statuses from facts (stdlib only).
 
 Run as `python3 -I scripts/project_flow.py <sync|next|start|followup|check> ...`.
-Exit 0 success, 1 `check` found facts (or a gh error), 2 usage, 3 a stop
-(`stop: <reason>: <detail>` on stdout). sync, next, start and followup run only on the project
-the repository variable PROJECT_URL names.
+Exit 0 success, 1 a gh error, 2 usage, 3 a stop (`stop: <reason>: <detail>` on stdout;
+`check` with setup facts ends in `stop: setup-incomplete`). sync, next, start and followup run
+only on the project the repository variable PROJECT_URL names; each public entry point gates itself.
 """
 import argparse
 import json
@@ -22,7 +22,7 @@ STOP_REASONS = (
     "not-enabled", "variable-unreadable", "nothing-ready", "tie", "missing-order",
     "incomplete-read", "not-ready", "collision", "missing-option", "config-invalid",
     "resume-disagrees", "no-order-room", "parent-unordered", "parent-as-blocker",
-    "missing-scope",
+    "missing-scope", "setup-incomplete",
 )
 SCOPE_FIX = "run gh auth refresh -s project"
 
@@ -870,8 +870,16 @@ _WRITE_PREFIXES = ("write: ", "would write: ")
 
 
 def sync(t: Transport, cfg: Config, project_url: str, *, mode: str, repo: Optional[str],
-         dry_run: bool, only: Optional[tuple] = None) -> SyncResult:
-    """The complete reconciliation: every in-scope item's Status, the milestone of every open or
+         env: Mapping[str, str], dry_run: bool, only: Optional[tuple] = None) -> SyncResult:
+    """The gated public entry point: Stop("not-enabled") unless PROJECT_URL names project_url,
+    checked before any board read; then the reconciliation (_reconcile)."""
+    require_enabled(t, project_url, repo, mode=mode, env=env)
+    return _reconcile(t, cfg, project_url, mode=mode, repo=repo, dry_run=dry_run, only=only)
+
+
+def _reconcile(t: Transport, cfg: Config, project_url: str, *, mode: str, repo: Optional[str],
+               dry_run: bool, only: Optional[tuple] = None) -> SyncResult:
+    """Ungated; only for callers that already ran require_enabled. The complete reconciliation: every in-scope item's Status, the milestone of every open or
     merged in-scope PR closing a board issue, and the report of empty open milestones.
     mode "action" writes only items and PRs of `repo`; "agent" covers the whole project.
     `only` (repo, number) limits the status and milestone pass to one issue and skips the
@@ -990,9 +998,14 @@ def require_enabled(t: Transport, project_url: str, repo: Optional[str], *, mode
                    % (named[0], named[1], wanted[0], wanted[1], ENABLE_STEP))
 
 
-# The built-in project workflows the setup relies on. Enabling one is possible only in the
+# The built-in project workflows the setup relies on (facts). Enabling one is possible only in the
 # project UI; the API has no mutation for it.
-REQUIRED_WORKFLOWS = ("Item closed", "Auto-add to project")
+REQUIRED_WORKFLOWS = ("Item closed",)
+# Advised, never required: a board may be populated by hand, and a real project's workflow list need
+# not contain this name at all.
+ADVISED_WORKFLOW = "Auto-add to project"
+AUTO_ADD_HINT = ("consider enabling Auto-add to project, issues only, so new issues reach the board; "
+                 "cards can also be added manually")
 _PROSE_DEPENDENCY = re.compile(r"(?i)\b(blocked by|depends on|after)\s+((?:[\w.-]+/[\w.-]+)?#\d+)")
 CHECK_NOTICE = (
     "A clean warning list does not prove that prose dependencies were converted to native "
@@ -1044,6 +1057,8 @@ def check(t: Transport, cfg: Config, project_url: Optional[str]) -> CheckResult:
         if state is not True:
             facts.append("built-in workflow %r is %s; enable it in the project UI (Workflows)"
                          % (name, "missing" if state is None else "disabled"))
+    if board.workflows.get(ADVISED_WORKFLOW) is not True:
+        warnings.append(AUTO_ADD_HINT)
     for key in ROLE_KEYS:
         if cfg.roles[key] not in board.options:
             facts.append("Status option %r (%s) is not on the project" % (cfg.roles[key], key))
@@ -1065,9 +1080,10 @@ def check(t: Transport, cfg: Config, project_url: Optional[str]) -> CheckResult:
     return CheckResult(facts, warnings, CHECK_NOTICE)
 
 
-def _sync(args, transport: Transport) -> int:
+def _sync(args, transport: Transport, env: Mapping[str, str]) -> int:
     cfg = load_config(args.config)
-    result = sync(transport, cfg, args.project, mode=args.mode, repo=args.repo, dry_run=args.dry_run)
+    result = sync(transport, cfg, args.project, mode=args.mode, repo=args.repo, env=env,
+                  dry_run=args.dry_run)
     for line in result.writes + result.reports:
         print(line)
     if not result.writes:
@@ -1089,7 +1105,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _check(args, transport: Transport) -> int:
-    """Exit 0 when the facts are clean, 1 when any fact is found."""
+    """Exit 0 when the facts are clean (warnings alone never fail); Stop("setup-incomplete")
+    after printing every finding when any fact is found."""
     cfg = load_config(args.config)
     print("config ok: %s" % args.config)
     if not args.project:
@@ -1102,11 +1119,14 @@ def _check(args, transport: Transport) -> int:
     if not result.facts:
         print("facts clean")
     print(result.notice)
-    return 1 if result.facts else 0
+    if result.facts:
+        raise Stop("setup-incomplete", "%d setup facts need attention" % len(result.facts))
+    return 0
 
 
-# The commands that act on a project only while PROJECT_URL names it; main refuses them before
-# any other call. Tasks 7 and 8 add next, start and followup.
+# The commands that act on a project only while PROJECT_URL names it. Each one's public entry point
+# calls require_enabled itself before any other call; the CLI table test runs every name here.
+# Tasks 7 and 8 add next, start and followup.
 GATED_COMMANDS = ("sync",)
 _COMMANDS = {"sync": _sync}
 
@@ -1125,12 +1145,10 @@ def main(argv: list, transport: Optional[Transport] = None,
         if args.command not in _COMMANDS:
             print("usage: %s is not implemented yet" % args.command, file=sys.stderr)
             return 2
-        if args.command in GATED_COMMANDS:
-            if not args.project:
-                print("usage: %s needs --project URL" % args.command, file=sys.stderr)
-                return 2
-            require_enabled(transport, args.project, args.repo, mode=args.mode, env=env)
-        return _COMMANDS[args.command](args, transport)
+        if args.command in GATED_COMMANDS and not args.project:
+            print("usage: %s needs --project URL" % args.command, file=sys.stderr)
+            return 2
+        return _COMMANDS[args.command](args, transport, env)
     except Stop as stop:
         print("stop: %s: %s" % (stop.reason, stop.detail))
         return 3

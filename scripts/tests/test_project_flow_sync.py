@@ -53,7 +53,7 @@ def patches(fake):
 
 
 def run_sync(fake, mode="agent", repo=None, dry_run=False, only=None):
-    return project_flow.sync(fake, CFG, URL, mode=mode, repo=repo, dry_run=dry_run, only=only)
+    return project_flow._reconcile(fake, CFG, URL, mode=mode, repo=repo, dry_run=dry_run, only=only)
 
 
 class SyncStatusTest(unittest.TestCase):
