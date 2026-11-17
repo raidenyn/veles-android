@@ -27,6 +27,16 @@ class GhTransportEncodingTest(unittest.TestCase):
              "-F", "n=5", "-F", "b=true"],
         )
 
+    def test_float_variable_sent_as_json(self):
+        # gh's -F sends "15.1" as a string, which GitHub rejects for a Float! variable (checked live
+        # on the scratch project), so a request with a float goes as a JSON body on stdin.
+        with mock.patch.object(GhTransport, "_run", return_value="{}") as run:
+            GhTransport().graphql("mutation M", {"value": 15.1, "item": "PVTI_x", "n": 2})
+        args, stdin = run.call_args[0][0], run.call_args[0][1]
+        self.assertEqual(args, ["api", "graphql", "--input", "-"])
+        self.assertEqual(json.loads(stdin), {"query": "mutation M",
+                                             "variables": {"value": 15.1, "item": "PVTI_x", "n": 2}})
+
 
 def completed(code, stdout, stderr=""):
     return subprocess.CompletedProcess(["gh"], code, stdout=stdout, stderr=stderr)

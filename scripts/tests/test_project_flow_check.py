@@ -119,11 +119,14 @@ class GateTest(unittest.TestCase):
 
     def test_gated_commands_refuse_when_not_enabled(self):
         """Every gated command refuses an unset or a different PROJECT_URL before any other call.
-        Task 8 adds followup to GATED_COMMANDS."""
-        for command in ("sync", "next", "start"):
+        """
+        for command in ("sync", "next", "start", "followup"):
             self.assertIn(command, project_flow.GATED_COMMANDS)
         self.assertNotIn("check", project_flow.GATED_COMMANDS)
-        positional = {"start": [REPO + "#1"]}
+        positional = {"start": [REPO + "#1"],
+                      "followup": ["--parent", "#1", "--title", "T", "--body-file", DEFAULTS,
+                                   "--pr", "https://github.com/owner/repo/pull/2",
+                                   "--change-dir", "openspec/changes/x", "--found-at", "here"]}
         cases = (("agent", [(VARIABLE, NOT_FOUND)], {}),
                  ("agent", [variable(OTHER)], {}),
                  ("action", [], {}),

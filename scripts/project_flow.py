@@ -94,6 +94,7 @@ _CONNECTION_NODES = {
     "blockedBy": (
         "nodes { number state stateReason(enableDuplicate: true) repository { nameWithOwner } }"),
     "subIssues": "nodes { number repository { nameWithOwner } }",
+    "projectItems": "nodes { id project { id } }",
 }
 _CONNECTION_ARGS = {"closedByPullRequestsReferences": ", includeClosedPrs: true"}
 ISSUE_CONNECTION_QUERY = """query IssueConnection_%(name)s($id: ID!, $first: Int = 100, $after: String) {
@@ -115,6 +116,12 @@ SUB_ISSUES_QUERY = """query IssueSubIssues($owner: String!, $name: String!, $num
   repository(owner: $owner, name: $name) { issue(number: $number) {
     subIssues(first: $first, after: $after) { %s nodes { number repository { nameWithOwner } } } } }
 }""" % _PAGE
+# The links of one issue followup creates or resumes, and the projects it is on.
+FOLLOWUP_ISSUE_QUERY = """query FollowupIssue($owner: String!, $name: String!, $number: Int!,
+    $first: Int = 100) {
+  repository(owner: $owner, name: $name) { issue(number: $number) { ...IssueFacts
+    projectItems(first: $first) { %s nodes { id project { id } } } } }
+}""" % _PAGE + _ISSUE_FACTS
 
 
 class GhError(Exception):
@@ -163,14 +170,22 @@ class GhTransport:
                 absent_ok: frozenset = frozenset()) -> dict:
         """absent_ok: the full response paths of field lookups whose absence (NOT_FOUND, null)
         is an answer, not a failure."""
-        args = ["api", "graphql", "-f", "query=" + query]
-        for name, value in (variables or {}).items():
-            if value is None or isinstance(value, (int, bool)):
-                args += ["-F", "%s=%s" % (name, json.dumps(value))]  # None -> null
-            else:
-                args += ["-f", "%s=%s" % (name, value)]
+        variables = variables or {}
+        stdin = None
+        if any(isinstance(value, float) for value in variables.values()):
+            # gh -F has no float form ("15.1" arrives as a string, rejected for Float!): send the
+            # whole request as a JSON body instead.
+            args = ["api", "graphql", "--input", "-"]
+            stdin = json.dumps({"query": query, "variables": variables})
+        else:
+            args = ["api", "graphql", "-f", "query=" + query]
+            for name, value in variables.items():
+                if value is None or isinstance(value, (int, bool)):
+                    args += ["-F", "%s=%s" % (name, json.dumps(value))]  # None -> null
+                else:
+                    args += ["-f", "%s=%s" % (name, value)]
         try:
-            return self._decode(self._run(args))
+            return self._decode(self._run(args, stdin))
         except GhError as err:
             absent = _absent_field_response(err.stdout, absent_ok)
             if absent is None:
@@ -728,6 +743,9 @@ SET_ORDER_MUTATION = """mutation SetOrder($project: ID!, $item: ID!, $field: ID!
   updateProjectV2ItemFieldValue(input: {projectId: $project, itemId: $item, fieldId: $field,
       value: {number: $value}}) { projectV2Item { id } }
 }"""
+ADD_ITEM_MUTATION = """mutation AddProjectItem($project: ID!, $content: ID!) {
+  addProjectV2ItemById(input: {projectId: $project, contentId: $content}) { item { id } }
+}"""
 _REST_PAGE = 100
 
 
@@ -837,14 +855,59 @@ class Writer:
                   {"assignees": [login]})
         self._emit("%s assignees: +%s" % (ref, login))
 
-    def set_order(self, item_id: str, value: float) -> None:
+    def set_order(self, item_id: Optional[str], value: float, label: Optional[str] = None) -> None:
+        """label: how the item is named in the output (followup's dry run has no item id yet)."""
         if self.board.order_field_id is None:
             raise Stop("missing-option", "number field %r not on the project" % self.cfg.order_field)
         if not self.dry_run:
             _mutate(self.t, SET_ORDER_MUTATION, {
                 "project": self.board.project_id, "item": item_id,
                 "field": self.board.order_field_id, "value": float(value)}, "item %s" % item_id)
-        self._emit("%s %s: %s" % (item_id, self.cfg.order_field, value))
+        self._emit("%s %s: %s" % (label or item_id, self.cfg.order_field, value))
+
+    def create_issue(self, repo: str, title: str, body: str) -> Optional[tuple]:
+        """Create the issue; (number, REST id, node id), None on a dry run. A failure raises Stop."""
+        created = None
+        if not self.dry_run:
+            what = "create issue in %s" % repo
+            response = _rest(self.t, "POST", "repos/%s/issues" % repo, what,
+                             {"title": title, "body": body})
+            created = (_field(response, "number", int, what), _field(response, "id", int, what),
+                       _field(response, "node_id", str, what))
+        self._emit("create issue in %s: %s" % (repo, title))
+        return created
+
+    def add_sub_issue(self, parent: tuple, ref: str, issue_id: Optional[int]) -> None:
+        """Attach the issue (by its REST id) as a sub-issue of `parent` (repo, number)."""
+        if not self.dry_run:
+            _rest(self.t, "POST", "repos/%s/issues/%d/sub_issues" % parent, ref,
+                  {"sub_issue_id": issue_id})
+        self._emit("%s sub-issue of %s#%d" % ((ref,) + tuple(parent)))
+
+    def set_issue_milestone(self, repo: str, number: Optional[int], ref: str, milestone_number: int,
+                            title: str) -> None:
+        if not self.dry_run:
+            _rest(self.t, "PATCH", "repos/%s/issues/%d" % (repo, number), ref,
+                  {"milestone": milestone_number})
+        self._emit("%s milestone: %s" % (ref, title))
+
+    def add_blocked_by(self, repo: str, number: Optional[int], ref: str, blocker: tuple,
+                       blocker_id: int) -> None:
+        """A native blocked-by link from the issue to `blocker` (repo, number), by its REST id."""
+        if not self.dry_run:
+            _rest(self.t, "POST", "repos/%s/issues/%d/dependencies/blocked_by" % (repo, number), ref,
+                  {"issue_id": blocker_id})
+        self._emit("%s blocked by %s#%d" % ((ref,) + tuple(blocker)))
+
+    def add_project_item(self, content_id: Optional[str], ref: str) -> Optional[str]:
+        """Add the issue to the project; the new item id, None on a dry run."""
+        item_id = None
+        if not self.dry_run:
+            data = _query(self.t, ADD_ITEM_MUTATION, {"project": self.board.project_id,
+                                                       "content": content_id}, ref)
+            item_id = _field(_dig(data, ("addProjectV2ItemById", "item"), ref), "id", str, ref)
+        self._emit("%s added to the project" % ref)
+        return item_id
 
     def set_pr_milestone(self, repo: str, number: int, milestone_title: str) -> bool:
         """Set the PR's milestone by title, unless the repository has no milestone of that title
@@ -1104,6 +1167,225 @@ def start(t: Transport, cfg: Config, project_url: str, repo: str, issue: tuple, 
     print("started: %s" % ref)
 
 
+def allocate_order(parent: Facts, items: list, descendants: set) -> float:
+    """The order value of a new follow-up of `parent` (design D7). p is the parent's value; n the
+    lowest value above p held by an item that is not a descendant of the parent, else p + 1; v the
+    largest value in [p, n). The first of v + 0.1, v + 0.01, v + 0.001 below n and unused wins.
+    Every value is compared after round(x, 3)."""
+    ref = "%s#%d" % (parent.repo, parent.number)
+    if parent.order is None:
+        raise Stop("parent-unordered", "%s has no order value; ask the user" % ref)
+    p = round(parent.order, 3)
+    below = {(r.lower(), n) for r, n in descendants}
+    used = {round(f.order, 3) for f in items if f.order is not None}
+    above = [round(f.order, 3) for f in items if f.order is not None and round(f.order, 3) > p
+             and (f.repo.lower(), f.number) not in below]
+    n = min(above) if above else round(p + 1, 3)
+    v = max([x for x in used if p <= x < n] + [p])
+    for step in (0.1, 0.01, 0.001):
+        candidate = round(v + step, 3)
+        if candidate < n and candidate not in used:
+            return candidate
+    raise Stop("no-order-room", "no free value between %s and %s for a follow-up of %s; ask the user"
+               % (_order_text(v), _order_text(n), ref))
+
+
+FOLLOWUP_STEPS = ("add_sub_issue", "set_milestone", "add_blocked_by", "add_project_item", "set_order")
+
+
+@dataclass(frozen=True)
+class IssueLinks:
+    """The links of an issue followup created or resumes; repos as GitHub returns them."""
+    database_id: int
+    content_id: str
+    parent: Optional[tuple]
+    milestone: Optional[str]
+    blockers: tuple
+    items: dict  # project id -> item id
+
+
+def _issue_links(t: Transport, repo: str, number: int) -> IssueLinks:
+    owner, name = _split_repo(repo)
+    what = "%s#%d" % (repo, number)
+    data = _query(t, FOLLOWUP_ISSUE_QUERY, {"owner": owner, "name": name, "number": number}, what)
+    issue = _dig(data, ("repository", "issue"), what)
+    parent = _field(issue, "parent", dict, what, nullable=True)
+    blockers = _issue_connection(t, issue, "blockedBy", what)
+    items = _issue_connection(t, issue, "projectItems", what)
+    return IssueLinks(
+        database_id=_field(issue, "databaseId", int, what), content_id=_field(issue, "id", str, what),
+        parent=None if parent is None else _ref(parent, what + " parent"),
+        milestone=_title(issue, what),
+        blockers=tuple(_ref(n, what + " blocker") for n in blockers),
+        items={_field(_field(n, "project", dict, what + " project item"), "id", str, what): _field(
+            n, "id", str, what + " project item") for n in items})
+
+
+def _key(ref: tuple) -> tuple:
+    return ref[0].lower(), ref[1]
+
+
+def _followup_body(body_file: str, pr: str, change_dir: str, found_at: str) -> str:
+    try:
+        with open(body_file, encoding="utf-8") as handle:
+            text = handle.read().rstrip()
+    except OSError as exc:
+        raise Stop("config-invalid", "cannot read the body file %s: %s" % (body_file, exc.strerror or exc))
+    return "%s\n\n---\n- Found in pull request: %s\n- Change directory: `%s`\n- Found at: %s\n" % (
+        text, pr, change_dir, found_at)
+
+
+def _disagreements(links: IssueLinks, parent: tuple, milestone: Optional[str], blockers: list) -> list:
+    found = []
+    if links.parent is not None and _key(links.parent) != _key(parent):
+        found.append("it is a sub-issue of %s#%d, not of %s#%d" % (links.parent + tuple(parent)))
+    if links.milestone is not None and links.milestone != milestone:
+        found.append("its milestone is %r, the parent's is %r" % (links.milestone, milestone))
+    wanted = {_key(b) for b in blockers}
+    extra = ["%s#%d" % b for b in links.blockers if _key(b) not in wanted]
+    if extra:
+        found.append("it is blocked by %s, not given as blockers" % ", ".join(extra))
+    return found
+
+
+def followup(t: Transport, cfg: Config, project_url: str, repo: str, *, parent: tuple, title: str,
+             body_file: str, blockers: list, pr: str, change_dir: str, found_at: str,
+             resume: Optional[int], dry_run: bool, mode: str = "agent",
+             env: Optional[Mapping[str, str]] = None) -> int:
+    """The gated public entry point of `followup` (design D7): create a follow-up issue in `repo`
+    and (1) print its number at once, (2) attach it as a sub-issue of `parent`, (3) give it the
+    parent's milestone, (4) add native blocked-by links to `blockers` only, (5) add it to the
+    project and (6) set its order value (allocate_order). Every read and check runs before the first
+    write. After a failure past step 1 it prints `created: #<n>` and `missing: <steps>` and stops;
+    `resume` (the issue number) with the original arguments completes only the missing steps, each
+    checked first, and stops with resume-disagrees, writing nothing, when an existing link
+    disagrees. Returns the issue number (0 for a dry run that creates nothing)."""
+    require_enabled(t, project_url, repo, mode=mode, env={} if env is None else env)
+    parent_ref = "%s#%d" % tuple(parent)
+    if any(_key(b) == _key(parent) for b in blockers):
+        raise Stop("parent-as-blocker", "%s is the parent; a follow-up is never blocked by its parent"
+                   % parent_ref)
+    blockers = list({_key(b): tuple(b) for b in blockers}.values())
+    body = _followup_body(body_file, pr, change_dir, found_at)
+    board = read_board(t, project_url, cfg)
+    preflight(board, cfg, needs_order=True)
+    if board.unreadable:
+        raise Stop("incomplete-read", "unreadable items, no order allocated: " + ", ".join(
+            "%s (%s)" % (i, board.reasons.get(i, "")) for i in board.unreadable))
+    on_board = {_key((f.repo, f.number)): f for f in board.items}
+    parent_facts = on_board.get(_key(parent))
+    if parent_facts is None:
+        raise Stop("parent-unordered", "%s is not an issue on the project; ask the user" % parent_ref)
+    if parent_facts.order is None:
+        raise Stop("parent-unordered", "%s has no order value; ask the user" % parent_ref)
+
+    links, item_id, ordered = None, None, False
+    if resume is not None:
+        links = _issue_links(t, repo, resume)
+        disagree = _disagreements(links, parent, parent_facts.milestone, blockers)
+        if disagree:
+            raise Stop("resume-disagrees", "%s#%d: %s; nothing written" % (repo, resume, "; ".join(disagree)))
+        item_id = links.items.get(board.project_id)
+        if item_id is not None:
+            ordered = read_item(t, item_id, cfg).order is not None
+    value = None
+    if not ordered:
+        value = allocate_order(parent_facts, board.items,
+                               read_descendants(t, parent_facts.repo, parent_facts.number))
+    milestone_number = None
+    if parent_facts.milestone is not None and (links is None or links.milestone is None):
+        numbers = {title_: number for number, title_, _ in _milestones(t, repo, "all")}
+        milestone_number = numbers.get(parent_facts.milestone)
+        if milestone_number is None:
+            raise Stop("missing-option", "milestone %r of %s not found in %s"
+                       % (parent_facts.milestone, parent_ref, repo))
+    have = set() if links is None else {_key(b) for b in links.blockers}
+    blocker_ids = {}
+    for b in blockers:
+        if _key(b) in have:
+            continue
+        known = on_board.get(_key(b))
+        if known is not None:
+            blocker_ids[b] = known.database_id
+        else:
+            what = "blocker %s#%d" % b
+            blocker_ids[b] = _field(_rest(t, "GET", "repos/%s/issues/%d" % b, what), "id", int, what)
+
+    out = []
+    writer = Writer(t, board, cfg, dry_run, out)
+
+    def flush():
+        for line in out:
+            print(line)
+        del out[:]
+
+    number = resume
+    if resume is None:
+        created = writer.create_issue(repo, title, body)
+        flush()
+        if created is not None:
+            number, issue_id, content_id = created
+            print("created: #%d" % number)
+            sys.stdout.flush()
+        else:
+            issue_id = content_id = None
+    else:
+        issue_id, content_id = links.database_id, links.content_id
+        print("resuming: %s#%d" % (repo, resume))
+    ref = "%s#%s" % (repo, number if number is not None else "(new)")
+    pending = list(FOLLOWUP_STEPS)
+
+    def done(step: str, why: Optional[str] = None) -> None:
+        if why is not None:
+            out.append("skipped %s: %s" % (step, why))
+        pending.remove(step)
+        flush()
+
+    try:
+        if links is not None and links.parent is not None:
+            done("add_sub_issue", "already a sub-issue of %s" % parent_ref)
+        else:
+            writer.add_sub_issue(tuple(parent), ref, issue_id)
+            done("add_sub_issue")
+        if parent_facts.milestone is None:
+            done("set_milestone", "%s has no milestone" % parent_ref)
+        elif links is not None and links.milestone is not None:
+            done("set_milestone", "milestone already %r" % links.milestone)
+        else:
+            writer.set_issue_milestone(repo, number, ref, milestone_number, parent_facts.milestone)
+            done("set_milestone")
+        for b in blockers:
+            if b in blocker_ids:
+                writer.add_blocked_by(repo, number, ref, b, blocker_ids[b])
+                flush()
+        done("add_blocked_by", "no blockers given" if not blockers else
+             None if blocker_ids else "every blocker already linked")
+        if item_id is None and number is not None:
+            # The project's auto-add workflows may have added it since: look it up first.
+            item_id = _issue_links(t, repo, number).items.get(board.project_id)
+            if item_id is not None:
+                done("add_project_item", "already on the project")
+        if "add_project_item" in pending:
+            if item_id is None:
+                item_id = writer.add_project_item(content_id, ref)
+                done("add_project_item")
+            else:
+                done("add_project_item", "already on the project")
+        if ordered:
+            done("set_order", "%r already set" % cfg.order_field)
+        else:
+            writer.set_order(item_id, value, label=ref)
+            done("set_order")
+    except (Stop, GhError):
+        flush()
+        if number is not None and not dry_run:
+            print("created: #%d" % number)
+            print("missing: %s" % ", ".join(pending))
+            print("resume with the same arguments and --resume %d" % number)
+        raise
+    return number or 0
+
+
 VARIABLE_FIX = "needs the Actions variables read permission"
 ENABLE_STEP = "set the repository variable PROJECT_URL to this project to enable it"
 
@@ -1257,7 +1539,25 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("issue", type=_issue_arg, metavar="OWNER/REPO#N")
             p.add_argument("--force", action="store_true",
                            help="claim an item that is not Ready (only after the user authorizes it)")
+        if name == "followup":
+            p.add_argument("--parent", type=_issue_arg, required=True, metavar="OWNER/REPO#N")
+            p.add_argument("--title", required=True)
+            p.add_argument("--body-file", required=True, metavar="PATH")
+            p.add_argument("--blocker", type=_issue_arg, action="append", default=[],
+                           metavar="OWNER/REPO#N", help="a native blocked-by link; repeat per blocker")
+            p.add_argument("--pr", required=True, metavar="URL")
+            p.add_argument("--change-dir", required=True, metavar="PATH")
+            p.add_argument("--found-at", required=True, metavar="TEXT")
+            p.add_argument("--resume", type=_number_arg, metavar="N",
+                           help="complete the missing steps of this issue; pass the original arguments")
     return parser
+
+
+def _number_arg(text: str) -> int:
+    match = re.fullmatch(r"#?(\d+)", text.strip())
+    if not match:
+        raise argparse.ArgumentTypeError("expected an issue number, got %r" % text)
+    return int(match.group(1))
 
 
 _ISSUE_ARG = re.compile(r"(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?#?(\d+)")
@@ -1285,6 +1585,17 @@ def _start(args, transport: Transport, env: Mapping[str, str]) -> int:
     return 0
 
 
+def _followup(args, transport: Transport, env: Mapping[str, str]) -> int:
+    def resolve(ref: tuple) -> tuple:
+        return (ref[0] or args.repo or "", ref[1])
+
+    followup(transport, load_config(args.config), args.project, args.repo,
+             parent=resolve(args.parent), title=args.title, body_file=args.body_file,
+             blockers=[resolve(b) for b in args.blocker], pr=args.pr, change_dir=args.change_dir,
+             found_at=args.found_at, resume=args.resume, dry_run=args.dry_run, mode=args.mode, env=env)
+    return 0
+
+
 def _check(args, transport: Transport) -> int:
     """Exit 0 when the facts are clean (warnings alone never fail); Stop("setup-incomplete")
     after printing every finding when any fact is found."""
@@ -1307,9 +1618,8 @@ def _check(args, transport: Transport) -> int:
 
 # The commands that act on a project only while PROJECT_URL names it. Each one's public entry point
 # calls require_enabled itself before any other call; the CLI table test runs every name here.
-# Task 8 adds followup.
-GATED_COMMANDS = ("sync", "next", "start")
-_COMMANDS = {"sync": _sync, "next": _next, "start": _start}
+GATED_COMMANDS = ("sync", "next", "start", "followup")
+_COMMANDS = {"sync": _sync, "next": _next, "start": _start, "followup": _followup}
 
 
 def main(argv: list, transport: Optional[Transport] = None,

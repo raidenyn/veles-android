@@ -305,6 +305,31 @@ class ClaimConvergenceTest(unittest.TestCase):
         self.assertNotIn("\nwrite: ", "\n" + out)
         self.assertEqual(fake.responses, [])
 
+    def test_followup_dry_run_lists_six_steps_no_mutation(self):
+        nodes = [item(issue(15, milestone="M3"), status="In Progress", order=15),
+                 item(issue(16), status="Backlog", order=16),
+                 item(issue(20), status="Ready", order=3)]
+        no_subs = ("query IssueSubIssues", {"data": {"repository": {"issue": {"subIssues": {
+            "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}})
+        fake = FakeTransport([ENABLED] + board(nodes) + [
+            no_subs, ("milestones?state=all", [{"number": 3, "title": "M3", "state": "open",
+                                                "open_issues": 1, "closed_issues": 0}])])
+        body = os.path.join(os.path.dirname(SCRIPTS), ".github", "project-flow.json")
+        number, out = quiet(project_flow.followup, fake, CFG, URL, "owner/repo",
+                            parent=("owner/repo", 15), title="Follow-up", body_file=body,
+                            blockers=[("owner/repo", 20)], pr="https://github.com/owner/repo/pull/7",
+                            change_dir="openspec/changes/x", found_at="here", resume=None,
+                            dry_run=True)
+        self.assertEqual(fake.mutations, [])
+        self.assertEqual(fake.responses, [])
+        would = [line for line in out.splitlines() if line.startswith("would write: ")]
+        self.assertEqual(len(would), 6, out)
+        for text in ("create issue", "sub-issue of owner/repo#15", "milestone: M3",
+                     "blocked by owner/repo#20", "project", "Implementation order: 15.1"):
+            self.assertTrue(any(text in line for line in would), (text, would))
+        self.assertNotIn("\nwrite: ", "\n" + out)
+        self.assertNotIn("created:", out)
+
 
 if __name__ == "__main__":
     unittest.main()
