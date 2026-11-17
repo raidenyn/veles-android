@@ -3,3 +3,4 @@
 - Issue: raidenyn/veles-android#94
 - Source documents: docs/rfcs/2026-08-21-otp-external-devices.md (section OTP-12)
 - Created: 2026-11-16
+- Follow-up: raidenyn/veles-android#165 (OTP-12 follow-up: relax the BLE multi-advertisement prerequisite; next after this change)
