@@ -54,7 +54,7 @@
 ## 9. Real-environment verification (non-evidentiary)
 
 - [x] 9.1 Build the debug APK; on an emulator or real phone, drive seed, staggered expiry, reseed, schedule, disarm, adb `PUSH` while armed a process kill (unarmed after restart) and stopping the sharing service while a push is pending (cancelled line, no push, detach logged before host shutdown) through adb
-- [ ] 9.2 On a real phone with a real desktop Chrome and the development-channel connector, run `pullAll()` against the seeded fixture and receive a short scheduled push; an emulator cannot cover the BLE and Chrome part
+- [x] 9.2 On a real phone with a real desktop Chrome and the development-channel connector, run `pullAll()` against the seeded fixture and receive a short scheduled push; an emulator cannot cover the BLE and Chrome part
 - [ ] 9.3 On a real phone, schedule a 20-minute push, remove the task, lock the screen and record when it fires
 - [ ] 9.4 Only if 9.3 misses the 19..21 minute window: implement the AlarmManager fallback behind the timer interface (debug-manifest `SCHEDULE_EXACT_ALARM`, guard-list decision after checking the merged release manifest and rerunning the release guard, unit tests for the alarm timer, runbook exact-alarm grant step, added only if the fallback is built), then rerun 9.3 and section 10
 - [x] 9.5 Record what ran and on what in the PR note; if a device or Chrome is unavailable stop and ask, and never report the change as tested

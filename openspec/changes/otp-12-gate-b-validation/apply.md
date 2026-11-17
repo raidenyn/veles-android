@@ -23,17 +23,21 @@
 
 ## Tasks
 
-- **Completed**: `33 of 36` checkboxes in tasks.md flipped to `- [x]`
-- **Remaining**: `9.2`, `9.3`, `9.4`
+- **Completed**: `34 of 36` checkboxes in tasks.md flipped to `- [x]`
+- **Remaining**: `9.3` (task removal not established), `9.4` (conditional, not applicable)
 
 Task 9 is the non-evidentiary real-environment verification. Step 1 (adb seed, staggered
 expiry, reseed, schedule, disarm, `PUSH` while armed, process restart, service stop with a
 pending push) ran on a OnePlus 10 Pro 5G, Android 15, and produced the expected log lines.
-Step 2 is blocked: the new development extension (with `pullAll` and a working native-host
-bridge) connected over BLE but the injected trust handshake never reached a live session, and
-the phone's debug pairing screen rendered black. Steps 3-4 depend on a live session and were not
-attempted. The full record is in `.superpowers/sdd/plan/task-9-report.md`; nothing from this run
-is Gate B evidence and the committed matrix stays `decision: OPEN`, `gate_b_accepted: false`.
+Step 2 passed: the development extension pulled five fixture records, received and acknowledged
+a scheduled push, and the pushed event did not join the history. Step 3 measured the wake-lock
+window: the 1200 s push fired 20 min 0.013 s after scheduling while the phone was asleep and
+locked, inside the 19..21 minute window; the post-minute-15 pull returned no events. ColorOS
+recents would not dismiss the task, so task-removal survival and the "foreground indication
+throughout" check were not established; that deviation is recorded in
+`.superpowers/sdd/plan/task-9-report.md`. Step 4 is conditional on a missed window and is not
+applicable. Nothing from this run is Gate B evidence and the committed matrix stays
+`decision: OPEN`, `gate_b_accepted: false`.
 
 ---
 
@@ -44,5 +48,7 @@ test; a scoped re-review approved the fix. The verification gap remains for the 
 
 ## Next step
 
-Run `/openspec-verify-change`. Task 9's Chrome step needs a decision from the owner: resolve the
-pairing handshake and repeat it, or record the gap as a prerequisite for the later Gate B runs.
+Run `/openspec-verify-change`. Task 9's remaining gap is task-removal survival on the locked phone
+(the ColorOS recents UI would not dismiss the task); the wake-lock window itself passed. The owner
+decides whether to repeat that step on a launcher that allows recents dismissal or to record it as
+a prerequisite for the later Gate B runs.
