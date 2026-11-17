@@ -57,7 +57,6 @@ internal object SharingState {
         return try {
             when {
                 !adapter.isEnabled -> SharingAvailability.BluetoothOff
-                !adapter.isMultipleAdvertisementSupported -> SharingAvailability.Unsupported
                 else -> null
             }
         } catch (_: SecurityException) {
