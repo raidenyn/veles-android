@@ -215,6 +215,7 @@ class FactsTest(unittest.TestCase):
 
 
 def read_one(node, extra=()):
+    node = dict(node, project=project_flow_fake.item_project())
     fake = FakeTransport([("query ProjectItem(", {"data": {"node": node}})] + list(extra))
     return project_flow.read_item(fake, node["id"], CFG)
 
@@ -357,6 +358,96 @@ class StrictFactsTest(unittest.TestCase):
         result = project_flow.read_board(FakeTransport(recorded_board()), URL, CFG)
         self.assertEqual(result.unreadable, [])
         self.assertEqual(len(result.items), 7)
+
+
+def read_one_typed(node, order_type="NUMBER"):
+    """read_item, where the item's project reports the order field's data type."""
+    node = dict(node, project=project_flow_fake.item_project(order_type))
+    fake = FakeTransport([("query ProjectItem(", {"data": {"node": node}})])
+    return project_flow.read_item(fake, node["id"], CFG)
+
+
+class OrderValueTest(unittest.TestCase):
+    """The order value is told apart by __typename: {} is only acceptable off a NUMBER field."""
+
+    def board_read(self, node, order=True):
+        return project_flow.read_board(
+            FakeTransport(board([node, item(issue(2))], order=order)), URL, CFG)
+
+    def assertUnreadable(self, node):
+        result = self.board_read(node)
+        self.assertEqual(result.unreadable, [node["id"]])
+        self.assertEqual([f.number for f in result.items], [2])
+        with self.assertRaises(Stop) as caught:
+            read_one_typed(node)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_empty_order_on_number_field_is_unreadable(self):
+        node = item(issue(1))
+        node["order"] = {}
+        self.assertUnreadable(node)
+
+    def test_empty_order_without_number_field_is_unset(self):
+        node = item(issue(1))
+        node["order"] = {}
+        result = self.board_read(node, order=False)
+        self.assertEqual(result.unreadable, [])
+        self.assertIsNone(result.items[0].order)
+        self.assertIsNone(read_one_typed(node, order_type="TEXT").order)
+        self.assertIsNone(read_one_typed(node, order_type=None).order)
+
+    def test_other_typed_value_without_number_field_is_unset(self):
+        node = item(issue(1))
+        node["order"] = {"__typename": "ProjectV2ItemFieldTextValue"}
+        self.assertIsNone(read_one_typed(node, order_type="TEXT").order)
+
+    def test_other_typed_value_on_number_field_is_unreadable(self):
+        node = item(issue(1))
+        node["order"] = {"__typename": "ProjectV2ItemFieldTextValue"}
+        self.assertUnreadable(node)
+
+    def test_number_value_missing_number(self):
+        node = item(issue(1))
+        node["order"] = {"__typename": "ProjectV2ItemFieldNumberValue"}
+        self.assertUnreadable(node)
+
+    def test_number_value_not_numeric(self):
+        for bad in ("3", True, None):
+            node = item(issue(1))
+            node["order"] = {"__typename": "ProjectV2ItemFieldNumberValue", "number": bad}
+            self.assertUnreadable(node)
+
+    def test_explicit_null_order_is_unset(self):
+        node = item(issue(1))
+        self.assertIsNone(self.board_read(node).items[0].order)
+        self.assertIsNone(read_one_typed(node).order)
+
+    def test_number_value_reads(self):
+        node = item(issue(1), order=7)
+        self.assertEqual(self.board_read(node).items[0].order, 7.0)
+        self.assertEqual(read_one_typed(node).order, 7.0)
+
+    def test_read_item_without_project_key_is_incomplete(self):
+        node = item(issue(1), order=7)
+        del node["project"]
+        fake = FakeTransport([("query ProjectItem(", {"data": {"node": node}})])
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_item(fake, node["id"], CFG)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+
+    def test_status_value_needs_its_type(self):
+        for value in ({}, {"__typename": "ProjectV2ItemFieldTextValue", "name": "Ready"},
+                      {"__typename": "ProjectV2ItemFieldSingleSelectValue"},
+                      {"__typename": "ProjectV2ItemFieldSingleSelectValue", "name": 3}):
+            node = item(issue(1))
+            node["status"] = value
+            self.assertUnreadable(node)
+
+    def test_queries_select_value_typenames(self):
+        for query in (project_flow.ITEMS_QUERY, project_flow.ITEM_QUERY):
+            self.assertIn("fieldValueByName(name: $order) { __typename", query)
+            self.assertIn("fieldValueByName(name: $status) { __typename", query)
+        self.assertIn("project { order: field(name: $order)", project_flow.ITEM_QUERY)
 
 
 class ParseProjectUrlTest(unittest.TestCase):

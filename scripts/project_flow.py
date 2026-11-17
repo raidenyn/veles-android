@@ -48,8 +48,9 @@ fragment IssueFacts on Issue {
 }""" % {"page": _PAGE}
 _ITEM_FIELDS = """
   id type
-  status: fieldValueByName(name: $status) { ... on ProjectV2ItemFieldSingleSelectValue { name optionId } }
-  order: fieldValueByName(name: $order) { ... on ProjectV2ItemFieldNumberValue { number } }
+  status: fieldValueByName(name: $status) { __typename
+    ... on ProjectV2ItemFieldSingleSelectValue { name optionId } }
+  order: fieldValueByName(name: $order) { __typename ... on ProjectV2ItemFieldNumberValue { number } }
   content { __typename ... on Issue { ...IssueFacts } }"""
 FIELDS_QUERY = """query ProjectFields($login: String!, $number: Int!, $status: String!, $order: String!) {
   OWNER(login: $login) { projectV2(number: $number) { id
@@ -69,7 +70,8 @@ ITEMS_QUERY = """query ProjectItems($login: String!, $number: Int!, $status: Str
   } }
 }""" % (_PAGE, _ITEM_FIELDS) + _ISSUE_FACTS
 ITEM_QUERY = """query ProjectItem($item: ID!, $status: String!, $order: String!, $first: Int = 100) {
-  node(id: $item) { ... on ProjectV2Item { %s } }
+  node(id: $item) { ... on ProjectV2Item { %s
+    project { order: field(name: $order) { __typename ... on ProjectV2Field { id dataType } } } } }
 }""" % _ITEM_FIELDS + _ISSUE_FACTS
 # Follow-up page of one nested connection of an issue, by the issue node id.
 _CONNECTION_NODES = {
@@ -448,8 +450,18 @@ def _pull(node: dict, what: str) -> PullRef:
                    _field(node, "isDraft", bool, what), _title(node, what))
 
 
-def _facts(t: Transport, node: dict, what: str) -> Facts:
-    """Facts of one project item whose content is an issue, reading every page."""
+_NUMBER_VALUE = "ProjectV2ItemFieldNumberValue"
+_SELECT_VALUE = "ProjectV2ItemFieldSingleSelectValue"
+
+
+def _is_number_field(field_node: Any) -> bool:
+    return (isinstance(field_node, dict) and field_node.get("__typename") == "ProjectV2Field"
+            and field_node.get("dataType") == "NUMBER")
+
+
+def _facts(t: Transport, node: dict, what: str, order_is_number: bool) -> Facts:
+    """Facts of one project item whose content is an issue, reading every page.
+    order_is_number: the configured order field exists and is a NUMBER field."""
     item_id = _field(node, "id", str, what)
     issue = _field(node, "content", dict, what)
     if issue.get("__typename") != "Issue":
@@ -461,11 +473,19 @@ def _facts(t: Transport, node: dict, what: str) -> Facts:
     milestone = _title(issue, what)
     parent = _field(issue, "parent", dict, what, nullable=True)
     status_value = _field(node, "status", dict, what, nullable=True)
-    status = None if status_value is None else _field(status_value, "name", str, what + " status")
+    status = None
+    if status_value is not None:
+        if status_value.get("__typename") != _SELECT_VALUE:
+            raise Stop("incomplete-read", "%s: status value is not a single-select value" % what)
+        status = _field(status_value, "name", str, what + " status")
     order_value = _field(node, "order", dict, what, nullable=True)
     order = None
-    if order_value:  # {} is a value of a non-number field, reported by order_field_id
+    if order_value is not None and order_is_number:
+        # On a NUMBER field a value must be a typed number; {} or another type is a broken read.
+        if order_value.get("__typename") != _NUMBER_VALUE:
+            raise Stop("incomplete-read", "%s: order value is not a number value" % what)
         order = float(_field(order_value, "number", float, what + " order"))
+    # Off a NUMBER field there is no order (reported through Board.order_field_id).
     labels = _issue_connection(t, issue, "labels", what)
     assignees = _issue_connection(t, issue, "assignees", what)
     prs = _issue_connection(t, issue, "closedByPullRequestsReferences", what)
@@ -511,10 +531,7 @@ def read_board(t: Transport, project_url: str, cfg: Config) -> Board:
     if not isinstance(status, dict) or status.get("__typename") != "ProjectV2SingleSelectField":
         raise Stop("missing-option", "single-select field %r not found on the project" % cfg.status_field)
     order = project.get("order")
-    order_id = None
-    if isinstance(order, dict) and order.get("__typename") == "ProjectV2Field" \
-            and order.get("dataType") == "NUMBER":
-        order_id = order.get("id")
+    order_id = order.get("id") if _is_number_field(order) else None
     try:
         options = {o["name"]: o["id"] for o in status["options"]}
         project_id, status_id = project["id"], status["id"]
@@ -535,7 +552,7 @@ def read_board(t: Transport, project_url: str, cfg: Config) -> Board:
         try:
             if kind != "ISSUE":
                 raise Stop("incomplete-read", "item %s: content not readable (%s)" % (item_id, kind))
-            board.items.append(_facts(t, node, "item %s" % item_id))
+            board.items.append(_facts(t, node, "item %s" % item_id, order_id is not None))
         except Stop as stop:
             if stop.reason != "incomplete-read":
                 raise
@@ -552,7 +569,9 @@ def read_item(t: Transport, item_id: str, cfg: Config) -> Facts:
     node = _dig(data, ("node",), what)
     if node.get("type") != "ISSUE":
         raise Stop("incomplete-read", "%s: not an issue item (%s)" % (what, node.get("type")))
-    return _facts(t, node, what)
+    project = _field(node, "project", dict, what)
+    order_field = _field(project, "order", dict, what + " project", nullable=True)
+    return _facts(t, node, what, _is_number_field(order_field))
 
 
 def read_text(t: Transport, repo: str, number: int) -> str:

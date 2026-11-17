@@ -117,9 +117,11 @@
               },
               "id": "PVTI_item1",
               "order": {
+                "__typename": "ProjectV2ItemFieldNumberValue",
                 "number": 10.0
               },
               "status": {
+                "__typename": "ProjectV2ItemFieldSingleSelectValue",
                 "name": "In Review",
                 "optionId": "opt4"
               },
@@ -176,9 +178,11 @@
               },
               "id": "PVTI_item2",
               "order": {
+                "__typename": "ProjectV2ItemFieldNumberValue",
                 "number": 1.0
               },
               "status": {
+                "__typename": "ProjectV2ItemFieldSingleSelectValue",
                 "name": "Done",
                 "optionId": "opt6"
               },
@@ -235,9 +239,11 @@
               },
               "id": "PVTI_item3",
               "order": {
+                "__typename": "ProjectV2ItemFieldNumberValue",
                 "number": 2.0
               },
               "status": {
+                "__typename": "ProjectV2ItemFieldSingleSelectValue",
                 "name": "Done",
                 "optionId": "opt6"
               },
@@ -373,6 +379,7 @@
               },
               "id": "PVTI_item5",
               "order": {
+                "__typename": "ProjectV2ItemFieldNumberValue",
                 "number": 5.0
               },
               "status": null,

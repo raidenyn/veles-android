@@ -67,9 +67,11 @@
               },
               "id": "PVTI_item6",
               "order": {
+                "__typename": "ProjectV2ItemFieldNumberValue",
                 "number": 20.5
               },
               "status": {
+                "__typename": "ProjectV2ItemFieldSingleSelectValue",
                 "name": "Backlog",
                 "optionId": "opt1"
               },
@@ -126,9 +128,11 @@
               },
               "id": "PVTI_item7",
               "order": {
+                "__typename": "ProjectV2ItemFieldNumberValue",
                 "number": 30.0
               },
               "status": {
+                "__typename": "ProjectV2ItemFieldSingleSelectValue",
                 "name": "Ready",
                 "optionId": "opt2"
               },

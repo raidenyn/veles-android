@@ -122,9 +122,20 @@ def item(content, item_id=None, status=None, order=None, type=None):
     if content is None and type == "DRAFT_ISSUE":
         content = {"__typename": "DraftIssue"}
     return {"id": item_id, "type": type,
-            "status": {"name": status, "optionId": "opt-" + status} if status else None,
-            "order": {"number": float(order)} if order is not None else None,
-            "content": content}
+            "status": ({"__typename": "ProjectV2ItemFieldSingleSelectValue", "name": status,
+                        "optionId": "opt-" + status} if status else None),
+            "order": ({"__typename": "ProjectV2ItemFieldNumberValue", "number": float(order)}
+                      if order is not None else None),
+            "content": content,
+            # Read by ITEM_QUERY only; ITEMS_QUERY responses carry it harmlessly.
+            "project": item_project()}
+
+
+def item_project(order_type="NUMBER"):
+    """The `project` of an ITEM_QUERY node: the order field and its data type (None: no field)."""
+    if order_type is None:
+        return {"order": None}
+    return {"order": {"__typename": "ProjectV2Field", "id": "PVTF_field1", "dataType": order_type}}
 
 
 def items_page(nodes, more=False, cursor="cursor-next", owner_key="user"):
@@ -164,5 +175,5 @@ def board(items, page_size=None, options=STATUS_OPTIONS, order=True, enabled=Non
     return responses
 
 
-__all__ = ["FakeTransport", "GhError", "issue", "pr", "blocker", "item", "items_page", "fields",
-           "workflows", "board"]
+__all__ = ["FakeTransport", "GhError", "issue", "pr", "blocker", "item", "item_project", "items_page",
+           "fields", "workflows", "board"]
