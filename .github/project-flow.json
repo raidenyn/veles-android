@@ -9,5 +9,6 @@
     "done": "Done"
   },
   "order_field": "Implementation order",
-  "blocked_label": "blocked"
+  "blocked_label": "blocked",
+  "environment": "project-actions"
 }

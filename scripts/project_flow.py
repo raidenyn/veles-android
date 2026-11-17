@@ -23,7 +23,7 @@ from typing import Any, Mapping, Optional, Protocol
 
 DEFAULT_CONFIG = ".github/project-flow.json"
 ROLE_KEYS = ("backlog", "ready", "in_progress", "in_review", "blocked", "done")
-CONFIG_KEYS = ("status_field", "roles", "order_field", "blocked_label")
+CONFIG_KEYS = ("status_field", "roles", "order_field", "blocked_label", "environment")
 STOP_REASONS = (
     "not-enabled", "variable-unreadable", "nothing-ready", "tie", "missing-order",
     "incomplete-read", "not-ready", "collision", "missing-option", "config-invalid",
@@ -36,6 +36,9 @@ _URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
 _ISSUE_REF = re.compile(r"#\d+")
 _NODE_ID = re.compile(r"[A-Z]{1,4}_[A-Za-z0-9_-]{8,}")
 _DIGITS = re.compile(r"\d+")
+# An Actions environment name as the config may hold it: letters, digits, `-`, `_` and `.`, never only
+# dots, so it is a single, literal path segment of the REST variable read.
+_ENVIRONMENT = re.compile(r"[A-Za-z0-9._-]+")
 # Characters that could start a new line or a terminal escape in printed output: C0 and C1 controls
 # (newline, carriage return, escape, ...) and the Unicode line and paragraph separators.
 _UNSAFE = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
@@ -271,6 +274,8 @@ class Config:
     roles: dict
     order_field: str
     blocked_label: str
+    # The Actions environment that holds PROJECT_URL and PROJECT_TOKEN; None: the repository level.
+    environment: Optional[str] = None
 
 
 def _bad_value(value: Any) -> Optional[str]:
@@ -319,6 +324,13 @@ def validate_config(raw: Any) -> list:
                 problem = _bad_value(roles[key])
                 if problem:
                     errors.append("roles.%s: %s" % (key, problem))
+    if "environment" in raw:
+        environment = raw["environment"]
+        problem = _bad_value(environment)
+        if problem is None and (not _ENVIRONMENT.fullmatch(environment) or not environment.strip(".")):
+            problem = "must be letters, digits, '-', '_' and '.' only, not only dots"
+        if problem:
+            errors.append("environment: %s" % problem)
     return errors
 
 
@@ -333,7 +345,8 @@ def load_config(path: str) -> Config:
     errors = validate_config(raw)
     if errors:
         raise Stop("config-invalid", "; ".join(errors))
-    return Config(raw["status_field"], dict(raw["roles"]), raw["order_field"], raw["blocked_label"])
+    return Config(raw["status_field"], dict(raw["roles"]), raw["order_field"], raw["blocked_label"],
+                  raw.get("environment"))
 
 
 # The scope-error wordings gh and GitHub print: `gh project ...` ("missing required scopes"), a GraphQL
@@ -1134,7 +1147,7 @@ def sync(t: Transport, cfg: Config, project_url: str, *, mode: str, repo: Option
          env: Mapping[str, str], dry_run: bool, only: Optional[tuple] = None) -> SyncResult:
     """The gated public entry point: Stop("not-enabled") unless PROJECT_URL names project_url,
     checked before any board read; then the reconciliation (_reconcile)."""
-    require_enabled(t, project_url, repo, mode=mode, env=env)
+    require_enabled(t, project_url, repo, mode=mode, env=env, environment=cfg.environment)
     return _reconcile(t, cfg, project_url, mode=mode, repo=repo, dry_run=dry_run, only=only)
 
 
@@ -1298,7 +1311,8 @@ def next_task(t: Transport, cfg: Config, project_url: str, repo: str, *, skip_un
     with the lowest order value (compared after round(x, 3)); prints `next: <repo>#<n> order=<v>`.
     Stops (never chooses) on a partial board, nothing Ready, an unordered candidate (unless
     skip_unordered) or a tie. Views and board positions are never read."""
-    require_enabled(t, project_url, repo, mode=mode, env={} if env is None else env)
+    require_enabled(t, project_url, repo, mode=mode, env={} if env is None else env,
+                    environment=cfg.environment)
     board = read_board(t, project_url, cfg)
     preflight(board, cfg, needs_order=True)
     result = _reconcile(t, cfg, project_url, mode=mode, repo=repo, dry_run=dry_run, board=board)
@@ -1365,7 +1379,8 @@ def start(t: Transport, cfg: Config, project_url: str, repo: str, issue: tuple, 
     afresh and refuse anything not Ready unless `force`; add the authenticated user as an assignee
     (never replacing), set In Progress, re-read the assignees (any other login: collision), then
     reconcile that item. A dry run lists the two writes and stops there."""
-    require_enabled(t, project_url, repo, mode=mode, env={} if env is None else env)
+    require_enabled(t, project_url, repo, mode=mode, env={} if env is None else env,
+                    environment=cfg.environment)
     issue_repo, number = issue
     ref = "%s#%d" % (issue_repo, number)
     board = read_board(t, project_url, cfg)
@@ -1502,7 +1517,8 @@ def followup(t: Transport, cfg: Config, project_url: str, repo: str, *, parent: 
     `resume` (the issue number) with the original arguments completes only the missing steps, each
     checked first, and stops with resume-disagrees, writing nothing, when an existing link
     disagrees. Returns the issue number (0 for a dry run that creates nothing)."""
-    require_enabled(t, project_url, repo, mode=mode, env={} if env is None else env)
+    require_enabled(t, project_url, repo, mode=mode, env={} if env is None else env,
+                    environment=cfg.environment)
     parent_ref = "%s#%d" % tuple(parent)
     if any(_key(b) == _key(parent) for b in blockers):
         raise Stop("parent-as-blocker", "%s is the parent; a follow-up is never blocked by its parent"
@@ -1689,6 +1705,14 @@ def followup(t: Transport, cfg: Config, project_url: str, repo: str, *, parent: 
 
 VARIABLE_FIX = "needs the Actions variables read permission"
 ENABLE_STEP = "set the repository variable PROJECT_URL to this project to enable it"
+ENABLE_STEP_ENVIRONMENT = "set the variable PROJECT_URL in environment %s to this project to enable it"
+
+
+def _variable_path(repo: str, environment: Optional[str]) -> str:
+    """The REST path of the PROJECT_URL variable: in `environment`, else at the repository level."""
+    if environment is None:
+        return "repos/%s/actions/variables/PROJECT_URL" % repo
+    return "repos/%s/environments/%s/variables/PROJECT_URL" % (repo, environment)
 
 
 def _require_visible_repo(t: Transport, repo: str) -> None:
@@ -1707,16 +1731,19 @@ def _require_visible_repo(t: Transport, repo: str) -> None:
         raise Stop("variable-unreadable", VARIABLE_FIX)
 
 
-def enabled_url(t: Transport, repo: str, *, mode: str, env: Mapping[str, str]) -> Optional[str]:
-    """The project PROJECT_URL names, None when it is unset. Mode "action" reads the environment;
-    "agent" reads the repository variable over REST, where a 404 means unset and any other failure
-    is reported, never guessed."""
+def enabled_url(t: Transport, repo: str, *, mode: str, env: Mapping[str, str],
+                environment: Optional[str] = None) -> Optional[str]:
+    """The project PROJECT_URL names, None when it is unset. Mode "action" reads the process
+    environment (the workflow job maps the variable into it); "agent" reads the variable over REST,
+    from the Actions environment `environment` when one is configured, else at the repository level.
+    A 404 means unset (a missing Actions environment answers 404 too) and any other failure is
+    reported, never guessed."""
     if mode == "action":
         return env.get("PROJECT_URL") or None
     if mode != "agent":
         raise Stop("config-invalid", "unknown mode %r" % mode)
     try:
-        response = t.rest("GET", "repos/%s/actions/variables/PROJECT_URL" % repo)
+        response = t.rest("GET", _variable_path(repo, environment))
     except GhError as err:
         scope = map_gh_error(err)
         if scope is not None:
@@ -1731,23 +1758,28 @@ def enabled_url(t: Transport, repo: str, *, mode: str, env: Mapping[str, str]) -
 
 
 def require_enabled(t: Transport, project_url: str, repo: Optional[str], *, mode: str,
-                    env: Mapping[str, str]) -> None:
+                    env: Mapping[str, str], environment: Optional[str] = None) -> None:
     """Stop("not-enabled") unless PROJECT_URL names the same project as project_url; a view URL
-    and the project URL are the same project."""
+    and the project URL are the same project. `environment` is the configured Actions environment
+    (Config.environment) that holds the variable; None means the repository level."""
     wanted = parse_project_url(project_url)
     owner, _, name = (repo or "").partition("/")
     if not owner or not name or "/" in name:
         raise Stop("config-invalid", "the PROJECT_URL check needs --repo OWNER/NAME")
-    enabled = enabled_url(t, repo, mode=mode, env=env)
+    enabled = enabled_url(t, repo, mode=mode, env=env, environment=environment)
+    step = ENABLE_STEP if environment is None else ENABLE_STEP_ENVIRONMENT % environment
     if enabled is None:
-        raise Stop("not-enabled", "PROJECT_URL is not set; " + ENABLE_STEP)
+        if mode == "agent" and environment is not None:
+            raise Stop("not-enabled", "PROJECT_URL is not set in environment %s (or the environment "
+                       "does not exist); %s" % (environment, step))
+        raise Stop("not-enabled", "PROJECT_URL is not set; " + step)
     try:
         named = parse_project_url(enabled)
     except Stop:
-        raise Stop("not-enabled", "PROJECT_URL is not a project URL; " + ENABLE_STEP)
+        raise Stop("not-enabled", "PROJECT_URL is not a project URL; " + step)
     if (named[0].lower(), named[1]) != (wanted[0].lower(), wanted[1]):
         raise Stop("not-enabled", "PROJECT_URL names %s/%d, not %s/%d; %s"
-                   % (named[0], named[1], wanted[0], wanted[1], ENABLE_STEP))
+                   % (named[0], named[1], wanted[0], wanted[1], step))
 
 
 # The built-in project workflows the setup relies on (facts). Enabling one is possible only in the

@@ -13,15 +13,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import project_flow  # noqa: E402
 from project_flow import Config, GhError, Stop  # noqa: E402
 from project_flow_fake import (FakeTransport, board, issue, item, item_response,  # noqa: E402
-                               status_written, unset_variable)
+                               status_written, unset_variable, COMMITTED_ENVIRONMENT, variable_path)
 
 URL = "https://github.com/users/owner/projects/2"
 OTHER = "https://github.com/users/owner/projects/3"
 REPO = "owner/repo"
-VARIABLE = "repos/owner/repo/actions/variables/PROJECT_URL"
+# The CLI tests here run on the committed config, so CFG and VARIABLE follow its environment.
+VARIABLE = variable_path("owner/repo", COMMITTED_ENVIRONMENT)
 CFG = Config("Status", {"backlog": "Backlog", "ready": "Ready", "in_progress": "In Progress",
                         "in_review": "In Review", "blocked": "Blocked", "done": "Done"},
-             "Implementation order", "blocked")
+             "Implementation order", "blocked", COMMITTED_ENVIRONMENT)
 MILESTONES = ("repos/owner/repo/milestones?state=open", [])
 NOT_FOUND = GhError("gh: Not Found (HTTP 404)")
 ENABLED = (VARIABLE, {"name": "PROJECT_URL", "value": URL})
@@ -157,7 +158,7 @@ class NextTest(unittest.TestCase):
         self.assertEqual(fake.mutations, [])
 
     def test_direct_next_refuses_when_not_enabled(self):
-        for responses in (unset_variable(), [(VARIABLE, {"name": "PROJECT_URL", "value": OTHER})]):
+        for responses in (unset_variable(environment=COMMITTED_ENVIRONMENT), [(VARIABLE, {"name": "PROJECT_URL", "value": OTHER})]):
             fake = FakeTransport(list(responses))
             stop = stop_of(project_flow.next_task, fake, CFG, URL, REPO, skip_unordered=False,
                            dry_run=False)
@@ -301,7 +302,7 @@ class StartTest(unittest.TestCase):
         self.assertEqual(fake.mutations, [])
 
     def test_direct_start_refuses_when_not_enabled(self):
-        for responses in (unset_variable(), [(VARIABLE, {"name": "PROJECT_URL", "value": OTHER})]):
+        for responses in (unset_variable(environment=COMMITTED_ENVIRONMENT), [(VARIABLE, {"name": "PROJECT_URL", "value": OTHER})]):
             fake = FakeTransport(list(responses))
             stop = stop_of(project_flow.start, fake, CFG, URL, REPO, (REPO, 1), force=True, dry_run=False)
             self.assertEqual(stop.reason, "not-enabled")

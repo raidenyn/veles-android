@@ -1,4 +1,5 @@
 """Test fake for the project_flow transport: records calls, serves canned responses."""
+import json
 import os
 import sys
 
@@ -6,6 +7,11 @@ SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SCRIPTS)
 
 from project_flow import GhError  # noqa: E402
+
+# The Actions environment the committed .github/project-flow.json names (None: the repository level).
+# Tests that run the CLI on the committed config serve PROJECT_URL at this environment's path.
+with open(os.path.join(os.path.dirname(SCRIPTS), ".github", "project-flow.json"), encoding="utf-8") as _f:
+    COMMITTED_ENVIRONMENT = json.load(_f).get("environment")
 
 
 class FakeTransport:
@@ -224,11 +230,19 @@ def milestone(number, title, open_issues=1, closed_issues=0):
 
 __all__ = ["FakeTransport", "GhError", "issue", "pr", "blocker", "item", "item_project", "items_page",
            "fields", "workflows", "board", "rate", "item_response", "closing_issues", "status_written",
-           "milestone"]
+           "milestone", "COMMITTED_ENVIRONMENT", "variable_path", "unset_variable"]
 
 
-def unset_variable(repo="owner/repo"):
+def variable_path(repo="owner/repo", environment=None):
+    """The REST path of PROJECT_URL: in `environment`, else at the repository level."""
+    if environment is None:
+        return "repos/%s/actions/variables/PROJECT_URL" % repo
+    return "repos/%s/environments/%s/variables/PROJECT_URL" % (repo, environment)
+
+
+def unset_variable(repo="owner/repo", environment=None):
     """Responses for an unset PROJECT_URL: the variable read answers 404 and the repository itself
     is readable (a 404 on an invisible repository is not "unset")."""
-    return [("repos/%s/actions/variables/PROJECT_URL" % repo, GhError("gh: Not Found (HTTP 404)")),
+    path = variable_path(repo, environment)
+    return [(lambda call: call.get("path") == path, GhError("gh: Not Found (HTTP 404)")),
             (lambda call: call.get("path") == "repos/%s" % repo, {"full_name": repo})]

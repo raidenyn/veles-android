@@ -14,15 +14,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import project_flow  # noqa: E402
 from project_flow import Config, Facts, PullRef, Stop  # noqa: E402
 from project_flow_fake import (FakeTransport, board, closing_issues, issue, item,  # noqa: E402
-                               item_response, milestone, pr, status_written)
+                               item_response, milestone, pr, status_written, COMMITTED_ENVIRONMENT,
+                               variable_path)
 
 URL = "https://github.com/users/owner/projects/2"
 REPO = "owner/repo"
 FORK = "stranger/repo"
 CFG = Config("Status", {"backlog": "Backlog", "ready": "Ready", "in_progress": "In Progress",
                         "in_review": "In Review", "blocked": "Blocked", "done": "Done"},
-             "Implementation order", "blocked")
-ENABLED = ("repos/owner/repo/actions/variables/PROJECT_URL", {"name": "PROJECT_URL", "value": URL})
+             "Implementation order", "blocked", COMMITTED_ENVIRONMENT)
+# run_cli uses the committed config, so CFG and ENABLED follow its environment.
+ENABLED = (variable_path(REPO, COMMITTED_ENVIRONMENT), {"name": "PROJECT_URL", "value": URL})
 OPEN_MILESTONES = ("repos/owner/repo/milestones?state=open", [])
 
 

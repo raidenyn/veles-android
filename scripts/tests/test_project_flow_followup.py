@@ -14,15 +14,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import project_flow  # noqa: E402
 from project_flow import Config, Facts, GhError, Stop  # noqa: E402
 from project_flow_fake import (FakeTransport, board, issue, item, item_response, milestone,  # noqa: E402
-                               status_written, unset_variable)
+                               status_written, unset_variable, COMMITTED_ENVIRONMENT, variable_path)
 
 URL = "https://github.com/users/owner/projects/2"
 OTHER = "https://github.com/users/owner/projects/3"
 REPO = "owner/repo"
-VARIABLE = "repos/owner/repo/actions/variables/PROJECT_URL"
+# The CLI tests here run on the committed config, so CFG and VARIABLE follow its environment.
+VARIABLE = variable_path("owner/repo", COMMITTED_ENVIRONMENT)
 CFG = Config("Status", {"backlog": "Backlog", "ready": "Ready", "in_progress": "In Progress",
                         "in_review": "In Review", "blocked": "Blocked", "done": "Done"},
-             "Implementation order", "blocked")
+             "Implementation order", "blocked", COMMITTED_ENVIRONMENT)
 NOT_FOUND = GhError("gh: Not Found (HTTP 404)")
 ENABLED = (VARIABLE, {"name": "PROJECT_URL", "value": URL})
 PR_URL = "https://github.com/owner/repo/pull/77"
@@ -463,7 +464,7 @@ class FollowupTest(unittest.TestCase):
                 self.assertEqual(fake.mutations, [])
 
     def test_direct_followup_refuses_when_not_enabled(self):
-        for responses in (unset_variable(), [(VARIABLE, {"name": "PROJECT_URL", "value": OTHER})]):
+        for responses in (unset_variable(environment=COMMITTED_ENVIRONMENT), [(VARIABLE, {"name": "PROJECT_URL", "value": OTHER})]):
             fake = FakeTransport(list(responses))
             stop, _ = run_followup(fake)
             self.assertEqual(stop.reason, "not-enabled")

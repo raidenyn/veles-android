@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -18,6 +19,7 @@ from project_flow_fake import FakeTransport  # noqa: E402
 
 PROJECT = os.path.dirname(SCRIPTS)
 DEFAULTS = os.path.join(PROJECT, ".github", "project-flow.json")
+WORKFLOW = os.path.join(PROJECT, ".github", "workflows", "project-flow.yml")
 
 
 def default_raw():
@@ -72,6 +74,46 @@ class ConfigTest(unittest.TestCase):
             raw = default_raw()
             raw["status_field"] = value
             self.assertEqual(project_flow.validate_config(raw), [], value)
+
+    def test_committed_config_names_the_environment(self):
+        self.assertEqual(project_flow.load_config(DEFAULTS).environment, "project-actions")
+
+    def test_environment_optional(self):
+        raw = default_raw()
+        raw.pop("environment", None)
+        self.assertEqual(project_flow.validate_config(raw), [])
+        self.assertIsNone(project_flow.load_config(self.write(raw)).environment)
+
+    def test_environment_valid(self):
+        for value in ("project-actions", "prod_1", "a.b", "Env-2.x"):
+            raw = default_raw()
+            raw["environment"] = value
+            self.assertEqual(project_flow.validate_config(raw), [], value)
+            self.assertEqual(project_flow.load_config(self.write(raw)).environment, value)
+
+    def test_environment_invalid_characters_rejected(self):
+        for value in ("project actions", "a/b", "a?b", "a%2Fb", "env\n", "ok#", ".", "..", "", " x"):
+            raw = default_raw()
+            raw["environment"] = value
+            errors = project_flow.validate_config(raw)
+            self.assertEqual(len(errors), 1, (value, errors))
+            self.assertTrue(errors[0].startswith("environment: "), errors)
+
+    def test_environment_wrong_type_rejected(self):
+        for value in (None, 3, ["project-actions"], {"name": "project-actions"}, True):
+            raw = default_raw()
+            raw["environment"] = value
+            errors = project_flow.validate_config(raw)
+            self.assertEqual(len(errors), 1, (value, errors))
+            self.assertTrue(errors[0].startswith("environment: "), errors)
+
+    def test_environment_identifier_rejected(self):
+        for value in ("PVT_kwHOAbc12345", "12345", "https://github.com/users/x/projects/3"):
+            raw = default_raw()
+            raw["environment"] = value
+            errors = project_flow.validate_config(raw)
+            self.assertEqual(len(errors), 1, (value, errors))
+            self.assertTrue(errors[0].startswith("environment: "), errors)
 
     def test_unknown_top_level_key_rejected(self):
         raw = default_raw()
@@ -166,3 +208,16 @@ class ConfigTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorkflowEnvironmentTest(unittest.TestCase):
+    """The agent commands and the Action must read PROJECT_URL from the same place: the job-level
+    environment of project-flow.yml is the environment the committed config names."""
+
+    def test_workflow_job_environment_matches_the_config(self):
+        with open(WORKFLOW, encoding="utf-8") as handle:
+            workflow = handle.read()
+        jobs = workflow.split("\njobs:\n", 1)[1]
+        found = [value.strip() for value in re.findall(r"(?m)^    environment:(.*)$", jobs)]
+        self.assertEqual(len(found), 1, "project-flow.yml must declare one job-level environment")
+        self.assertEqual(found[0], project_flow.load_config(DEFAULTS).environment)

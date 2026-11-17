@@ -14,11 +14,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import project_flow  # noqa: E402
 from project_flow import GhError, Stop  # noqa: E402
-from project_flow_fake import FakeTransport, board, issue, item, item_response  # noqa: E402
+from project_flow_fake import (COMMITTED_ENVIRONMENT, FakeTransport, board, issue, item,  # noqa: E402
+                               item_response, variable_path)
 
 URL = "https://github.com/users/owner/projects/2"
 REPO = "owner/repo"
-VARIABLE = "repos/owner/repo/actions/variables/PROJECT_URL"
+VARIABLE = variable_path("owner/repo", COMMITTED_ENVIRONMENT)  # run_main uses the committed config
 ENABLED = (VARIABLE, {"name": "PROJECT_URL", "value": URL})
 DEFAULTS = os.path.join(os.path.dirname(SCRIPTS), ".github", "project-flow.json")
 USER = (lambda c: c["kind"] == "rest" and c["path"] == "user", {"login": "me"})

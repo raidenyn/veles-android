@@ -12,7 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import project_flow  # noqa: E402
 from project_flow import Config, GhError, Stop  # noqa: E402
-from project_flow_fake import FakeTransport, blocker, board, issue, item, unset_variable  # noqa: E402
+from project_flow_fake import (COMMITTED_ENVIRONMENT, FakeTransport, blocker, board, issue, item,  # noqa: E402
+                               unset_variable, variable_path)
 
 URL = "https://github.com/users/owner/projects/2"
 OTHER = "https://github.com/users/owner/projects/3"
@@ -28,6 +29,14 @@ FORBIDDEN = GhError("gh: Resource not accessible by integration (HTTP 403)")
 
 def variable(value):
     return (VARIABLE, {"name": "PROJECT_URL", "value": value})
+
+
+# The CLI runs on the committed config, which names an environment: PROJECT_URL is read there.
+CLI_VARIABLE = variable_path("owner/repo", COMMITTED_ENVIRONMENT)
+
+
+def cli_variable(value):
+    return (lambda c: c.get("path") == CLI_VARIABLE, {"name": "PROJECT_URL", "value": value})
 
 
 def text(body, comments=()):
@@ -117,16 +126,114 @@ class EnabledUrlTest(unittest.TestCase):
         self.assertEqual(ctx.exception.reason, "not-enabled")
 
 
+ENV_VARIABLE = "repos/owner/repo/environments/project-actions/variables/PROJECT_URL"
+ENV_CFG = Config(CFG.status_field, CFG.roles, CFG.order_field, CFG.blocked_label, "project-actions")
+
+
+def env_variable(value):
+    return (lambda c: c.get("path") == ENV_VARIABLE, {"name": "PROJECT_URL", "value": value})
+
+
+class EnvironmentVariableTest(unittest.TestCase):
+    """With an environment configured, agent mode reads PROJECT_URL from that environment."""
+
+    def test_environment_reads_the_environment_path(self):
+        fake = FakeTransport([env_variable(OTHER)])
+        self.assertEqual(project_flow.enabled_url(fake, REPO, mode="agent", env={},
+                                                  environment="project-actions"), OTHER)
+        self.assertEqual([(c["kind"], c["method"], c["path"]) for c in fake.calls],
+                         [("rest", "GET", ENV_VARIABLE)])
+
+    def test_no_environment_reads_the_repository_path(self):
+        fake = FakeTransport([(lambda c: c.get("path") == VARIABLE, {"name": "PROJECT_URL", "value": OTHER})])
+        self.assertEqual(project_flow.enabled_url(fake, REPO, mode="agent", env={}, environment=None), OTHER)
+        self.assertEqual([c["path"] for c in fake.calls], [VARIABLE])
+
+    def test_action_mode_ignores_the_environment_name(self):
+        fake = FakeTransport()
+        self.assertEqual(project_flow.enabled_url(fake, REPO, mode="action", env={"PROJECT_URL": URL},
+                                                  environment="project-actions"), URL)
+        self.assertEqual(fake.calls, [])
+
+    def test_environment_404_is_unset_with_the_environment_diagnostic(self):
+        fake = FakeTransport([(lambda c: c.get("path") == ENV_VARIABLE, NOT_FOUND),
+                              (lambda c: c.get("path") == "repos/owner/repo", {"full_name": REPO})])
+        with self.assertRaises(Stop) as ctx:
+            project_flow.require_enabled(fake, URL, REPO, mode="agent", env={}, environment="project-actions")
+        self.assertEqual(ctx.exception.reason, "not-enabled")
+        self.assertIn("PROJECT_URL is not set in environment project-actions "
+                      "(or the environment does not exist)", ctx.exception.detail)
+        self.assertEqual([c["path"] for c in fake.calls], [ENV_VARIABLE, "repos/owner/repo"])
+
+    def test_repository_404_keeps_the_repository_diagnostic(self):
+        with self.assertRaises(Stop) as ctx:
+            project_flow.require_enabled(FakeTransport(unset_variable()), URL, REPO, mode="agent", env={})
+        self.assertTrue(ctx.exception.detail.startswith("PROJECT_URL is not set; "), ctx.exception.detail)
+        self.assertNotIn("environment", ctx.exception.detail)
+
+    def test_environment_404_on_an_invisible_repository_is_not_unset(self):
+        fake = FakeTransport([(lambda c: c.get("path") == ENV_VARIABLE, NOT_FOUND),
+                              (lambda c: c.get("path") == "repos/owner/repo", NOT_FOUND)])
+        with self.assertRaises(Stop) as ctx:
+            project_flow.enabled_url(fake, REPO, mode="agent", env={}, environment="project-actions")
+        self.assertEqual(ctx.exception.reason, "variable-unreadable")
+        self.assertIn("owner/repo is not visible to the token", ctx.exception.detail)
+
+    def test_error_mapping_is_the_same_for_both_paths(self):
+        scope = GhError('gh: This API operation needs the "repo" scope. (HTTP 403)')
+        for environment, path in ((None, VARIABLE), ("project-actions", ENV_VARIABLE)):
+            with self.subTest(environment=environment):
+                for error, expected in ((FORBIDDEN, Stop("variable-unreadable", project_flow.VARIABLE_FIX)),
+                                        (scope, Stop("missing-scope", "run gh auth refresh -s repo"))):
+                    fake = FakeTransport([(lambda c, p=path: c.get("path") == p, error)])
+                    with self.assertRaises(Stop) as ctx:
+                        project_flow.enabled_url(fake, REPO, mode="agent", env={}, environment=environment)
+                    self.assertEqual(ctx.exception, expected)
+                fake = FakeTransport([(lambda c, p=path: c.get("path") == p, {"name": "PROJECT_URL"})])
+                with self.assertRaises(Stop) as ctx:
+                    project_flow.enabled_url(fake, REPO, mode="agent", env={}, environment=environment)
+                self.assertEqual(ctx.exception.reason, "variable-unreadable")
+
+    def test_entry_points_pass_the_configured_environment(self):
+        """sync, next, start and followup each read the configured environment's variable."""
+        calls = {
+            "sync": lambda f: project_flow.sync(f, ENV_CFG, URL, mode="agent", repo=REPO, env={},
+                                                dry_run=True),
+            "next": lambda f: project_flow.next_task(f, ENV_CFG, URL, REPO, skip_unordered=False,
+                                                     dry_run=True),
+            "start": lambda f: project_flow.start(f, ENV_CFG, URL, REPO, (REPO, 1), force=False,
+                                                  dry_run=True),
+            "followup": lambda f: project_flow.followup(
+                f, ENV_CFG, URL, REPO, parent=(REPO, 1), title="T", body_file=DEFAULTS, blockers=[],
+                pr="https://github.com/owner/repo/pull/2", change_dir="x", found_at="here", resume=None,
+                dry_run=True),
+        }
+        for name, call in calls.items():
+            with self.subTest(command=name):
+                fake = FakeTransport([env_variable(OTHER)])
+                with self.assertRaises(Stop) as ctx:
+                    call(fake)
+                self.assertEqual(ctx.exception.reason, "not-enabled")
+                self.assertEqual([c["path"] for c in fake.calls], [ENV_VARIABLE])
+
+    def test_cli_reads_the_environment_named_in_the_config(self):
+        fake = FakeTransport([env_variable(OTHER)])
+        code, out, _ = run_main(["sync", "--project", URL, "--repo", REPO, "--config", DEFAULTS], fake)
+        self.assertEqual(code, 3)
+        self.assertIn("stop: not-enabled", out)
+        self.assertEqual([c["path"] for c in fake.calls], [ENV_VARIABLE])
+
+
 class GateTest(unittest.TestCase):
     def test_sync_refuses_when_not_enabled(self):
-        fake = FakeTransport(unset_variable())
+        fake = FakeTransport(unset_variable(environment=COMMITTED_ENVIRONMENT))
         code, out, _ = run_main(["sync", "--project", URL, "--repo", REPO], fake)
         self.assertEqual(code, 3)
         self.assertIn("stop: not-enabled", out)
         self.assertEqual(len(fake.calls), 2)  # the variable and repository reads; no board read, no write
 
     def test_sync_runs_when_enabled(self):
-        fake = FakeTransport([variable(URL + "/views/1")] + board([]) +
+        fake = FakeTransport([cli_variable(URL + "/views/1")] + board([]) +
                              [("milestones?state=open", [])])
         code, out, _ = run_main(["sync", "--project", URL, "--repo", REPO], fake)
         self.assertEqual(code, 0, out)
@@ -143,8 +250,8 @@ class GateTest(unittest.TestCase):
                       "followup": ["--parent", "#1", "--title", "T", "--body-file", DEFAULTS,
                                    "--pr", "https://github.com/owner/repo/pull/2",
                                    "--change-dir", "openspec/changes/x", "--found-at", "here"]}
-        cases = (("agent", unset_variable(), {}),
-                 ("agent", [variable(OTHER)], {}),
+        cases = (("agent", unset_variable(environment=COMMITTED_ENVIRONMENT), {}),
+                 ("agent", [cli_variable(OTHER)], {}),
                  ("action", [], {}),
                  ("action", [], {"PROJECT_URL": OTHER}))
         for command in project_flow.GATED_COMMANDS:
@@ -182,10 +289,10 @@ class GateTest(unittest.TestCase):
         self.assertEqual(fake.responses, [])
 
     def test_sync_reads_variable_once(self):
-        fake = FakeTransport([variable(URL)] + board([]) + [("milestones?state=open", [])])
+        fake = FakeTransport([cli_variable(URL)] + board([]) + [("milestones?state=open", [])])
         code, _, _ = run_main(["sync", "--project", URL, "--repo", REPO], fake)
         self.assertEqual(code, 0)
-        self.assertEqual(len([c for c in fake.calls if c.get("path") == VARIABLE]), 1)
+        self.assertEqual(len([c for c in fake.calls if c.get("path") == CLI_VARIABLE]), 1)
 
     def test_gated_command_needs_repo(self):
         code, out, _ = run_main(["sync", "--project", URL], FakeTransport())
