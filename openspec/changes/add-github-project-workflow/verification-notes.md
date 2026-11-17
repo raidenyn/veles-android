@@ -9,7 +9,7 @@ Real-environment run on 2026-11-17, from the worktree at `11ce2f0`, then `53c8ca
   Progress, In Review, Blocked, Done] and the number field "Implementation order"; built-in workflows:
   *Item closed* disabled, *Auto-add sub-issues to project* enabled, no *Auto-add to project*).
 - Agent side, two logins: (1) the project owner's `gh` login (classic, scopes `project`, `repo`, `read:org`,
-  `gist`, `admin:public_key`) — rounds 1 and 2; (2) the test PAT below — round 3, marked "(PAT)".
+  `gist`, `admin:public_key`) — rounds 1 and 2; (2) the test PAT below — round 3, marked "(PAT 2)".
 - Action side: `.github/workflows/project-flow.yml` copied byte-identical onto the scratch `main`.
 - Tokens tried for `PROJECT_TOKEN`: PAT 1, a classic token of **another account** with `project,
   public_repo, repo:status, repo_deployment`; PAT 2, a classic token of the **project owner** with the same
@@ -18,11 +18,12 @@ Real-environment run on 2026-11-17, from the worktree at `11ce2f0`, then `53c8ca
 
 ## Outcome
 
-Every transition passed through the **real Action** on real events (round 3), with PAT 2 on the repository
-made temporarily public, and through the agent commands. With the repository private again, PAT 2 cannot
-read it: the Action ran green but with `sync: partial (23 unreadable …)` and wrote nothing, and the agent
-commands stop. Three defects found: two diagnostic ones were fixed, and one design question is recorded,
-not fixed.
+63 scenarios, enumerated in the single table below: **26 executed by the real Action** on real GitHub
+events or `workflow_dispatch` (each row cites its run and its event type) and **37 executed by agent
+commands** on real GitHub (each row gives the command and its output). **0 failed**: 61 pass, and two Action
+rows are observations that exposed defects (row 25: defects 2 and 3; row 26: defect 3, recorded, not fixed).
+Row 63 passes only after the fix for defect 2. The Action rows that write (6–24) ran with PAT 2 while the
+repository was public; with the repository private again, PAT 2 cannot read it (rows 25, 26, 63).
 
 ## 8.1 Setup
 
@@ -34,54 +35,83 @@ not fixed.
 | Agent command before enabling | `sync` → `stop: not-enabled: PROJECT_URL is not set; …`, exit 3 (owner login and PAT 2) |
 | `PROJECT_URL` set last | after the secret, after `check` and after the "merged between runs" setup, in each round |
 
-## 8.3 Transitions through the real Action (round 3: PAT 2, repository public)
+## 8.3 Scenarios
 
-Run URLs are `https://github.com/raidenyn-shadow/scratch-project-flow/actions/runs/<id>`. Each event was
-waited for before the next one, so each run below belongs to one event.
+Conventions: `pf <cmd>` is `python3 -I scripts/project_flow.py <cmd> --project
+https://github.com/users/raidenyn-shadow/projects/2 --repo raidenyn-shadow/scratch-project-flow` run from
+the worktree (`check` without `--repo`); `R` is `raidenyn-shadow/scratch-project-flow` and `…#n` in an
+output line is `R#n`. A run id is `https://github.com/raidenyn-shadow/scratch-project-flow/actions/runs/<id>`;
+"event" is the run's `event` as `gh run view --json event` reports it, with the action that fired it. Every
+agent command used the owner's login unless marked **(PAT 2)**. Each event was waited for before the next,
+except in rows 23 and 25.
 
-| Transition | How triggered | Action run | Observed status | Pass/fail |
-| --- | --- | --- | --- | --- |
-| no-op, `PROJECT_URL` unset (secret present) | real events: PR #27 opened, merged; issue #26 closed | 44121943455, 44121965619, 44121977979: `::notice::project-flow not configured`, checkout and reconcile skipped | success, nothing written | pass |
-| milestone copy onto a PR opened and merged between runs; Done for its issue | PR #27 (`Closes #26`, #26 in `M3 e2e`) opened and merged while unset; then `PROJECT_URL` set and `workflow_dispatch` | 44122097447: `write: …#26 Status: (none) -> Done`, `write: …#27 milestone: M3 e2e` | #26 Done; PR #27 milestone `M3 e2e` | pass |
-| empty-milestone report | same run | 44122097447: `milestone 'M3 e2e' in … is complete: no open issues; not closed` | milestone left open | pass |
-| checkout ref on `workflow_dispatch` | same run | `ref: main`; `git checkout --progress --force -B main refs/remotes/origin/main` | default branch checked out | pass |
-| new items get a Status | four new issues added with orders 61–64; `workflow_dispatch` | 44122317280: four `Status: (none) -> Ready` | Ready | pass |
-| Ready → Backlog on blocker add | native `blocked_by` links #28 ← #29 and #31 ← #30 (GitHub emits no event for a dependency, so `workflow_dispatch`, the documented path) | 44122410951: `…#28 Status: Ready -> Backlog`, `…#31 Status: Ready -> Backlog` | Backlog | pass |
-| Backlog → Ready on blocker closed completed | `gh issue close 29 --reason completed` (real `issues.closed`) | 44122530443: `…#28 Status: Backlog -> Ready`, `…#29 Status: Ready -> Done` | Ready | pass |
-| not-planned blocker keeps Backlog + report | `gh issue close 30 --reason "not planned"` | 44122614347: `…#30 Status: Ready -> Done`, `…#31: blocker …#30 closed as not planned`, no write for #31 | Backlog | pass |
-| refused Backlog claim (PAT) | `start <repo>#31` | `stop: not-ready: …#31 is Backlog: blocker …#30 closed as not planned`, exit 3 | Backlog | pass |
-| claim (PAT) | `start <repo>#28` → real `issues.assigned` | command: `assignees: +raidenyn-shadow`, `Status: Ready -> In Progress`, `started: …#28`; run 44122752603: `no changes written` (agrees) | In Progress | pass |
-| draft PR without keyword | `gh pr create --draft` #32 (same-repo branch) | 44122872273: `no changes written` | In Progress | pass |
-| draft → ready → In Review, milestone copy onto the open PR | `gh pr edit 32 --body-file` (`Closes #28`) + `gh pr ready 32` (16:11:45) | 44122966816 (created 16:11:48): `…#28 Status: In Progress -> In Review`, `…#32 milestone: M3 e2e` | In Review; PR milestone `M3 e2e` | pass |
-| back to draft → In Progress | `gh pr ready 32 --undo` | 44123140643: `…#28 Status: In Review -> In Progress` | In Progress | pass |
-| blocked label on | `gh issue edit 28 --add-label blocked` | 44123233158: `…#28 Status: In Progress -> Blocked` | Blocked | pass |
-| blocked label off | `--remove-label blocked` | 44123321456: `…#28 Status: Blocked -> In Progress` | In Progress (derived again) | pass |
-| ready again | `gh pr ready 32` | 44123427211: `…#28 Status: In Progress -> In Review` | In Review | pass |
-| merge with the closing keyword → Done | `gh pr merge 32 --squash` → #28 `CLOSED/COMPLETED` | 44123516027 (PR closed): `…#28 Status: In Review -> Done` — **written by the Action** (*Item closed* disabled); 44123524379 (issue closed): `no changes written` | Done | pass |
-| empty-milestone report after the merge | same runs | `milestone 'M3 e2e' … is complete` | — | pass |
-| dropped events (a burst) | four label edits on #8 and #6 within ~3 s | 44123663609 ran and already read the final state; 44123674671 and 44123678302 **cancelled** (superseded pending runs of the concurrency group); 44123682354 ran: `no changes written` | #6, #8 Ready; Blocked never written | pass |
-| idempotence | `workflow_dispatch` with nothing changed | 44123833203: `no changes written`, `sync: complete` | — | pass |
-| `followup` (PAT) | `followup --parent <repo>#33 (order 70) --blocker <repo>#31 …` | `created: #34`, sub-issue, `skipped set_milestone: … has no milestone`, `blocked by …#31`, `added to the project` (this time the script's own `addProjectV2ItemById`), `Implementation order: 70.1` | order 70.1 | pass |
-| `next` (PAT) | `next` | writes the two new items' Statuses, `next: …#6 order=20.5` | — | pass |
-| closes of throwaways | three `gh issue close` in a row | 44124044441: three `-> Done`; 44124052399 cancelled; 44124058012 `no changes written` | Done | pass |
+| # | Scenario | Executed by | Evidence | Observed | Result |
+| --- | --- | --- | --- | --- | --- |
+| 1 | no-op, `PROJECT_URL` unset (round 1, secret set) | real Action, `workflow_dispatch` | run 44117276392: `##[notice]project-flow not configured`; checkout and reconcile steps `skipped` | success, nothing written | pass |
+| 2 | no-op, `PROJECT_URL` unset, real events (round 1) | real Action, `pull_request_target` (PR #15 opened; PR #15 merged), `issues` (#14 closed) | runs 44117452172, 44117468873, 44117477728: `##[notice]project-flow not configured` | success, nothing written | pass |
+| 3 | no-op, `PROJECT_URL` unset, real events (round 3, PAT 2 secret set) | real Action, `pull_request_target` (PR #27 opened; merged), `issues` (#26 closed) | runs 44121943455, 44121965619, 44121977979: `##[notice]project-flow not configured` | success, nothing written | pass |
+| 4 | no-op, secret absent (`PROJECT_URL` set) | real Action, `issues` (#17 closed), `pull_request_target` (PR #20 opened as draft; `ready_for_review`; `converted_to_draft`; closed) | runs 44118472146, 44118620968, 44118658159, 44118720473, 44118836438: `##[notice]project-flow not configured`; 44118836438's checkout and reconcile steps `skipped` | success, nothing written | pass |
+| 5 | a token that cannot see the project fails visibly (PAT 1) | real Action, `workflow_dispatch` | run 44117634152: `stop: incomplete-read: cannot read project raidenyn-shadow/2 as a user or an organization: project fields: gh: Could not resolve to an Organization …`, exit 3 | failure | pass (the message was defect 1) |
+| 6 | Done and milestone copy for a PR opened and merged between runs | real Action, `workflow_dispatch` after `PROJECT_URL` was set (PR #27, `Closes #26`, #26 in `M3 e2e`, opened and merged while unset) | run 44122097447: `write: …#26 Status: (none) -> Done`, `write: …#27 milestone: M3 e2e`, `sync: complete` | #26 Done; PR #27 milestone `M3 e2e` | pass |
+| 7 | empty-milestone report | real Action, `workflow_dispatch` | run 44122097447: `milestone 'M3 e2e' in … is complete: no open issues; not closed` | milestone left open | pass |
+| 8 | checkout ref on dispatch | real Action, `workflow_dispatch` | run 44122097447: `ref: main`, `git checkout --progress --force -B main refs/remotes/origin/main` | default branch | pass |
+| 9 | new items get a derived Status | real Action, `workflow_dispatch` (#28–#31 added with orders 61–64) | run 44122317280: `write: …#28 Status: (none) -> Ready` and the same for #29, #30, #31 | Ready | pass |
+| 10 | Ready → Backlog on a native blocker add | real Action, `workflow_dispatch` (links #28 ← #29 and #31 ← #30 through `POST …/dependencies/blocked_by`; GitHub emits no event for them) | run 44122410951: `write: …#28 Status: Ready -> Backlog`, `write: …#31 Status: Ready -> Backlog` | Backlog | pass |
+| 11 | Backlog → Ready when the blocker closes as completed | real Action, `issues` (`gh issue close 29 --reason completed`) | run 44122530443: `write: …#28 Status: Backlog -> Ready`, `write: …#29 Status: Ready -> Done` | Ready | pass |
+| 12 | a not-planned blocker keeps Backlog, with a report | real Action, `issues` (`gh issue close 30 --reason "not planned"`) | run 44122614347: `write: …#30 Status: Ready -> Done`, `…#31: blocker …#30 closed as not planned`; no write for #31 | Backlog | pass |
+| 13 | the assignment event after a claim changes nothing | real Action, `issues` (assigned by row 60's `start`) | run 44122752603: `no changes written`, `sync: complete` | In Progress (written by `start`) | pass |
+| 14 | a draft PR without the keyword changes nothing | real Action, `pull_request_target` (`gh pr create --draft`, PR #32) | run 44122872273: `no changes written` | In Progress | pass |
+| 15 | ready for review → In Review | real Action, `pull_request_target` (`gh pr edit 32 --body-file` with `Closes #28`, then `gh pr ready 32` at 16:11:45) | run 44122966816 (created 16:11:48): `write: …#28 Status: In Progress -> In Review` | In Review; the closing reference was already linked | pass |
+| 16 | milestone copy onto an open PR | real Action, `pull_request_target` (same event) | run 44122966816: `write: …#32 milestone: M3 e2e` | PR #32 milestone `M3 e2e` | pass |
+| 17 | back to draft → In Progress | real Action, `pull_request_target` (`gh pr ready 32 --undo`) | run 44123140643: `write: …#28 Status: In Review -> In Progress` | In Progress | pass |
+| 18 | blocked label on → Blocked | real Action, `issues` (`gh issue edit 28 --add-label blocked`) | run 44123233158: `write: …#28 Status: In Progress -> Blocked` | Blocked | pass |
+| 19 | blocked label off → derived again | real Action, `issues` (`--remove-label blocked`) | run 44123321456: `write: …#28 Status: Blocked -> In Progress` | In Progress | pass |
+| 20 | ready again → In Review | real Action, `pull_request_target` (`gh pr ready 32`) | run 44123427211: `write: …#28 Status: In Progress -> In Review` | In Review | pass |
+| 21 | merge with the closing keyword → Done, written by the Action | real Action, `pull_request_target` (`gh pr merge 32 --squash`) and `issues` (#28 closed by it) | run 44123516027: `write: …#28 Status: In Review -> Done`, `milestone 'M3 e2e' … is complete`; run 44123524379: `no changes written` | Done (*Item closed* disabled) | pass |
+| 22 | idempotence | real Action, `workflow_dispatch` with nothing changed | run 44123833203: `no changes written`, `sync: complete` | — | pass |
+| 23 | a burst of events | real Action, four `issues` events within ~3 s (blocked label on #8, on #6, off #8, off #6) | run 44123663609: `no changes written`; 44123674671 and 44123678302 `cancelled`; 44123682354: `no changes written` | #6, #8 Ready; Blocked never written (the first run read the board after the last edit) | pass |
+| 24 | closes of throwaway issues → Done | real Action, `issues` (#34 closed, ran; #33 closed, cancelled; #31 closed, ran) | run 44124044441: `write: …#31 Status: Backlog -> Done`, `…#33 Status: Ready -> Done`, `…#34 Status: Backlog -> Done`; 44124052399 `cancelled`; 44124058012: `no changes written` | Done | pass |
+| 25 | a token without `repo` on a private repository (PAT 2, repository private again) | real Action, `workflow_dispatch` | run 44124206732: 23 × `unreadable …: content has the wrong type; not written`, `sync: partial (23 unreadable, 0 conflicts, 0 skipped)`, conclusion success | green, nothing written | observed: defects 2 and 3 |
+| 26 | the same after `15bd1b6` | real Action, `workflow_dispatch` | run 44124856228: 23 × `content not readable (null): a card from a repository the token cannot see; …`, `sync: partial (23 unreadable …)`, conclusion success | green, nothing written | observed: defect 3 (recorded, not fixed) |
+| 27 | setup check before enabling | agent command | `pf check` → `fact: built-in workflow 'Item closed' is disabled; enable it in the project UI (Workflows)`, `warning: consider enabling Auto-add to project …`, `stop: setup-incomplete: 1 setup facts need attention`, exit 3 | expected setup fact | pass |
+| 28 | setup check with PAT 2 | agent command (PAT 2) | `pf check` → the same `fact:` and `warning:` lines, `stop: setup-incomplete: …`, exit 3 | — | pass |
+| 29 | gated command before enabling | agent command | `pf sync` → `stop: not-enabled: PROJECT_URL is not set; set the repository variable PROJECT_URL to this project to enable it`, exit 3 | — | pass |
+| 30 | first preview after enabling | agent command | `pf sync --dry-run` → `would write: …#4 Status: (none) -> Done`, `…#5 (none) -> In Review`, `…#6 Backlog -> Ready`, `…#14 (none) -> Done`, `…#9/#10 milestone: M1 scratch`, `…#15 milestone: M2 e2e`, `sync: complete`, exit 0 | nothing written | pass |
+| 31 | first sync: Done and milestone copy for a PR merged between runs, empty-milestone report | agent command (PR #15, `Closes #14`, #14 in `M2 e2e`, opened and merged while unset) | `pf sync` → `write: …#14 Status: (none) -> Done`, `write: …#15 milestone: M2 e2e`, `milestone 'M2 e2e' in … is complete: no open issues; not closed`, `sync: complete` | #14 Done; PR #15 `M2 e2e` | pass |
+| 32 | new items get a derived Status | agent command | `pf sync` → `write: …#16 Status: (none) -> Ready` and the same for #17, #18, #19 | Ready | pass |
+| 33 | Ready → Backlog on a native blocker add | agent command (links #16 ← #17, #19 ← #18) | `pf sync` → `write: …#16 Status: Ready -> Backlog`, `write: …#19 Status: Ready -> Backlog` | Backlog | pass |
+| 34 | refused Backlog claim (open blocker) | agent command | `pf start R#16` → `stop: not-ready: …#16 is Backlog: open blockers …#17`, exit 3 | Backlog | pass |
+| 35 | Backlog → Ready on a completed close | agent command (`gh issue close 17 --reason completed`) | `pf sync` → `write: …#16 Status: Backlog -> Ready`, `write: …#17 Status: Ready -> Done` | Ready | pass |
+| 36 | a not-planned blocker keeps Backlog, with a report | agent command (`gh issue close 18 --reason "not planned"`) | same `pf sync` → `write: …#18 Status: Ready -> Done`, `…#19: blocker …#18 closed as not planned`; no write for #19 | Backlog | pass |
+| 37 | refused claim behind a not-planned blocker | agent command | `pf start R#19` → `stop: not-ready: …#19 is Backlog: blocker …#18 closed as not planned`, exit 3 | Backlog | pass |
+| 38 | claim | agent command | `pf start R#16` → `write: …#16 assignees: +raidenyn-shadow`, `write: …#16 Status: Ready -> In Progress`, `started: …#16`, exit 0 | In Progress, assigned | pass |
+| 39 | a draft PR without the keyword changes nothing | agent command (`gh pr create --draft`, PR #20) | `pf sync` → no line for #16 or #20, `sync: complete` | In Progress | pass |
+| 40 | ready for review → In Review, milestone copy onto the open PR | agent command (`gh pr edit 20 --body-file` with `Closes #16`, `gh pr ready 20`, `pf sync` started < 1 s later, then again) | first `pf sync` → `write: …#16 Status: In Progress -> In Review`, `write: …#20 milestone: M2 e2e`; second → nothing for #16 | In Review | pass |
+| 41 | back to draft → In Progress | agent command (`gh pr ready 20 --undo`) | `pf sync` → `write: …#16 Status: In Review -> In Progress` | In Progress | pass |
+| 42 | blocked label on → Blocked; claim refused | agent command (`gh issue edit 16 --add-label blocked`) | `pf sync` → `write: …#16 Status: In Progress -> Blocked`; `pf start R#16` → `stop: not-ready: …#16 is Blocked` | Blocked | pass |
+| 43 | blocked label off → derived again | agent command (`--remove-label blocked`) | `pf sync` → `write: …#16 Status: Blocked -> In Progress` | In Progress | pass |
+| 44 | merge with the closing keyword → Done | agent command (`gh pr ready 20`, `pf sync`, `gh pr merge 20 --squash`, `pf sync`) | `write: …#16 Status: In Progress -> In Review`; after the merge `write: …#16 Status: In Review -> Done`, `milestone 'M2 e2e' in … is complete: …` | Done | pass |
+| 45 | Blocked set by hand without the label is undone | agent command (`gh project item-edit` Status Blocked on #8) | `pf sync` → `write: …#8 Status: Blocked -> Ready` | Ready | pass |
+| 46 | `followup` | agent command | `pf followup --parent R#21 --title "pf e2e followup one" --body-file <file> --pr https://github.com/R/pull/20 --change-dir openspec/changes/e2e --found-at "verification step 8.3"` → `created: #22`, `write: …#22 sub-issue of …#21`, `write: …#22 milestone: M1 scratch`, `skipped add_blocked_by: no blockers given`, `skipped add_project_item: already on the project`, `write: …#22 Implementation order: 15.1` | order 15.1 (parent 15; the next non-descendant value 20.5) | pass |
+| 47 | `followup` interrupted, then `--resume` | agent command | the same with `--title "pf e2e followup two" --blocker R#19`, SIGKILLed right after `created: #23` (no parent, blocker or item yet); then the same arguments plus `--resume 23` → `resuming: …#23`, `sub-issue of …#21`, `milestone: M1 scratch`, `blocked by …#19`, `skipped add_project_item: already on the project`, `Implementation order: 15.2` | order 15.2 | pass |
+| 48 | a second `--resume` is a no-op | agent command | the same `--resume 23` → five `skipped …` lines (`already a sub-issue`, `milestone already 'M1 scratch'`, `every blocker already linked`, `already on the project`, `'Implementation order' already set`), exit 0 | — | pass |
+| 49 | `--resume` with a disagreeing parent | agent command | the same with `--parent R#5 --resume 23` → `stop: resume-disagrees: …#23: it is a sub-issue of …#21, not of …#5; nothing written`, exit 3 | — | pass |
+| 50 | `next` normal pick | agent command | `pf next` → `next: …#21 order=15`, exit 0 | — | pass |
+| 51 | `next` tie | agent command (#22's order set to 15) | `pf next` → `stop: tie: …#21 and …#22 share the lowest 'Implementation order' value 15`, exit 3 | — | pass |
+| 52 | `next` missing-order, and `--skip-unordered` | agent command (new Ready #24 without an order) | `pf next --skip-unordered` → `skipped …#24: no 'Implementation order' value`, `next: …#21 order=15`; `pf next` → `stop: missing-order: Ready, unassigned items without a 'Implementation order' value: …#24`, exit 3 | — | pass (an earlier `pf next` right after `gh project item-add` did not see #24 yet: observation 3) |
+| 53 | `next` with an empty Ready set | agent command (blocked label on #6, #8, #21, #22) | `pf next` → `write: …#6 Status: Ready -> Blocked` (and #8, #21, #22), `stop: nothing-ready: no Ready, unassigned open issue on the project`, exit 3 | — | pass |
+| 54 | ready for review → In Review on the first sync (second lag observation) | agent command (`pf start R#22`; draft PR #25; `gh pr edit` with `Closes #22` + `gh pr ready`, 3.4 s; `pf sync` at once) | `write: …#22 Status: In Progress -> In Review`; PR #25 then had milestone `M1 scratch` | In Review | pass |
+| 55 | a PR closed unmerged | agent command (`gh pr close 25`) | `pf sync` → `write: …#22 Status: In Review -> In Progress` | In Progress | pass |
+| 56 | closes → Done | agent command (#22, #23, #21, #19 closed as not planned) | `pf sync` → `write: …#19 Status: Backlog -> Done`, `…#21 Ready -> Done`, `…#22 In Progress -> Done`, `…#23 Backlog -> Done` | Done | pass |
+| 57 | idempotence | agent command | `pf sync` → `no changes written`, `sync: complete` | — | pass |
+| 58 | gated command after `PROJECT_URL` was unset | agent command | `pf next` → `stop: not-enabled: PROJECT_URL is not set; …`, exit 3 | — | pass |
+| 59 | refused claim (PAT 2) | agent command (PAT 2) | `pf start R#31` → `stop: not-ready: …#31 is Backlog: blocker …#30 closed as not planned`, exit 3 | Backlog | pass |
+| 60 | claim (PAT 2) | agent command (PAT 2) | `pf start R#28` → `write: …#28 assignees: +raidenyn-shadow`, `write: …#28 Status: Ready -> In Progress`, `started: …#28` | In Progress | pass |
+| 61 | `followup` with a blocker and the script's own add-to-project (PAT 2) | agent command (PAT 2) | `pf followup --parent R#33 --title "pf action followup" --body-file <file> --blocker R#31 --pr https://github.com/R/pull/32 --change-dir openspec/changes/e2e --found-at "verification step 8.3"` → `created: #34`, `sub-issue of …#33`, `skipped set_milestone: …#33 has no milestone`, `blocked by …#31`, `added to the project`, `Implementation order: 70.1` | order 70.1 | pass |
+| 62 | `next` (PAT 2) | agent command (PAT 2) | `pf next` → `write: …#33 Status: (none) -> Ready`, `write: …#34 Status: (none) -> Backlog`, `next: …#6 order=20.5` | — | pass |
+| 63 | a token without `repo` on a private repository (PAT 2) | agent command (PAT 2) | before `15bd1b6`: `pf sync --dry-run` → `stop: not-enabled: PROJECT_URL is not set; …` although it was set (defect 2); after: `stop: missing-scope: run gh auth refresh -s repo`, exit 3 | stops, writes nothing | pass after the fix (defect 2) |
 
-### Agent-command rows (rounds 1–2, the owner's login; the Action was a no-op then)
-
-| Transition | How triggered | Command output | Observed status | Pass/fail |
-| --- | --- | --- | --- | --- |
-| Ready → Backlog / Backlog → Ready / not-planned report | native link, `gh issue close` (completed, not planned), agent `sync` | `#16 Ready -> Backlog`, `#16 Backlog -> Ready`, `#19: blocker #18 closed as not planned` | as derived | pass |
-| refused Backlog claims | `start #16`, `start #19` | `stop: not-ready: … is Backlog: open blockers …#17` / `… blocker …#18 closed as not planned` | — | pass |
-| claim | `start #16` | `assignees: +<login>`, `Ready -> In Progress`, `started:` | In Progress | pass |
-| draft ↔ ready, blocked label, merge → Done, milestone copy (open PR and between runs), empty-milestone report | as in round 3, with agent `sync` after each step | the same writes as round 3 | as derived | pass |
-| Blocked set by hand without the label is undone | `gh project item-edit` Status Blocked on #8, `sync` | `#8 Status: Blocked -> Ready` | Ready | pass |
-| PR closed unmerged | `gh pr close 25` (ready PR closing the assigned #22), `sync` | `#22 Status: In Review -> In Progress` | In Progress | pass |
-| `followup` | parent #21 (order 15) | `created: #22`, sub-issue, `milestone: M1 scratch`, `skipped add_project_item: already on the project` (auto-added by *Auto-add sub-issues*), `Implementation order: 15.1` | 15.1 | pass |
-| `followup` interrupted + `--resume` | second follow-up with `--blocker #19`, killed (SIGKILL) right after `created: #23`; same arguments + `--resume 23` | sub-issue, milestone, `blocked by …#19`, `already on the project`, `Implementation order: 15.2`; a second resume skipped all five steps; a resume with another `--parent` → `stop: resume-disagrees: … it is a sub-issue of …#21, not of …#5; nothing written` | 15.2 | pass |
-| order allocation 15 → 15.1 → 15.2 | the next value above 15 held by a non-descendant: 20.5 | 15.1, then 15.2 | — | pass |
-| `next` normal / tie / missing-order / empty Ready set | normal; #22 order set equal to #21's; an unordered Ready #24; blocked label on every Ready item | `next: …#21 order=15`; `stop: tie: …#21 and …#22 share the lowest 'Implementation order' value 15`; `stop: missing-order: … #24` (and `--skip-unordered` → `skipped …#24`, `next: …#21`); `stop: nothing-ready: …` | — | pass |
-| Action no-op, secret absent | real events after the secret was deleted (round 2), e.g. 44118620968, 44118658159, 44118720473, 44118836438, 44118472146 | notice, checkout and reconcile skipped | success | pass |
-
-### Observations
+## Observations
 
 1. **Closing-keyword lag (UNVERIFIED (c))**: three times (`gh pr edit` + `gh pr ready`, then a `sync` at
    once — twice the agent's, once the Action run created 3 s after `gh pr ready`) the first `sync` already
@@ -174,23 +204,26 @@ and milestone reads list `repo`), so it does not narrow the minimum further.
 ```markdown
 ### Real-environment verification
 
-Scratch repository `raidenyn-shadow/scratch-project-flow` and user project 2 of `raidenyn-shadow`; every
-row with its run URL is in `openspec/changes/add-github-project-workflow/verification-notes.md`.
+Scratch repository `raidenyn-shadow/scratch-project-flow` and user project 2 of `raidenyn-shadow`. All 63
+scenarios, each with its run URL or command output, are in
+`openspec/changes/add-github-project-workflow/verification-notes.md`: 26 executed by the real Action, 37 by
+agent commands on real GitHub; 0 failed (61 pass, 2 Action observations exposed defects).
 
-Passed through the real Action on real events (classic PAT of the project owner, `project` +
-`public_repo`, repository temporarily public): Backlog ↔ Ready on a native blocker add (dispatch: GitHub
-emits no dependency event) and a completed close; a not-planned blocker keeps Backlog with a report; draft PR
-→ ready → In Review → draft → In Progress; the blocked label on and off; a merge with `Closes #` → Done,
-written by the Action; the milestone copy onto an open PR and onto a PR opened and merged between runs; the
-empty-milestone report; a no-op with `PROJECT_URL` unset and with the secret absent; idempotence; a burst of
-events (superseded runs cancelled, the final state reconciled); the default branch checked out on dispatch.
+Through the real Action (classic PAT of the project owner, `project` + `public_repo`, repository
+temporarily public): no-op with `PROJECT_URL` unset and with the secret absent, on real events; Ready →
+Backlog on a native blocker add (dispatch: GitHub emits no dependency event); Backlog → Ready on a completed
+blocker close; a not-planned blocker keeps Backlog with a report; a draft PR changes nothing; ready → In
+Review; back to draft → In Progress; the blocked label on and off; a merge with `Closes #` → Done, written by
+the Action; the milestone copy onto an open PR and onto a PR opened and merged between runs; the
+empty-milestone report; idempotence; a burst of events; the default branch checked out on dispatch.
 
-Passed with the agent commands: `start` claim and refused Backlog claims; `followup` (15 → 15.1, 70.1)
-and an interrupted one completed by `--resume` (15.2), plus `resume-disagrees`; `next` normal pick, tie,
-missing-order and an empty Ready set. The closing keyword was linked by the first `sync` every time (3/3).
+Through agent commands: the same Status transitions with `sync`; `start` claims and refused claims;
+`followup` (15 → 15.1, 70.1), an interrupted one completed by `--resume` (15.2), a no-op resume and
+`resume-disagrees`; `next` normal pick, tie, missing-order and an empty Ready set; `check`. The closing
+keyword was linked by the first `sync` each time (3/3).
 
 Not verified: a `repo`-scoped PAT running the workflow on a private repository, fine-grained tokens,
-fork-PR trust, the schedule payload and a blocker invisible to the token.
+fork-PR trust, the schedule payload, a blocker invisible to the token, a GraphQL missing-scope text.
 Fixed during the run: the unreadable-project error names both owner reads; a repository the token cannot
 see is no longer reported as an unset `PROJECT_URL`. Open: a token that loses repository access leaves the
 workflow green with `sync: partial`.
