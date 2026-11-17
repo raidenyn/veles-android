@@ -128,6 +128,22 @@ class ReadBoardTest(unittest.TestCase):
         for call in fake.calls[1:]:
             self.assertIn("organization(login: $login)", call["query"])
 
+    def test_both_owner_reads_failing_name_both_reasons(self):
+        # Observed on real GitHub: a token that cannot see a private user project gets "Could not
+        # resolve to a ProjectV2" as a user; the organization fallback's error alone misleads.
+        responses = [
+            ("query ProjectFields", GhError("gh: Could not resolve to a ProjectV2 with the number 2.")),
+            ("query ProjectFields",
+             GhError("gh: Could not resolve to an Organization with the login of 'owner'.")),
+        ]
+        with self.assertRaises(Stop) as caught:
+            project_flow.read_board(FakeTransport(responses), URL, CFG)
+        self.assertEqual(caught.exception.reason, "incomplete-read")
+        self.assertIn("as a user: project fields: gh: Could not resolve to a ProjectV2 with the number 2.",
+                      caught.exception.detail)
+        self.assertIn("as an organization: project fields: gh: Could not resolve to an Organization",
+                      caught.exception.detail)
+
     def test_missing_status_field_stops(self):
         responses = board([])
         responses[0] = ("query ProjectFields",

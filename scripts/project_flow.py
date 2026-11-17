@@ -736,6 +736,7 @@ def read_board(t: Transport, project_url: str, cfg: Config) -> Board:
     names = {"status": cfg.status_field, "order": cfg.order_field}
     base = {"login": login, "number": number}
     owner_key, project = None, None
+    as_user = ""  # why the read as a user failed; a project the token cannot see fails both ways
     for candidate in ("user", "organization"):
         try:
             data = _query(t, _owner_query(FIELDS_QUERY, candidate), dict(base, **names),
@@ -743,8 +744,9 @@ def read_board(t: Transport, project_url: str, cfg: Config) -> Board:
             project = _dig(data, (candidate, "projectV2"), "project fields")
         except Stop as stop:
             if candidate == "organization":
-                raise Stop("incomplete-read", "cannot read project %s/%d as a user or an organization: %s"
-                           % (login, number, stop.detail))
+                raise Stop("incomplete-read", "cannot read project %s/%d; as a user: %s; as an "
+                           "organization: %s" % (login, number, as_user, stop.detail))
+            as_user = stop.detail
             continue
         owner_key = candidate
         break
