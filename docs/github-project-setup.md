@@ -83,7 +83,8 @@ none (see [Environment](#environment)).
 - **`PROJECT_URL`** (variable): the URL of the project the repository serves, in the form
   `https://github.com/users/<owner>/projects/<n>` or `https://github.com/orgs/<owner>/projects/<n>`. It is the
   enable switch. While it is unset, or names another project, the workflow is a successful no-op with a notice,
-  and `sync`, `next`, `start` and `followup` stop with `not-enabled`. The agent commands read it over the REST
+  and `sync`, `next`, `start` and `followup` stop with `not-enabled`. With an environment configured, the
+  workflow still falls back to a repository-level `PROJECT_URL`, so "unset" means unset in both places. The agent commands read it over the REST
   API from the repository given as `--repo` (from the configured environment, if any), so the user's `gh` token
   needs read access to the repository's Actions variables; otherwise they stop with `variable-unreadable`.
 - **`PROJECT_TOKEN`** (secret): the token the workflow uses to write the project and to read and
@@ -120,14 +121,19 @@ The variable and the secret can live in an Actions environment instead of at the
 3. Name it in two places, which must agree (a unit test in `scripts/tests` checks it): the `environment` key of
    `.github/project-flow.json`, which the agent commands use to read `PROJECT_URL`, and the job-level
    `environment:` of `.github/workflows/project-flow.yml`, a plain name, never an expression.
+4. When moving from repository settings, delete the repository-level `PROJECT_URL` variable and
+   `PROJECT_TOKEN` secret. A job that enters an environment still reads a repository-level variable or secret
+   the environment does not define, so a leftover `PROJECT_URL` keeps the workflow writing after the
+   environment's is removed, while the agent commands, which read only the environment, already stop.
 
 Under *Deployment branches and tags*, limit the environment to the default branch: a workflow run on any other
 branch then cannot read the token, which closes the write-access exposure above. Issue, schedule and manual
 runs on the default branch are allowed, and so are `pull_request_target` runs for pull requests into the
 default branch (they run on the base branch); a run for a pull request into another branch, or a manual run on
-another branch, fails at the environment check instead. Do not add required reviewers or a wait timer: every
-run, on every issue and pull request event, would wait for approval. Each job run is recorded as a deployment
-of the environment, under the repository's *Deployments*.
+another branch, fails at the environment check instead. Do not add required reviewers: every run, on every
+issue and pull request event, would wait until a reviewer approves it. Do not add a wait timer either: it would
+delay every run by the timer's length before the job starts. Each job run is recorded as a deployment of the
+environment, under the repository's *Deployments*.
 
 A project that spans several repositories installs the workflow, the configuration, the variable and the
 secret in each one. Each repository's workflow writes only the items whose issue lives in it (it still reads
@@ -206,6 +212,8 @@ someone acts; the reason names the remedy:
 
 ## Rollback
 
-Unset `PROJECT_URL` (in the configured environment, if any). The workflow becomes a no-op and every agent command refuses the project with
-`not-enabled`. Statuses already written are plain field values and need no cleanup. Remove the secret as well if
-the flow will not come back.
+Unset `PROJECT_URL` in every place it can come from: in the environment named in `.github/project-flow.json`
+(if any) **and** at the repository level, because the workflow falls back to a repository-level variable the
+environment does not define. The workflow then becomes a no-op and every agent command refuses the project
+with `not-enabled`. Statuses already written are plain field values and need no cleanup. If the flow will not
+come back, remove `PROJECT_TOKEN` from both places as well.
