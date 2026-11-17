@@ -26,7 +26,7 @@ Before performing intake the agent MUST read the *Next task* and *tracker.md* se
 ### Requirement: The chosen task is checked, announced and read in full
 Before creating the change the agent SHALL tell the user which task was chosen and why: the lowest order value among the Ready, unassigned items, or the task the user named.
 
-When the user names a task that is not Ready, the agent MUST say which state it is in and ask before claiming it. Not Ready means Backlog (with its open blockers listed), Blocked, In Review, Done, or assigned. A task that is In Progress and recorded in the `tracker.md` of an active change of this repository MUST be treated as a resume of that change: no claim is repeated and no conflict is reported.
+When the user names a task that is not Ready, the agent MUST say which state it is in and ask before claiming it. Not Ready means Backlog (with its open blockers listed), Blocked, In Review, Done, or assigned. A task recorded in the `tracker.md` of an active change of this repository MUST be treated as a resume of that change, not a new intake, and no conflict is reported. Two states qualify: In Progress and claimed by the authenticated user (no claim is repeated), and Ready because the session ended after `tracker.md` was written and before the claim (the existing change is reused, no second change is created, and the agent MUST perform the missing claim with `start`). If more than one active `tracker.md` records the same issue, or one records a repository other than the issue's, the agent MUST stop and ask the user.
 
 The agent SHALL then read the issue and follow its links (RFC section, pull requests, linked documents, specs, parent and sub-issues) until the context is complete, and MUST write the substantive findings into the brainstorm.
 
@@ -35,8 +35,16 @@ The agent SHALL then read the issue and follow its links (RFC section, pull requ
 - **THEN** the agent lists the blocker and asks before claiming it
 
 #### Scenario: Resume
-- **WHEN** the task is In Progress and an active change's `tracker.md` records it
+- **WHEN** the task is In Progress, claimed by the authenticated user, and an active change's `tracker.md` records it
 - **THEN** the agent continues that change without reporting a conflict and without a new claim
+
+#### Scenario: Interrupted before the claim
+- **WHEN** a session ended after `tracker.md` was written and before `start`, so the issue is still Ready and unassigned, and an active change's `tracker.md` records it
+- **THEN** the agent reuses that change, creates no second change, and claims the task with `start`
+
+#### Scenario: Ambiguous trackers
+- **WHEN** two active changes' `tracker.md` files record the same issue, or the recorded repository differs from the issue's
+- **THEN** the agent stops and asks the user
 
 #### Scenario: Linked context
 - **WHEN** the issue links an RFC section and a pull request

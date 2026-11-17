@@ -49,6 +49,8 @@ A blocker closed as not planned or as a duplicate MUST NOT count as closed, and 
 - the milestone copy for every open or merged pull request that closes an issue on the project;
 - the report of every open repository milestone that has no open issue and at least one closed issue on the project.
 
+It MUST print one line `ready: <owner>/<repo>#<n> order=<value>` for every item that is Ready after the reconciliation, whoever wrote that Status, with `order=-` for an item without an order value; the post-merge report of newly Ready tasks is built from these lines and the merged issue's blocking list, never from this run's writes. When the project query exposes it, `sync` MUST finish with a line `rate-limit: cost=<total> remaining=<last>`. It MUST attempt every write and report every failed write; a failed write MUST make `sync` finish with the named stop `write-failed` (exit 3) after all reports and completed writes were printed, and MUST make `next` stop with `write-failed` instead of selecting after a failed reconciliation. `start` writes its claim (the assignment and In Progress) before it reconciles the claimed item, so when that reconciliation reports a failed write `start` MUST stop with `write-failed` and MUST NOT announce a successful claim; the completed claim writes stay in place and are not rolled back.
+
 It MUST follow every paginated connection it reads to its last page. An item whose facts cannot be read completely MUST receive no write and MUST be reported. Running `sync` twice with no change on GitHub in between MUST make no write in the second run. `sync` MUST NOT close, create or rename a milestone, field or Status option.
 
 #### Scenario: Dropped event
@@ -74,6 +76,14 @@ It MUST follow every paginated connection it reads to its last page. An item who
 #### Scenario: Partial read
 - **WHEN** the blockers of one item cannot be read to the last page
 - **THEN** that item is not written and is reported, and the other items are reconciled
+
+#### Scenario: Failed write
+- **WHEN** one item's Status write is rejected while another item's write succeeds
+- **THEN** both writes are attempted and printed, `sync` ends with `stop: write-failed` and exit 3, and `next` selects nothing
+
+#### Scenario: Ready summary
+- **WHEN** an item was already made Ready by the Action before this run
+- **THEN** this run's `ready:` lines still list it
 
 #### Scenario: Second run
 - **WHEN** `sync` runs twice with no change in between
@@ -223,13 +233,14 @@ It MUST NOT hold any project id, project number, owner, field id or option id. T
 `project_flow.py check` SHALL validate `.github/project-flow.json` without network access. Given a project URL, it SHALL also report two kinds of findings.
 
 **Facts**, which must be clean before enabling:
-- built-in project workflows that are disabled, read from the project's workflows;
+- the built-in project workflow *Item closed* when it is missing or disabled, read from the project's workflows (enabling it is possible only in the project's web UI);
 - a missing order field or a missing configured Status option;
 - open items without an order value;
 - In Progress items without an assignee;
 - Blocked items without the blocked label.
 
 **Heuristic warnings**:
+- the *Auto-add to project* workflow, when it is missing or disabled, as an advisory hint only (issue cards can also be added manually);
 - open items whose body or comments mention a dependency ("blocked by", "depends on", "after #") without a matching native link.
 
 The output MUST state that a clean warning list does not prove that dependencies were converted, and that setting `PROJECT_URL` is the user's attestation that they were.
@@ -237,6 +248,14 @@ The output MUST state that a clean warning list does not prove that dependencies
 #### Scenario: Offline config check
 - **WHEN** `check` runs in CI without a project URL
 - **THEN** it validates only the config file and uses no network
+
+#### Scenario: Auto-add missing is not a fact
+- **WHEN** *Item closed* is enabled and no *Auto-add to project* workflow exists or it is disabled
+- **THEN** `check` lists one advisory warning, reports no setup fact and exits 0
+
+#### Scenario: Failed claim reconciliation
+- **WHEN** `start` has assigned the issue and set In Progress but the reconciliation of that item reports a rejected write
+- **THEN** `start` ends with `stop: write-failed` and exit 3, announces no successful claim, and leaves every completed write (the assignment, the status and any other write that succeeded) in place, with no rollback
 
 #### Scenario: Unconverted prose dependency
 - **WHEN** an open issue says "Depends on #12" and has no native link to it

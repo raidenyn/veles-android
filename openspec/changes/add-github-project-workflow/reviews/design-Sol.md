@@ -27,4 +27,4 @@
 | medium | `start` did not refuse Backlog | fixed after approval (refuses anything not Ready; `--force` = explicit user authorization) |
 | medium | The milestone copy covered only open PRs | fixed after approval (open or merged PRs closing project issues) |
 
-Approved content: design sha256 29ce2174aecf5ad1fc6da5c3366f47e7259b3da537098190706616be8f2aae45 (re-pointed after 3 minor fixes made after the round-2 approval: the resume contract, `start` refusing Backlog, the milestone copy for merged PRs)
+Approved content: design sha256 090fa30202de7c840bb37d29a8c7ac32c99e1ed2268ffb9c25316464f7ccc682 (re-pointed again after 1 minor fix made after the final whole-branch review: the setup-check workflow facts narrowed to Item closed)

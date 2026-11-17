@@ -7,11 +7,11 @@
 - Upstream hashes:
   - brainstorm.md sha256 cc91af6286ab0753e157b3cdeaad59feee8388d31ddcb689b22ebbdbdece7a53
   - proposal.md sha256 37823956307c9e8063bfd26113d734ea50a1034671261e99142e6697460ee20d
-  - design.md sha256 29ce2174aecf5ad1fc6da5c3366f47e7259b3da537098190706616be8f2aae45
-  - specs/github-project-automation/spec.md sha256 1e832e9287d89541aa5091d41cc9d95e2716dc481aa201f4ac5b6b0cd124ba49
-  - specs/superspec-tracker-intake/spec.md sha256 9a01c09feedcedc9724f6b85dd18a8c503ce65fd75a2882afa52b0d8614086d6
+  - design.md sha256 090fa30202de7c840bb37d29a8c7ac32c99e1ed2268ffb9c25316464f7ccc682
+  - specs/github-project-automation/spec.md sha256 fa8987309ff5caca77f1e069e1f19a3328228fe5240ea08e6682230525204592
+  - specs/superspec-tracker-intake/spec.md sha256 d58d36e42c00d40a523137131468f42f300e829fd68a0e207a75e8e28953db2d
   - specs/superspec-closeout/spec.md sha256 fcb933dc9975934b30972995022e415560ced5fff353e34ab306b9d086908a5f
-  - tasks.md sha256 39a229300823340daca55e994a27225694dc6160e5212e8d72de589c45b9e1ff
+  - tasks.md sha256 432e3205aab1f2743305dd44068299b4639e7e816fdf4b8b589e2c9e07282fc8
 
 ## Pass 1
 
@@ -45,4 +45,6 @@
 | --- | --- | --- |
 | medium | The guard's computed `configured` value was not tested for the four setting combinations | fixed after approval (the contract test executes the guard script four times) |
 
-Approved content: plan sha256 4de459e87251e0bf72d80cc4cc323551c9f69a977038a19a41653b0965d73dc4 (re-pointed after 1 minor fix made after the round-3 approval: the guard combination tests)
+Approved content: plan sha256 4de459e87251e0bf72d80cc4cc323551c9f69a977038a19a41653b0965d73dc4 (unchanged; upstream hashes re-pointed, see the note at the end)
+
+Upstream re-pointed after the pass-2 spec review of the specs artifact (consistency check by the same reviewer against the edited specs: no contradiction); the upstream hashes above are the current ones.

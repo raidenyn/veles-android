@@ -346,8 +346,10 @@ post-merge step of this change's closeout, not a tracked transition.
 
 **Facts** must be clean before enabling:
 - Blocked items without the blocked label;
-- the built-in workflows that are off, read from the project's `workflows { name enabled }` GraphQL connection
-  (this query has been run against a real user-owned project);
+- the built-in workflow *Item closed* when it is missing or off, read from the project's
+  `workflows { name enabled }` GraphQL connection (this query has been run against a real user-owned project).
+  The *Auto-add to project* workflow is only an advisory hint, because enabling built-in workflows is possible
+  only in the web UI and `sync` derives Done itself;
 - the order field and the Status options named in the config;
 - open items without an order value;
 - In Progress items without an assignee.
