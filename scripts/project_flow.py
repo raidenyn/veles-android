@@ -564,6 +564,10 @@ def _issue_connection(t: Transport, issue: dict, name: str, what: str) -> list:
 
 
 _MISSING = object()
+# Shapes that fail closed on every run until someone acts; the reason names the remedy.
+REDACTED_REMEDY = ("a card from a repository the token cannot see; remove the card or grant the token "
+                   "access to its repository")
+NO_REASON_REMEDY = "reopen and re-close it so GitHub records a reason"
 _ISSUE_STATES = ("OPEN", "CLOSED")
 _PR_STATES = ("OPEN", "CLOSED", "MERGED")
 _CLOSED_REASONS = ("COMPLETED", "NOT_PLANNED", "DUPLICATE")
@@ -611,6 +615,11 @@ def _title(obj: Any, what: str) -> Optional[str]:
 def _blocker(node: dict, what: str) -> Blocker:
     repo, number = _ref(node, what)
     state = _enum(node, "state", _ISSUE_STATES, what)
+    if state == "CLOSED" and isinstance(node, dict) and "stateReason" in node \
+            and node["stateReason"] is None:
+        # Issues closed before GitHub recorded state reasons: neither completed nor abandoned.
+        raise Stop("incomplete-read", "%s %s#%d closed without a state reason; %s"
+                   % (what, repo, number, NO_REASON_REMEDY))
     reasons = _CLOSED_REASONS if state == "CLOSED" else _OPEN_REASONS
     return Blocker(repo, number, state, _enum(node, "stateReason", reasons, what))
 
@@ -769,6 +778,9 @@ def read_board(t: Transport, project_url: str, cfg: Config) -> Board:
         if kind in ("DRAFT_ISSUE", "PULL_REQUEST"):
             continue
         try:
+            if kind == "REDACTED":
+                raise Stop("incomplete-read", "item %s: content not readable (REDACTED): %s"
+                           % (item_id, REDACTED_REMEDY))
             if kind != "ISSUE":
                 raise Stop("incomplete-read", "item %s: content not readable (%s)"
                            % (item_id, _safe(kind)))

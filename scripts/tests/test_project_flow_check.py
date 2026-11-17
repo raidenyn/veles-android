@@ -267,6 +267,23 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(len(result.facts), 1, result.facts)
         self.assertIn("PVTI_x", result.facts[0])
 
+    def test_check_permanent_unreadable_shapes_name_their_remedy(self):
+        # Shapes that fail closed on every run until someone acts: the fact names what to do.
+        redacted = self._check([item(None, item_id="PVTI_x", type="REDACTED"), item(issue(2), order=1)],
+                               texts=[""])
+        self.assertEqual(len(redacted.facts), 1, redacted.facts)
+        self.assertIn("item PVTI_x is unreadable", redacted.facts[0])
+        self.assertIn("remove the card or grant the token access to its repository", redacted.facts[0])
+        no_reason = self._check([item(issue(1, blockers=[(7, "CLOSED", None)]), order=1)], texts=[])
+        self.assertEqual(len(no_reason.facts), 1, no_reason.facts)
+        self.assertIn("blocker owner/repo#7 closed without a state reason", no_reason.facts[0])
+        self.assertIn("reopen and re-close it so GitHub records a reason", no_reason.facts[0])
+        hidden = self._check([item(issue(1, blockers=[(7, "CLOSED", "COMPLETED")], blockers_total=2),
+                                   order=1)], texts=[])
+        self.assertEqual(len(hidden.facts), 1, hidden.facts)
+        self.assertIn("inaccessible blockers", hidden.facts[0])
+        self.assertIn("grant the token access", hidden.facts[0])
+
     def test_check_prose_warning(self):
         result = self._check([item(issue(5), order=1)], texts=["Depends on #12"])
         self.assertEqual(result.facts, [])
