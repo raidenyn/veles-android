@@ -130,7 +130,7 @@ Each step below that changes a file the agent-file check inspects lands together
   - the two-entry `opencode.json` allow-list, with a third plugin rejected;
   - the moved rule absent from `.agents/rules/` and from the `repo-*` list;
   - the legacy size and frontmatter checks scoped to `.agents/rules/`.
-- [ ] 6.2 Add the `global-overrides` entries in `.github/components.json` and the `scripts/tests/test_components.py` cases in the same step. `global-overrides` matches exact file names only, so there is one entry per tracked file under `scripts/opencode-hooked-rules/`, plus one for `scripts/agent_rules.py`. The cases:
+- [x] 6.2 Add the `global-overrides` entries in `.github/components.json` and the `scripts/tests/test_components.py` cases in the same step. `global-overrides` matches exact file names only, so there is one entry per tracked file under `scripts/opencode-hooked-rules/`, plus one for `scripts/agent_rules.py`. The cases:
   - an engine-only change selects exactly `tooling` and `docs`;
   - a test iterates over every tracked file under `scripts/opencode-hooked-rules/` and asserts that each, changed alone, selects exactly `tooling` and `docs`;
   - the guidance-edit case uses `.agents/hooked-rules/repo-commit-types.md` and selects only `docs`.
