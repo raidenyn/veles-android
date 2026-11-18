@@ -567,8 +567,8 @@ KEEP_SESSIONS = 50
 LOCK_RETRY_SECONDS = 0.1
 ENTRY_STATES = ("delivered", "pending")
 INITIALIZED_MARKER = "initialized"
-STEM_RE = re.compile(r"^[0-9a-f]{64}$")
-SESSION_FILE_RE = re.compile(r"^[0-9a-f]{64}\.json$")
+STEM_RE = re.compile(r"[0-9a-f]{64}")
+SESSION_FILE_RE = re.compile(r"[0-9a-f]{64}\.json")
 
 
 class StoreError(Exception):
@@ -660,14 +660,28 @@ def _atomic_write(path, text):
         raise
 
 
+def _no_duplicates(pairs):
+    """``object_pairs_hook`` that refuses a repeated member name, which json would resolve silently."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate member %r" % (key,))
+        result[key] = value
+    return result
+
+
 def _read_json(path):
-    """The JSON object in ``path``; None only when the file does not exist, StoreError otherwise."""
+    """The JSON object in ``path``; None only when the file does not exist, StoreError otherwise.
+
+    Duplicate object members, bad UTF-8, invalid JSON and nesting too deep for the decoder all raise
+    StoreError.
+    """
     try:
         with open(path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
+            data = json.load(handle, object_pairs_hook=_no_duplicates)
     except FileNotFoundError:
         return None
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RecursionError) as error:
         raise StoreError("cannot read %s: %s" % (path, error))
     if not isinstance(data, dict):
         raise StoreError("%s does not hold a JSON object" % path)
@@ -698,8 +712,11 @@ class SessionState(object):
         generations = {}
         entries = {}
         if data is not None:
-            if data.get("version") != STATE_VERSION:
-                raise StoreError("unsupported session state version %r" % (data.get("version"),))
+            version = data.get("version")
+            if type(version) is not int or version != STATE_VERSION:
+                raise StoreError("unsupported session state version %r" % (version,))
+            if data.get("session") != session:
+                raise StoreError("the stored state belongs to session %r" % (data.get("session"),))
             raw, items = data.get("generations"), data.get("entries")
             if not isinstance(raw, dict) or not isinstance(items, list):
                 raise StoreError("session state has no generations object and entries list")
@@ -795,6 +812,14 @@ class Store(object):
     directory (delivery state only; the next event starts afresh). Stray ``tmp-*.tmp`` files left by a
     crash are harmless and may be removed offline; the store never sweeps them.
 
+    Errors: ``StoreError`` (including ``LockTimeout``) is raised by ``transaction`` on entry (an invalid
+    session id, a busy lock, invalid stored state) and on commit (index or publish failures that are
+    store errors), by ``SessionState.put`` through ``next_write_id``, by ``next_write_id`` itself,
+    by ``prune`` when the index lock stays busy or the index is invalid, and by ``session_path`` and
+    ``session_lock_path`` for an invalid id. Callers must therefore guard the whole transaction and
+    the prune that follows it. Raw ``OSError`` from opening a lock file or an atomic write is not
+    wrapped, so callers fail open on any ``Exception``.
+
     Lock order: a session lock may be held while taking the index lock, never the other way round, and
     no code path acquires a session lock while holding the index lock. The index lock is only held for
     one short read-modify-write.
@@ -835,19 +860,29 @@ class Store(object):
         return FileLock(os.path.join(self.state_dir, stem + ".lock"), self.sleep, 1)
 
     def _initialized(self):
+        """Whether this store was used before: the marker, or any session file, exists.
+
+        StoreError when that cannot be checked, rather than assuming a fresh store.
+        """
         if os.path.exists(os.path.join(self.state_dir, INITIALIZED_MARKER)):
             return True
         try:
-            return any(SESSION_FILE_RE.match(name) for name in os.listdir(self.state_dir))
-        except OSError:
+            return any(SESSION_FILE_RE.fullmatch(name) for name in os.listdir(self.state_dir))
+        except FileNotFoundError:
             return False
+        except OSError as error:
+            raise StoreError("cannot inspect the delivery-state directory %s: %s" % (self.state_dir, error))
+
+    def _write_marker(self):
+        _atomic_write(os.path.join(self.state_dir, INITIALIZED_MARKER), "initialized\n")
 
     def _load_index(self, create):
         """The validated index; call with the index lock held.
 
-        A brand-new store (no marker, no session file) yields a fresh index, and with ``create`` the
-        marker is written first, before any counter can be issued. An index that is missing in an
-        initialised store, or invalid, raises StoreError.
+        A brand-new store (no marker, no session file) yields a fresh index; with ``create`` the
+        zero-counter index is published first and the marker second, both before any id is issued, so
+        an interruption between them heals on the next call. A valid index that lacks its marker gets
+        it with ``create``. A missing index in a used store, or an invalid one, raises StoreError.
         """
         data = _read_json(self.index_path())
         if data is None:
@@ -856,14 +891,16 @@ class Store(object):
                     "the delivery-state index %s is missing; remove the agent-rules directory "
                     "%s to start afresh" % (self.index_path(), self.state_dir)
                 )
+            fresh = {"write_id": 0, "order": 0, "sessions": {}}
             if create:
-                _atomic_write(os.path.join(self.state_dir, INITIALIZED_MARKER), "initialized\n")
-            return {"write_id": 0, "order": 0, "sessions": {}}
+                self._write_index(fresh)
+                self._write_marker()
+            return fresh
         write_id, order, raw = _count(data.get("write_id")), _count(data.get("order")), data.get("sessions")
         valid = write_id is not None and order is not None and isinstance(raw, dict)
         if valid:
             valid = all(
-                isinstance(stem, str) and STEM_RE.match(stem) and _count(value) is not None
+                isinstance(stem, str) and STEM_RE.fullmatch(stem) and _count(value) is not None
                 for stem, value in raw.items()
             )
         if not valid:
@@ -871,6 +908,8 @@ class Store(object):
                 "the delivery-state index %s is invalid; remove the agent-rules directory %s to "
                 "start afresh" % (self.index_path(), self.state_dir)
             )
+        if create and not os.path.exists(os.path.join(self.state_dir, INITIALIZED_MARKER)):
+            self._write_marker()
         return {"write_id": write_id, "order": order, "sessions": dict(raw)}
 
     def _write_index(self, index):
@@ -939,8 +978,18 @@ class Store(object):
             self._prune_one(stem, current)
 
     def _prune_one(self, stem, current):
-        try:
-            with self.victim_lock(stem) as lock:
+        """Prune one victim, best effort: busy or failing victims stay where they are.
+
+        A busy victim lock (LockTimeout) or any OSError on the victim leaves it in place with no index
+        change, since the file is removed before the index entry. StoreError from the index lock
+        or contents propagates.
+        """
+        with contextlib.ExitStack() as stack:
+            try:
+                lock = stack.enter_context(self.victim_lock(stem))
+            except (LockTimeout, OSError):
+                return
+            try:
                 with self._lock(self.index_lock_path()):
                     index = self._load_index(create=False)
                     if stem not in self._victims(index["sessions"], current):
@@ -957,8 +1006,8 @@ class Store(object):
                         os.unlink(lock.path)
                     except OSError:
                         pass
-        except LockTimeout:
-            return
+            except OSError:
+                return
 
 
 def _default_root():

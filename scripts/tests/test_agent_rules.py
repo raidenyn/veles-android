@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SCRIPTS)
@@ -787,6 +788,14 @@ class StoreTest(unittest.TestCase):
             state(generations={"s1": True}),
             state(entries={}),
             state(version=2),
+            state(version=True),
+            state(version=1.0),
+            state(session="other"),
+            '{"version": 1, "generations": {}, "entries": []}',
+            "[" * 100000 + "]" * 100000,
+            '{"version": 1, "version": 1, "session": "s1", "generations": {}, "entries": []}',
+            '{"version": 1, "session": "s1", "generations": {"a": 0, "a": 5}, "entries": []}',
+            state(entries=[dict(entry)]).replace('"state": "delivered"', '"state": "pending", "state": "delivered"'),
             bad_entry(state="gone"),
             bad_entry(patterns="git"),
             bad_entry(patterns=[1]),
@@ -963,6 +972,31 @@ class StoreTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.store.index_path()))
         self.assertFalse(os.path.exists(os.path.join(self.state_dir, "initialized")))
 
+    def test_prune_skips_a_victim_whose_unlink_fails(self):
+        for index in range(53):
+            self.deliver("s%02d" % index)
+        stuck = self.store.session_path("s00")
+        real_unlink = os.unlink
+
+        def unlink(path, *args, **kwargs):
+            if path == stuck:
+                raise PermissionError("denied")
+            return real_unlink(path, *args, **kwargs)
+
+        with mock.patch("os.unlink", side_effect=unlink):
+            self.store.prune("s52")
+        self.assertTrue(os.path.exists(stuck))
+        self.assertFalse(os.path.exists(self.store.session_path("s01")))
+        self.assertFalse(os.path.exists(self.store.session_path("s02")))
+        self.store.prune("s52")  # the skipped victim is still indexed and goes next time
+        self.assertFalse(os.path.exists(stuck))
+
+    def test_prune_index_lock_timeout_propagates(self):
+        self.deliver("s1")
+        with FileLock(self.store.index_lock_path(), no_sleep, 1):
+            with self.assertRaises(LockTimeout):
+                self.store.prune("s1")
+
     def test_prune_does_nothing_at_or_below_the_limit(self):
         for index in range(50):
             self.deliver("s%02d" % index)
@@ -1049,7 +1083,8 @@ class StoreTest(unittest.TestCase):
 
     def test_index_stems_must_be_canonical_digests(self):
         self.store.next_write_id()
-        for stem in ("../../etc/passwd", "A" * 64, "a" * 63, "a" * 65, "g" * 64, "", "a" * 64 + "/x"):
+        for stem in ("../../etc/passwd", "A" * 64, "a" * 63, "a" * 65, "g" * 64, "", "a" * 64 + "/x",
+                     "a" * 64 + "\n"):
             with open(self.store.index_path(), "w", encoding="utf-8") as handle:
                 json.dump({"write_id": 1, "order": 1, "sessions": {stem: 1}}, handle)
             for call in (self.store.next_write_id, lambda: self.store.prune("s1")):
@@ -1061,17 +1096,67 @@ class StoreTest(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(self.state_dir, "initialized")))
         self.assertEqual(self.make_store().next_write_id(), 2)
 
-    def test_marker_exists_before_the_first_id_is_issued(self):
+    def test_zero_index_then_marker_before_the_first_id(self):
         state_dir = self.state_dir
         seen = []
 
         class Watching(Store):
             def _write_index(self, index):
-                seen.append(os.path.exists(os.path.join(state_dir, "initialized")))
+                seen.append((index["write_id"], os.path.exists(os.path.join(state_dir, "initialized"))))
                 Store._write_index(self, index)
 
         self.assertEqual(Watching(state_dir, sleep=no_sleep).next_write_id(), 1)
-        self.assertEqual(seen, [True])
+        self.assertEqual(seen, [(0, False), (1, True)])
+
+    def test_marker_write_failure_self_heals(self):
+        class Failing(Store):
+            def _write_marker(self):
+                raise OSError("disk full")
+
+        failing = Failing(self.state_dir, sleep=no_sleep, lock_attempts=3)
+        with self.assertRaises(OSError):
+            failing.next_write_id()
+        self.assertTrue(os.path.exists(self.store.index_path()))
+        self.assertFalse(os.path.exists(os.path.join(self.state_dir, "initialized")))
+        self.assertEqual(self.store.next_write_id(), 1)
+        self.assertTrue(os.path.exists(os.path.join(self.state_dir, "initialized")))
+
+    def test_marker_with_missing_index_raises(self):
+        self.store.next_write_id()
+        os.unlink(self.store.index_path())
+        self.assertTrue(os.path.exists(os.path.join(self.state_dir, "initialized")))
+        with self.assertRaises(StoreError):
+            self.store.next_write_id()
+
+    def test_valid_index_without_marker_gets_a_marker(self):
+        self.store.next_write_id()
+        os.unlink(os.path.join(self.state_dir, "initialized"))
+        self.assertEqual(self.store.next_write_id(), 2)
+        self.assertTrue(os.path.exists(os.path.join(self.state_dir, "initialized")))
+
+    def test_duplicate_index_members_raise(self):
+        self.store.next_write_id()
+        for content in (
+            '{"write_id": 42, "write_id": 1, "order": 0, "sessions": {}}',
+            '{"write_id": 1, "order": 0, "sessions": {"%s": 1, "%s": 2}}' % ("a" * 64, "a" * 64),
+        ):
+            with open(self.store.index_path(), "w", encoding="utf-8") as handle:
+                handle.write(content)
+            with self.assertRaises(StoreError, msg=content):
+                self.store.next_write_id()
+
+    def test_deeply_nested_index_raises_store_error(self):
+        self.store.next_write_id()
+        with open(self.store.index_path(), "w", encoding="utf-8") as handle:
+            handle.write("[" * 100000 + "]" * 100000)
+        with self.assertRaises(StoreError):
+            self.store.next_write_id()
+
+    def test_unreadable_store_directory_is_not_a_fresh_store(self):
+        with mock.patch("os.listdir", side_effect=PermissionError("denied")):
+            with self.assertRaises(StoreError):
+                self.store.next_write_id()
+        self.assertFalse(os.path.exists(self.store.index_path()))
 
     def test_ids_stay_monotonic_across_prune_and_new_store(self):
         for index in range(53):
