@@ -239,7 +239,7 @@ class SelectionTest(unittest.TestCase):
             "docs/AGENTS.md",
             "openspec/changes/x/spec.md",
             "AGENTS.md",
-            ".agents/rules/repo-conventional-commits.md",
+            ".agents/hooked-rules/repo-commit-types.md",
             ".claude/settings.json",
             "opencode.json",
             ".gitattributes",
@@ -359,6 +359,34 @@ class SelectionTest(unittest.TestCase):
             owner_nodes(workflow, CMAP), {"docs", "installer", "supply-chain", "tooling"}
         )
         self.assertEqual(unaccounted([workflow], CMAP), [])
+
+    def test_engine_only_selects_tooling_docs(self):
+        path = "scripts/agent_rules.py"
+        self.assertEqual(sorted(CMAP["global-overrides"][path]), ["docs", "tooling"])
+        self.assertEqual(owner_nodes(path, CMAP), {"tooling", "docs"})
+        self.assertEqual({n for n, v in affected([path], CMAP).items() if v}, {"tooling", "docs"})
+        self.assertEqual(unaccounted([path], CMAP), [])
+
+    def test_each_plugin_file_selects_tooling_docs(self):
+        # The list comes from git, so a new tracked file without an override fails here.
+        listing = subprocess.run(
+            ["git", "ls-files", "scripts/opencode-hooked-rules/"],
+            cwd=REPO, check=True, stdout=subprocess.PIPE, universal_newlines=True,
+        ).stdout.split()
+        self.assertTrue(listing)
+        for path in listing:
+            with self.subTest(path=path):
+                self.assertEqual(sorted(CMAP["global-overrides"].get(path, [])), ["docs", "tooling"])
+                self.assertEqual(owner_nodes(path, CMAP), {"tooling", "docs"})
+                self.assertEqual(
+                    {n for n, v in affected([path], CMAP).items() if v}, {"tooling", "docs"}
+                )
+                self.assertEqual(unaccounted([path], CMAP), [])
+
+    def test_engine_tests_stay_tooling_only(self):
+        path = "scripts/tests/test_agent_rules.py"
+        self.assertNotIn(path, CMAP["global-overrides"])
+        self.assertEqual({n for n, v in affected([path], CMAP).items() if v}, {"tooling"})
 
     def test_agent_files_with_code_select_both(self):
         files = ["android/AGENTS.md", "android/app/src/main/Foo.kt"]

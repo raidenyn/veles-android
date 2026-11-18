@@ -10,6 +10,7 @@ repository root.
 ./gradlew installGitCliff      # pinned, SHA-256-verified git-cliff 2.14.2 -> build/release-tools/git-cliff
 ./gradlew scriptsTest          # stdlib-Python suites in scripts/tests (commitlint, component map, release planner/assets/readiness)
 node --test scripts/check-mac-comparisons.test.mjs
+node --test scripts/opencode-hooked-rules/index.test.mjs   # the OpenCode hooked-rules plugin (stdlib node, python3 for one round-trip test)
 
 python3 -I scripts/commitlint.py --message "feat(app): add thing"   # validate a message (or --file PATH); exit 0 valid, 1 invalid
 python3 -I scripts/components.py check                              # every tracked file is owned by a node in .github/components.json
@@ -38,8 +39,8 @@ Every commit subject is a Conventional Commit (`type(scope): description`), enfo
 `scripts/commitlint.py` through three gates: the `.githooks/commit-msg` hook, the required
 `pr-title` check on the PR title and body (the future squash commit), and `commit-guard` on master
 pushes. `feat` bumps the minor version, `fix`/`perf` the patch, `!` or a `BREAKING CHANGE:` footer
-the major; every other type bumps nothing. Guidance-only changes must be typed `docs`/`chore` so
-they do not bump a release component. See `docs/releasing.md` and `docs/ci.md`.
+the major; every other type bumps nothing. Guidance-only changes must be typed `docs` so they
+do not bump a release component. See `docs/releasing.md` and `docs/ci.md`.
 
 ## Versions and tags
 

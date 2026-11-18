@@ -38,6 +38,8 @@ jobs:
         run: sh verify/check-root-aliases.sh --self-test
       - name: Test the MAC comparison guard
         run: node --test scripts/check-mac-comparisons.test.mjs
+      - name: Test the OpenCode hooked-rules plugin
+        run: node --test scripts/opencode-hooked-rules/index.test.mjs
       - name: Assert system Python version
         run: python3 --version && python3 -c 'import sys; assert sys.version_info >= (3, 8), sys.version'
       - run: ./gradlew scriptsTest
