@@ -29,13 +29,13 @@
 
 ## 2. Engine: rule parsing and pointers (tests first)
 
-- [ ] 2.1 Write failing tests in `scripts/tests/test_agent_rules.py` for the hooked-rule parser, then create `scripts/agent_rules.py` (stdlib, Python 3.8+, `-I`) to pass them. The tests cover:
+- [x] 2.1 Write failing tests in `scripts/tests/test_agent_rules.py` for the hooked-rule parser, then create `scripts/agent_rules.py` (stdlib, Python 3.8+, `-I`) to pass them. The tests cover:
   - the restricted grammar and the key set;
   - a namespaced skill;
   - duplicate key, unknown key, `[]`, an invalid regex and no trigger list;
   - the 4,096-byte body passing and 4,097 failing;
   - rule identity as file name plus sha256.
-- [ ] 2.2 Write failing tests, then implement `pointers --write` and `pointers --check`. The tests cover:
+- [x] 2.2 Write failing tests, then implement `pointers --write` and `pointers --check`. The tests cover:
   - a fresh block, a stale block and a missing block;
   - a block that contains the always-on Conventional Commits format sentence for the commit-types rule.
 
