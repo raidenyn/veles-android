@@ -4,9 +4,11 @@ Each fixture is a throwaway git repository, so tests exercise the same git calls
 real run uses without touching this checkout. Stdlib only; Python 3.8 compatible.
 """
 import contextlib
+import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -23,10 +25,13 @@ from check_agent_files import (  # noqa: E402
     NOTICE_NESTED,
     NOTICE_ROOT,
     SCOPES,
+    check_claude_hooks,
     check_codeowners,
+    check_hooked_rules,
     check_links,
     check_opencode,
     check_plugin_mentions,
+    check_pointer_block,
     check_repo,
     list_files,
     list_links,
@@ -34,6 +39,22 @@ from check_agent_files import (  # noqa: E402
     parse_documented_skills,
     parse_frontmatter,
 )
+
+# The real engine: the fixture repositories carry a copy of it, and the fixture pointer block is
+# rendered with it, so the checker and the runtime are tested against the same parser.
+ENGINE_PATH = os.path.join(os.path.dirname(os.path.dirname(CHECKS)), "scripts", "agent_rules.py")
+
+
+def _load_engine():
+    spec = importlib.util.spec_from_file_location("fixture_agent_rules", ENGINE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+ENGINE = _load_engine()
+with open(ENGINE_PATH, "r", encoding="utf-8", newline="") as _handle:
+    ENGINE_TEXT = _handle.read()
 
 # The brief's literals, repeated here so a wrong constant cannot satisfy its own fixture.
 EXPECTED_NOTICE_ROOT = (
@@ -140,8 +161,54 @@ EXPECTED_CODEOWNER_PATTERNS = (
     "/docs/superspec-workflow.md",
     "/openspec/config.yaml",
     "/openspec/schemas/",
+    "/scripts/agent_rules.py",
+    "/scripts/opencode-hooked-rules/",
+)
+HOOK_COMMAND = 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/agent_rules.py" hook --format claude'
+# (event, matcher) per hook; a matcher of None means the entry carries no `matcher` key.
+EXPECTED_HOOKS = (
+    ("PreToolUse", "Bash"),
+    ("PostToolUse", "Bash|Skill|Read"),
+    ("UserPromptSubmit", None),
+    ("PreCompact", None),
 )
 OPENCODE_PACKAGE = "opencode-rules@>=2.0.0 <3"
+LOCAL_PLUGIN = "./scripts/opencode-hooked-rules"
+LOCAL_PLUGIN_INDEX = "scripts/opencode-hooked-rules/index.js"
+# The eight always-on `repo-*` rules the root AGENTS.md lists once the Conventional Commits rule
+# moved to `.agents/hooked-rules/`.
+EXPECTED_REPO_RULES = (
+    "repo-real-device-testing.md",
+    "repo-no-time-based-tests.md",
+    "repo-pre-push-checks.md",
+    "repo-review-models.md",
+    "repo-superspec-review-gate.md",
+    "repo-tracker-intake.md",
+    "repo-superspec-closeout.md",
+    "repo-signing-keys.md",
+)
+MOVED_RULE = ".agents/rules/repo-conventional-commits.md"
+HOOKED_DIR = ".agents/hooked-rules/"
+HOOKED_NAME = "repo-commit-types.md"
+HOOKED_PATH = HOOKED_DIR + HOOKED_NAME
+HOOKED_POINTER = "Fixture commit types: read before `git commit`."
+ENGINE_FILE = "scripts/agent_rules.py"
+
+
+def hooked_rule_text(pointer=HOOKED_POINTER, lines=None, body="Fixture body.\n"):
+    """A hooked rule; ``lines`` replaces the frontmatter lines after `pointer`."""
+    if lines is None:
+        lines = ["gates:", '  - "\\\\bgit\\\\b[^;&|\\\\n]*?\\\\scommit\\\\b"']
+    head = ['pointer: "%s"' % pointer] if pointer is not None else []
+    return "---\n" + "\n".join(head + list(lines)) + "\n---\n" + body
+
+
+def pointer_block(rule_texts=None):
+    """The engine's pointer block over ``{name: text}`` (the fixture rule by default)."""
+    if rule_texts is None:
+        rule_texts = {HOOKED_NAME: hooked_rule_text()}
+    rules = [ENGINE.parse_rule(name, text) for name, text in sorted(rule_texts.items())]
+    return ENGINE.render_pointer_block(rules)
 
 
 def skill_section(skills):
@@ -186,7 +253,10 @@ def opencode_text(
     directories=(".agents/rules",),
 ):
     if plugins is None:
-        plugins = [{"package": package, "options": {"additionalRuleDirectories": list(directories)}}]
+        plugins = [
+            {"package": package, "options": {"additionalRuleDirectories": list(directories)}},
+            LOCAL_PLUGIN,
+        ]
     data = {"$schema": "https://opencode.ai/config.json", "plugins": plugins}
     if extra:
         data.update(extra)
@@ -200,7 +270,44 @@ def codeowners_text(patterns=None):
     )
 
 
-def root_text(dirs=None, target_lines=None, notice=EXPECTED_NOTICE_ROOT, mention=True):
+def hooks_block(drop=None, matchers=None, commands=None, timeouts=None):
+    """The expected `hooks` block, with per-event overrides for the negative tests.
+
+    ``drop`` names events to omit; ``matchers`` and ``commands`` replace a value; ``timeouts``
+    replaces the timeout, and a value of ``False`` omits the key.
+    """
+    block = {}
+    for event, matcher in EXPECTED_HOOKS:
+        if drop is not None and event == drop:
+            continue
+        matcher = (matchers or {}).get(event, matcher)
+        command = {"type": "command", "command": (commands or {}).get(event, HOOK_COMMAND)}
+        timeout = (timeouts or {}).get(event, 5)
+        if timeout is not False:
+            command["timeout"] = timeout
+        entry = {"hooks": [command]}
+        if matcher is not None:
+            entry = {"matcher": matcher, "hooks": [command]}
+        block[event] = [entry]
+    return block
+
+
+def settings_text(hooks=None, extra=None):
+    data = {"enabledPlugins": {}, "hooks": hooks_block() if hooks is None else hooks}
+    if extra:
+        data.update(extra)
+    return json.dumps(data, indent=2) + "\n"
+
+
+def root_text(
+    dirs=None,
+    target_lines=None,
+    notice=EXPECTED_NOTICE_ROOT,
+    mention=True,
+    block=None,
+    heading=True,
+):
+    """The fixture root AGENTS.md; ``block`` replaces the pointer block, ``False`` omits it."""
     dirs = list(EXPECTED_NODE_FILES if dirs is None else dirs)
     lines = ["# AGENTS.md", ""]
     if notice is not None:
@@ -218,7 +325,13 @@ def root_text(dirs=None, target_lines=None, notice=EXPECTED_NOTICE_ROOT, mention
                 "- **OpenCode** needs the `opencode-rules` plugin at the range pinned in `opencode.json`.",
             ]
         )
-    lines.extend(["", "## Rules", "", "Repo-wide rules live in `.agents/rules/`."])
+    lines.extend(["", "## Rules", "", "Repo-wide rules live in `.agents/rules/`:"])
+    lines.extend("- `.agents/rules/%s`" % name for name in EXPECTED_REPO_RULES)
+    if block is not False:
+        lines.append("")
+        if heading:
+            lines.append("## Hook-delivered rules")
+        lines.extend((pointer_block() if block is None else block).split("\n"))
     if target_lines is not None:
         while len(lines) < target_lines:
             lines.append("Filler line for the line cap.")
@@ -298,9 +411,14 @@ def clean_files(skills=None):
         ".github/components.json": components_json(),
         ".github/CODEOWNERS": codeowners_text(),
         "opencode.json": opencode_text(),
-        ".claude/settings.json": json.dumps({"enabledPlugins": {}}, indent=2) + "\n",
+        ".claude/settings.json": settings_text(),
         ".agents/skills/.openspec-target": "claude\n",
+        LOCAL_PLUGIN_INDEX: "export default {}\n",
+        ENGINE_FILE: ENGINE_TEXT,
+        HOOKED_PATH: hooked_rule_text(),
     }
+    for name in EXPECTED_REPO_RULES:
+        files[".agents/rules/" + name] = repo_rule_text()
     for path in EXPECTED_NODE_FILES:
         node = path[: -len("/AGENTS.md")]
         files[path] = nested_text(node, skills=skills if node == "docs" else None)
@@ -1017,13 +1135,254 @@ class AgentFileCheckTest(unittest.TestCase):
                 self.assert_finding(findings, "error", ".agents/rules/" + name, "size cap")
                 self.assertEqual(len(findings), 1, findings)
 
+    # Hooked rules: `.agents/hooked-rules/` is parsed by the engine the fixture carries.
+
+    def hooked_findings(self, text, name=HOOKED_NAME):
+        files = clean_files()
+        files[HOOKED_DIR + name] = text
+        return check_repo(self.repo(files))
+
+    def assert_single(self, findings, path, fragment):
+        self.assert_finding(findings, "error", path, fragment)
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_hooked_unknown_key(self):
+        text = hooked_rule_text(lines=['sticky: "yes"', 'gates: ["\\\\bgit\\\\b"]'])
+        self.assert_single(self.hooked_findings(text), HOOKED_PATH, "unsupported frontmatter key 'sticky'")
+
+    def test_hooked_duplicate_key(self):
+        text = hooked_rule_text(lines=['gates: ["a"]', 'gates: ["b"]'])
+        self.assert_single(self.hooked_findings(text), HOOKED_PATH, "duplicate frontmatter key 'gates'")
+
+    def test_hooked_empty_list(self):
+        text = hooked_rule_text(lines=["gates: []", 'skills: ["opsx:apply"]'])
+        self.assert_single(self.hooked_findings(text), HOOKED_PATH, "at least one item")
+
+    def test_hooked_bad_regex(self):
+        text = hooked_rule_text(lines=['gates: ["(unbalanced"]'])
+        self.assert_single(self.hooked_findings(text), HOOKED_PATH, "invalid regex")
+
+    def test_hooked_no_trigger(self):
+        text = hooked_rule_text(lines=[])
+        self.assert_single(self.hooked_findings(text), HOOKED_PATH, "at least one entry")
+
+    def test_hooked_missing_pointer(self):
+        text = hooked_rule_text(pointer=None, lines=['gates: ["\\\\bgit\\\\b"]'])
+        self.assert_single(self.hooked_findings(text), HOOKED_PATH, "`pointer` is required")
+
+    def hooked_body(self, size):
+        """The fixture rule with a body of exactly ``size`` UTF-8 bytes (a multi-byte character included)."""
+        head = "é\n"  # two bytes plus a newline
+        filler = "x" * 79 + "\n"
+        padding = size - len(head.encode("utf-8"))
+        body = head + filler * (padding // len(filler)) + "x" * (padding % len(filler))
+        self.assertEqual(len(body.encode("utf-8")), size)
+        return hooked_rule_text(body=body)
+
+    def test_hooked_body_4096_ok(self):
+        # The file is over the 4,096-byte `repo-*` cap of `.agents/rules/`; only the body counts.
+        text = self.hooked_body(4096)
+        self.assertGreater(len(text.encode("utf-8")), REPO_RULE_SIZE_MAX)
+        self.assertEqual(self.hooked_findings(text), [])
+
+    def test_hooked_body_4097(self):
+        self.assert_single(self.hooked_findings(self.hooked_body(4097)), HOOKED_PATH, "4096 byte limit")
+
+    def test_hooked_rule_not_judged_as_repo_rule(self):
+        # The fixture rule has no `trigger`, is listed in no `## Rules` section and is still clean.
+        root = self.repo()
+        self.assertNotIn("trigger", clean_files()[HOOKED_PATH])
+        self.assertNotIn(HOOKED_PATH, root_text().replace(HOOKED_PATH, ""))
+        self.assertEqual(check_repo(root), [])
+        self.assertEqual(check_hooked_rules(root, list_files(root)), [])
+        self.assertEqual(check_pointer_block(root), [])
+
+    def test_hooked_nested_dir(self):
+        findings = self.hooked_findings(hooked_rule_text(), name="x/repo-nested.md")
+        self.assert_single(findings, HOOKED_DIR + "x/repo-nested.md", "subdirectory")
+
+    def test_hooked_bad_scope_name(self):
+        for name, fragment in (
+            ("commit-types.md", "no known scope"),
+            ("repo-.md", "empty topic"),
+            ("repo-notes.txt", "does not end with `.md`"),
+        ):
+            with self.subTest(name=name):
+                self.assert_single(self.hooked_findings("x\n", name=name), HOOKED_DIR + name, fragment)
+
+    def test_hooked_symlink_fails(self):
+        files = clean_files()
+        del files[HOOKED_PATH]
+        files["docs/rule-source.md"] = hooked_rule_text()
+        symlinks = default_symlinks()
+        symlinks[HOOKED_PATH] = "../../docs/rule-source.md"
+        findings = check_repo(self.repo(files, symlinks))
+        self.assert_single(findings, HOOKED_PATH, "symlink")
+
+    def test_hooked_not_utf8_fails(self):
+        root = self.repo()
+        with open(os.path.join(root, HOOKED_PATH), "wb") as handle:
+            handle.write(b"---\npointer: \"\xff\"\ngates: [\"a\"]\n---\n")
+        self.assert_single(check_repo(root), HOOKED_PATH, "UTF-8")
+
+    def test_hooked_engine_missing_is_one_finding(self):
+        files = clean_files()
+        del files[ENGINE_FILE]
+        self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "cannot be imported")
+
+    def test_hooked_engine_unimportable_is_one_finding(self):
+        for text in ("def broken(:\n", "raise SystemExit(3)\n", "RULES_DIR = 1\n"):
+            with self.subTest(text=text):
+                files = clean_files()
+                files[ENGINE_FILE] = text
+                self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "cannot be imported")
+
+    def test_retained_block_with_missing_engine_is_one_finding(self):
+        files = clean_files()
+        del files[HOOKED_PATH]
+        del files[ENGINE_FILE]
+        self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "cannot be imported")
+
+    def test_lone_marker_with_missing_engine_is_one_finding(self):
+        files = clean_files()
+        del files[HOOKED_PATH]
+        del files[ENGINE_FILE]
+        files["AGENTS.md"] = root_text(block=False) + "\n<!-- hooked-rules:end -->\n"
+        self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "cannot be imported")
+
+    def test_on_disk_hooked_file_with_missing_engine_is_one_finding(self):
+        files = clean_files()
+        del files[ENGINE_FILE]
+        files["AGENTS.md"] = root_text(block=False)
+        del files[HOOKED_PATH]
+        files[".gitignore"] = ".agents/hooked-rules/\n"
+        root = self.repo(files)
+        write_text(root, HOOKED_PATH, hooked_rule_text())
+        self.assert_single(check_repo(root), ENGINE_FILE, "cannot be imported")
+
+    def test_retained_block_with_zero_rules_is_stale(self):
+        files = clean_files()
+        del files[HOOKED_PATH]
+        self.assert_single(check_repo(self.repo(files)), "AGENTS.md", "stale")
+
+    def test_ignored_hooked_file_rejected_by_loader_is_one_finding(self):
+        files = clean_files()
+        files[".gitignore"] = ".agents/hooked-rules/junk.md\n"
+        root = self.repo(files)
+        write_text(root, HOOKED_DIR + "junk.md", "not a rule\n")
+        self.assertNotIn(HOOKED_DIR + "junk.md", list_files(root))
+        self.assert_single(check_repo(root), HOOKED_DIR + "junk.md", "frontmatter")
+
+    def test_loader_error_not_duplicated_for_a_listed_file(self):
+        # The per-file check already reports the tracked bad rule; the loader's error is not repeated.
+        findings = self.hooked_findings(hooked_rule_text(lines=['gates: ["("]']))
+        self.assert_single(findings, HOOKED_PATH, "invalid regex")
+
+    def test_marker_found_in_a_damaged_root_agents_md(self):
+        # With a marker the hooked-rule check needs the engine; without one only the configured
+        # Claude Code hooks do, which is reported as such.
+        for block, fragment in ((None, "cannot be imported"), (False, "the Claude Code hooks")):
+            with self.subTest(block=block):
+                files = clean_files()
+                del files[HOOKED_PATH]
+                del files[ENGINE_FILE]
+                files["AGENTS.md"] = root_text(block=block)
+                root = self.repo(files)
+                with open(os.path.join(root, "AGENTS.md"), "ab") as handle:
+                    handle.write(b"A damaged byte: \xff\n")
+                self.assert_single(check_repo(root), ENGINE_FILE, fragment)
+
+    def test_no_hooked_rules_and_no_block_passes(self):
+        files = clean_files()
+        del files[HOOKED_PATH]
+        files["AGENTS.md"] = root_text(block=False)
+        # Hooks with zero hooked rules are valid: the engine passes silently.
+        self.assertEqual(check_repo(self.repo(files)), [])
+        # The configured Claude Code hooks still run the engine, so it must exist.
+        del files[ENGINE_FILE]
+        self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "the Claude Code hooks")
+
+    def test_pointer_block_stale(self):
+        files = clean_files()
+        files[HOOKED_PATH] = hooked_rule_text(pointer="A changed pointer.")
+        self.assert_single(check_repo(self.repo(files)), "AGENTS.md", "stale")
+        files["AGENTS.md"] = root_text(block=pointer_block({HOOKED_NAME: files[HOOKED_PATH]}))
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_pointer_block_stale_for_a_new_rule(self):
+        files = clean_files()
+        files[HOOKED_DIR + "docs-extra.md"] = hooked_rule_text(pointer="Extra.")
+        self.assert_single(check_repo(self.repo(files)), "AGENTS.md", "stale")
+
+    def test_pointer_block_crlf_passes(self):
+        files = clean_files()
+        files["AGENTS.md"] = root_text().replace("\n", "\r\n")
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_pointer_block_missing(self):
+        cases = (
+            ("no block", root_text(block=False), "no hooked-rules pointer block"),
+            ("no heading", root_text(heading=False), "Hook-delivered rules"),
+            (
+                "blank line after the heading",
+                root_text().replace("## Hook-delivered rules\n", "## Hook-delivered rules\n\n"),
+                "Hook-delivered rules",
+            ),
+            ("no end marker", root_text().replace(ENGINE.POINTER_END + "\n", ""), "begin line"),
+            (
+                "two blocks",
+                root_text() + "\n" + pointer_block() + "\n",
+                "begin line",
+            ),
+        )
+        for case, text, fragment in cases:
+            with self.subTest(case=case):
+                files = clean_files()
+                files["AGENTS.md"] = text
+                self.assert_single(check_repo(self.repo(files)), "AGENTS.md", fragment)
+
+    def test_old_rule_present(self):
+        files = clean_files()
+        files[MOVED_RULE] = repo_rule_text()
+        self.assert_single(
+            check_repo(self.repo(files)), MOVED_RULE, ".agents/hooked-rules/repo-commit-types.md"
+        )
+
+    def test_old_rule_listed(self):
+        files = clean_files()
+        files["AGENTS.md"] = listed(files["AGENTS.md"], "repo-conventional-commits.md")
+        self.assert_single(
+            check_repo(self.repo(files)), "AGENTS.md", ".agents/hooked-rules/repo-commit-types.md"
+        )
+
+    def test_old_rule_listed_by_a_node(self):
+        files = clean_files()
+        files["scripts/AGENTS.md"] = listed(files["scripts/AGENTS.md"], "repo-conventional-commits.md")
+        self.assert_single(check_repo(self.repo(files)), "scripts/AGENTS.md", "now lives at")
+
+    def test_old_rule_present_and_listed(self):
+        files = with_rule(clean_files(), "repo-conventional-commits.md", repo_rule_text(), "repo")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", MOVED_RULE, "now lives at")
+        self.assert_finding(findings, "error", "AGENTS.md", "now lives at")
+        self.assertEqual(len(findings), 2, findings)
+
+    def test_root_lists_the_eight_repo_rules(self):
+        text = root_text()
+        for name in EXPECTED_REPO_RULES:
+            self.assertIn(".agents/rules/" + name, text)
+        self.assertEqual(len(EXPECTED_REPO_RULES), 8)
+
     def test_check_functions_accept_the_real_tree_shape(self):
         root = self.repo()
         files = list_files(root)
         self.assertEqual(check_links(root, files, "linux"), [])
         self.assertEqual(check_opencode(root), [])
         self.assertEqual(check_codeowners(root), [])
+        self.assertEqual(check_claude_hooks(root), [])
         self.assertEqual(check_plugin_mentions(root), [])
+        self.assertEqual(check_hooked_rules(root, files), [])
+        self.assertEqual(check_pointer_block(root), [])
 
     def test_documented_skill_section_parses(self):
         text = "# x\n\n## OpenSpec skills\n\n- `alpha`\n- `beta`\n\n## Next\n\n- `gamma`\n"
@@ -1224,6 +1583,8 @@ class AgentFileCheckTest(unittest.TestCase):
             "/docs/superspec-workflow.md",
             "/openspec/config.yaml",
             "/openspec/schemas/",
+            "/scripts/agent_rules.py",
+            "/scripts/opencode-hooked-rules/",
         ):
             with self.subTest(pattern=pattern):
                 patterns = [item for item in EXPECTED_CODEOWNER_PATTERNS if item != pattern]
@@ -1305,7 +1666,7 @@ class AgentFileCheckTest(unittest.TestCase):
         # GitHub treats a directory pattern without a trailing slash as covering its contents.
         cases = (
             ("/.claude", ".claude/settings.json"),
-            ("/.agents", ".agents/rules/repo-conventional-commits.md"),
+            ("/.agents", ".agents/hooked-rules/repo-commit-types.md"),
             ("/android", "android/AGENTS.md"),
         )
         for pattern, sample in cases:
@@ -1328,6 +1689,276 @@ class AgentFileCheckTest(unittest.TestCase):
                 files[".github/CODEOWNERS"] = codeowners_text() + pattern + " @raidenyn\n"
                 self.assertEqual(check_repo(self.repo(files)), [])
 
+    def test_codeowners_engine_missing(self):
+        patterns = [item for item in EXPECTED_CODEOWNER_PATTERNS if item != "/scripts/agent_rules.py"]
+        files = clean_files()
+        files[".github/CODEOWNERS"] = codeowners_text(patterns)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", ".github/CODEOWNERS", "is missing the `/scripts/agent_rules.py`"
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_codeowners_plugin_missing(self):
+        patterns = [
+            item for item in EXPECTED_CODEOWNER_PATTERNS if item != "/scripts/opencode-hooked-rules/"
+        ]
+        files = clean_files()
+        files[".github/CODEOWNERS"] = codeowners_text(patterns)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings,
+            "error",
+            ".github/CODEOWNERS",
+            "is missing the `/scripts/opencode-hooked-rules/`",
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_codeowners_engine_and_plugin_without_owner_fail(self):
+        cases = (
+            ("/scripts/agent_rules.py", "scripts/agent_rules.py"),
+            ("/scripts/opencode-hooked-rules/", "scripts/opencode-hooked-rules/index.js"),
+        )
+        for pattern, sample in cases:
+            with self.subTest(pattern=pattern):
+                patterns = [item for item in EXPECTED_CODEOWNER_PATTERNS if item != pattern]
+                files = clean_files()
+                files[".github/CODEOWNERS"] = codeowners_text(patterns) + pattern + "\n"
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings,
+                    "error",
+                    ".github/CODEOWNERS",
+                    "has no owner on the `%s` pattern for `%s`" % (pattern, sample),
+                )
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_codeowners_engine_and_plugin_shadowed_fail(self):
+        # A later ownerless rule shadows the earlier owned entry for the engine and the plugin.
+        for pattern in ("/scripts/agent_rules.py", "/scripts/opencode-hooked-rules/"):
+            with self.subTest(pattern=pattern):
+                files = clean_files()
+                files[".github/CODEOWNERS"] = codeowners_text() + pattern + "\n"
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings, "error", ".github/CODEOWNERS", "`%s` pattern" % pattern
+                )
+                self.assert_finding(findings, "error", ".github/CODEOWNERS", "last matching rule")
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_hooks_clean(self):
+        self.assertEqual(check_claude_hooks(self.repo()), [])
+        self.assertEqual(check_repo(self.repo()), [])
+
+    def test_hooks_settings_unreadable_or_without_hooks_fail(self):
+        files = clean_files()
+        del files[".claude/settings.json"]
+        findings = check_claude_hooks(self.repo(files))
+        self.assert_finding(findings, "error", ".claude/settings.json", "is missing")
+        self.assertEqual(len(findings), 1, findings)
+        for name, text, fragment in (
+            ("invalid", "{not json", "is not valid JSON"),
+            ("array", "[]\n", "must be a JSON object"),
+            ("no hooks", json.dumps({"enabledPlugins": {}}) + "\n", "has no `hooks` block"),
+            ("hooks list", json.dumps({"hooks": []}) + "\n", "has no `hooks` block"),
+        ):
+            with self.subTest(name=name):
+                files = clean_files()
+                files[".claude/settings.json"] = text
+                findings = check_repo(self.repo(files))
+                self.assert_finding(findings, "error", ".claude/settings.json", fragment)
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_hooks_extra_entry_fails(self):
+        for event, matcher in EXPECTED_HOOKS:
+            with self.subTest(event=event, kind="second entry"):
+                block = hooks_block()
+                extra = {"hooks": [{"type": "command", "command": "true", "timeout": 5}]}
+                block[event].append(extra)
+                files = clean_files()
+                files[".claude/settings.json"] = settings_text(block)
+                findings = check_repo(self.repo(files))
+                self.assert_finding(findings, "error", ".claude/settings.json", "hook %s " % event)
+                self.assert_finding(findings, "error", ".claude/settings.json", "exactly one")
+                self.assertEqual(len(findings), 1, findings)
+            with self.subTest(event=event, kind="second command"):
+                block = hooks_block()
+                block[event][0]["hooks"].append({"type": "command", "command": "true", "timeout": 5})
+                files = clean_files()
+                files[".claude/settings.json"] = settings_text(block)
+                findings = check_repo(self.repo(files))
+                self.assert_finding(findings, "error", ".claude/settings.json", "hook %s " % event)
+                self.assert_finding(findings, "error", ".claude/settings.json", "exactly one")
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_hooks_malformed_entry_fails(self):
+        for name, value in (("string", "x"), ("empty list", []), ("entry not object", ["x"])):
+            with self.subTest(name=name):
+                block = hooks_block()
+                block["PreToolUse"] = value
+                files = clean_files()
+                files[".claude/settings.json"] = settings_text(block)
+                findings = check_repo(self.repo(files))
+                self.assert_finding(findings, "error", ".claude/settings.json", "hook PreToolUse")
+                self.assertEqual(len(findings), 1, findings)
+        block = hooks_block()
+        block["PreToolUse"][0]["hooks"][0]["type"] = "prompt"
+        files = clean_files()
+        files[".claude/settings.json"] = settings_text(block)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".claude/settings.json", "hook PreToolUse has type")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_hooks_timeout_must_be_the_integer_five(self):
+        for name, value in (("string", "5"), ("float", 5.0), ("bool", True), ("other", 6)):
+            with self.subTest(name=name):
+                files = clean_files()
+                files[".claude/settings.json"] = settings_text(
+                    hooks_block(timeouts={"PreCompact": value})
+                )
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings, "error", ".claude/settings.json", "hook PreCompact has timeout"
+                )
+                self.assertEqual(len(findings), 1, findings)
+
+    def _hooks_findings_for_bytes(self, data):
+        root = self.repo()
+        with open(os.path.join(root, ".claude/settings.json"), "wb") as handle:
+            handle.write(data)
+        return check_repo(root)
+
+    def test_hooks_settings_invalid_utf8_fails(self):
+        valid = settings_text().encode("utf-8")
+        findings = self._hooks_findings_for_bytes(valid.replace(b'"enabledPlugins"', b'"enabled\xffPlugins"'))
+        self.assert_finding(findings, "error", ".claude/settings.json", "is not valid UTF-8")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_hooks_settings_non_json_constant_fails(self):
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(constant=constant):
+                text = settings_text(extra={"limit": 0}).replace('"limit": 0', '"limit": ' + constant)
+                findings = self._hooks_findings_for_bytes(text.encode("utf-8"))
+                self.assert_finding(findings, "error", ".claude/settings.json", "non-JSON constant")
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_hooks_settings_duplicate_key_fails(self):
+        text = settings_text()
+        # A second `PreToolUse` member would silently replace the first (last wins).
+        duplicate = text.replace('"PreToolUse": [', '"PreToolUse": [], "PreToolUse": [', 1)
+        findings = self._hooks_findings_for_bytes(duplicate.encode("utf-8"))
+        self.assert_finding(findings, "error", ".claude/settings.json", "duplicate key `PreToolUse`")
+        self.assertEqual(len(findings), 1, findings)
+        nested = text.replace('"type": "command",', '"type": "command", "type": "command",', 1)
+        findings = self._hooks_findings_for_bytes(nested.encode("utf-8"))
+        self.assert_finding(findings, "error", ".claude/settings.json", "duplicate key `type`")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_hooks_settings_duplicate_surrogate_key_is_ascii_and_printable(self):
+        # `"\ud800"` is ASCII on disk and passes UTF-8 decoding, but decodes to a lone surrogate
+        # that a strict stdout cannot encode, so the finding must carry an escaped form.
+        text = settings_text().replace(
+            '"enabledPlugins": {}', '"enabledPlugins": {}, "\\ud800": 1, "\\ud800": 2', 1
+        )
+        self.assertIn('"\\ud800": 1, "\\ud800": 2', text)
+        root = self.repo()
+        with open(os.path.join(root, ".claude/settings.json"), "wb") as handle:
+            handle.write(text.encode("utf-8"))
+        findings = check_repo(root)
+        self.assert_finding(findings, "error", ".claude/settings.json", "duplicate key")
+        self.assertEqual(len(findings), 1, findings)
+        message = findings[0].message
+        self.assertIn("\\ud800", message)
+        self.assertTrue(message.isascii() and "\n" not in message, message)
+        raw = io.BytesIO()
+        stdout = io.TextIOWrapper(raw, encoding="utf-8", errors="strict", newline="\n")
+        with contextlib.redirect_stdout(stdout):
+            code = main(["--root", root])
+        stdout.flush()
+        self.assertEqual(code, 1)
+        self.assertIn(b"duplicate key", raw.getvalue())
+
+    def test_hooks_reject_any_extra_key_on_a_hook_command(self):
+        for key, value in (
+            ("async", True),
+            ("async", False),
+            ("onFailure", "ignore"),
+            ("if", "Bash(git *)"),
+            ("shell", "powershell"),
+            ("statusMessage", "x"),
+        ):
+            for event, _ in EXPECTED_HOOKS:
+                with self.subTest(key=key, value=value, event=event):
+                    block = hooks_block()
+                    block[event][0]["hooks"][0][key] = value
+                    files = clean_files()
+                    files[".claude/settings.json"] = settings_text(block)
+                    findings = check_repo(self.repo(files))
+                    self.assert_finding(
+                        findings, "error", ".claude/settings.json", "hook %s has unexpected key `%s`" % (event, key)
+                    )
+                    self.assertEqual(len(findings), 1, findings)
+
+    def test_hooks_reject_any_extra_key_on_a_matcher_group(self):
+        for event, _ in EXPECTED_HOOKS:
+            with self.subTest(event=event):
+                block = hooks_block()
+                block[event][0]["disabled"] = True
+                files = clean_files()
+                files[".claude/settings.json"] = settings_text(block)
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings, "error", ".claude/settings.json", "hook %s entry has unexpected key `disabled`" % event
+                )
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_hooks_exact_keys_pass(self):
+        # The clean block has exactly type, command and timeout, and matcher plus hooks (or hooks alone).
+        block = hooks_block()
+        for event, matcher in EXPECTED_HOOKS:
+            self.assertEqual(sorted(block[event][0]["hooks"][0]), ["command", "timeout", "type"])
+            expected = ["hooks", "matcher"] if matcher is not None else ["hooks"]
+            self.assertEqual(sorted(block[event][0]), expected)
+        self.assertEqual(check_claude_hooks(self.repo()), [])
+
+    def test_disable_all_hooks_truthy_fails(self):
+        for value in (True, 1, "yes", ["x"], {"a": 1}):
+            with self.subTest(value=value):
+                files = clean_files()
+                files[".claude/settings.json"] = settings_text(extra={"disableAllHooks": value})
+                findings = check_repo(self.repo(files))
+                self.assert_finding(findings, "error", ".claude/settings.json", "disableAllHooks")
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_disable_all_hooks_falsy_passes(self):
+        for value in (False, 0, "", None, [], {}):
+            with self.subTest(value=value):
+                files = clean_files()
+                files[".claude/settings.json"] = settings_text(extra={"disableAllHooks": value})
+                self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_hooks_with_missing_engine_fail(self):
+        files = clean_files()
+        del files[ENGINE_FILE]
+        findings = check_claude_hooks(self.repo(files))
+        self.assert_finding(findings, "error", ENGINE_FILE, "is missing; the Claude Code hooks")
+        self.assertEqual(len(findings), 1, findings)
+        # With hooked rules present too, the engine is still reported once.
+        self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "")
+
+    def test_missing_engine_without_hooks_is_not_a_hook_finding(self):
+        files = clean_files()
+        del files[ENGINE_FILE]
+        files[".claude/settings.json"] = json.dumps({"enabledPlugins": {}}) + "\n"
+        findings = check_claude_hooks(self.repo(files))
+        self.assert_finding(findings, "error", ".claude/settings.json", "has no `hooks` block")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_hooks_keep_other_settings(self):
+        files = clean_files()
+        files[".claude/settings.json"] = settings_text(extra={"model": "x"})
+        self.assertEqual(check_repo(self.repo(files)), [])
+
     def test_opencode_extra_key_fails(self):
         files = clean_files()
         files["opencode.json"] = opencode_text(extra={"model": "x"})
@@ -1335,16 +1966,104 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assert_finding(findings, "error", "opencode.json", "unexpected key `model`")
         self.assertEqual(len(findings), 1, findings)
 
-    def test_opencode_second_plugin_fails(self):
-        entry = {
+    def pinned_entry(self):
+        return {
             "package": OPENCODE_PACKAGE,
             "options": {"additionalRuleDirectories": [".agents/rules"]},
         }
+
+    def test_opencode_two_entries_ok(self):
+        for plugins in (
+            [self.pinned_entry(), LOCAL_PLUGIN],
+            [LOCAL_PLUGIN, self.pinned_entry()],
+        ):
+            with self.subTest(plugins=plugins):
+                files = clean_files()
+                files["opencode.json"] = opencode_text(plugins=plugins)
+                self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_opencode_third_plugin(self):
         files = clean_files()
-        files["opencode.json"] = opencode_text(plugins=[entry, dict(entry)])
+        files["opencode.json"] = opencode_text(
+            plugins=[self.pinned_entry(), LOCAL_PLUGIN, "./scripts/other-plugin"]
+        )
         findings = check_repo(self.repo(files))
-        self.assert_finding(findings, "error", "opencode.json", "exactly one")
+        self.assert_finding(findings, "error", "opencode.json", "exactly two")
         self.assertEqual(len(findings), 1, findings)
+
+    def test_opencode_second_plugin_fails(self):
+        # A second `opencode-rules` entry, the local entry twice and a lone entry all fail.
+        cases = (
+            ([self.pinned_entry(), self.pinned_entry()], "`opencode-rules` entry"),
+            ([self.pinned_entry(), LOCAL_PLUGIN, LOCAL_PLUGIN], "exactly two"),
+            ([LOCAL_PLUGIN, LOCAL_PLUGIN], "`opencode-rules` entry"),
+            ([self.pinned_entry()], "exactly two"),
+            ([], "exactly two"),
+        )
+        for plugins, fragment in cases:
+            with self.subTest(plugins=plugins):
+                files = clean_files()
+                files["opencode.json"] = opencode_text(plugins=plugins)
+                findings = check_repo(self.repo(files))
+                self.assert_finding(findings, "error", "opencode.json", fragment)
+
+    def test_opencode_duplicate_local_entry(self):
+        files = clean_files()
+        files["opencode.json"] = opencode_text(plugins=[LOCAL_PLUGIN, LOCAL_PLUGIN])
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", "opencode.json", "local plugin `%s` is declared 2 times" % LOCAL_PLUGIN)
+
+    def test_opencode_missing_local_entry(self):
+        files = clean_files()
+        files["opencode.json"] = opencode_text(plugins=[self.pinned_entry(), self.pinned_entry()])
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", "opencode.json", "has no local plugin `%s`" % LOCAL_PLUGIN
+        )
+        self.assert_finding(findings, "error", "opencode.json", "second `opencode-rules` entry")
+
+    def test_opencode_wrong_local_string(self):
+        for wrong in (
+            "./scripts/opencode-hooked-rules/index.js",
+            "./scripts/opencode-hooked-rules/",
+            "scripts/opencode-hooked-rules",
+            "./scripts/other",
+            "",
+        ):
+            with self.subTest(entry=wrong):
+                files = clean_files()
+                files["opencode.json"] = opencode_text(plugins=[self.pinned_entry(), wrong])
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings, "error", "opencode.json", "plugin string `%s` is not `%s`" % (wrong, LOCAL_PLUGIN)
+                )
+
+    def test_opencode_other_entry_types(self):
+        for wrong in (7, None, ["x"], {"package": "other-plugin@1.0.0"}):
+            with self.subTest(entry=wrong):
+                files = clean_files()
+                files["opencode.json"] = opencode_text(plugins=[self.pinned_entry(), wrong])
+                findings = check_repo(self.repo(files))
+                self.assertTrue(findings)
+                self.assertTrue(all(f.path == "opencode.json" for f in findings), findings)
+
+    def test_opencode_local_dir_missing_index(self):
+        files = clean_files()
+        del files[LOCAL_PLUGIN_INDEX]
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", "opencode.json", "local plugin `%s` has no `index.js`" % LOCAL_PLUGIN
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_opencode_local_dir_with_only_other_files(self):
+        files = clean_files()
+        del files[LOCAL_PLUGIN_INDEX]
+        files["scripts/opencode-hooked-rules/index.test.mjs"] = "// test\n"
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", "opencode.json", "local plugin `%s` has no `index.js`" % LOCAL_PLUGIN
+        )
 
     def test_opencode_unpinned_fails(self):
         cases = (
@@ -1434,6 +2153,49 @@ class AgentFileCheckTest(unittest.TestCase):
                 findings = check_repo(self.repo(files))
                 self.assert_finding(findings, "error", path, "opencode-rules@2.x")
                 self.assertEqual(len(findings), 1, findings)
+
+
+def _add_hook_tests():
+    """One missing, wrong-matcher, wrong-command and missing-timeout test per hook."""
+
+    def build(name, event, expected_matcher, kind):
+        def test(self):
+            files = clean_files()
+            if kind == "missing":
+                hooks = hooks_block(drop=event)
+                fragment = "hook %s is missing" % event
+            elif kind == "matcher":
+                # Where no matcher is expected a stray one is wrong; elsewhere a different one is.
+                wrong = "Write" if expected_matcher is None else expected_matcher + "|Write"
+                hooks = hooks_block(matchers={event: wrong})
+                fragment = "hook %s has matcher" % event
+            elif kind == "command":
+                hooks = hooks_block(commands={event: "python3 scripts/agent_rules.py hook"})
+                fragment = "hook %s has command" % event
+            else:
+                hooks = hooks_block(timeouts={event: False})
+                fragment = "hook %s has no timeout" % event
+            files[".claude/settings.json"] = settings_text(hooks)
+            findings = check_repo(self.repo(files))
+            self.assert_finding(findings, "error", ".claude/settings.json", fragment)
+            self.assertEqual(len(findings), 1, findings)
+
+        test.__name__ = name
+        return test
+
+    for event, matcher in EXPECTED_HOOKS:
+        snake = re.sub(r"(?<!^)(?=[A-Z])", "_", event).lower()
+        for kind, prefix in (
+            ("missing", "test_hook_missing_"),
+            ("matcher", "test_hook_wrong_matcher_"),
+            ("command", "test_hook_wrong_command_"),
+            ("timeout", "test_hook_missing_timeout_"),
+        ):
+            name = prefix + snake
+            setattr(AgentFileCheckTest, name, build(name, event, matcher, kind))
+
+
+_add_hook_tests()
 
 
 if __name__ == "__main__":

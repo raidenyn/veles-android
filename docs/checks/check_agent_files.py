@@ -2,12 +2,13 @@
 """Agent-file layout check.
 
 Checks the legacy files, the AGENTS.md notices and line caps, node-map parity, rule files,
-the `.claude/` symlinks and skill set, `opencode.json`, `.github/CODEOWNERS`, the
-`opencode-rules` mentions and the component overrides. Stdlib only; Python 3.8 compatible;
-run from the `docs / agent-files` CI check.
+the hook-delivered rules and their pointer block, the `.claude/` symlinks and skill set,
+`opencode.json`, `.github/CODEOWNERS`, the `opencode-rules` mentions and the component overrides.
+Stdlib only; Python 3.8 compatible; run from the `docs / agent-files` CI check.
 """
 import argparse
 import collections
+import importlib.util
 import json
 import os
 import re
@@ -58,6 +59,9 @@ OPENCODE_JSON = "opencode.json"
 OPENCODE_KEYS = ("$schema", "plugins")
 PLUGIN_NAME = "opencode-rules"
 PLUGIN_OPTION_DIRS = "additionalRuleDirectories"
+# The one local plugin entry (a directory path string, per the hooked-rule-delivery spike) and its file.
+LOCAL_PLUGIN = "./scripts/opencode-hooked-rules"
+LOCAL_PLUGIN_INDEX = "scripts/opencode-hooked-rules/index.js"
 
 CODEOWNERS = ".github/CODEOWNERS"
 CODEOWNER_PATTERNS = (
@@ -68,6 +72,8 @@ CODEOWNER_PATTERNS = (
     "/docs/superspec-workflow.md",
     "/openspec/config.yaml",
     "/openspec/schemas/",
+    "/scripts/agent_rules.py",
+    "/scripts/opencode-hooked-rules/",
 )
 CODEOWNER_MCP_PATTERN = "/.mcp.json"
 MCP_JSON = ".mcp.json"
@@ -75,12 +81,29 @@ MCP_JSON = ".mcp.json"
 CODEOWNER_SAMPLE_PATHS = (
     ("/opencode.json", "opencode.json"),
     ("/.claude/", ".claude/settings.json"),
-    ("/.agents/", ".agents/rules/repo-conventional-commits.md"),
+    ("/.agents/", ".agents/hooked-rules/repo-commit-types.md"),
     ("**/AGENTS.md", "android/AGENTS.md"),
     ("**/AGENTS.md", "native-bridge/host/AGENTS.md"),
     ("/docs/superspec-workflow.md", "docs/superspec-workflow.md"),
     ("/openspec/config.yaml", "openspec/config.yaml"),
     ("/openspec/schemas/", "openspec/schemas/superspec/schema.yaml"),
+    ("/scripts/agent_rules.py", "scripts/agent_rules.py"),
+    ("/scripts/opencode-hooked-rules/", "scripts/opencode-hooked-rules/index.js"),
+)
+
+# The Claude Code hooks that deliver the hooked rules: event -> expected matcher (None: no
+# `matcher` key). Each event has exactly one entry holding exactly one command. Any other key on a
+# command (`async`, `onFailure`, `if`, `shell`, ...) or on an entry could change how or whether the
+# hook runs, so only these keys are allowed.
+CLAUDE_HOOK_COMMAND = 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/agent_rules.py" hook --format claude'
+CLAUDE_HOOK_TIMEOUT = 5
+CLAUDE_HOOK_COMMAND_KEYS = ("type", "command", "timeout")
+CLAUDE_HOOK_ENTRY_KEYS = ("matcher", "hooks")
+CLAUDE_HOOKS = (
+    ("PreToolUse", "Bash"),
+    ("PostToolUse", "Bash|Skill|Read"),
+    ("UserPromptSubmit", None),
+    ("PreCompact", None),
 )
 
 PLUGIN_MENTION_FILES = (ROOT_AGENTS, "CONTRIBUTING.md")
@@ -101,6 +124,27 @@ RULE_SIZE_MAX = 24000
 # always-on context budget, not the node-rule cap.
 REPO_RULE_SIZE_MAX = 4096
 RULE_KEYS = ("trigger", "globs", "paths")
+
+# Hook-delivered rules are parsed by the engine itself, imported by path from the checked root, so
+# a rule that passes this check also parses at runtime. The names the checker needs from it:
+HOOKED_RULES_DIR = ".agents/hooked-rules"
+ENGINE_FILE = "scripts/agent_rules.py"
+ENGINE_NAMES = (
+    "RULES_DIR",
+    "RuleError",
+    "parse_rule",
+    "load_rules",
+    "render_pointer_block",
+    "_locate_block",
+    "_normalise",
+)
+POINTER_BEGIN = "<!-- hooked-rules:begin -->"
+POINTER_END = "<!-- hooked-rules:end -->"
+POINTERS_COMMAND = "python3 -I scripts/agent_rules.py pointers --write"
+# The always-on Conventional Commits rule became the hook-delivered commit-type guide.
+MOVED_RULES = {
+    "repo-conventional-commits.md": HOOKED_RULES_DIR + "/repo-commit-types.md",
+}
 
 # Scope -> folder pattern. `repo` rules are always on and so have no pattern.
 SCOPES = {
@@ -606,6 +650,8 @@ def check_rules(root, files):
                 Finding("error", path, "has an empty topic; name rules `<scope>-<topic>.md`")
             )
             continue
+        if relative in MOVED_RULES:
+            continue  # `check_moved_rules` reports it with its new location
         rules[path] = scope
         cap = REPO_RULE_SIZE_MAX if scope == "repo" else RULE_SIZE_MAX
         try:
@@ -640,13 +686,222 @@ def check_rules(root, files):
         if path not in references.get(agents_path, set()):
             findings.append(Finding("error", path, "is not listed in %s" % agents_path))
     known = set(files)
+    moved = set(RULES_DIR + "/" + name for name in MOVED_RULES)
     for agents_path in sorted(references):
         for path in sorted(references[agents_path]):
-            if path not in known:
+            if path not in known and path not in moved:
                 findings.append(
                     Finding("error", path, "is referenced by %s but does not exist" % agents_path)
                 )
     return findings
+
+
+def check_moved_rules(root, files):
+    """Reject a moved rule still present in `.agents/rules/` or listed by a scope's AGENTS.md."""
+    findings = []
+    known = set(files)
+    references = _rule_references(root)
+    for name, target in sorted(MOVED_RULES.items()):
+        path = RULES_DIR + "/" + name
+        message = "the rule moved: it now lives at `%s`" % target
+        if path in known:
+            findings.append(Finding("error", path, "must not exist; %s" % message))
+        for agents_path in sorted(references):
+            if path in references[agents_path]:
+                findings.append(Finding("error", agents_path, "lists `%s`; %s" % (path, message)))
+    return findings
+
+
+class _EngineError(Exception):
+    """The engine at ``<root>/scripts/agent_rules.py`` is missing or cannot be imported."""
+
+
+def _load_engine(root):
+    """Import ``<root>/scripts/agent_rules.py`` by path, or raise ``_EngineError``."""
+    path = os.path.join(root, *ENGINE_FILE.split("/"))
+    if not os.path.isfile(path):
+        raise _EngineError("is missing")
+    try:
+        spec = importlib.util.spec_from_file_location("veles_checked_agent_rules", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except BaseException as error:  # SyntaxError, ImportError, SystemExit, ...: never crash
+        if isinstance(error, KeyboardInterrupt):
+            raise
+        raise _EngineError("raised %s: %s" % (type(error).__name__, error))
+    missing = [name for name in ENGINE_NAMES if not hasattr(module, name)]
+    if missing:
+        raise _EngineError("lacks %s" % ", ".join(missing))
+    if module.RULES_DIR != HOOKED_RULES_DIR:
+        raise _EngineError("reads rules from %r, not %r" % (module.RULES_DIR, HOOKED_RULES_DIR))
+    return module
+
+
+def _engine_finding(error):
+    return Finding(
+        "error",
+        ENGINE_FILE,
+        "cannot be imported to parse `%s/` (%s)" % (HOOKED_RULES_DIR, " ".join(str(error).split())),
+    )
+
+
+def _hooked_paths(files):
+    return sorted(path for path in files if path.startswith(HOOKED_RULES_DIR + "/"))
+
+
+def _hooked_name_findings(files):
+    """Name and file-type findings for listed `.agents/hooked-rules/` paths, and the candidates."""
+    findings = []
+    candidates = []
+    for path in _hooked_paths(files):
+        relative = path[len(HOOKED_RULES_DIR) + 1:]
+        if "/" in relative:
+            findings.append(
+                Finding("error", path, "is in a subdirectory; `%s/` is flat" % HOOKED_RULES_DIR)
+            )
+            continue
+        if not relative.endswith(".md"):
+            findings.append(
+                Finding("error", path, "does not end with `.md`; name rules `<scope>-<topic>.md`")
+            )
+            continue
+        name = relative[:-len(".md")]
+        scope = _scope_for(name)
+        if scope is None:
+            findings.append(
+                Finding("error", path, "has no known scope; name rules `<scope>-<topic>.md`")
+            )
+            continue
+        if not name[len(scope) + 1:]:
+            findings.append(
+                Finding("error", path, "has an empty topic; name rules `<scope>-<topic>.md`")
+            )
+            continue
+        candidates.append((path, relative))
+    return findings, candidates
+
+
+def _has_marker(text):
+    """Whether either pointer-block marker is a line of ``text``."""
+    return any(
+        line.strip() in (POINTER_BEGIN, POINTER_END)
+        for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    )
+
+
+def _hooked_files_on_disk(root):
+    directory = os.path.join(root, *HOOKED_RULES_DIR.split("/"))
+    for _, _, names in os.walk(directory):
+        if names:
+            return True
+    return False
+
+
+def _check_hooked(root, files):
+    """``(rule findings, pointer findings)`` for the hooked rules and the root pointer block.
+
+    The engine is needed when the root AGENTS.md has a pointer marker or `.agents/hooked-rules/`
+    holds any file (listed or on disk); then a missing or unimportable engine is one finding.
+    Errors the runtime loader reports for paths the per-file checks did not already report are
+    added once per path. The pointer block is compared only when every rule loads.
+    """
+    rule_findings, candidates = _hooked_name_findings(files)
+    try:
+        with open(os.path.join(root, ROOT_AGENTS), "rb") as handle:
+            data = handle.read()
+    except (IOError, OSError):
+        data = None
+    raw = None
+    if data is not None:
+        try:
+            raw = data.decode("utf-8")
+        except UnicodeDecodeError:
+            raw = None  # the pointer comparison needs valid text; marker detection does not
+    # The ASCII markers are detected on a lenient decoding, so a damaged byte elsewhere in the
+    # file cannot hide a retained marker line.
+    needed = bool(_hooked_paths(files)) or _hooked_files_on_disk(root) or (
+        data is not None and _has_marker(data.decode("utf-8", "replace"))
+    )
+    if not needed:
+        return rule_findings, []
+    try:
+        engine = _load_engine(root)
+    except _EngineError as error:
+        return rule_findings + [_engine_finding(error)], []
+    for path, relative in candidates:
+        full = os.path.join(root, path)
+        if os.path.islink(full) or not os.path.isfile(full):
+            rule_findings.append(
+                Finding("error", path, "is a symlink or not a regular file; hooked rules are plain files")
+            )
+            continue
+        try:
+            with open(full, "rb") as handle:
+                text = handle.read().decode("utf-8")
+        except UnicodeDecodeError as error:
+            rule_findings.append(Finding("error", path, "is not valid UTF-8 (%s)" % error))
+            continue
+        except (IOError, OSError):
+            rule_findings.append(Finding("error", path, "cannot be read"))
+            continue
+        try:
+            engine.parse_rule(relative, text)
+        except engine.RuleError as error:
+            rule_findings.append(Finding("error", path, "is not a valid hooked rule: %s" % error))
+    rules, errors = engine.load_rules(root)
+    reported = set(finding.path for finding in rule_findings)
+    for path, message in errors:
+        if path not in reported:
+            reported.add(path)
+            rule_findings.append(
+                Finding("error", path, "is rejected by the hooked-rule loader: %s" % message)
+            )
+    if errors or raw is None:
+        return rule_findings, []
+    return rule_findings, _pointer_findings(engine, raw, rules)
+
+
+def _pointer_findings(engine, raw, rules):
+    fix = "run `%s`" % POINTERS_COMMAND
+    try:
+        location = engine._locate_block(raw)
+        block = engine.render_pointer_block(rules)
+    except engine.RuleError as error:
+        return [Finding("error", ROOT_AGENTS, "has a malformed pointer block: %s; %s" % (error, fix))]
+    if location is None:
+        if not rules:
+            return []
+        return [Finding("error", ROOT_AGENTS, "has no hooked-rules pointer block; %s" % fix)]
+    if not location.heading_ok:
+        return [
+            Finding(
+                "error",
+                ROOT_AGENTS,
+                "lacks the `## Hook-delivered rules` heading before the pointer block; %s" % fix,
+            )
+        ]
+    if engine._normalise(raw[location.begin:location.end]) != block:
+        return [Finding("error", ROOT_AGENTS, "has a stale hooked-rules pointer block; %s" % fix)]
+    return []
+
+
+def check_hooked_rules(root, files):
+    """Check `.agents/hooked-rules/`: flat `<scope>-<topic>.md` regular files the engine parses.
+
+    The format, the 4,096-byte body cap and regex validity are the engine's own `parse_rule`
+    errors, plus any file the runtime loader rejects. The `.agents/rules/` frontmatter, size and
+    listing checks do not apply here. A missing or unimportable engine is reported here.
+    """
+    return _check_hooked(root, files)[0]
+
+
+def check_pointer_block(root, files=None):
+    """Check the root AGENTS.md pointer block against the engine's rendering of the rules.
+
+    Silent when there are no hooked rules and no block; engine and rule failures belong to
+    `check_hooked_rules`, which is why this check is silent when a rule does not load.
+    """
+    return _check_hooked(root, list_files(root) if files is None else files)[1]
 
 
 def parse_documented_skills(text):
@@ -1000,8 +1255,33 @@ def _check_opencode_package(package):
     ]
 
 
+def _check_pinned_plugin(plugin):
+    """The `opencode-rules` object entry: a pinned package and the rule directory option."""
+    findings = []
+    package = plugin.get("package")
+    if not isinstance(package, str):
+        findings.append(Finding("error", OPENCODE_JSON, "plugin entry has no `package` string"))
+    else:
+        findings.extend(_check_opencode_package(package))
+    options = plugin.get("options")
+    directories = options.get(PLUGIN_OPTION_DIRS) if isinstance(options, dict) else None
+    if not isinstance(directories, list) or RULES_DIR not in directories:
+        findings.append(
+            Finding(
+                "error",
+                OPENCODE_JSON,
+                "`options.%s` must contain `%s`" % (PLUGIN_OPTION_DIRS, RULES_DIR),
+            )
+        )
+    return findings
+
+
 def check_opencode(root):
-    """Check `opencode.json`: only `$schema`/`plugins`, one pinned plugin and the rule dirs."""
+    """Check `opencode.json`: only `$schema`/`plugins`, and exactly two plugin entries.
+
+    The allow-list is the pinned `opencode-rules` object (with the rule directory) and the local
+    hooked-rules plugin as the string `LOCAL_PLUGIN`, whose directory must hold an `index.js`.
+    """
     text = _read_text(root, OPENCODE_JSON)
     if text is None:
         return [Finding("error", OPENCODE_JSON, "is missing")]
@@ -1026,32 +1306,66 @@ def check_opencode(root):
     if not isinstance(plugins, list):
         findings.append(Finding("error", OPENCODE_JSON, "has no `plugins` list"))
         return findings
-    if len(plugins) != 1:
+    if len(plugins) != 2:
         findings.append(
             Finding(
                 "error",
                 OPENCODE_JSON,
-                "declares %d plugins; exactly one `opencode-rules` entry is required" % len(plugins),
+                "declares %d plugins; exactly two entries are required: the `%s` object and "
+                "the local `%s` string" % (len(plugins), PLUGIN_NAME, LOCAL_PLUGIN),
             )
         )
         return findings
-    plugin = plugins[0]
-    if not isinstance(plugin, dict):
-        findings.append(Finding("error", OPENCODE_JSON, "plugin entry must be a JSON object"))
-        return findings
-    package = plugin.get("package")
-    if not isinstance(package, str):
-        findings.append(Finding("error", OPENCODE_JSON, "plugin entry has no `package` string"))
+
+    objects = [plugin for plugin in plugins if isinstance(plugin, dict)]
+    local_count = 0
+    for plugin in plugins:
+        if isinstance(plugin, dict):
+            continue
+        if not isinstance(plugin, str):
+            findings.append(
+                Finding("error", OPENCODE_JSON, "plugin entry must be a JSON string or object")
+            )
+        elif plugin != LOCAL_PLUGIN:
+            findings.append(
+                Finding(
+                    "error",
+                    OPENCODE_JSON,
+                    "plugin string `%s` is not `%s`" % (plugin, LOCAL_PLUGIN),
+                )
+            )
+        else:
+            local_count += 1
+    if objects:
+        findings.extend(_check_pinned_plugin(objects[0]))
     else:
-        findings.extend(_check_opencode_package(package))
-    options = plugin.get("options")
-    directories = options.get(PLUGIN_OPTION_DIRS) if isinstance(options, dict) else None
-    if not isinstance(directories, list) or RULES_DIR not in directories:
+        findings.append(Finding("error", OPENCODE_JSON, "has no `%s` entry" % PLUGIN_NAME))
+    if len(objects) > 1:
         findings.append(
             Finding(
                 "error",
                 OPENCODE_JSON,
-                "`options.%s` must contain `%s`" % (PLUGIN_OPTION_DIRS, RULES_DIR),
+                "has a second `%s` entry; only one object entry is allowed" % PLUGIN_NAME,
+            )
+        )
+    if local_count > 1:
+        findings.append(
+            Finding(
+                "error",
+                OPENCODE_JSON,
+                "local plugin `%s` is declared %d times; declare it once" % (LOCAL_PLUGIN, local_count),
+            )
+        )
+    elif local_count == 0:
+        findings.append(
+            Finding("error", OPENCODE_JSON, "has no local plugin `%s`" % LOCAL_PLUGIN)
+        )
+    if local_count and not os.path.isfile(os.path.join(root, *LOCAL_PLUGIN_INDEX.split("/"))):
+        findings.append(
+            Finding(
+                "error",
+                OPENCODE_JSON,
+                "local plugin `%s` has no `index.js` (expected `%s`)" % (LOCAL_PLUGIN, LOCAL_PLUGIN_INDEX),
             )
         )
     return findings
@@ -1167,6 +1481,145 @@ def check_codeowners(root):
     return findings
 
 
+class _StrictJsonError(ValueError):
+    """A JSON document that Python accepts but strict JSON does not."""
+
+
+def _reject_json_constant(name):
+    raise _StrictJsonError("has the non-JSON constant `%s`" % name)
+
+
+def _strict_object(pairs):
+    seen = set()
+    for key, _ in pairs:
+        if key in seen:
+            # `ascii` keeps the message one plain-ASCII line, even for a lone-surrogate escape
+            # such as "\\ud800" that a strict stdout could not encode.
+            raise _StrictJsonError("has a duplicate key `%s`" % ascii(key)[1:-1])
+        seen.add(key)
+    return dict(pairs)
+
+
+def _hook_findings(event, expected_matcher, entries):
+    """Findings for one event's entry list in `.claude/settings.json`."""
+    def error(message):
+        return [Finding("error", SETTINGS_JSON, "hook %s %s" % (event, message))]
+
+    if not isinstance(entries, list) or not entries:
+        return error("must be a non-empty list holding exactly one entry")
+    if len(entries) != 1:
+        return error(
+            "has %d entries; expected exactly one entry with exactly one command" % len(entries)
+        )
+    entry = entries[0]
+    if not isinstance(entry, dict):
+        return error("entry must be an object")
+    commands = entry.get("hooks")
+    if not isinstance(commands, list) or len(commands) != 1:
+        return error("must hold exactly one command in its entry")
+    command = commands[0]
+    if not isinstance(command, dict):
+        return error("command must be an object")
+
+    findings = []
+    if expected_matcher is None:
+        if "matcher" in entry:
+            findings.extend(
+                error("has matcher %r; expected none (no `matcher` key)" % (entry["matcher"],))
+            )
+    elif entry.get("matcher") != expected_matcher:
+        findings.extend(
+            error("has matcher %r; expected %r" % (entry.get("matcher"), expected_matcher))
+        )
+    if command.get("type") != "command":
+        findings.extend(error("has type %r; expected 'command'" % (command.get("type"),)))
+    if command.get("command") != CLAUDE_HOOK_COMMAND:
+        findings.extend(
+            error("has command %r; expected %r" % (command.get("command"), CLAUDE_HOOK_COMMAND))
+        )
+    timeout = command.get("timeout")
+    if "timeout" not in command:
+        findings.extend(error("has no timeout; expected %d" % CLAUDE_HOOK_TIMEOUT))
+    elif (
+        not isinstance(timeout, int) or isinstance(timeout, bool) or timeout != CLAUDE_HOOK_TIMEOUT
+    ):
+        findings.extend(error("has timeout %r; expected %d" % (timeout, CLAUDE_HOOK_TIMEOUT)))
+    for key in sorted(set(entry) - set(CLAUDE_HOOK_ENTRY_KEYS)):
+        findings.extend(
+            error("entry has unexpected key `%s`; only `matcher` and `hooks` are allowed" % ascii(key)[1:-1])
+        )
+    for key in sorted(set(command) - set(CLAUDE_HOOK_COMMAND_KEYS)):
+        findings.extend(
+            error(
+                "has unexpected key `%s`; only `type`, `command` and `timeout` are allowed"
+                % ascii(key)[1:-1]
+            )
+        )
+    return findings
+
+
+def check_claude_hooks(root):
+    """Check that `.claude/settings.json` wires the hooked-rule engine into Claude Code.
+
+    Each of the four events has exactly one entry with exactly one command, the engine's `hook`
+    subcommand, the expected matcher (or none) and a 5-second timeout, and no other key on the entry
+    or the command. `disableAllHooks` must not be set to a true value, and the engine the hooks run
+    must exist. Whether the engine may ever answer `allow` is a property of the engine, tested there,
+    not here. A repository with these hooks and no hooked rule is valid: the engine passes silently.
+    """
+    if os.path.islink(os.path.join(root, SETTINGS_JSON)):
+        return []  # `check_links` reports the symlink; a dangling target is not a second error
+    try:
+        with open(os.path.join(root, SETTINGS_JSON), "rb") as handle:
+            raw = handle.read()
+    except (IOError, OSError):
+        return [Finding("error", SETTINGS_JSON, "is missing")]
+    # Claude Code may reject a file the lenient reader accepts and then load no hooks at all, so
+    # this file is read strictly: UTF-8 only, no NaN/Infinity constants, no duplicate members.
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        return [Finding("error", SETTINGS_JSON, "is not valid UTF-8 (%s)" % error)]
+    try:
+        data = json.loads(
+            text, parse_constant=_reject_json_constant, object_pairs_hook=_strict_object
+        )
+    except _StrictJsonError as error:
+        return [Finding("error", SETTINGS_JSON, str(error))]
+    except ValueError as error:
+        return [Finding("error", SETTINGS_JSON, "is not valid JSON (%s)" % error)]
+    if not isinstance(data, dict):
+        return [Finding("error", SETTINGS_JSON, "must be a JSON object")]
+    findings = []
+    if data.get("disableAllHooks"):
+        findings.append(
+            Finding(
+                "error",
+                SETTINGS_JSON,
+                "sets `disableAllHooks`; the hooked-rule hooks must stay enabled",
+            )
+        )
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return findings + [Finding("error", SETTINGS_JSON, "has no `hooks` block")]
+    if any(event in hooks for event, _ in CLAUDE_HOOKS) and not os.path.isfile(
+        os.path.join(root, *ENGINE_FILE.split("/"))
+    ):
+        findings.append(
+            Finding(
+                "error",
+                ENGINE_FILE,
+                "is missing; the Claude Code hooks in `%s` run it" % SETTINGS_JSON,
+            )
+        )
+    for event, matcher in CLAUDE_HOOKS:
+        if event not in hooks:
+            findings.append(Finding("error", SETTINGS_JSON, "hook %s is missing" % event))
+            continue
+        findings.extend(_hook_findings(event, matcher, hooks[event]))
+    return findings
+
+
 def check_plugin_mentions(root):
     """Check the `opencode-rules` mentions and that only `opencode.json` pins the range."""
     findings = []
@@ -1209,9 +1662,20 @@ def check_repo(root, platform=sys.platform):
     findings.extend(_check_node_map(root_text, tracked_nested))
     findings.extend(_check_overrides(root, tracked_nested))
     findings.extend(check_rules(root, files))
+    findings.extend(check_moved_rules(root, files))
+    hooked_findings, pointer_findings = _check_hooked(root, files)
+    findings.extend(hooked_findings)
+    findings.extend(pointer_findings)
     findings.extend(check_links(root, files, platform))
     findings.extend(check_opencode(root))
     findings.extend(check_codeowners(root))
+    # A missing engine is one finding: the hooked-rule check may already have reported it.
+    engine_reported = any(finding.path == ENGINE_FILE for finding in hooked_findings)
+    findings.extend(
+        finding
+        for finding in check_claude_hooks(root)
+        if not (engine_reported and finding.path == ENGINE_FILE)
+    )
     findings.extend(check_plugin_mentions(root))
     return findings
 

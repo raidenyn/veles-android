@@ -28,7 +28,6 @@ commands and rules; this file intentionally holds no node detail.
 ## Rules
 
 Repo-wide rules in `.agents/rules/` are always on and each holds one concern:
-`.agents/rules/repo-conventional-commits.md`,
 `.agents/rules/repo-real-device-testing.md`,
 `.agents/rules/repo-no-time-based-tests.md`,
 `.agents/rules/repo-pre-push-checks.md`,
@@ -50,3 +49,8 @@ scoped rule, read the file the node lists.
   are in `CONTRIBUTING.md`.
 - **OpenSpec** CLI `>= 2.0.0, < 3` (2.0.0 last verified; 1.x is unsupported).
 - Do not run `/init` in any agent tool: it rewrites guidance and can create a nested `CLAUDE.md`.
+
+## Hook-delivered rules
+<!-- hooked-rules:begin -->
+- Every commit subject and PR title is a Conventional Commit `type(scope): description`; the type guide is delivered when you apply or finalize a change and before `git commit`, `gh pr create` or `gh pr edit`; read this file at those moments if it was not. — .agents/hooked-rules/repo-commit-types.md
+<!-- hooked-rules:end -->

@@ -9,8 +9,9 @@ non-release `docs` CI node (`check-docs.yml`); the node's checks are `docs / age
 `docs/checks/check_agent_files.py` is a standard-library Python check (Python 3.8+) of the agent
 guidance layout: removed legacy files (`CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md`,
 `CONTRIBUTION.md`, `.opencode/`, `.claude/commands/`), the `AGENTS.md` line caps and start-at-root
-notices, node-map parity, rule frontmatter and scope patterns, the `.claude/` symlinks and skill
-set, `opencode.json`, `.github/CODEOWNERS` and the plugin mentions. Run it and its tests from the
+notices, node-map parity, rule frontmatter and scope patterns, the hook-delivered rules (parsed by
+the engine imported from `scripts/agent_rules.py`) and their pointer block, the `.claude/` symlinks,
+hooks and skill set, `opencode.json`, `.github/CODEOWNERS` and the plugin mentions. Run it and its tests from the
 repository root:
 
 ```bash
@@ -174,15 +175,32 @@ discoverable if the plugin is not active.
   one session can drop the scoped rule that the first read delivered, so a rule that applied earlier
   can stop applying. If a scoped rule appears to vanish, read the rule files listed in the node's
   `## Rules` section by hand; the always-on `repo-*` rules are unaffected.
-- **Untrusted checkouts**: `opencode.json` and any repo-controlled agent configuration can make your
-  tool install and run code, so read `opencode.json` and `.claude/settings.json` before launching an
-  agent in an untrusted PR checkout. To review such a checkout safely, start OpenCode from outside
-  it, or remove/disable the plugin entry in your local uncommitted copy (and disable the project's
-  Claude Code configuration). `opencode debug config` lists the configuration sources being loaded.
+- **Untrusted checkouts**: any agent configuration in a checkout (`opencode.json`,
+  `.claude/settings.json`, auto-discovered plugins and more) can make your tool install and run code,
+  and this repository's hooks run a script on every shell command and prompt. Review an untrusted PR
+  from a trusted checkout (its diff, not its working tree) or with a file viewer that is not an agent.
+  Run an agent in it only after disabling all of that tool's project configuration; removing the
+  known entries is not enough, since the checkout can add others.
 - **Plugin unavailable**: with an offline cache miss, an install failure or the plugin disabled,
   OpenCode still starts; scoped rules are simply not delivered, and the root `AGENTS.md` pointer plus
   each node's listed rule files keep them discoverable. This degraded state is supported, not a
   repository error.
+
+## Hook-delivered rules
+
+A hook-delivered rule reaches the agent only when it matters: the Claude Code hooks and the local
+OpenCode plugin run `scripts/agent_rules.py`, which adds the rule at a skill or workflow command, or
+denies a gated shell command once with the rule text. The root `AGENTS.md` pointer block is the
+always-on fallback.
+
+- **Adding a rule**: one file `.agents/hooked-rules/<scope>-<topic>.md`; frontmatter keys `pointer`
+  (required), `skills`, `commands`, `gates` (double-quoted strings, regexes for the last two); a body
+  of at most 4,096 bytes. Run `python3 -I scripts/agent_rules.py pointers --write`, then the
+  agent-file check.
+- **Supported configuration**: start the agent at the repository root, with no parent `CLAUDE.md` or
+  `CLAUDE.local.md`.
+- Grammar, delivery, gates, degraded modes and verified versions:
+  [docs/hook-delivered-rules.md](hook-delivered-rules.md).
 
 ## Rules
 

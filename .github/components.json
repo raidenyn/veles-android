@@ -63,6 +63,18 @@
     "scripts/AGENTS.md": [
       "docs"
     ],
+    "scripts/agent_rules.py": [
+      "tooling",
+      "docs"
+    ],
+    "scripts/opencode-hooked-rules/index.js": [
+      "tooling",
+      "docs"
+    ],
+    "scripts/opencode-hooked-rules/index.test.mjs": [
+      "tooling",
+      "docs"
+    ],
     "verify/AGENTS.md": [
       "docs"
     ],
