@@ -121,6 +121,10 @@ def check_mintignore(root):
                     'line "%s" is not an allowed form' % line,
                 )
             )
+    if first:
+        findings.append(
+            Finding("error", ".mintignore", 'has no patterns; the first pattern must be "/*"')
+        )
     return findings
 
 

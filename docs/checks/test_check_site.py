@@ -204,11 +204,11 @@ class StructureTests(unittest.TestCase):
 
     def test_relative_import(self):
         files = base_site()
-        files["docs/dev/specs/x.mdx"] = 'import X from "./x.md";\n'
-        files["docs/dev/specs/x.md"] = "x\n"
-        lines = self.findings(files)
-        self.assertEqual(len(lines), 2, lines)
-        self.assertTrue(any("root-relative" in line for line in lines), lines)
+        files["docs/user/b.mdx"] = 'import X from "./x.md";\n'
+        data = json.loads(docs_json())
+        data["navigation"]["groups"][0]["pages"].append("docs/user/b")
+        files["docs.json"] = json.dumps(data)
+        self.assertOne(files, "docs/user/b.mdx", "root-relative")
 
     def test_wrapper_not_in_nav(self):
         files = base_site()
@@ -247,6 +247,17 @@ class StructureTests(unittest.TestCase):
             code = main(["--root", root])
         self.assertEqual(code, 1)
         self.assertEqual(len(out.getvalue().splitlines()), 1)
+
+    def test_mintignore_empty_or_comment_only(self):
+        for text in ("", "# only a comment\n\n"):
+            files = base_site()
+            files[".mintignore"] = text
+            lines = self.findings(files)
+            self.assertEqual(
+                lines[0],
+                'error .mintignore: has no patterns; the first pattern must be "/*"',
+            )
+            self.assertEqual(len([l for l in lines if ".mintignore" in l]), 1, lines)
 
     def test_mintignore_bad_form(self):
         files = base_site()
