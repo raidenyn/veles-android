@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Documentation site guard (spec: the `docs-site` capability of the onboard-mintlify-docs change).
+"""Documentation site guard (spec: the `documentation-site` capability, onboard-mintlify-docs).
 
 Computes the set of files the documentation site publishes from the tracked files, the
 `.mintignore` allowlist and the site's default ignores, and checks that set. Stdlib only;
@@ -54,16 +54,6 @@ def _split_z(output):
     return [entry for entry in output.split("\0") if entry]
 
 
-def reincluded_paths(mintignore_text):
-    """Exact paths of the ``!/path`` lines, without the leading ``!/`` and trailing ``/``."""
-    paths = set()
-    for line in mintignore_text.split("\n"):
-        line = line.rstrip("\r").rstrip()
-        if line.startswith("!/") and len(line) > 2:
-            paths.add(line[2:].rstrip("/"))
-    return paths
-
-
 def _default_ignored(path):
     return any(segment in DEFAULT_IGNORES for segment in path.split("/"))
 
@@ -77,12 +67,9 @@ def published_files(root):
     ignored = set(
         _split_z(_git(root, "ls-files", "-z", "-c", "-i", "--exclude-from=.mintignore"))
     )
-    with open(mintignore, encoding="utf-8", errors="surrogateescape") as handle:
-        reincluded = reincluded_paths(handle.read())
+    # The default ignores always win: a `.mintignore` re-include cannot publish such a path.
     return sorted(
-        path
-        for path in tracked
-        if path not in ignored and (path in reincluded or not _default_ignored(path))
+        path for path in tracked if path not in ignored and not _default_ignored(path)
     )
 
 
@@ -204,7 +191,6 @@ def check_structure(root, published):
                 )
             )
 
-    tracked = set(_split_z(_git(root, "ls-files", "-z")))
     nav_set = set(pages)
     for path in published:
         if not path.endswith(".mdx"):
@@ -215,9 +201,13 @@ def check_structure(root, published):
                 findings.append(
                     Finding("error", path, 'import "%s": imports must be root-relative' % target)
                 )
-            elif target[1:] not in tracked:
+            elif target[1:] not in published_set:
                 findings.append(
-                    Finding("error", path, 'import "%s" resolves to no tracked file' % target)
+                    Finding(
+                        "error",
+                        path,
+                        'import "%s" points at a missing or unpublished file' % target,
+                    )
                 )
         match = WRAPPER_RE.match(path)
         if match:
@@ -328,7 +318,7 @@ def scan_hazards(path, text, mdx):
 
 def check_hazards(root, published):
     """Hazard findings for every published page and every file a published .mdx imports."""
-    tracked = set(_split_z(_git(root, "ls-files", "-z")))
+    published_set = set(published)
     jobs = []
     seen = set()
 
@@ -346,7 +336,7 @@ def check_hazards(root, published):
         if path.endswith(".mdx"):
             for target in imports(_read(root, path)):
                 name = target[1:] if target.startswith("/") else target
-                if name in tracked and os.path.isfile(os.path.join(root, *name.split("/"))):
+                if name in published_set and os.path.isfile(os.path.join(root, *name.split("/"))):
                     add(name, False)
     findings = []
     for path, mdx in jobs:

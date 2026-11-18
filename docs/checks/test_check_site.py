@@ -1,4 +1,4 @@
-"""Tests for the documentation site guard: the published-set computation.
+"""Tests for the documentation site guard: published set, structure, hazards, warnings, output.
 
 Each fixture is a throwaway git repository (initialised and staged, never committed), so tests
 exercise the same git calls the real run uses. Stdlib only; Python 3.8 compatible.
@@ -83,11 +83,11 @@ class PublishedSetTests(unittest.TestCase):
         )
         self.assertEqual(published_files(root), ["docs/ok.md"])
 
-    def test_default_ignore_kept_with_exact_reinclude(self):
+    def test_default_ignore_wins_over_reinclude(self):
         root = self.repo(
             {".mintignore": "/*\n!/CONTRIBUTING.md\n", "CONTRIBUTING.md": "c\n"}
         )
-        self.assertEqual(published_files(root), ["CONTRIBUTING.md"])
+        self.assertEqual(published_files(root), [])
 
     def test_path_with_space_and_unicode(self):
         name = "docs/my page é.md"
@@ -197,6 +197,32 @@ class StructureTests(unittest.TestCase):
         files = base_site()
         files["docs/user/b.mdx"] = 'import Y from "/openspec/nope.md";\n'
         self.assertOne(files, "docs/user/b.mdx", "/openspec/nope.md")
+
+    def test_import_of_unpublished_file(self):
+        files = base_site()
+        files["docs/private/p.md"] = "p\n"
+        files["docs/user/b.mdx"] = 'import Y from "/docs/private/p.md";\n'
+        self.assertOne(
+            files,
+            "docs/user/b.mdx",
+            'import "/docs/private/p.md" points at a missing or unpublished file',
+        )
+
+    def test_import_of_published_file_ok(self):
+        files = base_site()
+        files["docs/user/b.mdx"] = 'import Y from "/docs/user/a.md";\n'
+        self.assertEqual(self.findings(files), [])
+
+    def test_import_of_default_ignored_file_fails_despite_reinclude(self):
+        files = base_site()
+        files[".mintignore"] = MINTIGNORE + "!/CONTRIBUTING.md\n"
+        files["CONTRIBUTING.md"] = "c\n"
+        files["docs/user/b.mdx"] = 'import Y from "/CONTRIBUTING.md";\n'
+        self.assertOne(
+            files,
+            "docs/user/b.mdx",
+            'import "/CONTRIBUTING.md" points at a missing or unpublished file',
+        )
 
     def test_wrapper_import_mismatch(self):
         files = base_site()
@@ -371,6 +397,9 @@ class HazardTests(unittest.TestCase):
         lines = self.scan("a {x} b {y}\n")
         self.assertEqual(len(lines), 1, lines)
         self.assertTrue(lines[0].startswith("warning a.md:1: "), lines)
+
+    def test_brace_in_mdx_no_warning(self):
+        self.assertEqual(self.scan("a {x} b\n", mdx=True, path="a.mdx"), [])
 
     def test_brace_in_code_ok(self):
         self.assertEqual(self.scan("a `{x}` b\n"), [])
