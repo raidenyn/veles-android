@@ -10,6 +10,7 @@ repository root.
 ./gradlew installGitCliff      # pinned, SHA-256-verified git-cliff 2.14.2 -> build/release-tools/git-cliff
 ./gradlew scriptsTest          # stdlib-Python suites in scripts/tests (commitlint, component map, release planner/assets/readiness)
 node --test scripts/check-mac-comparisons.test.mjs
+node --test scripts/opencode-hooked-rules/index.test.mjs   # the OpenCode hooked-rules plugin (stdlib node, python3 for one round-trip test)
 
 python3 -I scripts/commitlint.py --message "feat(app): add thing"   # validate a message (or --file PATH); exit 0 valid, 1 invalid
 python3 -I scripts/components.py check                              # every tracked file is owned by a node in .github/components.json

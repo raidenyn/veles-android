@@ -58,6 +58,9 @@ OPENCODE_JSON = "opencode.json"
 OPENCODE_KEYS = ("$schema", "plugins")
 PLUGIN_NAME = "opencode-rules"
 PLUGIN_OPTION_DIRS = "additionalRuleDirectories"
+# The one local plugin entry (a directory path string, per the hooked-rule-delivery spike) and its file.
+LOCAL_PLUGIN = "./scripts/opencode-hooked-rules"
+LOCAL_PLUGIN_INDEX = "scripts/opencode-hooked-rules/index.js"
 
 CODEOWNERS = ".github/CODEOWNERS"
 CODEOWNER_PATTERNS = (
@@ -1015,8 +1018,33 @@ def _check_opencode_package(package):
     ]
 
 
+def _check_pinned_plugin(plugin):
+    """The `opencode-rules` object entry: a pinned package and the rule directory option."""
+    findings = []
+    package = plugin.get("package")
+    if not isinstance(package, str):
+        findings.append(Finding("error", OPENCODE_JSON, "plugin entry has no `package` string"))
+    else:
+        findings.extend(_check_opencode_package(package))
+    options = plugin.get("options")
+    directories = options.get(PLUGIN_OPTION_DIRS) if isinstance(options, dict) else None
+    if not isinstance(directories, list) or RULES_DIR not in directories:
+        findings.append(
+            Finding(
+                "error",
+                OPENCODE_JSON,
+                "`options.%s` must contain `%s`" % (PLUGIN_OPTION_DIRS, RULES_DIR),
+            )
+        )
+    return findings
+
+
 def check_opencode(root):
-    """Check `opencode.json`: only `$schema`/`plugins`, one pinned plugin and the rule dirs."""
+    """Check `opencode.json`: only `$schema`/`plugins`, and exactly two plugin entries.
+
+    The allow-list is the pinned `opencode-rules` object (with the rule directory) and the local
+    hooked-rules plugin as the string `LOCAL_PLUGIN`, whose directory must hold an `index.js`.
+    """
     text = _read_text(root, OPENCODE_JSON)
     if text is None:
         return [Finding("error", OPENCODE_JSON, "is missing")]
@@ -1041,32 +1069,66 @@ def check_opencode(root):
     if not isinstance(plugins, list):
         findings.append(Finding("error", OPENCODE_JSON, "has no `plugins` list"))
         return findings
-    if len(plugins) != 1:
+    if len(plugins) != 2:
         findings.append(
             Finding(
                 "error",
                 OPENCODE_JSON,
-                "declares %d plugins; exactly one `opencode-rules` entry is required" % len(plugins),
+                "declares %d plugins; exactly two entries are required: the `%s` object and "
+                "the local `%s` string" % (len(plugins), PLUGIN_NAME, LOCAL_PLUGIN),
             )
         )
         return findings
-    plugin = plugins[0]
-    if not isinstance(plugin, dict):
-        findings.append(Finding("error", OPENCODE_JSON, "plugin entry must be a JSON object"))
-        return findings
-    package = plugin.get("package")
-    if not isinstance(package, str):
-        findings.append(Finding("error", OPENCODE_JSON, "plugin entry has no `package` string"))
+
+    objects = [plugin for plugin in plugins if isinstance(plugin, dict)]
+    local_count = 0
+    for plugin in plugins:
+        if isinstance(plugin, dict):
+            continue
+        if not isinstance(plugin, str):
+            findings.append(
+                Finding("error", OPENCODE_JSON, "plugin entry must be a JSON string or object")
+            )
+        elif plugin != LOCAL_PLUGIN:
+            findings.append(
+                Finding(
+                    "error",
+                    OPENCODE_JSON,
+                    "plugin string `%s` is not `%s`" % (plugin, LOCAL_PLUGIN),
+                )
+            )
+        else:
+            local_count += 1
+    if objects:
+        findings.extend(_check_pinned_plugin(objects[0]))
     else:
-        findings.extend(_check_opencode_package(package))
-    options = plugin.get("options")
-    directories = options.get(PLUGIN_OPTION_DIRS) if isinstance(options, dict) else None
-    if not isinstance(directories, list) or RULES_DIR not in directories:
+        findings.append(Finding("error", OPENCODE_JSON, "has no `%s` entry" % PLUGIN_NAME))
+    if len(objects) > 1:
         findings.append(
             Finding(
                 "error",
                 OPENCODE_JSON,
-                "`options.%s` must contain `%s`" % (PLUGIN_OPTION_DIRS, RULES_DIR),
+                "has a second `%s` entry; only one object entry is allowed" % PLUGIN_NAME,
+            )
+        )
+    if local_count > 1:
+        findings.append(
+            Finding(
+                "error",
+                OPENCODE_JSON,
+                "local plugin `%s` is declared %d times; declare it once" % (LOCAL_PLUGIN, local_count),
+            )
+        )
+    elif local_count == 0:
+        findings.append(
+            Finding("error", OPENCODE_JSON, "has no local plugin `%s`" % LOCAL_PLUGIN)
+        )
+    if local_count and not os.path.isfile(os.path.join(root, *LOCAL_PLUGIN_INDEX.split("/"))):
+        findings.append(
+            Finding(
+                "error",
+                OPENCODE_JSON,
+                "local plugin `%s` has no `index.js` (expected `%s`)" % (LOCAL_PLUGIN, LOCAL_PLUGIN_INDEX),
             )
         )
     return findings

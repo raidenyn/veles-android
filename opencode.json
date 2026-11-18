@@ -1,1 +1,1 @@
-{"$schema": "https://opencode.ai/config.json", "plugins": [{"package": "opencode-rules@>=2.0.0 <3", "options": {"additionalRuleDirectories": [".agents/rules"]}}]}
+{"$schema": "https://opencode.ai/config.json", "plugins": [{"package": "opencode-rules@>=2.0.0 <3", "options": {"additionalRuleDirectories": [".agents/rules"]}}, "./scripts/opencode-hooked-rules"]}

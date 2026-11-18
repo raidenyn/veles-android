@@ -154,6 +154,8 @@ EXPECTED_HOOKS = (
     ("PreCompact", None),
 )
 OPENCODE_PACKAGE = "opencode-rules@>=2.0.0 <3"
+LOCAL_PLUGIN = "./scripts/opencode-hooked-rules"
+LOCAL_PLUGIN_INDEX = "scripts/opencode-hooked-rules/index.js"
 
 
 def skill_section(skills):
@@ -198,7 +200,10 @@ def opencode_text(
     directories=(".agents/rules",),
 ):
     if plugins is None:
-        plugins = [{"package": package, "options": {"additionalRuleDirectories": list(directories)}}]
+        plugins = [
+            {"package": package, "options": {"additionalRuleDirectories": list(directories)}},
+            LOCAL_PLUGIN,
+        ]
     data = {"$schema": "https://opencode.ai/config.json", "plugins": plugins}
     if extra:
         data.update(extra)
@@ -341,6 +346,7 @@ def clean_files(skills=None):
         "opencode.json": opencode_text(),
         ".claude/settings.json": settings_text(),
         ".agents/skills/.openspec-target": "claude\n",
+        LOCAL_PLUGIN_INDEX: "export default {}\n",
     }
     for path in EXPECTED_NODE_FILES:
         node = path[: -len("/AGENTS.md")]
@@ -1573,16 +1579,104 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assert_finding(findings, "error", "opencode.json", "unexpected key `model`")
         self.assertEqual(len(findings), 1, findings)
 
-    def test_opencode_second_plugin_fails(self):
-        entry = {
+    def pinned_entry(self):
+        return {
             "package": OPENCODE_PACKAGE,
             "options": {"additionalRuleDirectories": [".agents/rules"]},
         }
+
+    def test_opencode_two_entries_ok(self):
+        for plugins in (
+            [self.pinned_entry(), LOCAL_PLUGIN],
+            [LOCAL_PLUGIN, self.pinned_entry()],
+        ):
+            with self.subTest(plugins=plugins):
+                files = clean_files()
+                files["opencode.json"] = opencode_text(plugins=plugins)
+                self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_opencode_third_plugin(self):
         files = clean_files()
-        files["opencode.json"] = opencode_text(plugins=[entry, dict(entry)])
+        files["opencode.json"] = opencode_text(
+            plugins=[self.pinned_entry(), LOCAL_PLUGIN, "./scripts/other-plugin"]
+        )
         findings = check_repo(self.repo(files))
-        self.assert_finding(findings, "error", "opencode.json", "exactly one")
+        self.assert_finding(findings, "error", "opencode.json", "exactly two")
         self.assertEqual(len(findings), 1, findings)
+
+    def test_opencode_second_plugin_fails(self):
+        # A second `opencode-rules` entry, the local entry twice and a lone entry all fail.
+        cases = (
+            ([self.pinned_entry(), self.pinned_entry()], "`opencode-rules` entry"),
+            ([self.pinned_entry(), LOCAL_PLUGIN, LOCAL_PLUGIN], "exactly two"),
+            ([LOCAL_PLUGIN, LOCAL_PLUGIN], "`opencode-rules` entry"),
+            ([self.pinned_entry()], "exactly two"),
+            ([], "exactly two"),
+        )
+        for plugins, fragment in cases:
+            with self.subTest(plugins=plugins):
+                files = clean_files()
+                files["opencode.json"] = opencode_text(plugins=plugins)
+                findings = check_repo(self.repo(files))
+                self.assert_finding(findings, "error", "opencode.json", fragment)
+
+    def test_opencode_duplicate_local_entry(self):
+        files = clean_files()
+        files["opencode.json"] = opencode_text(plugins=[LOCAL_PLUGIN, LOCAL_PLUGIN])
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", "opencode.json", "local plugin `%s` is declared 2 times" % LOCAL_PLUGIN)
+
+    def test_opencode_missing_local_entry(self):
+        files = clean_files()
+        files["opencode.json"] = opencode_text(plugins=[self.pinned_entry(), self.pinned_entry()])
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", "opencode.json", "has no local plugin `%s`" % LOCAL_PLUGIN
+        )
+        self.assert_finding(findings, "error", "opencode.json", "second `opencode-rules` entry")
+
+    def test_opencode_wrong_local_string(self):
+        for wrong in (
+            "./scripts/opencode-hooked-rules/index.js",
+            "./scripts/opencode-hooked-rules/",
+            "scripts/opencode-hooked-rules",
+            "./scripts/other",
+            "",
+        ):
+            with self.subTest(entry=wrong):
+                files = clean_files()
+                files["opencode.json"] = opencode_text(plugins=[self.pinned_entry(), wrong])
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings, "error", "opencode.json", "plugin string `%s` is not `%s`" % (wrong, LOCAL_PLUGIN)
+                )
+
+    def test_opencode_other_entry_types(self):
+        for wrong in (7, None, ["x"], {"package": "other-plugin@1.0.0"}):
+            with self.subTest(entry=wrong):
+                files = clean_files()
+                files["opencode.json"] = opencode_text(plugins=[self.pinned_entry(), wrong])
+                findings = check_repo(self.repo(files))
+                self.assertTrue(findings)
+                self.assertTrue(all(f.path == "opencode.json" for f in findings), findings)
+
+    def test_opencode_local_dir_missing_index(self):
+        files = clean_files()
+        del files[LOCAL_PLUGIN_INDEX]
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", "opencode.json", "local plugin `%s` has no `index.js`" % LOCAL_PLUGIN
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_opencode_local_dir_with_only_other_files(self):
+        files = clean_files()
+        del files[LOCAL_PLUGIN_INDEX]
+        files["scripts/opencode-hooked-rules/index.test.mjs"] = "// test\n"
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", "opencode.json", "local plugin `%s` has no `index.js`" % LOCAL_PLUGIN
+        )
 
     def test_opencode_unpinned_fails(self):
         cases = (
