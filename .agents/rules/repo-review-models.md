@@ -10,7 +10,7 @@ the roster's presets and to the first and second reviewer of a preset.
 
 | Label | Model | Effort |
 | --- | --- | --- |
-| Sol | GPT-6.1-Sol | medium |
+| Sol | GPT-6.2-Sol | medium |
 | Opus | Opus-5.5 | medium |
 
 Presets, each an ordered list of labels:
