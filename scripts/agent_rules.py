@@ -225,6 +225,20 @@ def render_pointer_block(rules):
     return "\n".join(lines)
 
 
+LINE_BREAK_RE = re.compile(r"(\r\n|\r|\n)")
+
+
+def _normalise(text):
+    """``text`` with every line ending turned into LF."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _line_ending(text):
+    """The first line ending of ``text``, the style a rewrite keeps; LF for a file without one."""
+    match = LINE_BREAK_RE.search(text)
+    return match.group(1) if match else "\n"
+
+
 # What _locate_block found: where the begin marker line starts, where the end marker line ends
 # (before its line break) and whether the heading is the last non-blank line before the begin marker.
 BlockLocation = collections.namedtuple("BlockLocation", ["begin", "end", "heading_ok"])
@@ -233,15 +247,16 @@ BlockLocation = collections.namedtuple("BlockLocation", ["begin", "end", "headin
 def _locate_block(text):
     """Find the block in ``text`` by its standalone marker lines, or return None when absent.
 
-    A marker is recognised only when the whole line (ignoring a trailing CR) equals it, so marker
-    text inside a pointer line is ignored. Raises ``RuleError`` for any other marker layout than
+    Lines end in LF, CRLF or a lone CR. A marker is recognised only when the whole line equals it,
+    so marker text inside a pointer line is ignored. Raises ``RuleError`` for any other marker layout than
     one begin line followed by one end line.
     """
+    pieces = LINE_BREAK_RE.split(text)  # line, break, line, break, ..., line
     lines = []
     position = 0
-    for line in text.split("\n"):
-        lines.append((position, line.rstrip("\r")))
-        position += len(line) + 1
+    for index in range(0, len(pieces), 2):
+        lines.append((position, pieces[index]))
+        position += len(pieces[index]) + (len(pieces[index + 1]) if index + 1 < len(pieces) else 0)
     begins = [i for i, (_, content) in enumerate(lines) if content == POINTER_BEGIN]
     ends = [i for i, (_, content) in enumerate(lines) if content == POINTER_END]
     if not begins and not ends:
@@ -265,14 +280,21 @@ def _apply_block(text, block):
     heading is written back in front of the begin marker.
     """
     location = _locate_block(text)
+    eol = _line_ending(text)
     if location is None:
-        separator = "" if not text or text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
-        return "%s%s%s\n\n%s\n" % (text, separator, POINTER_HEADING, block)
-    current = text[location.begin:location.end].replace("\r\n", "\n")
-    if location.heading_ok and current == block:
+        if not text or text.endswith(eol + eol):
+            separator = ""
+        elif text.endswith(eol):
+            separator = eol
+        else:
+            separator = eol + eol
+        return "%s%s%s%s%s%s" % (
+            text, separator, POINTER_HEADING, eol + eol, block.replace("\n", eol), eol,
+        )
+    if location.heading_ok and _normalise(text[location.begin:location.end]) == block:
         return text
-    heading = "" if location.heading_ok else POINTER_HEADING + "\n\n"
-    return text[:location.begin] + heading + block + text[location.end:]
+    heading = "" if location.heading_ok else POINTER_HEADING + eol + eol
+    return text[:location.begin] + heading + block.replace("\n", eol) + text[location.end:]
 
 
 def _read_agents(path):
@@ -315,7 +337,7 @@ def _pointers(args):
                 "run `agent_rules.py pointers --write`\n" % (AGENTS_FILE, POINTER_HEADING)
             )
             return 1
-        if current[location.begin:location.end].replace("\r\n", "\n") != block:
+        if _normalise(current[location.begin:location.end]) != block:
             sys.stderr.write(
                 "the hooked-rules block in %s is stale; run `agent_rules.py pointers --write`\n"
                 % AGENTS_FILE

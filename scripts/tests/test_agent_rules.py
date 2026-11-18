@@ -318,6 +318,39 @@ class PointerBlockTest(unittest.TestCase):
         self.assertEqual(self.run_cli("--check").returncode, 1)
         self.assertEqual(self.run_cli("--write").returncode, 1)
 
+    def test_stale_block_is_replaced_in_place_for_every_line_ending(self):
+        self.rule("repo-a.md", "Fresh")
+        template = (
+            "# Agents\n\n## Hook-delivered rules\n\n"
+            "<!-- hooked-rules:begin -->\n"
+            "If your tool did not deliver a rule below, read its file yourself at the moment it names.\n\n"
+            "- %s \u2014 .agents/hooked-rules/repo-a.md\n"
+            "<!-- hooked-rules:end -->\n\n## After\n\nKept.\n"
+        )
+        for eol in ("\n", "\r\n", "\r"):
+            with self.subTest(eol=repr(eol)):
+                with open(self.agents, "w", encoding="utf-8", newline="") as handle:
+                    handle.write((template % "Stale").replace("\n", eol))
+                self.assertEqual(self.run_cli("--check").returncode, 1)
+                self.assertEqual(self.run_cli("--write").returncode, 0)
+                with open(self.agents, "r", encoding="utf-8", newline="") as handle:
+                    text = handle.read()
+                self.assertEqual(text, (template % "Fresh").replace("\n", eol))
+                self.assertEqual(text.count("<!-- hooked-rules:begin -->"), 1)
+                self.assertEqual(self.run_cli("--check").returncode, 0)
+
+    def test_missing_block_is_appended_in_the_file_line_ending(self):
+        self.rule("repo-a.md", "First")
+        for eol in ("\n", "\r\n", "\r"):
+            with self.subTest(eol=repr(eol)):
+                with open(self.agents, "w", encoding="utf-8", newline="") as handle:
+                    handle.write("# Agents\n".replace("\n", eol))
+                self.assertEqual(self.run_cli("--write").returncode, 0)
+                with open(self.agents, "r", encoding="utf-8", newline="") as handle:
+                    text = handle.read()
+                self.assertEqual(text.replace("\r\n", "\n").replace("\r", "\n").count("\n"), text.count(eol))
+                self.assertEqual(self.run_cli("--check").returncode, 0)
+
     def test_commit_types_pointer_keeps_format(self):
         pointer = (
             "Every commit subject and PR title is a Conventional Commit "
