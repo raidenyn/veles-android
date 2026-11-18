@@ -1,29 +1,20 @@
 # native-bridge/installer/macos/AGENTS.md
 
-The macOS installer frontend (OTP-25): a SwiftPM app in `native-bridge/installer/macos/`
-(`Package.swift`, `Sources/`) wrapping the Rust installer engine, built on `macos-26` under the
-pinned Xcode. No Tauri, no Node. User/developer instructions are `docs/otp-25-installers.md`; the
-macOS PoC identity and TCC history are in `docs/desktop-ble-poc.md`.
-
-This file is the **canonical** home of the macOS signing identity and TCC rules. Android keeps its
-own separate identity in `android/AGENTS.md`; there is no cross-platform key.
+The macOS installer frontend (OTP-25): a SwiftPM app wrapping the Rust installer engine, built on
+`macos-26` under the pinned Xcode. No Tauri, no Node. Instructions: `docs/otp-25-installers.md`; PoC
+identity and TCC history: `docs/desktop-ble-poc.md`. This file is the canonical home of the macOS
+signing identity and TCC rules; Android has its own separate identity in `android/AGENTS.md`.
 
 ## Signing identity and TCC (macOS)
 
-Always reuse the **same existing signing identity within each platform/app identity** for subsequent
-app and fixture builds. This is one stable key per app identity, not one cross-platform key: the
-Android and macOS identities are separate.
+Reuse the exact approved signing identity/team and bundle ID. No ad-hoc substitution, key export or
+TCC reset; use the Aqua keychain context when required. Different production signing is a separately
+planned migration with revalidation; never borrow debug credentials or record unread fingerprints.
 
-- **macOS:** reuse the exact approved signing identity/team and bundle ID. No ad-hoc substitution,
-  key export, or TCC reset; use the Aqua keychain context when required.
-- Different production signing is a separately planned migration with revalidation. Do not borrow
-  debug credentials. Never record fingerprints that were not read from real output.
-- The macOS test bundle (`native-bridge/host/scripts/macos-test-bundle.sh`, application
-  `VelesOtpDebug.app`, identifier `me.nagaev.veles.debug`) selects the approved Apple Development
-  certificate read-only by its exact recorded name and stops (BLOCKED) when it is absent or
-  ambiguous; never add a fallback identity. It is a test vehicle, not the production bundle.
-- Signing and notarization run only in the owner-only `publish-release.yml` (`sign-macos` under the
-  `native-release` environment), never in the unsigned input producers.
+The test bundle (`native-bridge/host/scripts/macos-test-bundle.sh`, `VelesOtpDebug.app`,
+`me.nagaev.veles.debug`) selects the approved Apple Development certificate read-only by its exact
+recorded name and stops (BLOCKED) when it is absent or ambiguous; never add a fallback identity.
+Signing and notarization run only in the owner-only `publish-release.yml` (`sign-macos`).
 
 Real macOS Bluetooth E2E runs follow `.agents/rules/native-bridge-test-app-tcc.md`: one fixed bundle
 identifier and signing identity, a LaunchServices or Chrome launch, and no TCC reset.
@@ -34,8 +25,7 @@ From the repository root:
 
 ```bash
 ./gradlew bridgeInstallerTest bridgeInstallerScriptsTest
-# macOS-only producer (needs the approved tracked release-macos.json):
-./gradlew bridgeInstallerUnsigned
+./gradlew bridgeInstallerUnsigned          # needs the approved tracked release-macos.json
 ./gradlew bridgeInstallerPackageFixture
 ```
 
