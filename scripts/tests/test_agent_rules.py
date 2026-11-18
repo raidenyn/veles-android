@@ -508,6 +508,20 @@ class ParseEventTest(unittest.TestCase):
         )
         self.assertEqual((event.ok, event.skill, event.path, event.prompt), (False, "x", "p", "q"))
 
+    def test_parse_plain_void_requires_write_ids(self):
+        base = {"event": "void", "session": "r", "cwd": "/c"}
+        for write_ids in (None, "missing", [], 5, "1", {"a": 1}, ["1"], [1, "2"], [True], [1.5]):
+            payload = dict(base)
+            if write_ids != "missing":
+                payload["write_ids"] = write_ids
+            if write_ids == []:
+                self.assertEqual(list(parse_event("plain", payload).write_ids), [])
+                continue
+            with self.assertRaises(EventError, msg=repr(write_ids)):
+                parse_event("plain", payload)
+        valid = parse_event("plain", dict(base, write_ids=[1, 2]))
+        self.assertEqual(list(valid.write_ids), [1, 2])
+
     def test_parse_plain_rejects_bad_input(self):
         base = {"event": "prompt", "session": "r", "cwd": "/c"}
         bad = [
@@ -644,6 +658,25 @@ class CheckoutForTest(IsolatedGitTest):
         os.environ["GIT_CEILING_DIRECTORIES"] = self.tmp
         self.addCleanup(os.environ.pop, "GIT_CEILING_DIRECTORIES", None)
         self.assertIsNone(checkout_for(root))
+
+    def test_inherited_git_selection_variables_are_ignored(self):
+        other = self.make_dir("other")
+        self.git_init(other)
+        self.hooked_rules(other)
+        right = self.make_dir("right")
+        self.git_init(right)
+        self.hooked_rules(right)
+        outside = self.make_dir("outside")
+        overrides = {
+            "GIT_DIR": os.path.join(other, ".git"),
+            "GIT_WORK_TREE": other,
+            "GIT_COMMON_DIR": os.path.join(other, ".git"),
+        }
+        for name, value in overrides.items():
+            self._saved_env[name] = os.environ.get(name)
+            os.environ[name] = value
+        self.assertIsNone(checkout_for(outside))
+        self.assertEqual(checkout_for(right), (right, os.path.join(right, ".git")))
 
     def test_missing_or_bad_cwd_passes(self):
         self.assertIsNone(checkout_for(os.path.join(self.tmp, "does-not-exist")))

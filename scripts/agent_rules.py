@@ -359,6 +359,13 @@ def _pointers(args):
 
 EVENT_KINDS = ("tool-before", "tool-after", "prompt", "compacted", "void")
 DECISION_KINDS = ("pass", "context", "deny")
+# Variables that select or relocate the repository; git honours them over ``-C``, so a host started from
+# a git hook could otherwise point the engine at an unrelated checkout. GIT_CEILING_DIRECTORIES is kept:
+# it can only make discovery fail, which passes silently.
+GIT_SELECTION_VARIABLES = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX",
+)
 GIT_TIMEOUT_SECONDS = 5  # a runtime bound on the one git call, not test timing
 
 # Claude Code's hook_event_name for each engine event; ``void`` has no Claude Code form.
@@ -437,7 +444,7 @@ def _parse_plain(payload):
     if ok is not None and not isinstance(ok, bool):
         raise EventError("`ok` must be a boolean")
     write_ids = payload.get("write_ids")
-    if write_ids is not None:
+    if write_ids is not None or kind == "void":
         if not isinstance(write_ids, list) or not all(
             isinstance(item, int) and not isinstance(item, bool) for item in write_ids
         ):
@@ -514,12 +521,16 @@ def checkout_for(cwd):
     """
     if not isinstance(cwd, str) or not cwd or "\0" in cwd:
         return None
+    environment = dict(
+        (name, value) for name, value in os.environ.items() if name not in GIT_SELECTION_VARIABLES
+    )
     try:
         completed = subprocess.run(
             ["git", "-C", cwd, "rev-parse", "--show-toplevel", "--git-common-dir"],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            env=environment,
             timeout=GIT_TIMEOUT_SECONDS,
         )
     except (OSError, subprocess.SubprocessError, ValueError):
