@@ -566,9 +566,16 @@ STATE_VERSION = 1
 KEEP_SESSIONS = 50
 LOCK_RETRY_SECONDS = 0.1
 ENTRY_STATES = ("delivered", "pending")
+INITIALIZED_MARKER = "initialized"
+STEM_RE = re.compile(r"^[0-9a-f]{64}$")
+SESSION_FILE_RE = re.compile(r"^[0-9a-f]{64}\.json$")
 
 
-class LockTimeout(Exception):
+class StoreError(Exception):
+    """A delivery-state store that cannot be used safely: the caller passes without delivering."""
+
+
+class LockTimeout(StoreError):
     """A lock that stayed busy for every bounded, non-blocking try."""
 
 
@@ -654,13 +661,17 @@ def _atomic_write(path, text):
 
 
 def _read_json(path):
-    """The decoded JSON object in ``path``, or None when it is missing, unreadable or not an object."""
+    """The JSON object in ``path``; None only when the file does not exist, StoreError otherwise."""
     try:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return None
-    return data if isinstance(data, dict) else None
+    except (OSError, ValueError) as error:
+        raise StoreError("cannot read %s: %s" % (path, error))
+    if not isinstance(data, dict):
+        raise StoreError("%s does not hold a JSON object" % path)
+    return data
 
 
 def _count(value):
@@ -683,34 +694,41 @@ class SessionState(object):
 
     @classmethod
     def load(cls, store, session, data):
+        """The state held in ``data`` (None for a session never written); StoreError when invalid."""
         generations = {}
         entries = {}
         if data is not None:
-            raw = data.get("generations")
-            for key, value in (raw.items() if isinstance(raw, dict) else ()):
-                if _count(value) is not None:
-                    generations[key] = value
-            for item in (data.get("entries") if isinstance(data.get("entries"), list) else ()):
-                parsed = cls._entry(item)
-                if parsed is not None:
-                    entries[parsed[0]] = parsed[1]
+            if data.get("version") != STATE_VERSION:
+                raise StoreError("unsupported session state version %r" % (data.get("version"),))
+            raw, items = data.get("generations"), data.get("entries")
+            if not isinstance(raw, dict) or not isinstance(items, list):
+                raise StoreError("session state has no generations object and entries list")
+            for key, value in raw.items():
+                if _count(value) is None:
+                    raise StoreError("invalid generation for %r" % (key,))
+                generations[key] = value
+            for item in items:
+                identity, entry = cls._entry(item)
+                if identity in entries:
+                    raise StoreError("duplicate entry %r" % (identity,))
+                entries[identity] = entry
         return cls(store, session, generations, entries)
 
     @staticmethod
     def _entry(item):
         if not isinstance(item, dict):
-            return None
+            raise StoreError("a state entry is not an object")
         key, name, digest = item.get("key"), item.get("name"), item.get("sha256")
         patterns = item.get("patterns")
         if not (isinstance(key, str) and isinstance(name, str) and isinstance(digest, str)):
-            return None
-        if item.get("state") not in ENTRY_STATES or not isinstance(patterns, list):
-            return None
-        if not all(isinstance(pattern, str) for pattern in patterns):
-            return None
+            raise StoreError("a state entry has an invalid key or rule identity")
+        if item.get("state") not in ENTRY_STATES:
+            raise StoreError("a state entry has an invalid state")
+        if not isinstance(patterns, list) or not all(isinstance(pattern, str) for pattern in patterns):
+            raise StoreError("a state entry has invalid patterns")
         generation, write_id = _count(item.get("generation")), _count(item.get("write_id"))
         if generation is None or write_id is None:
-            return None
+            raise StoreError("a state entry has an invalid generation or write id")
         return (key, (name, digest)), {
             "state": item["state"],
             "patterns": set(patterns),
@@ -766,12 +784,20 @@ class SessionState(object):
 class Store(object):
     """The per-session JSON state under ``state_dir``, with a store-level index.
 
-    Files: ``<stem>.json`` and ``<stem>.lock`` per session (``stem`` is the sha256 of the session id, so no
-    session id can name another path), and ``index.json`` / ``index.lock``. The index holds the write-id
+    Files: ``<stem>.json`` and ``<stem>.lock`` per session (``stem`` is the sha256 of the strictly
+    UTF-8 encoded session id, so no session id can name another path or share a file with another id),
+    ``index.json`` / ``index.lock``, and an ``initialized`` marker. The index holds the write-id
     counter and a recency counter that orders the sessions for pruning; no clock is read.
 
-    Lock order: a session lock may be held while taking the index lock, never the other way round. The
-    index lock is only ever held for one short read-modify-write.
+    Failure policy: a missing session file is a fresh session; anything else wrong with the state, and
+    a missing or invalid index in a store that was initialised before, raises ``StoreError`` and
+    allocates nothing, so counters can never restart. The remedy is to remove the ``agent-rules``
+    directory (delivery state only; the next event starts afresh). Stray ``tmp-*.tmp`` files left by a
+    crash are harmless and may be removed offline; the store never sweeps them.
+
+    Lock order: a session lock may be held while taking the index lock, never the other way round, and
+    no code path acquires a session lock while holding the index lock. The index lock is only held for
+    one short read-modify-write.
     """
 
     def __init__(self, state_dir, sleep=time.sleep, lock_attempts=50):
@@ -781,7 +807,13 @@ class Store(object):
 
     @staticmethod
     def _stem(session):
-        return hashlib.sha256(session.encode("utf-8", "replace")).hexdigest()
+        if not isinstance(session, str):
+            raise StoreError("a session id must be a string")
+        try:
+            raw = session.encode("utf-8")
+        except UnicodeEncodeError:
+            raise StoreError("a session id that cannot be encoded as UTF-8")
+        return hashlib.sha256(raw).hexdigest()
 
     def session_path(self, session):
         return os.path.join(self.state_dir, self._stem(session) + ".json")
@@ -802,18 +834,44 @@ class Store(object):
         """A lock on a prune victim (named by its file stem) that fails at once when busy."""
         return FileLock(os.path.join(self.state_dir, stem + ".lock"), self.sleep, 1)
 
-    def _read_index(self):
-        data = _read_json(self.index_path()) or {}
-        sessions = {}
-        raw = data.get("sessions")
-        for stem, order in (raw.items() if isinstance(raw, dict) else ()):
-            if _count(order) is not None:
-                sessions[stem] = order
-        return {
-            "write_id": _count(data.get("write_id")) or 0,
-            "order": _count(data.get("order")) or 0,
-            "sessions": sessions,
-        }
+    def _initialized(self):
+        if os.path.exists(os.path.join(self.state_dir, INITIALIZED_MARKER)):
+            return True
+        try:
+            return any(SESSION_FILE_RE.match(name) for name in os.listdir(self.state_dir))
+        except OSError:
+            return False
+
+    def _load_index(self, create):
+        """The validated index; call with the index lock held.
+
+        A brand-new store (no marker, no session file) yields a fresh index, and with ``create`` the
+        marker is written first, before any counter can be issued. An index that is missing in an
+        initialised store, or invalid, raises StoreError.
+        """
+        data = _read_json(self.index_path())
+        if data is None:
+            if self._initialized():
+                raise StoreError(
+                    "the delivery-state index %s is missing; remove the agent-rules directory "
+                    "%s to start afresh" % (self.index_path(), self.state_dir)
+                )
+            if create:
+                _atomic_write(os.path.join(self.state_dir, INITIALIZED_MARKER), "initialized\n")
+            return {"write_id": 0, "order": 0, "sessions": {}}
+        write_id, order, raw = _count(data.get("write_id")), _count(data.get("order")), data.get("sessions")
+        valid = write_id is not None and order is not None and isinstance(raw, dict)
+        if valid:
+            valid = all(
+                isinstance(stem, str) and STEM_RE.match(stem) and _count(value) is not None
+                for stem, value in raw.items()
+            )
+        if not valid:
+            raise StoreError(
+                "the delivery-state index %s is invalid; remove the agent-rules directory %s to "
+                "start afresh" % (self.index_path(), self.state_dir)
+            )
+        return {"write_id": write_id, "order": order, "sessions": dict(raw)}
 
     def _write_index(self, index):
         _atomic_write(self.index_path(), json.dumps(index, sort_keys=True, indent=1) + "\n")
@@ -821,78 +879,86 @@ class Store(object):
     def next_write_id(self):
         """The next write id; the counter lives in the index and is never reused."""
         with self._lock(self.index_lock_path()):
-            index = self._read_index()
+            index = self._load_index(create=True)
             index["write_id"] += 1
             self._write_index(index)
             return index["write_id"]
 
     def _touch(self, session):
+        """Register ``session`` in the index as the most recently written one."""
+        stem = self._stem(session)
         with self._lock(self.index_lock_path()):
-            index = self._read_index()
+            index = self._load_index(create=True)
             index["order"] += 1
-            index["sessions"][self._stem(session)] = index["order"]
+            index["sessions"][stem] = index["order"]
             self._write_index(index)
+
+    def _publish(self, session, text):
+        _atomic_write(self.session_path(session), text)
 
     @contextlib.contextmanager
     def transaction(self, session):
         """Hold the session lock, yield its ``SessionState`` and write it atomically when it changed.
 
         A body that raises writes nothing. ``LockTimeout`` is raised, with the body not run, when the lock
-        stays busy for ``lock_attempts`` tries.
+        stays busy for ``lock_attempts`` tries; ``StoreError`` when the stored state is invalid. The
+        index registers the session before the file is published, so a published file is always
+        indexed; an index entry without a file is harmless.
         """
+        self._stem(session)
         with self._lock(self.session_lock_path(session)):
-            data = _read_json(self.session_path(session))
-            state = SessionState.load(self, session, data)
+            state = SessionState.load(self, session, _read_json(self.session_path(session)))
             before = state.dump()
             yield state
             after = state.dump()
             if after != before:
-                _atomic_write(self.session_path(session), after)
                 self._touch(session)
+                self._publish(session, after)
+
+    @staticmethod
+    def _victims(sessions, current):
+        """The stems beyond the newest 50, oldest first, the current session never among them."""
+        surplus = len(sessions) - KEEP_SESSIONS
+        if surplus <= 0:
+            return []
+        oldest_first = sorted(sessions, key=lambda stem: sessions[stem])
+        return [stem for stem in oldest_first if stem != current][:surplus]
 
     def prune(self, current_session):
         """Keep the newest 50 sessions by index order; never the current one; skip busy ones.
 
-        Call it after the session transaction has released its lock. The index lock is released before
-        any victim lock is tried, and a victim lock is tried once, without waiting.
+        Call it after the session transaction has released its lock. A first look at the index plans
+        the victims. Each victim lock is then tried once, without waiting, and with only that lock
+        held the index is re-read under its lock and the victim re-checked, so two concurrent prunes
+        cannot together remove more than the surplus.
         """
         current = self._stem(current_session)
         with self._lock(self.index_lock_path()):
-            sessions = dict(self._read_index()["sessions"])
-        surplus = len(sessions) - KEEP_SESSIONS
-        if surplus <= 0:
-            return
-        oldest_first = sorted(sessions, key=lambda stem: sessions[stem])
-        for stem in [stem for stem in oldest_first if stem != current][:surplus]:
-            self._prune_one(stem, sessions[stem])
+            planned = self._victims(self._load_index(create=False)["sessions"], current)
+        for stem in planned:
+            self._prune_one(stem, current)
 
-    def _prune_one(self, stem, seen_order):
+    def _prune_one(self, stem, current):
         try:
-            return self._prune_locked(stem, seen_order, self.victim_lock(stem))
-        except (LockTimeout, OSError):
-            return None
-
-    def _prune_locked(self, stem, seen_order, lock):
-        with lock:
-            # With the victim's lock held, nobody can write it, so one look at the index is enough
-            # to know the order we planned from is still current.
-            with self._lock(self.index_lock_path()):
-                if self._read_index()["sessions"].get(stem) != seen_order:
-                    return
-            try:
-                os.unlink(os.path.join(self.state_dir, stem + ".json"))
-            except FileNotFoundError:
-                pass
-            with self._lock(self.index_lock_path()):
-                index = self._read_index()
-                index["sessions"].pop(stem, None)
-                self._write_index(index)
-            if fcntl is not None:
-                # POSIX only: Windows cannot delete an open file. FileLock re-checks the inode.
-                try:
-                    os.unlink(lock.path)
-                except OSError:
-                    pass
+            with self.victim_lock(stem) as lock:
+                with self._lock(self.index_lock_path()):
+                    index = self._load_index(create=False)
+                    if stem not in self._victims(index["sessions"], current):
+                        return
+                    try:
+                        os.unlink(os.path.join(self.state_dir, stem + ".json"))
+                    except FileNotFoundError:
+                        pass
+                    del index["sessions"][stem]
+                    self._write_index(index)
+                if fcntl is not None:
+                    # POSIX only: Windows cannot delete an open file. FileLock re-checks the inode.
+                    try:
+                        os.unlink(lock.path)
+                    except OSError:
+                        pass
+        except LockTimeout:
+            return
 
 
 def _default_root():

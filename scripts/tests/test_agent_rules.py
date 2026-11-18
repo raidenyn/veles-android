@@ -18,6 +18,7 @@ from agent_rules import (  # noqa: E402
     LockTimeout,
     RuleError,
     Store,
+    StoreError,
     checkout_for,
     load_rules,
     parse_event,
@@ -756,16 +757,70 @@ class StoreTest(unittest.TestCase):
             pass
         self.assertFalse(os.path.exists(self.store.session_path("s1")))
 
-    def test_corrupt_session_file_is_empty_state(self):
+    def test_missing_session_file_is_a_fresh_session(self):
+        self.assertEqual(self.entries_of("never-seen"), {})
+
+    def write_session_file(self, session, content):
+        os.makedirs(self.state_dir, exist_ok=True)
+        with open(self.store.session_path(session), "w", encoding="utf-8") as handle:
+            handle.write(content)
+
+    def test_invalid_session_file_raises(self):
         self.deliver("s1")
-        with open(self.store.session_path("s1"), "w", encoding="utf-8") as handle:
-            handle.write("{not json")
-        self.assertEqual(self.entries_of("s1"), {})
-        with open(self.store.session_path("s1"), "w", encoding="utf-8") as handle:
-            json.dump({"entries": [{"key": 1}], "generations": {"s1": "x"}}, handle)
-        with self.store.transaction("s1") as state:
-            self.assertEqual(state.entries, {})
-            self.assertEqual(state.generation("s1"), 0)
+        entry = {"key": "s1", "name": "n", "sha256": "a" * 64, "state": "delivered",
+                 "patterns": [], "generation": 0, "write_id": 1}
+
+        def state(**changes):
+            document = {"version": 1, "session": "s1", "generations": {}, "entries": [dict(entry)]}
+            for name, value in changes.items():
+                document[name] = value
+            return json.dumps(document)
+
+        bad_entry = lambda **c: state(entries=[dict(entry, **c)])  # noqa: E731
+        cases = [
+            "{not json",
+            "[]",
+            "",
+            state(generations=[]),
+            state(generations={"s1": "x"}),
+            state(generations={"s1": -1}),
+            state(generations={"s1": True}),
+            state(entries={}),
+            state(version=2),
+            bad_entry(state="gone"),
+            bad_entry(patterns="git"),
+            bad_entry(patterns=[1]),
+            bad_entry(generation="0"),
+            bad_entry(write_id=-3),
+            bad_entry(write_id=None),
+            bad_entry(key=1),
+            bad_entry(sha256=None),
+            state(entries=[dict(entry), dict(entry)]),
+            state(entries=[3]),
+        ]
+        for content in cases:
+            self.write_session_file("s1", content)
+            with self.assertRaises(StoreError, msg=content):
+                with self.store.transaction("s1"):
+                    self.fail("the body must not run on invalid state")
+
+    def test_unreadable_session_file_raises(self):
+        os.makedirs(self.state_dir)
+        os.mkdir(self.store.session_path("s1"))  # a directory where the file belongs
+        with self.assertRaises(StoreError):
+            with self.store.transaction("s1"):
+                self.fail("the body must not run")
+
+    def test_non_utf8_session_file_raises(self):
+        os.makedirs(self.state_dir)
+        with open(self.store.session_path("s1"), "wb") as handle:
+            handle.write(b"\xff\xfe\x00")
+        with self.assertRaises(StoreError):
+            with self.store.transaction("s1"):
+                self.fail("the body must not run")
+
+    def test_lock_timeout_is_a_store_error(self):
+        self.assertTrue(issubclass(LockTimeout, StoreError))
 
     def test_write_ids_monotonic(self):
         seen = [self.store.next_write_id()]
@@ -862,23 +917,51 @@ class StoreTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.store.session_path("s02")))
         self.assertTrue(os.path.exists(self.store.session_path("s03")))
 
-    def test_prune_holds_no_index_lock_while_locking_victims(self):
-        outer = self
+    def test_prune_holds_no_index_lock_while_acquiring_victim_locks(self):
         probes = []
+        state_dir = self.state_dir
 
-        class Probing(Store):
-            def victim_lock(self, session):
+        class ProbingLock(FileLock):
+            def __enter__(self):
                 try:
-                    with FileLock(self.index_lock_path(), no_sleep, 1):
+                    with FileLock(os.path.join(state_dir, "index.lock"), no_sleep, 1):
                         probes.append("free")
                 except LockTimeout:
                     probes.append("held")
-                return Store.victim_lock(self, session)
+                return FileLock.__enter__(self)
+
+        class Probing(Store):
+            def victim_lock(self, stem):
+                return ProbingLock(os.path.join(self.state_dir, stem + ".lock"), no_sleep, 1)
 
         for index in range(53):
             self.deliver("s%02d" % index)
-        Probing(outer.state_dir, sleep=no_sleep, lock_attempts=3).prune("s52")
+        Probing(state_dir, sleep=no_sleep, lock_attempts=3).prune("s52")
         self.assertEqual(probes, ["free"] * 3)
+
+    def test_concurrent_prunes_leave_exactly_50(self):
+        for index in range(51):
+            self.deliver("s%02d" % index)
+        other = self.make_store()
+        state_dir = self.state_dir
+
+        class Interleaved(Store):
+            def victim_lock(self, stem):
+                if not getattr(self, "ran", False):
+                    self.ran = True
+                    other.prune("s00")  # a whole second prune between the first one's snapshot and lock
+                return Store.victim_lock(self, stem)
+
+        Interleaved(state_dir, sleep=no_sleep, lock_attempts=3).prune("s50")
+        remaining = [i for i in range(51) if os.path.exists(self.store.session_path("s%02d" % i))]
+        self.assertEqual(len(remaining), 50)
+        self.assertIn(0, remaining)  # the second prune's current session
+        self.assertIn(50, remaining)
+
+    def test_prune_without_index_does_nothing(self):
+        self.store.prune("s1")
+        self.assertFalse(os.path.exists(self.store.index_path()))
+        self.assertFalse(os.path.exists(os.path.join(self.state_dir, "initialized")))
 
     def test_prune_does_nothing_at_or_below_the_limit(self):
         for index in range(50):
@@ -919,6 +1002,142 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(os.path.dirname(self.store.session_path("../../escape/x")), self.state_dir)
         self.assertEqual(len(self.entries_of("../../escape/x")), 1)
         self.assertEqual(os.listdir(self.tmp), ["agent-rules"])
+
+    def test_deleted_index_after_ids_raises_and_issues_nothing(self):
+        self.assertEqual(self.store.next_write_id(), 1)
+        self.assertEqual(self.store.next_write_id(), 2)
+        os.unlink(self.store.index_path())
+        with self.assertRaises(StoreError) as caught:
+            self.store.next_write_id()
+        self.assertIn("agent-rules", str(caught.exception))
+        self.assertFalse(os.path.exists(self.store.index_path()))
+        with self.assertRaises(StoreError):
+            self.deliver("s1")
+        with self.assertRaises(StoreError):
+            self.store.prune("s1")
+
+    def test_deleted_index_with_session_files_raises(self):
+        self.deliver("s1")
+        os.unlink(self.store.index_path())
+        os.unlink(os.path.join(self.state_dir, "initialized"))
+        with self.assertRaises(StoreError):
+            self.store.next_write_id()
+
+    def test_invalid_index_raises(self):
+        self.store.next_write_id()
+        good_stem = "a" * 64
+        cases = [
+            "{nope",
+            "[]",
+            "",
+            json.dumps({"write_id": 1, "order": 1}),
+            json.dumps({"write_id": -1, "order": 1, "sessions": {}}),
+            json.dumps({"write_id": True, "order": 1, "sessions": {}}),
+            json.dumps({"write_id": "1", "order": 1, "sessions": {}}),
+            json.dumps({"write_id": 1, "order": 1.5, "sessions": {}}),
+            json.dumps({"write_id": 1, "order": 1, "sessions": []}),
+            json.dumps({"write_id": 1, "order": 1, "sessions": {good_stem: "x"}}),
+            json.dumps({"write_id": 1, "order": 1, "sessions": {good_stem: -1}}),
+        ]
+        for content in cases:
+            with open(self.store.index_path(), "w", encoding="utf-8") as handle:
+                handle.write(content)
+            with self.assertRaises(StoreError, msg=content):
+                self.store.next_write_id()
+            with open(self.store.index_path(), encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), content)  # never rewritten
+
+    def test_index_stems_must_be_canonical_digests(self):
+        self.store.next_write_id()
+        for stem in ("../../etc/passwd", "A" * 64, "a" * 63, "a" * 65, "g" * 64, "", "a" * 64 + "/x"):
+            with open(self.store.index_path(), "w", encoding="utf-8") as handle:
+                json.dump({"write_id": 1, "order": 1, "sessions": {stem: 1}}, handle)
+            for call in (self.store.next_write_id, lambda: self.store.prune("s1")):
+                with self.assertRaises(StoreError, msg=repr(stem)):
+                    call()
+
+    def test_fresh_store_initialises_once(self):
+        self.assertEqual(self.store.next_write_id(), 1)
+        self.assertTrue(os.path.exists(os.path.join(self.state_dir, "initialized")))
+        self.assertEqual(self.make_store().next_write_id(), 2)
+
+    def test_marker_exists_before_the_first_id_is_issued(self):
+        state_dir = self.state_dir
+        seen = []
+
+        class Watching(Store):
+            def _write_index(self, index):
+                seen.append(os.path.exists(os.path.join(state_dir, "initialized")))
+                Store._write_index(self, index)
+
+        self.assertEqual(Watching(state_dir, sleep=no_sleep).next_write_id(), 1)
+        self.assertEqual(seen, [True])
+
+    def test_ids_stay_monotonic_across_prune_and_new_store(self):
+        for index in range(53):
+            self.deliver("s%02d" % index)
+        last = self.store.next_write_id()
+        self.store.prune("s52")
+        self.assertGreater(self.make_store().next_write_id(), last)
+
+    def test_index_registered_before_session_file_is_published(self):
+        state_dir = self.state_dir
+        order = []
+
+        class Watching(Store):
+            def _publish(self, session, text):
+                with open(os.path.join(state_dir, "index.json"), encoding="utf-8") as handle:
+                    order.append(self._stem(session) in json.load(handle)["sessions"])
+                Store._publish(self, session, text)
+
+        store = Watching(state_dir, sleep=no_sleep, lock_attempts=3)
+        with store.transaction("s1") as state:
+            state.put("s1", IDENTITY_A, "delivered", set())
+        self.assertEqual(order, [True])
+
+    def test_publish_failure_leaves_a_consistent_store(self):
+        class Failing(Store):
+            def _publish(self, session, text):
+                raise OSError("disk full")
+
+        failing = Failing(self.state_dir, sleep=no_sleep, lock_attempts=3)
+        with self.assertRaises(OSError):
+            with failing.transaction("s1") as state:
+                state.put("s1", IDENTITY_A, "delivered", set())
+        self.assertFalse(os.path.exists(self.store.session_path("s1")))
+        self.assertEqual(self.entries_of("s1"), {})  # the index entry without a file is harmless
+        self.deliver("s1")
+        self.assertEqual(len(self.entries_of("s1")), 1)
+        for index in range(52):
+            self.deliver("t%02d" % index)
+        self.store.prune("t51")  # a ghost index entry does not break pruning
+        self.assertFalse(os.path.exists(self.store.session_path("s1")))
+
+    def test_index_failure_publishes_no_unindexed_file(self):
+        class Failing(Store):
+            def _touch(self, session):
+                raise StoreError("index unavailable")
+
+        failing = Failing(self.state_dir, sleep=no_sleep, lock_attempts=3)
+        with self.assertRaises(StoreError):
+            with failing.transaction("s1") as state:
+                state.put("s1", IDENTITY_A, "delivered", set())
+        self.assertFalse(os.path.exists(self.store.session_path("s1")))
+
+    def test_unencodable_session_id_raises(self):
+        for session in ("\ud800", "a\udfffb", 5, None):
+            with self.assertRaises(StoreError, msg=repr(session)):
+                with self.store.transaction(session):
+                    self.fail("the body must not run")
+            with self.assertRaises(StoreError, msg=repr(session)):
+                self.store.prune(session)
+
+    def test_distinct_session_ids_never_share_a_file(self):
+        self.assertNotEqual(self.store.session_path("\ufffd"), self.store.session_path("a"))
+        self.deliver("\ufffd")
+        with self.assertRaises(StoreError):
+            self.deliver("\ud800")
+        self.assertEqual(len(self.entries_of("\ufffd")), 1)
 
 
 class FileLockTest(unittest.TestCase):
