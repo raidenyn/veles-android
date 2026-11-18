@@ -1,0 +1,6 @@
+- Repository: raidenyn/veles-android
+- Project: Veles OTP external devices (https://github.com/users/raidenyn/projects/3)
+- Issue: raidenyn/veles-android#169
+- Source documents: docs/otp-06-transport.md, openspec/specs/ble-sharing-availability/spec.md, openspec/changes/archive/2026-11-18-relax-ble-advertising-prerequisite/apply.md
+- Created: 2026-11-18
+- Implementation PR:
