@@ -1,8 +1,8 @@
 ## 1. Line mapping and its tests
 
-- [ ] 1.1 Add the string resource `sharing_stopped` with the exact copy from the `Stopped transport line` scenario to `android/app/src/main/res/values/sharing.xml`; leave `sharing_enabled_unavailable` and `sharing_disabled` unchanged.
-- [ ] 1.2 Write `SharingCardTextTest` in `android/app/src/test/java/me/nagaev/veles/sharing/` (Robolectric, `@Config(sdk = [33])`) first: it asserts the expected lines for all 14 (enabled × `SharingAvailability`) combinations (including each availability's own line from the `Availability lines` scenario), that only enabled with `Disabled` yields `[sharing_stopped]`, and that `sharing_stopped` resolves to the exact copy; run it and see it fail (a compile error before 1.3 adds the function counts as failing).
-- [ ] 1.3 Add `SharingCardText.kt` with `internal fun sharingCardLines(enabled: Boolean, availability: SharingAvailability): List<Int>` per the design, and make the test pass.
+- [x] 1.1 Add the string resource `sharing_stopped` with the exact copy from the `Stopped transport line` scenario to `android/app/src/main/res/values/sharing.xml`; leave `sharing_enabled_unavailable` and `sharing_disabled` unchanged.
+- [x] 1.2 Write `SharingCardTextTest` in `android/app/src/test/java/me/nagaev/veles/sharing/` (Robolectric, `@Config(sdk = [33])`) first: it asserts the expected lines for all 14 (enabled × `SharingAvailability`) combinations (including each availability's own line from the `Availability lines` scenario), that only enabled with `Disabled` yields `[sharing_stopped]`, and that `sharing_stopped` resolves to the exact copy; run it and see it fail (a compile error before 1.3 adds the function counts as failing).
+- [x] 1.3 Add `SharingCardText.kt` with `internal fun sharingCardLines(enabled: Boolean, availability: SharingAvailability): List<Int>` per the design, and make the test pass.
 
 ## 2. Card and documentation
 

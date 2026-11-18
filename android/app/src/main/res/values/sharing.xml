@@ -2,6 +2,7 @@
 <resources>
     <string name="sharing_title">Device sharing transport</string>
     <string name="sharing_enabled_unavailable">Sharing is enabled, but the transport is not running. Enable transport to retry, or stop sharing.</string>
+    <string name="sharing_stopped">Sharing is on, but the Bluetooth service is not running. This can happen after an app update, a restart or the system stopping the app. Tap Enable transport to start it again, or Stop sharing to turn it off.</string>
     <string name="sharing_notification">Bluetooth sharing is running. Tap to manage.</string>
     <string name="sharing_start">Enable transport</string>
     <string name="sharing_stop">Stop sharing</string>
