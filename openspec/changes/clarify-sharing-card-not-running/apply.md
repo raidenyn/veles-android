@@ -58,6 +58,15 @@
 
 ---
 
+### Implementation review
+
+One read-only reviewer subagent (Opus) reviewed `fff30b6` and `09194b5` against the spec, design and the original card logic: all 14 combinations match, the strings and the docs sentence are exact, the tests do not use a clock; verdict approve. Two low findings, both accepted:
+
+- `SharingCardText.kt` repeats the `active` check that `SharingCard.kt` uses for the buttons; a new running availability would need both updated. Accepted: the enum is small and the `when` in the mapping is exhaustive; a shared `isActive` can be a later cleanup.
+- No Compose UI test covers the card's wiring. Accepted: the real-phone check above reads the rendered card in every state the change touches.
+
+---
+
 ## Next step
 
 Run `openspec-verify-change` (the audit and the spec check), then continue to finalize.
