@@ -110,8 +110,7 @@ PLUGIN_MENTION_FILES = (ROOT_AGENTS, "CONTRIBUTING.md")
 PLUGIN_RANGE_DOCS = (ROOT_AGENTS, "CONTRIBUTING.md", DOCUMENTED_SKILLS)
 PLUGIN_RANGE_RE = re.compile(r"opencode-rules@[^\s`\"'<>()\[\],;]+")
 
-ROOT_LINE_WARN = 60
-ROOT_LINE_MAX = 120
+AGENTS_LINE_MAX = 40
 
 NODE_MAP_RE = re.compile(r"^-\s+`([^`\s]+)/`\s+—")
 
@@ -411,30 +410,29 @@ def _check_legacy(files):
     return findings
 
 
+def _check_line_cap(path, text):
+    """One error when a guidance file is over the 40-line cap; a missing file is the caller's finding."""
+    if text is None:
+        return []
+    lines = len(text.splitlines())
+    if lines > AGENTS_LINE_MAX:
+        return [
+            Finding(
+                "error",
+                path,
+                "has %d lines; the AGENTS.md cap is %d lines" % (lines, AGENTS_LINE_MAX),
+            )
+        ]
+    return []
+
+
 def _check_root(text):
     if text is None:
         return [Finding("error", ROOT_AGENTS, "is missing")]
     findings = []
     if NOTICE_ROOT not in text:
         findings.append(Finding("error", ROOT_AGENTS, "is missing the run-from-root notice"))
-    lines = len(text.splitlines())
-    if lines > ROOT_LINE_MAX:
-        findings.append(
-            Finding(
-                "error",
-                ROOT_AGENTS,
-                "has %d lines; the root AGENTS.md hard limit is %d lines"
-                % (lines, ROOT_LINE_MAX),
-            )
-        )
-    elif lines > ROOT_LINE_WARN:
-        findings.append(
-            Finding(
-                "warning",
-                ROOT_AGENTS,
-                "has %d lines; the root AGENTS.md cap is %d lines" % (lines, ROOT_LINE_WARN),
-            )
-        )
+    findings.extend(_check_line_cap(ROOT_AGENTS, text))
     return findings
 
 
@@ -455,6 +453,7 @@ def _check_nested_files(root, tracked_nested):
             findings.append(Finding("error", path, "is missing the nested run-from-root notice"))
         if not _has_rules_section(text):
             findings.append(Finding("error", path, "is missing a `## Rules` section"))
+        findings.extend(_check_line_cap(path, text))
     return findings
 
 

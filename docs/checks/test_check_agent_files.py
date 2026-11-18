@@ -217,7 +217,7 @@ def skill_section(skills):
     return lines
 
 
-def nested_text(node, notice=EXPECTED_NOTICE_NESTED, rules=True, skills=None):
+def nested_text(node, notice=EXPECTED_NOTICE_NESTED, rules=True, skills=None, target_lines=None):
     if skills is None and node == "docs":
         skills = EXPECTED_OPENSPEC_SKILLS
     lines = ["# %s/AGENTS.md" % node, ""]
@@ -230,6 +230,10 @@ def nested_text(node, notice=EXPECTED_NOTICE_NESTED, rules=True, skills=None):
         lines.extend(["## Notes", "", "No rules section here."])
     if skills is not None:
         lines.extend([""] + skill_section(skills))
+    if target_lines is not None:
+        if len(lines) > target_lines:
+            raise AssertionError("base nested text is already %d lines" % len(lines))
+        lines.extend(["Filler line for the line cap."] * (target_lines - len(lines)))
     return "\n".join(lines) + "\n"
 
 
@@ -326,7 +330,13 @@ def root_text(
             ]
         )
     lines.extend(["", "## Rules", "", "Repo-wide rules live in `.agents/rules/`:"])
-    lines.extend("- `.agents/rules/%s`" % name for name in EXPECTED_REPO_RULES)
+    for index in range(0, len(EXPECTED_REPO_RULES), 2):
+        lines.append(
+            ", ".join(
+                "`.agents/rules/%s`" % name
+                for name in EXPECTED_REPO_RULES[index:index + 2]
+            )
+        )
     if block is not False:
         lines.append("")
         if heading:
@@ -559,6 +569,7 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assertEqual(tuple(NESTED_EXCLUSIVE_DOCS), EXPECTED_EXCLUSIVE)
         self.assertEqual(getattr(check_module, "RULE_SIZE_MAX", None), RULE_SIZE_MAX)
         self.assertEqual(getattr(check_module, "REPO_RULE_SIZE_MAX", None), REPO_RULE_SIZE_MAX)
+        self.assertEqual(getattr(check_module, "AGENTS_LINE_MAX", None), 40)
 
     def test_clean_fixture_passes(self):
         root = self.repo()
@@ -603,18 +614,31 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assert_finding(findings, "error", ".claude/commands/fix-issue.md", "legacy agent tooling path")
         self.assertEqual(len(findings), 2, findings)
 
-    def test_root_line_boundaries(self):
-        files = clean_files()
-        files["AGENTS.md"] = root_text(target_lines=60)
-        self.assertEqual(check_repo(self.repo(files)), [])
-        cases = ((61, "warning", "cap is 60 lines"), (120, "warning", "cap is 60 lines"), (121, "error", "hard limit is 120 lines"))
-        for count, severity, fragment in cases:
-            with self.subTest(lines=count):
+    def test_agents_line_boundaries(self):
+        cases = (
+            ("AGENTS.md", 40, 0),
+            ("AGENTS.md", 41, 1),
+            ("rust/AGENTS.md", 40, 0),
+            ("rust/AGENTS.md", 41, 1),
+        )
+        for path, target, expected in cases:
+            with self.subTest(path=path, lines=target):
                 files = clean_files()
-                files["AGENTS.md"] = root_text(target_lines=count)
+                files[path] = (
+                    root_text(target_lines=target)
+                    if path == "AGENTS.md"
+                    else nested_text("rust", target_lines=target)
+                )
                 findings = check_repo(self.repo(files))
-                self.assert_finding(findings, severity, "AGENTS.md", fragment)
-                self.assertEqual(len(findings), 1, findings)
+                cap = [
+                    finding
+                    for finding in findings
+                    if finding.path == path
+                    and "the AGENTS.md cap is 40 lines" in finding.message
+                ]
+                self.assertEqual(len(cap), expected, findings)
+                if expected:
+                    self.assertEqual(cap[0].severity, "error")
 
     def test_nested_missing_rules_section_fails(self):
         files = clean_files()
