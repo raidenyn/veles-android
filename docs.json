@@ -1,0 +1,86 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "Veles",
+  "theme": "mint",
+  "colors": {
+    "primary": "#1e6b47",
+    "light": "#8fdbb0",
+    "dark": "#1e6b47"
+  },
+  "logo": "/docs/assets/veles-icon.png",
+  "favicon": "/docs/assets/veles-icon.png",
+  "integrations": {
+    "telemetry": {
+      "enabled": false
+    }
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/raidenyn/veles-android"
+      },
+      {
+        "label": "Releases",
+        "href": "https://github.com/raidenyn/veles-android/releases"
+      }
+    ]
+  },
+  "navigation": {
+    "products": [
+      {
+        "product": "Users",
+        "icon": "book-open",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": []
+          },
+          {
+            "group": "Privacy",
+            "pages": []
+          }
+        ]
+      },
+      {
+        "product": "Developers",
+        "icon": "code",
+        "groups": [
+          {
+            "group": "Start here",
+            "pages": []
+          },
+          {
+            "group": "Engineering reference",
+            "pages": []
+          },
+          {
+            "group": "Specifications",
+            "pages": [
+              {
+                "group": "Android app",
+                "pages": []
+              },
+              {
+                "group": "Pairing and trust",
+                "pages": []
+              },
+              {
+                "group": "Gate B testing",
+                "pages": []
+              },
+              {
+                "group": "Build, CI and release",
+                "pages": []
+              },
+              {
+                "group": "Contributor workflow",
+                "pages": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

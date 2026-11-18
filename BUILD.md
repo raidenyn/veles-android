@@ -13,7 +13,7 @@ This document describes prerequisites, build commands, installation instructions
   ```bash
   sdkmanager "ndk;29.0.14206865"
   ```
-  The version is defined once in [`rust/ndk-version`](rust/ndk-version); the Rust build finds it
+  The version is defined once in [`rust/ndk-version`](https://github.com/raidenyn/veles-android/blob/master/rust/ndk-version); the Rust build finds it
   through `ANDROID_NDK_HOME`, then `$ANDROID_SDK_ROOT/ndk/<version>`, then
   `$ANDROID_HOME/ndk/<version>`, then the `sdk.dir` of the repository-root `local.properties`,
   then the `sdk.dir` of `android/local.properties`. The independent Android build reads the SDK
@@ -60,7 +60,7 @@ cd android && ./gradlew testDebugUnitTest --tests "me.nagaev.veles.otp.handlers.
 ```bash
 ./gradlew assembleRelease
 ```
-See [docs/releasing.md](docs/releasing.md) for signing configuration and release runbooks.
+See [docs/releasing.md](https://github.com/raidenyn/veles-android/blob/master/docs/releasing.md) for signing configuration and release runbooks.
 
 ---
 
@@ -81,7 +81,7 @@ See [docs/releasing.md](docs/releasing.md) for signing configuration and release
    - **Send notifications:** Prompted via the standard `POST_NOTIFICATIONS` runtime dialog.
 
 > [!IMPORTANT]
-> **Android 15+ Users:** Android 15 automatically redacts OTP and banking details from notifications unless companion permissions are granted. Follow the in-app pairing wizard or refer to the [Sensitive Notifications Guide](docs/sensitive-notifications.md) for ADB instructions.
+> **Android 15+ Users:** Android 15 automatically redacts OTP and banking details from notifications unless companion permissions are granted. Follow the in-app pairing wizard or refer to the [Sensitive Notifications Guide](https://github.com/raidenyn/veles-android/blob/master/docs/user/sensitive-notifications.md) for ADB instructions.
 
 ---
 
@@ -109,7 +109,7 @@ npm run build       # or: npm run package (build + deterministic zip)
 `npm run typecheck`, `npm test`, `npm run test:bundle` and the Playwright browser check
 resolve the same import and all require `rustWasm` beforehand.
 
-Refer to [docs/ci.md](docs/ci.md) and individual subdirectories for component-specific build steps.
+Refer to [docs/ci.md](https://github.com/raidenyn/veles-android/blob/master/docs/ci.md) and individual subdirectories for component-specific build steps.
 
 ---
 
@@ -121,4 +121,4 @@ Each GitHub Release is built deterministically in CI and published with attestat
 gh attestation verify veles-android-X.Y.Z.apk --repo raidenyn/veles-android
 ```
 
-For more details on build reproducibility, see [docs/reproducible-builds.md](docs/reproducible-builds.md).
+For more details on build reproducibility, see [docs/reproducible-builds.md](https://github.com/raidenyn/veles-android/blob/master/docs/reproducible-builds.md).

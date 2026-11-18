@@ -53,7 +53,7 @@ We are actively building cross-device OTP relay support to automatically send ve
 1. **Download:** Get the latest release from the [Releases page](https://github.com/raidenyn/veles-android/releases/latest).
 2. **Install:** Run `adb install -r <apk>` or open the APK directly on your Android device (Android 13+).
 3. **Grant Access:** Follow the in-app prompts to enable **Notification access**.
-   *(On Android 15+, companion pairing or our [Sensitive Notifications Guide](docs/sensitive-notifications.md) ensures OTPs are not hidden by the OS).*
+   *(On Android 15+, companion pairing or our [Sensitive Notifications Guide](docs/user/sensitive-notifications.md) ensures OTPs are not hidden by the OS).*
 
 ---
 
@@ -63,5 +63,5 @@ We are actively building cross-device OTP relay support to automatically send ve
 - 📦 **[Latest Releases](https://github.com/raidenyn/veles-android/releases/latest)** — Download pre-built APKs and verification attestations.
 - 🛠️ **[Build Guide (BUILD.md)](BUILD.md)** — Prerequisites, Gradle build commands, tests, and multi-component toolchains.
 - 🤝 **[Contributing (CONTRIBUTING.md)](CONTRIBUTING.md)** — Architecture overview, adding bank regex templates, and commit conventions.
-- 🔐 **[Sensitive Notifications](docs/sensitive-notifications.md)** — Android 15 companion pairing & ADB setup.
+- 🔐 **[Sensitive Notifications](docs/user/sensitive-notifications.md)** — Android 15 companion pairing & ADB setup.
 - 📜 **[License](LICENSE)** — Licensed under the [MIT License](LICENSE).

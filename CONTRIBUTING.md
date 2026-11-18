@@ -92,6 +92,6 @@ how to add a rule or a node.
 
 ## Build & Release Documentation
 
-- Refer to [BUILD.md](BUILD.md) for local compile and test instructions.
-- Refer to [docs/ci.md](docs/ci.md) for continuous integration workflows.
-- Refer to [docs/releasing.md](docs/releasing.md) for versioning rules and release runbooks.
+- Refer to [BUILD.md](https://github.com/raidenyn/veles-android/blob/master/BUILD.md) for local compile and test instructions.
+- Refer to [docs/ci.md](https://github.com/raidenyn/veles-android/blob/master/docs/ci.md) for continuous integration workflows.
+- Refer to [docs/releasing.md](https://github.com/raidenyn/veles-android/blob/master/docs/releasing.md) for versioning rules and release runbooks.

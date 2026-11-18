@@ -2660,7 +2660,7 @@ They become binding in the follow-up amendment or RFC after OTP-26/OTP-27:
 
 The firmware is expected to be pure Rust on ESP-IDF std
 (`esp-idf-svc` + `esp32-nimble` host + RustCrypto `p256`/`aes-gcm`/`hkdf`/
-`sha2` in software, fast enough at <1 KiB records), UI via Slint or
+`sha2` in software, fast enough at `<1 KiB` records), UI via Slint or
 embedded-graphics, board support via a small `Board` HAL over AXP2101/FT6336/
 ST7789. A C++/LVGL hybrid with the SPAKE2 core linked as a Rust staticlib is
 the recorded fallback if BSP bring-up dominates; a bare-`no_std`/`trouble`
