@@ -4,6 +4,7 @@ Each fixture is a throwaway git repository, so tests exercise the same git calls
 real run uses without touching this checkout. Stdlib only; Python 3.8 compatible.
 """
 import contextlib
+import importlib.util
 import io
 import json
 import os
@@ -26,9 +27,11 @@ from check_agent_files import (  # noqa: E402
     SCOPES,
     check_claude_hooks,
     check_codeowners,
+    check_hooked_rules,
     check_links,
     check_opencode,
     check_plugin_mentions,
+    check_pointer_block,
     check_repo,
     list_files,
     list_links,
@@ -36,6 +39,22 @@ from check_agent_files import (  # noqa: E402
     parse_documented_skills,
     parse_frontmatter,
 )
+
+# The real engine: the fixture repositories carry a copy of it, and the fixture pointer block is
+# rendered with it, so the checker and the runtime are tested against the same parser.
+ENGINE_PATH = os.path.join(os.path.dirname(os.path.dirname(CHECKS)), "scripts", "agent_rules.py")
+
+
+def _load_engine():
+    spec = importlib.util.spec_from_file_location("fixture_agent_rules", ENGINE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+ENGINE = _load_engine()
+with open(ENGINE_PATH, "r", encoding="utf-8", newline="") as _handle:
+    ENGINE_TEXT = _handle.read()
 
 # The brief's literals, repeated here so a wrong constant cannot satisfy its own fixture.
 EXPECTED_NOTICE_ROOT = (
@@ -156,6 +175,40 @@ EXPECTED_HOOKS = (
 OPENCODE_PACKAGE = "opencode-rules@>=2.0.0 <3"
 LOCAL_PLUGIN = "./scripts/opencode-hooked-rules"
 LOCAL_PLUGIN_INDEX = "scripts/opencode-hooked-rules/index.js"
+# The eight always-on `repo-*` rules the root AGENTS.md lists once the Conventional Commits rule
+# moved to `.agents/hooked-rules/`.
+EXPECTED_REPO_RULES = (
+    "repo-real-device-testing.md",
+    "repo-no-time-based-tests.md",
+    "repo-pre-push-checks.md",
+    "repo-review-models.md",
+    "repo-superspec-review-gate.md",
+    "repo-tracker-intake.md",
+    "repo-superspec-closeout.md",
+    "repo-signing-keys.md",
+)
+MOVED_RULE = ".agents/rules/repo-conventional-commits.md"
+HOOKED_DIR = ".agents/hooked-rules/"
+HOOKED_NAME = "repo-commit-types.md"
+HOOKED_PATH = HOOKED_DIR + HOOKED_NAME
+HOOKED_POINTER = "Fixture commit types: read before `git commit`."
+ENGINE_FILE = "scripts/agent_rules.py"
+
+
+def hooked_rule_text(pointer=HOOKED_POINTER, lines=None, body="Fixture body.\n"):
+    """A hooked rule; ``lines`` replaces the frontmatter lines after `pointer`."""
+    if lines is None:
+        lines = ["gates:", '  - "\\\\bgit\\\\b[^;&|\\\\n]*?\\\\scommit\\\\b"']
+    head = ['pointer: "%s"' % pointer] if pointer is not None else []
+    return "---\n" + "\n".join(head + list(lines)) + "\n---\n" + body
+
+
+def pointer_block(rule_texts=None):
+    """The engine's pointer block over ``{name: text}`` (the fixture rule by default)."""
+    if rule_texts is None:
+        rule_texts = {HOOKED_NAME: hooked_rule_text()}
+    rules = [ENGINE.parse_rule(name, text) for name, text in sorted(rule_texts.items())]
+    return ENGINE.render_pointer_block(rules)
 
 
 def skill_section(skills):
@@ -246,7 +299,15 @@ def settings_text(hooks=None, extra=None):
     return json.dumps(data, indent=2) + "\n"
 
 
-def root_text(dirs=None, target_lines=None, notice=EXPECTED_NOTICE_ROOT, mention=True):
+def root_text(
+    dirs=None,
+    target_lines=None,
+    notice=EXPECTED_NOTICE_ROOT,
+    mention=True,
+    block=None,
+    heading=True,
+):
+    """The fixture root AGENTS.md; ``block`` replaces the pointer block, ``False`` omits it."""
     dirs = list(EXPECTED_NODE_FILES if dirs is None else dirs)
     lines = ["# AGENTS.md", ""]
     if notice is not None:
@@ -264,7 +325,13 @@ def root_text(dirs=None, target_lines=None, notice=EXPECTED_NOTICE_ROOT, mention
                 "- **OpenCode** needs the `opencode-rules` plugin at the range pinned in `opencode.json`.",
             ]
         )
-    lines.extend(["", "## Rules", "", "Repo-wide rules live in `.agents/rules/`."])
+    lines.extend(["", "## Rules", "", "Repo-wide rules live in `.agents/rules/`:"])
+    lines.extend("- `.agents/rules/%s`" % name for name in EXPECTED_REPO_RULES)
+    if block is not False:
+        lines.append("")
+        if heading:
+            lines.extend(["## Hook-delivered rules", ""])
+        lines.extend((pointer_block() if block is None else block).split("\n"))
     if target_lines is not None:
         while len(lines) < target_lines:
             lines.append("Filler line for the line cap.")
@@ -347,7 +414,11 @@ def clean_files(skills=None):
         ".claude/settings.json": settings_text(),
         ".agents/skills/.openspec-target": "claude\n",
         LOCAL_PLUGIN_INDEX: "export default {}\n",
+        ENGINE_FILE: ENGINE_TEXT,
+        HOOKED_PATH: hooked_rule_text(),
     }
+    for name in EXPECTED_REPO_RULES:
+        files[".agents/rules/" + name] = repo_rule_text()
     for path in EXPECTED_NODE_FILES:
         node = path[: -len("/AGENTS.md")]
         files[path] = nested_text(node, skills=skills if node == "docs" else None)
@@ -1064,6 +1135,183 @@ class AgentFileCheckTest(unittest.TestCase):
                 self.assert_finding(findings, "error", ".agents/rules/" + name, "size cap")
                 self.assertEqual(len(findings), 1, findings)
 
+    # Hooked rules: `.agents/hooked-rules/` is parsed by the engine the fixture carries.
+
+    def hooked_findings(self, text, name=HOOKED_NAME):
+        files = clean_files()
+        files[HOOKED_DIR + name] = text
+        return check_repo(self.repo(files))
+
+    def assert_single(self, findings, path, fragment):
+        self.assert_finding(findings, "error", path, fragment)
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_hooked_unknown_key(self):
+        text = hooked_rule_text(lines=['sticky: "yes"', 'gates: ["\\\\bgit\\\\b"]'])
+        self.assert_single(self.hooked_findings(text), HOOKED_PATH, "unsupported frontmatter key 'sticky'")
+
+    def test_hooked_duplicate_key(self):
+        text = hooked_rule_text(lines=['gates: ["a"]', 'gates: ["b"]'])
+        self.assert_single(self.hooked_findings(text), HOOKED_PATH, "duplicate frontmatter key 'gates'")
+
+    def test_hooked_empty_list(self):
+        text = hooked_rule_text(lines=["gates: []", 'skills: ["opsx:apply"]'])
+        self.assert_single(self.hooked_findings(text), HOOKED_PATH, "at least one item")
+
+    def test_hooked_bad_regex(self):
+        text = hooked_rule_text(lines=['gates: ["(unbalanced"]'])
+        self.assert_single(self.hooked_findings(text), HOOKED_PATH, "invalid regex")
+
+    def test_hooked_no_trigger(self):
+        text = hooked_rule_text(lines=[])
+        self.assert_single(self.hooked_findings(text), HOOKED_PATH, "at least one entry")
+
+    def test_hooked_missing_pointer(self):
+        text = hooked_rule_text(pointer=None, lines=['gates: ["\\\\bgit\\\\b"]'])
+        self.assert_single(self.hooked_findings(text), HOOKED_PATH, "`pointer` is required")
+
+    def hooked_body(self, size):
+        """The fixture rule with a body of exactly ``size`` UTF-8 bytes (a multi-byte character included)."""
+        head = "é\n"  # two bytes plus a newline
+        filler = "x" * 79 + "\n"
+        padding = size - len(head.encode("utf-8"))
+        body = head + filler * (padding // len(filler)) + "x" * (padding % len(filler))
+        self.assertEqual(len(body.encode("utf-8")), size)
+        return hooked_rule_text(body=body)
+
+    def test_hooked_body_4096_ok(self):
+        # The file is over the 4,096-byte `repo-*` cap of `.agents/rules/`; only the body counts.
+        text = self.hooked_body(4096)
+        self.assertGreater(len(text.encode("utf-8")), REPO_RULE_SIZE_MAX)
+        self.assertEqual(self.hooked_findings(text), [])
+
+    def test_hooked_body_4097(self):
+        self.assert_single(self.hooked_findings(self.hooked_body(4097)), HOOKED_PATH, "4096 byte limit")
+
+    def test_hooked_rule_not_judged_as_repo_rule(self):
+        # The fixture rule has no `trigger`, is listed in no `## Rules` section and is still clean.
+        root = self.repo()
+        self.assertNotIn("trigger", clean_files()[HOOKED_PATH])
+        self.assertNotIn(HOOKED_PATH, root_text().replace(HOOKED_PATH, ""))
+        self.assertEqual(check_repo(root), [])
+        self.assertEqual(check_hooked_rules(root, list_files(root)), [])
+        self.assertEqual(check_pointer_block(root), [])
+
+    def test_hooked_nested_dir(self):
+        findings = self.hooked_findings(hooked_rule_text(), name="x/repo-nested.md")
+        self.assert_single(findings, HOOKED_DIR + "x/repo-nested.md", "subdirectory")
+
+    def test_hooked_bad_scope_name(self):
+        for name, fragment in (
+            ("commit-types.md", "no known scope"),
+            ("repo-.md", "empty topic"),
+            ("repo-notes.txt", "does not end with `.md`"),
+        ):
+            with self.subTest(name=name):
+                self.assert_single(self.hooked_findings("x\n", name=name), HOOKED_DIR + name, fragment)
+
+    def test_hooked_symlink_fails(self):
+        files = clean_files()
+        del files[HOOKED_PATH]
+        files["docs/rule-source.md"] = hooked_rule_text()
+        symlinks = default_symlinks()
+        symlinks[HOOKED_PATH] = "../../docs/rule-source.md"
+        findings = check_repo(self.repo(files, symlinks))
+        self.assert_single(findings, HOOKED_PATH, "symlink")
+
+    def test_hooked_not_utf8_fails(self):
+        root = self.repo()
+        with open(os.path.join(root, HOOKED_PATH), "wb") as handle:
+            handle.write(b"---\npointer: \"\xff\"\ngates: [\"a\"]\n---\n")
+        self.assert_single(check_repo(root), HOOKED_PATH, "UTF-8")
+
+    def test_hooked_engine_missing_is_one_finding(self):
+        files = clean_files()
+        del files[ENGINE_FILE]
+        self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "cannot be imported")
+
+    def test_hooked_engine_unimportable_is_one_finding(self):
+        for text in ("def broken(:\n", "raise SystemExit(3)\n", "RULES_DIR = 1\n"):
+            with self.subTest(text=text):
+                files = clean_files()
+                files[ENGINE_FILE] = text
+                self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "cannot be imported")
+
+    def test_no_hooked_rules_and_no_block_passes(self):
+        files = clean_files()
+        del files[HOOKED_PATH]
+        files["AGENTS.md"] = root_text(block=False)
+        self.assertEqual(check_repo(self.repo(files)), [])
+        # Without hooked rules the engine is not needed either.
+        del files[ENGINE_FILE]
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_pointer_block_stale(self):
+        files = clean_files()
+        files[HOOKED_PATH] = hooked_rule_text(pointer="A changed pointer.")
+        self.assert_single(check_repo(self.repo(files)), "AGENTS.md", "stale")
+        files["AGENTS.md"] = root_text(block=pointer_block({HOOKED_NAME: files[HOOKED_PATH]}))
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_pointer_block_stale_for_a_new_rule(self):
+        files = clean_files()
+        files[HOOKED_DIR + "docs-extra.md"] = hooked_rule_text(pointer="Extra.")
+        self.assert_single(check_repo(self.repo(files)), "AGENTS.md", "stale")
+
+    def test_pointer_block_crlf_passes(self):
+        files = clean_files()
+        files["AGENTS.md"] = root_text().replace("\n", "\r\n")
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_pointer_block_missing(self):
+        cases = (
+            ("no block", root_text(block=False), "no hooked-rules pointer block"),
+            ("no heading", root_text(heading=False), "Hook-delivered rules"),
+            ("no end marker", root_text().replace(ENGINE.POINTER_END + "\n", ""), "begin line"),
+            (
+                "two blocks",
+                root_text() + "\n" + pointer_block() + "\n",
+                "begin line",
+            ),
+        )
+        for case, text, fragment in cases:
+            with self.subTest(case=case):
+                files = clean_files()
+                files["AGENTS.md"] = text
+                self.assert_single(check_repo(self.repo(files)), "AGENTS.md", fragment)
+
+    def test_old_rule_present(self):
+        files = clean_files()
+        files[MOVED_RULE] = repo_rule_text()
+        self.assert_single(
+            check_repo(self.repo(files)), MOVED_RULE, ".agents/hooked-rules/repo-commit-types.md"
+        )
+
+    def test_old_rule_listed(self):
+        files = clean_files()
+        files["AGENTS.md"] = listed(files["AGENTS.md"], "repo-conventional-commits.md")
+        self.assert_single(
+            check_repo(self.repo(files)), "AGENTS.md", ".agents/hooked-rules/repo-commit-types.md"
+        )
+
+    def test_old_rule_listed_by_a_node(self):
+        files = clean_files()
+        files["scripts/AGENTS.md"] = listed(files["scripts/AGENTS.md"], "repo-conventional-commits.md")
+        self.assert_single(check_repo(self.repo(files)), "scripts/AGENTS.md", "now lives at")
+
+    def test_old_rule_present_and_listed(self):
+        files = with_rule(clean_files(), "repo-conventional-commits.md", repo_rule_text(), "repo")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", MOVED_RULE, "now lives at")
+        self.assert_finding(findings, "error", "AGENTS.md", "now lives at")
+        self.assertEqual(len(findings), 2, findings)
+
+    def test_root_lists_the_eight_repo_rules(self):
+        text = root_text()
+        for name in EXPECTED_REPO_RULES:
+            self.assertIn(".agents/rules/" + name, text)
+        self.assertEqual(len(EXPECTED_REPO_RULES), 8)
+
     def test_check_functions_accept_the_real_tree_shape(self):
         root = self.repo()
         files = list_files(root)
@@ -1072,6 +1320,8 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assertEqual(check_codeowners(root), [])
         self.assertEqual(check_claude_hooks(root), [])
         self.assertEqual(check_plugin_mentions(root), [])
+        self.assertEqual(check_hooked_rules(root, files), [])
+        self.assertEqual(check_pointer_block(root), [])
 
     def test_documented_skill_section_parses(self):
         text = "# x\n\n## OpenSpec skills\n\n- `alpha`\n- `beta`\n\n## Next\n\n- `gamma`\n"
@@ -1355,7 +1605,7 @@ class AgentFileCheckTest(unittest.TestCase):
         # GitHub treats a directory pattern without a trailing slash as covering its contents.
         cases = (
             ("/.claude", ".claude/settings.json"),
-            ("/.agents", ".agents/rules/repo-conventional-commits.md"),
+            ("/.agents", ".agents/hooked-rules/repo-commit-types.md"),
             ("/android", "android/AGENTS.md"),
         )
         for pattern, sample in cases:

@@ -2,12 +2,13 @@
 """Agent-file layout check.
 
 Checks the legacy files, the AGENTS.md notices and line caps, node-map parity, rule files,
-the `.claude/` symlinks and skill set, `opencode.json`, `.github/CODEOWNERS`, the
-`opencode-rules` mentions and the component overrides. Stdlib only; Python 3.8 compatible;
-run from the `docs / agent-files` CI check.
+the hook-delivered rules and their pointer block, the `.claude/` symlinks and skill set,
+`opencode.json`, `.github/CODEOWNERS`, the `opencode-rules` mentions and the component overrides.
+Stdlib only; Python 3.8 compatible; run from the `docs / agent-files` CI check.
 """
 import argparse
 import collections
+import importlib.util
 import json
 import os
 import re
@@ -80,7 +81,7 @@ MCP_JSON = ".mcp.json"
 CODEOWNER_SAMPLE_PATHS = (
     ("/opencode.json", "opencode.json"),
     ("/.claude/", ".claude/settings.json"),
-    ("/.agents/", ".agents/rules/repo-conventional-commits.md"),
+    ("/.agents/", ".agents/hooked-rules/repo-commit-types.md"),
     ("**/AGENTS.md", "android/AGENTS.md"),
     ("**/AGENTS.md", "native-bridge/host/AGENTS.md"),
     ("/docs/superspec-workflow.md", "docs/superspec-workflow.md"),
@@ -119,6 +120,25 @@ RULE_SIZE_MAX = 24000
 # always-on context budget, not the node-rule cap.
 REPO_RULE_SIZE_MAX = 4096
 RULE_KEYS = ("trigger", "globs", "paths")
+
+# Hook-delivered rules are parsed by the engine itself, imported by path from the checked root, so
+# a rule that passes this check also parses at runtime. The names the checker needs from it:
+HOOKED_RULES_DIR = ".agents/hooked-rules"
+ENGINE_FILE = "scripts/agent_rules.py"
+ENGINE_NAMES = (
+    "RULES_DIR",
+    "RuleError",
+    "parse_rule",
+    "load_rules",
+    "render_pointer_block",
+    "_locate_block",
+    "_normalise",
+)
+POINTERS_COMMAND = "python3 -I scripts/agent_rules.py pointers --write"
+# The always-on Conventional Commits rule became the hook-delivered commit-type guide.
+MOVED_RULES = {
+    "repo-conventional-commits.md": HOOKED_RULES_DIR + "/repo-commit-types.md",
+}
 
 # Scope -> folder pattern. `repo` rules are always on and so have no pattern.
 SCOPES = {
@@ -624,6 +644,8 @@ def check_rules(root, files):
                 Finding("error", path, "has an empty topic; name rules `<scope>-<topic>.md`")
             )
             continue
+        if relative in MOVED_RULES:
+            continue  # `check_moved_rules` reports it with its new location
         rules[path] = scope
         cap = REPO_RULE_SIZE_MAX if scope == "repo" else RULE_SIZE_MAX
         try:
@@ -658,13 +680,177 @@ def check_rules(root, files):
         if path not in references.get(agents_path, set()):
             findings.append(Finding("error", path, "is not listed in %s" % agents_path))
     known = set(files)
+    moved = set(RULES_DIR + "/" + name for name in MOVED_RULES)
     for agents_path in sorted(references):
         for path in sorted(references[agents_path]):
-            if path not in known:
+            if path not in known and path not in moved:
                 findings.append(
                     Finding("error", path, "is referenced by %s but does not exist" % agents_path)
                 )
     return findings
+
+
+def check_moved_rules(root, files):
+    """Reject a moved rule still present in `.agents/rules/` or listed by a scope's AGENTS.md."""
+    findings = []
+    known = set(files)
+    references = _rule_references(root)
+    for name, target in sorted(MOVED_RULES.items()):
+        path = RULES_DIR + "/" + name
+        message = "the rule moved: it now lives at `%s`" % target
+        if path in known:
+            findings.append(Finding("error", path, "must not exist; %s" % message))
+        for agents_path in sorted(references):
+            if path in references[agents_path]:
+                findings.append(Finding("error", agents_path, "lists `%s`; %s" % (path, message)))
+    return findings
+
+
+class _EngineError(Exception):
+    """The engine at ``<root>/scripts/agent_rules.py`` is missing or cannot be imported."""
+
+
+def _load_engine(root):
+    """Import ``<root>/scripts/agent_rules.py`` by path, or raise ``_EngineError``."""
+    path = os.path.join(root, *ENGINE_FILE.split("/"))
+    if not os.path.isfile(path):
+        raise _EngineError("is missing")
+    try:
+        spec = importlib.util.spec_from_file_location("veles_checked_agent_rules", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except BaseException as error:  # SyntaxError, ImportError, SystemExit, ...: never crash
+        if isinstance(error, KeyboardInterrupt):
+            raise
+        raise _EngineError("raised %s: %s" % (type(error).__name__, error))
+    missing = [name for name in ENGINE_NAMES if not hasattr(module, name)]
+    if missing:
+        raise _EngineError("lacks %s" % ", ".join(missing))
+    if module.RULES_DIR != HOOKED_RULES_DIR:
+        raise _EngineError("reads rules from %r, not %r" % (module.RULES_DIR, HOOKED_RULES_DIR))
+    return module
+
+
+def _engine_finding(error):
+    return Finding(
+        "error",
+        ENGINE_FILE,
+        "cannot be imported to parse `%s/` (%s)" % (HOOKED_RULES_DIR, " ".join(str(error).split())),
+    )
+
+
+def _hooked_paths(files):
+    return sorted(path for path in files if path.startswith(HOOKED_RULES_DIR + "/"))
+
+
+def check_hooked_rules(root, files):
+    """Check `.agents/hooked-rules/`: flat `<scope>-<topic>.md` regular files the engine parses.
+
+    The format, the 4,096-byte body cap and regex validity are the engine's own `parse_rule`
+    errors. The `.agents/rules/` frontmatter, size and listing checks do not apply here.
+    """
+    findings = []
+    candidates = []
+    for path in _hooked_paths(files):
+        relative = path[len(HOOKED_RULES_DIR) + 1:]
+        if "/" in relative:
+            findings.append(
+                Finding("error", path, "is in a subdirectory; `%s/` is flat" % HOOKED_RULES_DIR)
+            )
+            continue
+        if not relative.endswith(".md"):
+            findings.append(
+                Finding("error", path, "does not end with `.md`; name rules `<scope>-<topic>.md`")
+            )
+            continue
+        name = relative[:-len(".md")]
+        scope = _scope_for(name)
+        if scope is None:
+            findings.append(
+                Finding("error", path, "has no known scope; name rules `<scope>-<topic>.md`")
+            )
+            continue
+        if not name[len(scope) + 1:]:
+            findings.append(
+                Finding("error", path, "has an empty topic; name rules `<scope>-<topic>.md`")
+            )
+            continue
+        full = os.path.join(root, path)
+        if os.path.islink(full) or not os.path.isfile(full):
+            findings.append(
+                Finding("error", path, "is a symlink or not a regular file; hooked rules are plain files")
+            )
+            continue
+        candidates.append((path, relative))
+    if not candidates:
+        return findings
+    try:
+        engine = _load_engine(root)
+    except _EngineError as error:
+        return findings + [_engine_finding(error)]
+    for path, relative in candidates:
+        try:
+            with open(os.path.join(root, path), "rb") as handle:
+                text = handle.read().decode("utf-8")
+        except UnicodeDecodeError as error:
+            findings.append(Finding("error", path, "is not valid UTF-8 (%s)" % error))
+            continue
+        except (IOError, OSError):
+            findings.append(Finding("error", path, "cannot be read"))
+            continue
+        try:
+            engine.parse_rule(relative, text)
+        except engine.RuleError as error:
+            findings.append(Finding("error", path, "is not a valid hooked rule: %s" % error))
+    return findings
+
+
+def check_pointer_block(root):
+    """Check the root AGENTS.md pointer block against the engine's rendering of the rules.
+
+    Silent when there are no hooked rules and no block, when the engine cannot be imported or a
+    rule does not parse (`check_hooked_rules` reports both) and when AGENTS.md is missing.
+    """
+    raw = None
+    try:
+        with open(os.path.join(root, ROOT_AGENTS), "r", encoding="utf-8", newline="") as handle:
+            raw = handle.read()
+    except (IOError, OSError, UnicodeDecodeError):
+        return []
+    directory = os.path.join(root, *HOOKED_RULES_DIR.split("/"))
+    has_rules = os.path.isdir(directory) and any(
+        name.endswith(".md") for name in os.listdir(directory)
+    )
+    if not has_rules and "hooked-rules:" not in raw:
+        return []
+    try:
+        engine = _load_engine(root)
+    except _EngineError:
+        return []
+    rules, errors = engine.load_rules(root)
+    if errors:
+        return []
+    fix = "run `%s`" % POINTERS_COMMAND
+    try:
+        location = engine._locate_block(raw)
+        block = engine.render_pointer_block(rules)
+    except engine.RuleError as error:
+        return [Finding("error", ROOT_AGENTS, "has a malformed pointer block: %s; %s" % (error, fix))]
+    if location is None:
+        if not rules:
+            return []
+        return [Finding("error", ROOT_AGENTS, "has no hooked-rules pointer block; %s" % fix)]
+    if not location.heading_ok:
+        return [
+            Finding(
+                "error",
+                ROOT_AGENTS,
+                "lacks the `## Hook-delivered rules` heading before the pointer block; %s" % fix,
+            )
+        ]
+    if engine._normalise(raw[location.begin:location.end]) != block:
+        return [Finding("error", ROOT_AGENTS, "has a stale hooked-rules pointer block; %s" % fix)]
+    return []
 
 
 def parse_documented_skills(text):
@@ -1394,6 +1580,9 @@ def check_repo(root, platform=sys.platform):
     findings.extend(_check_node_map(root_text, tracked_nested))
     findings.extend(_check_overrides(root, tracked_nested))
     findings.extend(check_rules(root, files))
+    findings.extend(check_moved_rules(root, files))
+    findings.extend(check_hooked_rules(root, files))
+    findings.extend(check_pointer_block(root))
     findings.extend(check_links(root, files, platform))
     findings.extend(check_opencode(root))
     findings.extend(check_codeowners(root))

@@ -39,8 +39,8 @@ Every commit subject is a Conventional Commit (`type(scope): description`), enfo
 `scripts/commitlint.py` through three gates: the `.githooks/commit-msg` hook, the required
 `pr-title` check on the PR title and body (the future squash commit), and `commit-guard` on master
 pushes. `feat` bumps the minor version, `fix`/`perf` the patch, `!` or a `BREAKING CHANGE:` footer
-the major; every other type bumps nothing. Guidance-only changes must be typed `docs`/`chore` so
-they do not bump a release component. See `docs/releasing.md` and `docs/ci.md`.
+the major; every other type bumps nothing. Guidance-only changes must be typed `docs` so they
+do not bump a release component. See `docs/releasing.md` and `docs/ci.md`.
 
 ## Versions and tags
 

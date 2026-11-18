@@ -2314,3 +2314,55 @@ class HookCliTest(CheckoutFixture):
         )
         self.assertEqual((completed.returncode, completed.stdout), (1, b""))
         self.assertTrue(os.path.isfile(self.store.session_path("s1")))
+
+
+REPO_ROOT = os.path.dirname(SCRIPTS)
+COMMIT_TYPES_RULE = os.path.join(REPO_ROOT, ".agents", "hooked-rules", "repo-commit-types.md")
+TYPE_LINE_PREFIX = "- `"
+
+
+class RealRepoRuleTest(unittest.TestCase):
+    """The repository's own hooked rules, read from this checkout."""
+
+    def real_rule(self):
+        with open(COMMIT_TYPES_RULE, "r", encoding="utf-8", newline="") as handle:
+            return parse_rule("repo-commit-types.md", handle.read())
+
+    def test_real_rules_load_without_errors(self):
+        rules, errors = load_rules(REPO_ROOT)
+        self.assertEqual(errors, [])
+        self.assertIn("repo-commit-types.md", [rule.name for rule in rules])
+
+    def test_commit_types_covers_commitlint(self):
+        import commitlint
+
+        names = []
+        for line in self.real_rule().body.split("\n"):
+            # A type line is a bullet starting with a backticked type name and an em dash.
+            if line.startswith(TYPE_LINE_PREFIX) and "` — " in line:
+                names.append(line[len(TYPE_LINE_PREFIX):line.index("` — ")])
+        expected = commitlint.TYPES.split("|")
+        self.assertEqual(len(expected), 11)
+        self.assertEqual(sorted(names), sorted(expected))
+        self.assertEqual(len(names), len(set(names)))
+
+    def test_commit_types_rule_triggers(self):
+        rule = self.real_rule()
+        self.assertEqual(rule.skills, ["openspec-apply-change", "opsx:apply"])
+        self.assertEqual(
+            [pattern.pattern for pattern in rule.commands],
+            ["\\bopenspec\\s+instructions\\s+finalize\\b"],
+        )
+        self.assertEqual(
+            [pattern.pattern for pattern in rule.gates],
+            ["\\bgit\\b[^;&|\\n]*?\\scommit\\b", "\\bgh\\s+pr\\s+(create|edit)\\b"],
+        )
+        self.assertIn("type(scope): description", rule.pointer)
+        self.assertIn("type(scope): description", rule.body)
+
+    def test_real_pointer_block_is_current(self):
+        completed = subprocess.run(
+            [sys.executable, "-I", CLI, "pointers", "--check", "--root", REPO_ROOT],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
