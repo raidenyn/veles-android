@@ -524,42 +524,63 @@ def render(fmt, event, decision):
     return json.dumps({"hookSpecificOutput": {"hookEventName": name, "additionalContext": decision.text}})
 
 
-def checkout_for(cwd):
-    """``(toplevel, common_dir)`` of the checkout holding ``cwd``, or None.
+class CheckoutError(Exception):
+    """Checkout discovery that failed for a reason other than "not a checkout"."""
+
+
+def discover_checkout(cwd):
+    """``(toplevel, common_dir)`` of the checkout holding ``cwd``; None only for a genuine non-checkout.
 
     One ``git rev-parse`` answers; ``common_dir`` is absolute, resolved against ``cwd`` when git prints
-    it relative. None means pass silently: git failed (no repository, a bad ``cwd``) or the top level has
-    no ``.agents/hooked-rules/`` directory.
+    it relative. None means pass silently: git reports "not a git repository" or the top level has no
+    ``.agents/hooked-rules/`` directory. ``CheckoutError`` for anything else: an invalid ``cwd``, git
+    missing or timing out, any other git failure or unexpected output. git runs under ``LC_ALL=C`` so
+    its message is not translated.
     """
     if not isinstance(cwd, str) or not cwd or "\0" in cwd:
-        return None
+        raise CheckoutError("invalid cwd %r" % (cwd,))
     environment = dict(
         (name, value) for name, value in os.environ.items() if name not in GIT_SELECTION_VARIABLES
     )
+    environment["LC_ALL"] = "C"
+    environment.pop("LANGUAGE", None)
     try:
         completed = subprocess.run(
             ["git", "-C", cwd, "rev-parse", "--show-toplevel", "--git-common-dir"],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             env=environment,
             timeout=GIT_TIMEOUT_SECONDS,
         )
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return None
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        raise CheckoutError("git could not run: %s: %s" % (type(error).__name__, error))
     if completed.returncode != 0:
-        return None
+        if b"not a git repository" in (completed.stderr or b""):
+            return None
+        raise CheckoutError(
+            "git rev-parse failed with exit %d: %s"
+            % (completed.returncode, (completed.stderr or b"").decode("utf-8", "replace").strip())
+        )
     try:
         lines = completed.stdout.decode("utf-8").splitlines()
     except UnicodeDecodeError:
-        return None
+        raise CheckoutError("git printed paths that are not UTF-8")
     if len(lines) != 2 or not lines[0] or not lines[1]:
-        return None
+        raise CheckoutError("unexpected git rev-parse output %r" % (lines,))
     toplevel = lines[0]
     common_dir = os.path.normpath(os.path.join(os.path.abspath(cwd), lines[1]))
     if not os.path.isdir(os.path.join(toplevel, *RULES_DIR.split("/"))):
         return None
     return toplevel, common_dir
+
+
+def checkout_for(cwd):
+    """``discover_checkout``, with every failure read as None (pass silently)."""
+    try:
+        return discover_checkout(cwd)
+    except CheckoutError:
+        return None
 
 
 STATE_VERSION = 1
@@ -1057,20 +1078,20 @@ def _prompt_skill(prompt):
 
 
 def _read_skill_dirs(event):
-    """The ``<name>`` of each ``/skills/<name>/SKILL.md`` suffix of the read path, given and real."""
-    raw = event.path.replace("\\", "/")
-    candidates = [raw]
+    """The ``<name>`` when the read path's real path ends in ``/skills/<name>/SKILL.md``, else nothing.
+
+    Only the resolved path counts, so a lookalike path that resolves elsewhere earns no credit. A
+    relative path is joined to ``cwd``; backslashes become slashes first, for Windows-style paths.
+    """
     try:
         base = event.cwd if isinstance(event.cwd, str) else ""
-        candidates.append(os.path.realpath(os.path.join(base, raw)).replace("\\", "/"))
+        real = os.path.realpath(os.path.join(base, event.path.replace("\\", "/")))
     except (OSError, ValueError):
-        pass
-    names = set()
-    for candidate in candidates:
-        parts = candidate.split("/")
-        if len(parts) >= 3 and parts[-1] == "SKILL.md" and parts[-3] == "skills" and parts[-2]:
-            names.add(parts[-2])
-    return names
+        return set()
+    parts = real.replace("\\", "/").split("/")
+    if len(parts) >= 3 and parts[-1] == "SKILL.md" and parts[-3] == "skills" and parts[-2]:
+        return set([parts[-2]])
+    return set()
 
 
 def _moment_rules(rules, event):
@@ -1193,10 +1214,18 @@ FAIL_AFTER_WRITE = "VELES_AGENT_RULES_FAIL_AFTER_WRITE"
 CLAUDE_CONTEXT_EVENTS = ("tool-after", "prompt")
 
 
+def _stderr(text):
+    """Write to stderr, best effort: a broken stderr must not turn a pass into a failure."""
+    try:
+        sys.stderr.write(text)
+    except Exception:
+        pass
+
+
 def _diagnose(what, error):
     """One stderr line for ``error``."""
     message = " ".join(str(error).split())
-    sys.stderr.write("agent_rules.py hook: %s: %s: %s\n" % (what, type(error).__name__, message))
+    _stderr("agent_rules.py hook: %s: %s: %s\n" % (what, type(error).__name__, message))
 
 
 def _failure_output(fmt, payload):
@@ -1209,7 +1238,7 @@ def _failure_output(fmt, payload):
             return json.dumps({"hookSpecificOutput": {
                 "hookEventName": name, "additionalContext": FAILURE_NOTICE,
             }})
-    sys.stderr.write(FAILURE_NOTICE + "\n")
+    _stderr(FAILURE_NOTICE + "\n")
     return ""
 
 
@@ -1224,7 +1253,7 @@ def handle(stdin_text, fmt, env, store_factory):
     try:
         payload = json.loads(stdin_text)
         event = parse_event(fmt, payload)
-        checkout = checkout_for(event.cwd)
+        checkout = discover_checkout(event.cwd)
         if checkout is None:
             return "", 0
         toplevel, common_dir = checkout
@@ -1242,7 +1271,7 @@ def handle(stdin_text, fmt, env, store_factory):
         except Exception as error:  # pruning is housekeeping; the decision stands
             _diagnose("prune skipped", error)
         if env.get(FAIL_AFTER_WRITE) == "1":
-            sys.stderr.write("agent_rules.py hook: %s=1: failing after the write\n" % FAIL_AFTER_WRITE)
+            _stderr("agent_rules.py hook: %s=1: failing after the write\n" % FAIL_AFTER_WRITE)
             return "", 1
         return output, 0
     except Exception as error:
@@ -1250,15 +1279,64 @@ def handle(stdin_text, fmt, env, store_factory):
         return _failure_output(fmt, payload), 0
 
 
-def _hook(args):
-    raw = sys.stdin.buffer.read()
+class _UsageError(Exception):
+    """A ``hook`` command line argparse rejected."""
+
+
+class _HookParser(argparse.ArgumentParser):
+    """Raises on a usage error instead of exiting 2, which Claude Code would treat as a blocking hook."""
+
+    def error(self, message):
+        raise _UsageError(message)
+
+
+def _hook_parser():
+    parser = _HookParser(prog="agent_rules.py hook", description="Decide one hook event read as JSON on stdin.")
+    parser.add_argument("--format", required=True, choices=("claude", "plain"), help="the event format")
+    return parser
+
+
+def _silence_stdout(stdout):
+    """Point a broken real stdout at the null device, so the flush at exit cannot fail again."""
     try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        text = ""  # not an event: fails open like any malformed input
-    output, code = handle(text, args.format, os.environ, Store)
+        if stdout is sys.stdout:
+            null = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(null, stdout.fileno())
+            os.close(null)
+    except Exception:
+        pass
+
+
+def hook_main(argv, stdin=None, stdout=None, env=None, store_factory=Store):
+    """The ``hook`` subcommand: never exits 2, and fails open on usage, stdin and stdout errors.
+
+    Only the test-only ``FAIL_AFTER_WRITE`` switch returns 1. ``--help`` keeps argparse's exit 0.
+    """
+    stdin = sys.stdin if stdin is None else stdin
+    stdout = sys.stdout if stdout is None else stdout
+    env = os.environ if env is None else env
+    parser = _hook_parser()
+    try:
+        args = parser.parse_args(argv)
+    except _UsageError as error:
+        _stderr("%sagent_rules.py hook: error: %s\n%s\n" % (parser.format_usage(), error, FAILURE_NOTICE))
+        return 0
+    try:
+        text = stdin.buffer.read().decode("utf-8", "replace")
+    except Exception as error:
+        _diagnose("stdin unreadable", error)
+        output, code = _failure_output(args.format, None), 0
+    else:
+        output, code = handle(text, args.format, env, store_factory)
     if output:
-        sys.stdout.write(output + "\n")
+        try:
+            stdout.write(output + "\n")
+            stdout.flush()
+        except Exception as error:
+            _diagnose("stdout unwritable", error)
+            _silence_stdout(stdout)
+            _stderr(FAILURE_NOTICE + "\n")
+            return 0
     return code
 
 
@@ -1276,10 +1354,11 @@ def main(argv=None):
     mode.add_argument("--check", action="store_true", help="exit 1 when the block is stale or missing")
     pointers.add_argument("--root", default=_default_root(), help="repository root")
     pointers.set_defaults(handler=_pointers)
-    hook = commands.add_parser("hook", help="decide one hook event read as JSON on stdin")
-    # No ``choices``: an unknown format must fail open in ``handle``, not exit 2 (a blocking hook error).
-    hook.add_argument("--format", help="claude or plain")
-    hook.set_defaults(handler=_hook)
+    # Listed for --help only: ``hook`` is dispatched to ``hook_main`` before this parser runs.
+    commands.add_parser("hook", help="decide one hook event read as JSON on stdin (--format claude|plain)")
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv and argv[0] == "hook":
+        return hook_main(argv[1:])
     args = parser.parse_args(argv)
     return args.handler(args)
 

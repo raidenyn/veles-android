@@ -24,7 +24,10 @@ from agent_rules import (  # noqa: E402
     RuleError,
     Store,
     StoreError,
+    CheckoutError,
     checkout_for,
+    discover_checkout,
+    hook_main,
     context_key,
     decide,
     handle,
@@ -1408,21 +1411,52 @@ class MomentTest(EngineTest):
             self.assertEqual(decision.kind, "context", path)
             self.assertEqual(self.entry(key=session)["state"], "delivered")
 
-    def test_skill_md_read_by_real_path(self):
-        skill_dir = os.path.join(self.tmp, "repo", ".agents", "skills", "openspec-apply-change")
-        os.makedirs(skill_dir)
-        with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as handle:
+    def make_skill(self, *parts):
+        directory = os.path.join(self.tmp, "repo", *parts)
+        os.makedirs(directory)
+        path = os.path.join(directory, "SKILL.md")
+        with open(path, "w", encoding="utf-8") as handle:
             handle.write("skill\n")
-        os.makedirs(os.path.join(self.tmp, "repo", ".claude"))
-        link = os.path.join(self.tmp, "repo", ".claude", "linked")
+        return directory
+
+    def symlink(self, target, *parts):
+        link = os.path.join(self.tmp, "repo", *parts)
+        os.makedirs(os.path.dirname(link), exist_ok=True)
         try:
-            os.symlink(os.path.join(self.tmp, "repo", ".agents", "skills"), link)
+            os.symlink(target, link)
         except (OSError, NotImplementedError):
             self.skipTest("symlinks are unavailable")
-        decision = self.run_event(
-            event("tool-after", tool="Read", path=os.path.join(link, "openspec-apply-change", "SKILL.md"))
-        )
+        return link
+
+    def read(self, path, rules=None):
+        return self.run_event(event("tool-after", tool="Read", path=path), rules=rules)
+
+    def test_skill_md_read_by_real_path(self):
+        target = self.make_skill(".agents", "skills", "openspec-apply-change")
+        link = self.symlink(target, ".claude", "skills", "openspec-apply-change")
+        self.assertEqual(self.read(os.path.join(link, "SKILL.md")).kind, "context")
+        whole = self.symlink(os.path.join(self.tmp, "repo", ".agents", "skills"), ".claude", "linked")
+        self.assertEqual(self.read(os.path.join(whole, "openspec-apply-change", "SKILL.md")).kind, "context")
+
+    def test_skill_md_lookalike_resolving_elsewhere_is_not_a_moment(self):
+        elsewhere = self.make_skill("docs", "notes")
+        link = self.symlink(elsewhere, ".claude", "skills", "openspec-apply-change")
+        self.assertEqual(self.read(os.path.join(link, "SKILL.md")).kind, "pass")
+        file_link = self.symlink(os.path.join(elsewhere, "SKILL.md"),
+                                 ".agents", "skills", "opsx", "SKILL.md")
+        self.assertEqual(self.read(file_link).kind, "pass")
+        self.assertEqual(self.entries(), {})
+
+    def test_skill_md_symlink_to_another_skill_credits_that_skill_only(self):
+        apply_rule = make_rule("repo-a.md", body="A\n", skills=("openspec-apply-change",))
+        other_rule = make_rule("repo-b.md", body="B\n", skills=("other-skill",))
+        target = self.make_skill(".agents", "skills", "other-skill")
+        link = self.symlink(target, ".claude", "skills", "openspec-apply-change")
+        decision = self.read(os.path.join(link, "SKILL.md"), rules=[apply_rule, other_rule])
         self.assertEqual(decision.kind, "context")
+        self.assertEqual(decision.text, "B")
+        self.assertEqual([identity for identity, _ in decision.entries], [other_rule.identity])
+        self.assertIsNone(self.entry(apply_rule))
 
     def test_other_reads_are_not_moments(self):
         for path in (
@@ -2049,6 +2083,105 @@ class HandleTest(CheckoutFixture):
         self.assertTrue(os.path.isfile(self.store.session_path("s9")))
 
 
+class DiscoveryFailureTest(CheckoutFixture):
+    def test_missing_git_gives_the_notice(self):
+        for error in (FileNotFoundError("git"), subprocess.TimeoutExpired(["git"], 5)):
+            with mock.patch("agent_rules.subprocess.run", side_effect=error):
+                self.assert_plain_notice(*self.call(self.plain("tool-before", command="git commit")))
+                self.assertIn("CheckoutError", self.stderr)
+                self.assertIsNone(checkout_for(self.root))
+
+    def test_unexpected_git_failure_gives_the_notice(self):
+        failed = subprocess.CompletedProcess(["git"], 128, b"", b"fatal: detected dubious ownership\n")
+        with mock.patch("agent_rules.subprocess.run", return_value=failed):
+            self.assert_plain_notice(*self.call(self.plain("tool-before", command="git commit")))
+        with self.assertRaises(CheckoutError):
+            discover_checkout(self.make_dir("does", "not", "exist") + "\0")
+
+    def test_genuine_non_checkout_is_silent(self):
+        plain_dir = self.make_dir("plain-dir")
+        os.environ["GIT_CEILING_DIRECTORIES"] = self.tmp
+        self.addCleanup(os.environ.pop, "GIT_CEILING_DIRECTORIES", None)
+        self.assertIsNone(discover_checkout(plain_dir))
+        payload = {"event": "tool-before", "session": "s1", "cwd": plain_dir, "command": "git commit"}
+        self.assertEqual(self.call(payload), ("", 0))
+        self.assertEqual(self.stderr, "")
+
+    def test_localized_git_still_reads_as_non_checkout(self):
+        plain_dir = self.make_dir("plain-dir")
+        os.environ["GIT_CEILING_DIRECTORIES"] = self.tmp
+        self.addCleanup(os.environ.pop, "GIT_CEILING_DIRECTORIES", None)
+        with mock.patch.dict(os.environ, {"LANG": "de_DE.UTF-8", "LC_ALL": "de_DE.UTF-8",
+                                          "LANGUAGE": "de"}):
+            self.assertIsNone(discover_checkout(plain_dir))
+
+
+class FailingStream(object):
+    def __init__(self, error):
+        self.error = error
+        self.buffer = self
+
+    def read(self, *args):
+        raise self.error
+
+    def write(self, *args):
+        raise self.error
+
+    def flush(self):
+        raise self.error
+
+
+class HookMainTest(CheckoutFixture):
+    def run_main(self, argv, stdin_bytes=b"", stdin=None, stdout=None):
+        out = io.StringIO()
+        stdin = stdin or mock.Mock(buffer=io.BytesIO(stdin_bytes))
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = hook_main(argv, stdin=stdin, stdout=stdout or out, env={}, store_factory=quick_store)
+        self.stderr = stderr.getvalue()
+        return code, out.getvalue()
+
+    def test_usage_errors_fail_open(self):
+        stdin = FailingStream(AssertionError("stdin must not be read"))
+        for argv in (["--format", "claude", "--bogus"], ["--format"], ["--format", "xml"], [],
+                     ["--format", "plain", "extra"]):
+            with self.subTest(argv=argv):
+                code, out = self.run_main(argv, stdin=stdin)
+                self.assertEqual((code, out), (0, ""))
+                self.assertIn(FAILURE_NOTICE, self.stderr)
+                self.assertIn("usage", self.stderr)
+
+    def test_failing_stdin_fails_open(self):
+        for error in (OSError("stdin closed"), ValueError("I/O operation on closed file")):
+            code, out = self.run_main(["--format", "plain"], stdin=FailingStream(error))
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out)["text"], FAILURE_NOTICE)
+            code, out = self.run_main(["--format", "claude"], stdin=FailingStream(error))
+            self.assertEqual((code, out), (0, ""))
+            self.assertIn(FAILURE_NOTICE, self.stderr)
+
+    def test_undecodable_stdin_fails_open(self):
+        code, out = self.run_main(["--format", "plain"], stdin_bytes=b"\xff\xfe")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["text"], FAILURE_NOTICE)
+
+    def test_failing_stdout_fails_open(self):
+        for index, error in enumerate((BrokenPipeError("pipe"), OSError("gone"))):
+            payload = json.dumps(self.plain("tool-before", session="out-%d" % index,
+                                            command="git commit -m x")).encode("utf-8")
+            code, out = self.run_main(["--format", "plain"], stdin_bytes=payload,
+                                      stdout=FailingStream(error))
+            self.assertEqual(code, 0)
+            self.assertIn(FAILURE_NOTICE, self.stderr)
+
+    def test_decision_is_written(self):
+        payload = json.dumps(self.plain("tool-before", command="git commit -m x")).encode("utf-8")
+        code, out = self.run_main(["--format", "plain"], stdin_bytes=payload)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["decision"], "deny")
+        self.assertTrue(out.endswith("\n"))
+
+
 class HookCliTest(CheckoutFixture):
     def run_cli(self, stdin, *args):
         return subprocess.run(
@@ -2082,6 +2215,25 @@ class HookCliTest(CheckoutFixture):
             completed = self.run_cli(payload, *args)
             self.assertEqual((completed.returncode, completed.stdout), (0, b""), args)
             self.assertIn(FAILURE_NOTICE.encode("utf-8"), completed.stderr)
+
+    def test_cli_usage_errors_exit_zero(self):
+        for args in (("--format", "claude", "--bogus"), ("--format",), ("--format", "xml"), ()):
+            completed = self.run_cli(b"", *args)
+            self.assertEqual((completed.returncode, completed.stdout), (0, b""), args)
+            self.assertIn(FAILURE_NOTICE.encode("utf-8"), completed.stderr)
+
+    def test_cli_pointers_usage_error_still_exits_two(self):
+        completed = subprocess.run([sys.executable, "-I", CLI, "pointers", "--bogus"],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual(completed.returncode, 2)
+        completed = subprocess.run([sys.executable, "-I", CLI, "--bogus"],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual(completed.returncode, 2)
+
+    def test_cli_hook_help_exits_zero(self):
+        completed = self.run_cli(b"", "--help")
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn(b"--format", completed.stdout)
 
     def test_cli_fail_after_write_exits_one(self):
         payload = json.dumps(self.plain("tool-before", command="git commit -m x")).encode("utf-8")
