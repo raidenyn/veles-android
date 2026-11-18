@@ -15,7 +15,9 @@ import unittest
 CHECKS = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, CHECKS)
 
-from check_site import main, published_files  # noqa: E402
+import json  # noqa: E402
+
+from check_site import check_repo, main, nav_pages, published_files  # noqa: E402
 
 
 def _write(root, files):
@@ -101,6 +103,179 @@ class PublishedSetTests(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         self.assertTrue(lines[0].startswith("error "))
         self.assertIn("git ls-files", lines[0])
+
+
+MINTIGNORE = (
+    "/*\n!/docs.json\n!/docs/\n/docs/*\n!/docs/user/\n!/docs/dev/\n!/docs/assets/\n"
+    "!/openspec/\n/openspec/*\n!/openspec/specs/\n"
+)
+
+
+def docs_json(**extra):
+    data = {
+        "navigation": {
+            "groups": [{"group": "G", "pages": ["docs/user/a", "docs/dev/specs/x"]}]
+        },
+        "logo": "docs/assets/veles-icon.png",
+        "favicon": "docs/assets/veles-icon.png",
+    }
+    data.update(extra)
+    return json.dumps(data)
+
+
+def base_site():
+    return {
+        ".mintignore": MINTIGNORE,
+        "docs.json": docs_json(),
+        "docs/user/a.md": "a\n",
+        "docs/dev/specs/x.mdx": 'import X from "/openspec/specs/x/spec.md";\n\n<X />\n',
+        "openspec/specs/x/spec.md": "spec\n",
+        "docs/assets/veles-icon.png": "png",
+    }
+
+
+class StructureTests(unittest.TestCase):
+    def repo_files(self, files):
+        root = make_repo(files)
+        self.addCleanup(shutil.rmtree, root)
+        return root
+
+    def findings(self, files):
+        return [
+            "%s %s: %s" % f for f in check_repo(self.repo_files(files))
+        ]
+
+    def assertOne(self, files, *needles):
+        lines = self.findings(files)
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith("error "), lines)
+        for needle in needles:
+            self.assertIn(needle, lines[0])
+
+    def with_docs_json(self, text):
+        files = base_site()
+        files["docs.json"] = text
+        return files
+
+    def test_base_site_is_clean(self):
+        self.assertEqual(check_repo(self.repo_files(base_site())), [])
+
+    def test_missing_docs_json(self):
+        files = base_site()
+        del files["docs.json"]
+        self.assertOne(files, "docs.json")
+
+    def test_invalid_docs_json(self):
+        self.assertOne(self.with_docs_json("{not json"), "docs.json")
+
+    def test_nav_page_without_file(self):
+        data = json.loads(docs_json())
+        data["navigation"]["groups"][0]["pages"].append("docs/user/nope")
+        self.assertOne(self.with_docs_json(json.dumps(data)), "docs/user/nope")
+
+    def test_nav_page_unpublished(self):
+        files = base_site()
+        files["docs/other/b.md"] = "b\n"
+        data = json.loads(docs_json())
+        data["navigation"]["groups"][0]["pages"].append("docs/other/b")
+        files["docs.json"] = json.dumps(data)
+        self.assertOne(files, "docs/other/b")
+
+    def test_duplicate_nav_page(self):
+        data = json.loads(docs_json())
+        data["navigation"]["groups"][0]["pages"].append("docs/user/a")
+        self.assertOne(self.with_docs_json(json.dumps(data)), "docs/user/a", "twice")
+
+    def test_import_missing_file(self):
+        files = base_site()
+        files["docs/user/b.mdx"] = 'import Y from "/openspec/nope.md";\n'
+        self.assertOne(files, "docs/user/b.mdx", "/openspec/nope.md")
+
+    def test_wrapper_import_mismatch(self):
+        files = base_site()
+        files["openspec/specs/y/spec.md"] = "y\n"
+        files["docs/dev/specs/x.mdx"] = 'import Y from "/openspec/specs/y/spec.md";\n'
+        self.assertOne(files, "docs/dev/specs/x.mdx", "/openspec/specs/x/spec.md")
+
+    def test_wrapper_without_import(self):
+        files = base_site()
+        files["docs/dev/specs/x.mdx"] = "no import\n"
+        self.assertOne(files, "docs/dev/specs/x.mdx")
+
+    def test_relative_import(self):
+        files = base_site()
+        files["docs/dev/specs/x.mdx"] = 'import X from "./x.md";\n'
+        files["docs/dev/specs/x.md"] = "x\n"
+        lines = self.findings(files)
+        self.assertEqual(len(lines), 2, lines)
+        self.assertTrue(any("root-relative" in line for line in lines), lines)
+
+    def test_wrapper_not_in_nav(self):
+        files = base_site()
+        files["docs/dev/specs/z.mdx"] = 'import Z from "/openspec/specs/z/spec.md";\n'
+        files["openspec/specs/z/spec.md"] = "z\n"
+        self.assertOne(files, "docs/dev/specs/z.mdx", "navigation")
+
+    def test_logo_unpublished(self):
+        files = base_site()
+        files["docs.json"] = docs_json(logo="docs/missing.png")
+        self.assertOne(files, "logo")
+
+    def test_favicon_unpublished(self):
+        files = base_site()
+        files["docs.json"] = docs_json(favicon="/docs/missing.png")
+        self.assertOne(files, "favicon")
+
+    def test_logo_object_light_dark(self):
+        both = {"light": "docs/assets/veles-icon.png", "dark": "/docs/assets/veles-icon.png"}
+        files = base_site()
+        files["docs.json"] = docs_json(logo=both)
+        self.assertEqual(check_repo(self.repo_files(files)), [])
+        files["docs.json"] = docs_json(logo=dict(both, dark="docs/missing.png"))
+        self.assertOne(files, "logo.dark")
+
+    def test_missing_mintignore(self):
+        files = base_site()
+        del files[".mintignore"]
+        root = self.repo_files(files)
+        found = check_repo(root)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].path, ".mintignore")
+        self.assertIn("is missing", found[0].message)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = main(["--root", root])
+        self.assertEqual(code, 1)
+        self.assertEqual(len(out.getvalue().splitlines()), 1)
+
+    def test_mintignore_bad_form(self):
+        files = base_site()
+        files[".mintignore"] = "/*\ndocs/**\n"
+        lines = self.findings(files)
+        self.assertTrue(any(l.startswith("error .mintignore:2: ") for l in lines), lines)
+
+    def test_mintignore_first_line_not_root(self):
+        files = base_site()
+        files[".mintignore"] = "# comment\n!/docs/\n"
+        lines = self.findings(files)
+        self.assertTrue(any(l.startswith("error .mintignore:2: ") for l in lines), lines)
+
+    def test_mintignore_crlf_and_trailing_space(self):
+        files = base_site()
+        files[".mintignore"] = MINTIGNORE.replace("\n", " \r\n")
+        self.assertEqual(check_repo(self.repo_files(files)), [])
+
+    def test_nav_walks_nested_groups_and_product_pages(self):
+        navigation = {
+            "products": [
+                {"product": "P", "icon": "i", "pages": ["p/one"]},
+                {
+                    "group": "G",
+                    "pages": ["g/two", {"group": "Inner", "pages": ["g/three"]}],
+                },
+            ]
+        }
+        self.assertEqual(nav_pages(navigation), ["p/one", "g/two", "g/three"])
 
 
 if __name__ == "__main__":
