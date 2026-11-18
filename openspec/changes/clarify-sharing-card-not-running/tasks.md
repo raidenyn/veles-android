@@ -6,8 +6,8 @@
 
 ## 2. Card and documentation
 
-- [ ] 2.1 Change `SharingCard.kt` to render one `Text` per id returned by `sharingCardLines(enabled, state)`, replacing the inline `if` and `when`; leave the buttons, the `start` lambda and the `active` logic unchanged.
-- [ ] 2.2 Add the exact sentence from the design's Docs decision to `docs/otp-06-transport.md` after "reopen Home and retry."
+- [x] 2.1 Change `SharingCard.kt` to render one `Text` per id returned by `sharingCardLines(enabled, state)`, replacing the inline `if` and `when`; leave the buttons, the `start` lambda and the `active` logic unchanged.
+- [x] 2.2 Add the exact sentence from the design's Docs decision to `docs/otp-06-transport.md` after "reopen Home and retry."
 
 ## 3. Verification
 

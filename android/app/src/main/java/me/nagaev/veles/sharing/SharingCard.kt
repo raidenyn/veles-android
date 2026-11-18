@@ -50,20 +50,7 @@ internal fun SharingCard() {
     Card(Modifier.fillMaxWidth().padding(16.dp).testTag(TestTags.SHARING_CARD)) {
         Column(Modifier.padding(16.dp)) {
             Text(stringResource(R.string.sharing_title))
-            if (enabled && !active) Text(stringResource(R.string.sharing_enabled_unavailable))
-            Text(
-                stringResource(
-                    when (state) {
-                        SharingAvailability.Disabled -> R.string.sharing_disabled
-                        SharingAvailability.Starting -> R.string.sharing_starting
-                        SharingAvailability.Advertising -> R.string.sharing_advertising
-                        SharingAvailability.Unsupported -> R.string.sharing_unsupported
-                        SharingAvailability.PermissionRequired -> R.string.sharing_permission
-                        SharingAvailability.BluetoothOff -> R.string.sharing_bluetooth_off
-                        SharingAvailability.Failed -> R.string.sharing_failed
-                    },
-                ),
-            )
+            sharingCardLines(enabled, state).forEach { Text(stringResource(it)) }
             Button(onClick = {
                 if (active) {
                     context.startService(Intent(context, SharingService::class.java).setAction(SharingService.STOP))
