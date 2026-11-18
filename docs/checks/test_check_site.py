@@ -200,8 +200,7 @@ class StructureTests(unittest.TestCase):
 
     def test_wrapper_import_mismatch(self):
         files = base_site()
-        files["openspec/specs/y/spec.md"] = "y\n"
-        files["docs/dev/specs/x.mdx"] = 'import Y from "/openspec/specs/y/spec.md";\n'
+        files["docs/dev/specs/x.mdx"] = 'import Y from "/docs/user/a.md";\n'
         self.assertOne(files, "docs/dev/specs/x.mdx", "/openspec/specs/x/spec.md")
 
     def test_wrapper_without_import(self):
@@ -386,6 +385,56 @@ class HazardTests(unittest.TestCase):
             lines,
             ["error openspec/specs/x/spec.md:2: HTML comment breaks the MDX build"],
         )
+
+
+class OutputTests(unittest.TestCase):
+    def repo(self, files):
+        root = make_repo(files)
+        self.addCleanup(shutil.rmtree, root)
+        return root
+
+    def unwrapped(self):
+        files = base_site()
+        files["openspec/specs/z/spec.md"] = "z\n"
+        return files
+
+    def test_missing_wrapper_is_warning(self):
+        findings = check_repo(self.repo(self.unwrapped()))
+        self.assertEqual(len(findings), 1, findings)
+        self.assertEqual(findings[0].severity, "warning")
+        self.assertEqual(findings[0].path, "docs/dev/specs/z.mdx")
+        self.assertIn('capability "z" has no wrapper page', findings[0].message)
+
+    def test_all_wrapped_no_warning(self):
+        self.assertEqual(check_repo(self.repo(base_site())), [])
+
+    def test_main_warnings_only_exits_zero(self):
+        root = self.repo(self.unwrapped())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = main(["--root", root])
+        self.assertEqual(code, 0)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith("warning "), lines)
+
+    def test_main_error_exits_nonzero(self):
+        files = base_site()
+        files["docs.json"] = docs_json(
+            navigation={
+                "groups": [
+                    {
+                        "group": "G",
+                        "pages": ["docs/user/a", "docs/user/a", "docs/dev/specs/x"],
+                    }
+                ]
+            }
+        )
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = main(["--root", self.repo(files)])
+        self.assertEqual(code, 1)
+        self.assertIn("error docs.json", out.getvalue())
 
 
 if __name__ == "__main__":

@@ -354,13 +354,38 @@ def check_hazards(root, published):
     return findings
 
 
+SPEC_RE = re.compile(r"^openspec/specs/([^/]+)/spec\.md$")
+
+
+def check_wrapper_coverage(root, published):
+    """Warnings for published capability specs that have no tracked wrapper page."""
+    tracked = set(_split_z(_git(root, "ls-files", "-z")))
+    findings = []
+    for path in published:
+        match = SPEC_RE.match(path)
+        if match and "docs/dev/specs/%s.mdx" % match.group(1) not in tracked:
+            findings.append(
+                Finding(
+                    "warning",
+                    "docs/dev/specs/%s.mdx" % match.group(1),
+                    'capability "%s" has no wrapper page' % match.group(1),
+                )
+            )
+    return findings
+
+
 def check_repo(root):
     """All findings for the repository at ``root``."""
     findings = check_mintignore(root)
     if findings and findings[0].message == "is missing":
         return findings
     published = published_files(root)
-    return findings + check_structure(root, published) + check_hazards(root, published)
+    return (
+        findings
+        + check_structure(root, published)
+        + check_hazards(root, published)
+        + check_wrapper_coverage(root, published)
+    )
 
 
 def main(argv=None):
