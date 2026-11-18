@@ -55,34 +55,80 @@
         "groups": [
           {
             "group": "Start here",
-            "pages": []
+            "pages": [
+              "docs/dev/index",
+              "docs/dev/architecture",
+              "docs/dev/build",
+              "docs/dev/contributing"
+            ]
           },
           {
             "group": "Engineering reference",
-            "pages": []
+            "pages": [
+              "docs/ci",
+              "docs/releasing",
+              "docs/reproducible-builds",
+              "docs/superspec-workflow",
+              "docs/decisions/2026-11-08-self-signed-completion-identity",
+              "docs/decisions/2026-11-09-self-signed-macos-acceptance",
+              "docs/rfcs/2026-08-21-otp-external-devices"
+            ]
           },
           {
             "group": "Specifications",
             "pages": [
               {
                 "group": "Android app",
-                "pages": []
+                "pages": [
+                  "docs/dev/specs/android-standalone-build",
+                  "docs/dev/specs/ble-sharing-availability",
+                  "docs/dev/specs/sharing-card-copy"
+                ]
               },
               {
                 "group": "Pairing and trust",
-                "pages": []
+                "pages": [
+                  "docs/dev/specs/spake2-enrollment-exchange",
+                  "docs/dev/specs/pairing-window-admission",
+                  "docs/dev/specs/protected-record-session",
+                  "docs/dev/specs/reconnect-authentication",
+                  "docs/dev/specs/peer-revocation",
+                  "docs/dev/specs/mutual-peer-removal",
+                  "docs/dev/specs/trust-activation-recovery",
+                  "docs/dev/specs/trust-store-failure-recovery",
+                  "docs/dev/specs/synthetic-session-probe",
+                  "docs/dev/specs/pairing-debug-harness"
+                ]
               },
               {
                 "group": "Gate B testing",
-                "pages": []
+                "pages": [
+                  "docs/dev/specs/gate-b-evidence-matrix",
+                  "docs/dev/specs/gate-b-history-fixture",
+                  "docs/dev/specs/gate-b-journey-harness"
+                ]
               },
               {
                 "group": "Build, CI and release",
-                "pages": []
+                "pages": [
+                  "docs/dev/specs/ci-pipeline",
+                  "docs/dev/specs/component-versioning",
+                  "docs/dev/specs/release-publishing",
+                  "docs/dev/specs/pr-last-green-selection",
+                  "docs/dev/specs/commit-conventions"
+                ]
               },
               {
                 "group": "Contributor workflow",
-                "pages": []
+                "pages": [
+                  "docs/dev/specs/agent-guidance-layout",
+                  "docs/dev/specs/openspec-skills-delivery",
+                  "docs/dev/specs/superspec-review-gate",
+                  "docs/dev/specs/superspec-closeout",
+                  "docs/dev/specs/superspec-tracker-intake",
+                  "docs/dev/specs/github-project-automation",
+                  "docs/dev/specs/real-device-testing"
+                ]
               }
             ]
           }
