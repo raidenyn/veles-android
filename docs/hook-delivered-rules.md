@@ -55,12 +55,13 @@ stale block.
 
 - A compaction re-arms delivery. A subagent compaction re-arms that subagent only; a main-context
   compaction re-arms every key of the session, so every context gets the rule again.
-- Stale credit, two cases, each lasting until the next compaction of that context:
+- Stale credit, two cases; each can last until the next compaction of that context:
   - *stale delivery*: the host fails, cancels or times out after the engine recorded a delivery, so
     the rule counts as delivered although the agent may not have seen it;
   - *stale pending denial*: the engine recorded a pending denial but the host never showed or applied
-    the deny (cancel, timeout, crash or error), so the next matching gate call confirms the entry and
-    passes, and later gates of that rule pass too.
+    the deny (cancel, timeout, crash or error). A later call that matches a recorded pending pattern
+    confirms the entry, so this rule no longer denies it or later gates (another matching rule still
+    can); a call matching only a different gate pattern is denied again while the entry is pending.
 - A passing retry therefore does not prove the rule was shown.
 
 ## Supported configuration
