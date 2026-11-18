@@ -149,9 +149,8 @@ gates:
 
 - **The block.** A generated block in the root `AGENTS.md`, between `<!-- hooked-rules:begin -->` and
   `<!-- hooked-rules:end -->`, under a `## Hook-delivered rules` heading. It holds one line per rule (`pointer`
-  text, then the file path) and one fixed sentence:
-
-  > *If your tool did not deliver a rule below, read its file yourself at the moment it names.*
+  text, then the file path) and nothing else. To keep the root file short there is no separate explanatory
+  sentence (owner's call): each `pointer` itself says when to read the rule file.
 
 - **Why there:**
   - In the supported configuration (section 8), every supported tool reads the root `AGENTS.md` natively, with no
@@ -161,7 +160,7 @@ gates:
   - `python3 -I scripts/agent_rules.py pointers --write` writes the block. The agent-file check fails if the block
     is stale.
   - Root `AGENTS.md` is 52 lines today, with a warning at 60 and a limit at 120. The pilot removes one `## Rules`
-    entry and adds the heading, the sentence and one pointer line, so the file stays below the warning.
+    entry and adds the heading, the two markers and one pointer line, so the file stays below the warning.
 - **Format rule kept on:** the commit-types pointer keeps the format rule itself always on ("every commit
   subject and PR title is a Conventional Commit `type(scope): description`"). Only the type guide is deferred.
 
@@ -383,8 +382,8 @@ The guide:
 - `revert` — undoes an earlier commit.
 - `chore` — rare; only when nothing above fits.
 
-A `!` or a `BREAKING CHANGE:` footer bumps the major version of the touched components whatever the type, as
-`scripts/AGENTS.md` and `cliff.toml` define.
+Use `!` or a `BREAKING CHANGE:` footer only with `feat` (owner's call): any `!` bumps the major version of the
+touched components, as `scripts/AGENTS.md` and `cliff.toml` define, and major bumps are reserved for features.
 
 A mixed change takes the type of its purpose, not of most of its files. For example, a user-visible feature with
 its tests and docs is `feat`, and new CI tooling with its docs is `ci`.
@@ -473,15 +472,17 @@ change.
 - **`.github/CODEOWNERS`** gains `/scripts/agent_rules.py` and `/scripts/opencode-hooked-rules/`. They are code
   that runs automatically in contributor sessions, the same reason the file already covers `/.claude/`,
   `/opencode.json` and `/.agents/`.
-- **`docs/AGENTS.md`** gains a "Hook-delivered rules" section covering:
-  - how to add a rule, with the grammar;
+- **`docs/AGENTS.md`** gains a short "Hook-delivered rules" section with only what an agent needs on every
+  checkout (owner's call): how to add a rule (location, naming, grammar pointer, the `pointers --write` step), the
+  supported configuration, and a link to `docs/hook-delivered-rules.md`. Its "Untrusted checkouts" note is
+  extended: the repository's hooks now run a script on every shell command.
+- **`docs/hook-delivered-rules.md`** (new, docs node) holds the feature documentation:
+  - the grammar and how to add a rule;
   - delivery, gates, pending and confirmed, and re-arm;
   - the supported configuration;
   - each degraded mode and what the agent sees in it;
   - the residual cases;
   - the verified state of each tool and version.
-
-  Its "Untrusted checkouts" note is extended: the repository's hooks now run a script on every shell command.
 
 ### 10. Testing
 

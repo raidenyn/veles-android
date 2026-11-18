@@ -83,13 +83,15 @@ only when it is needed, and again after a summary, in both Claude Code and OpenC
 - **New files:**
   - `scripts/agent_rules.py` and its tests in `scripts/tests/`;
   - `scripts/opencode-hooked-rules/`;
-  - `.agents/hooked-rules/repo-commit-types.md`.
+  - `.agents/hooked-rules/repo-commit-types.md`;
+  - `docs/hook-delivered-rules.md` (the feature documentation, kept out of the agent guidance files).
 - **Edited files:**
   - `.claude/settings.json` (hooks);
   - `opencode.json` (the second plugin entry);
   - the root `AGENTS.md` (the pointer block and the rules list);
-  - `docs/AGENTS.md`: a new hook-delivered rules section, and an untrusted-checkout warning that the repository's
-    hooks now run a script on every shell command;
+  - `docs/AGENTS.md`: a short hook-delivered rules section (how to add a rule, the supported configuration, a link
+    to the new guide), and an untrusted-checkout warning that the repository's hooks now run a script on every
+    shell command;
   - `scripts/AGENTS.md`: guidance-only changes are typed `docs`, no longer `docs`/`chore`;
   - `docs/checks/check_agent_files.py` and its tests;
   - `.github/components.json`, `.github/CODEOWNERS` and `scripts/tests/test_components.py`.

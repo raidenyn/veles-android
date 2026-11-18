@@ -29,8 +29,8 @@ bump rules change.
 
 **Bump and mixed changes.**
 
-- The guide MUST state that a `!` or a `BREAKING CHANGE:` footer bumps the major version of the touched
-  components, whatever the type.
+- The guide MUST state that `!` and a `BREAKING CHANGE:` footer are used only with `feat`, because any `!` bumps
+  the major version of the touched components and major bumps are reserved for features.
 - It MUST state that a mixed change takes the type of its purpose, not of most of its files.
 
 **Triggers.** The rule's gates MUST be `git commit`, `gh pr create` and `gh pr edit`. Its moments MUST be the
@@ -45,6 +45,10 @@ bump rules change.
 #### Scenario: CI tooling change
 - **WHEN** an agent reads the guide before committing a workflow change with its docs
 - **THEN** the guide directs it to `ci`
+
+#### Scenario: Breaking marker
+- **WHEN** an agent reads the guide before committing a breaking change
+- **THEN** the guide directs it to use `!` or a `BREAKING CHANGE:` footer only on a `feat` commit
 
 #### Scenario: User-visible feature with tests
 - **WHEN** an agent commits a new Android screen together with its tests and docs

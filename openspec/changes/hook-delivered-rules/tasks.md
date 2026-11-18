@@ -105,7 +105,7 @@ Each step below that changes a file the agent-file check inspects lands together
 - [x] 5.1 Create `.agents/hooked-rules/repo-commit-types.md`. It holds the format rule, the 11-type guide, the breaking-change and purpose rules, and the pilot skills, commands and gates. Add a test that compares the guide's type lines with the `TYPES` list of `scripts/commitlint.py` (one line per type).
 - [x] 5.2 Land in the same step as the moved-rule, pointer-freshness and hooked-rule-format invariants of 6.1 and their tests. Remove `.agents/rules/repo-conventional-commits.md`. Update the root `AGENTS.md`: drop the entry from the `## Rules` list, leaving eight `repo-*` rules, and generate the pointer block with `pointers --write`.
 - [x] 5.3 Update `scripts/AGENTS.md`: guidance-only changes are typed `docs`.
-- [x] 5.4 Add the "Hook-delivered rules" section to `docs/AGENTS.md`. It covers:
+- [x] 5.4 Add a short "Hook-delivered rules" section to `docs/AGENTS.md` (how to add a rule, the supported configuration, a link) and the feature documentation to the new `docs/hook-delivered-rules.md`. The latter covers:
   - adding a rule;
   - delivery, gates, pending entries and re-arm;
   - the supported configuration;

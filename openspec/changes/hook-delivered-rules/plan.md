@@ -35,7 +35,6 @@ list `tasks.md`.
 - **Pointer block markers:** `<!-- hooked-rules:begin -->` / `<!-- hooked-rules:end -->` under
   `## Hook-delivered rules` in the root `AGENTS.md`.
 - **Fixed texts:**
-  - fallback sentence: *"If your tool did not deliver a rule below, read its file yourself at the moment it names."*
   - failure notice: *"Rule hooks failed: read the hooked rules listed in AGENTS.md by hand at the moments they
     name."*
 - **Test-only switches** (environment variables):
@@ -185,7 +184,7 @@ Implements tasks 2.1–2.2.
 
   | Test | Assertion |
   |---|---|
-  | `test_pointer_block_render` | the block lists one `pointer — path` line per rule, in name order, plus the fixed sentence |
+  | `test_pointer_block_render` | the block lists one `pointer — path` line per rule, in name order, and nothing else |
   | `test_pointer_check_stale` | `--check` exits 1 after a pointer edit |
   | `test_pointer_check_missing` | `--check` exits 1 when the markers are absent |
   | `test_pointer_write_idempotent` | `--write` twice leaves the same text |
@@ -360,7 +359,7 @@ Implements tasks 3.4–3.8.
   | Test | Assertion |
   |---|---|
   | `test_malformed_event_plain` | invalid JSON in plain format returns the notice as a plain `context` response, with exit 0 |
-  | `test_malformed_event_claude` | invalid JSON in Claude format gives empty stdout, the notice on stderr and exit 0. Without the event name there is no model-visible channel, which the spec's "where a channel exists" allows; `docs/AGENTS.md` documents it |
+  | `test_malformed_event_claude` | invalid JSON in Claude format gives empty stdout, the notice on stderr and exit 0. Without the event name there is no model-visible channel, which the spec's "where a channel exists" allows; `docs/hook-delivered-rules.md` documents it |
   | `test_unreadable_rule` | an undecodable or non-UTF-8 rule file yields the notice and a pass (Review Focus 3) |
   | `test_corrupt_state` | a corrupt session file yields the notice and a pass |
   | `test_lock_timeout_passes` | `LockTimeout` yields the notice and a pass |
@@ -493,13 +492,15 @@ Implements tasks 4.2–4.3, with the allow-list invariant of task 6.1.
 Implements tasks 5.1–5.5 and the remaining task 6.1 invariants.
 
 **Files:**
+- Create: `docs/hook-delivered-rules.md` (the feature documentation; see the `docs/AGENTS.md` bullet below).
 - Create: `.agents/hooked-rules/repo-commit-types.md`, with the text of the `commit-conventions` spec "Commit and PR
   type guidance": the format line, 11 type lines, the breaking and purpose rules, and the frontmatter `skills`,
   `commands` and `gates` of design §7.
 - Delete: `.agents/rules/repo-conventional-commits.md`
 - Modify:
   - root `AGENTS.md`: drop the rule from `## Rules`, leaving eight, and add the pointer block via `pointers --write`;
-  - `docs/AGENTS.md`: the "Hook-delivered rules" section with the six topics of the spec, and the untrusted-checkout
+  - `docs/AGENTS.md`: a short "Hook-delivered rules" section (how to add a rule, supported configuration, link to
+    the new `docs/hook-delivered-rules.md` which holds the six topics of the spec), and the untrusted-checkout
     warning;
   - `scripts/AGENTS.md`: guidance-only changes are typed `docs`.
 - Modify: `docs/checks/check_agent_files.py`
@@ -534,7 +535,8 @@ Implements tasks 5.1–5.5 and the remaining task 6.1 invariants.
     `commitlint.TYPES.split("|")` with the same multiplicity, so each type appears exactly once.
 - [ ] **Step 2: Run both suites and see them fail.**
 - [ ] **Step 3: Write the rule file, delete the old rule, run `python3 -I scripts/agent_rules.py pointers --write`,
-  and edit the three `AGENTS.md` files.**
+  and edit the three `AGENTS.md` files; write `docs/hook-delivered-rules.md`.** Acceptance check by reading the rule:
+  it says `!` and a `BREAKING CHANGE:` footer are used only with `feat`.
 - [ ] **Step 4: Implement the checker changes.** Then run the checker tests, the engine tests and
   `python3 docs/checks/check_agent_files.py --root .`. Expected: all PASS, no errors.
 - [ ] **Step 5: Commit** with the message `docs(agents): deliver the commit-type guide as a hooked rule`.

@@ -39,8 +39,8 @@ the file.
 ### Requirement: Pointer block in the root AGENTS.md
 The root `AGENTS.md` SHALL carry a generated block between `<!-- hooked-rules:begin -->` and
 `<!-- hooked-rules:end -->`, under a `## Hook-delivered rules` heading. It MUST hold one line per hooked rule (its
-`pointer`, then its path) and a fixed sentence telling an agent whose tool did not deliver a rule to read its file
-at the moment it names.
+`pointer`, then its path) and nothing else. Each `pointer` MUST itself say when to read the rule's file (it names
+the moments in words), so the block needs no separate explanatory sentence.
 
 `python3 -I scripts/agent_rules.py pointers --write` MUST write the block, and `pointers --check` MUST fail when it
 is stale. The commit-types pointer MUST keep the Conventional Commits format rule itself always on.
@@ -228,16 +228,19 @@ calls of that rule in that context may pass without the guide.
 response, each with the entry's write id. The engine MUST remove an entry only if it still carries exactly that
 write id.
 
-**Documentation.** `docs/AGENTS.md` MUST gain a hook-delivered rules section. It MUST describe:
+**Documentation.**
 
-- adding a rule, with the grammar;
-- delivery, gates, pending entries and re-arm;
-- the supported configuration;
-- each degraded mode and what the agent sees in it;
-- the stale-credit and parallel-batch residuals;
-- the verified tools and versions.
-
-Its untrusted-checkout guidance MUST warn that the repository's hooks run a script on every shell command.
+- `docs/AGENTS.md` MUST gain a short hook-delivered rules section limited to what an agent needs on every
+  checkout: how to add a rule (location, naming, the grammar pointer and the `pointers --write` step), the
+  supported configuration, and a link to `docs/hook-delivered-rules.md`.
+- Its untrusted-checkout guidance MUST warn that the repository's hooks run a script on every shell command.
+- `docs/hook-delivered-rules.md` MUST describe:
+  - adding a rule, with the grammar;
+  - delivery, gates, pending entries and re-arm;
+  - the supported configuration;
+  - each degraded mode and what the agent sees in it;
+  - the stale-credit and parallel-batch residuals;
+  - the verified tools and versions.
 
 #### Scenario: Corrupt state
 - **WHEN** the session file contains invalid JSON and the agent runs `git commit`
