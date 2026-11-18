@@ -11,12 +11,24 @@ only the ``\\"`` and ``\\\\`` escapes are allowed, extended with a double-quoted
 
 import argparse
 import collections
+import contextlib
 import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
+import time
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+try:
+    import msvcrt
+except ImportError:  # POSIX
+    msvcrt = None
 
 RULES_DIR = ".agents/hooked-rules"
 AGENTS_FILE = "AGENTS.md"
@@ -548,6 +560,339 @@ def checkout_for(cwd):
     if not os.path.isdir(os.path.join(toplevel, *RULES_DIR.split("/"))):
         return None
     return toplevel, common_dir
+
+
+STATE_VERSION = 1
+KEEP_SESSIONS = 50
+LOCK_RETRY_SECONDS = 0.1
+ENTRY_STATES = ("delivered", "pending")
+
+
+class LockTimeout(Exception):
+    """A lock that stayed busy for every bounded, non-blocking try."""
+
+
+class FileLock(object):
+    """An exclusive lock on one file, taken by non-blocking tries separated by ``sleep``.
+
+    ``attempts`` tries are made; ``sleep(LOCK_RETRY_SECONDS)`` runs between two tries, never after the
+    last one, and ``LockTimeout`` follows the last failed try. POSIX uses ``fcntl.flock``; Windows uses
+    ``msvcrt.locking`` on the first byte (a lock past the end of an empty file is allowed there).
+    """
+
+    def __init__(self, path, sleep=time.sleep, attempts=50):
+        self.path = path
+        self.sleep = sleep
+        self.attempts = max(1, attempts)
+        self.fd = None
+
+    def _try(self):
+        """The open descriptor when the lock is taken, None when it is busy or the file was replaced."""
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            if fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError:
+            os.close(fd)
+            return None
+        if fcntl is not None:
+            # A pruner may have unlinked the file between our open and our lock; a lock on an
+            # unlinked file excludes nobody, so take it again on the file that is now there.
+            try:
+                same = os.path.samestat(os.fstat(fd), os.stat(self.path))
+            except OSError:
+                same = False
+            if not same:
+                os.close(fd)
+                return None
+        return fd
+
+    def __enter__(self):
+        for attempt in range(self.attempts):
+            if attempt:
+                self.sleep(LOCK_RETRY_SECONDS)
+            fd = self._try()
+            if fd is not None:
+                self.fd = fd
+                return self
+        raise LockTimeout(self.path)
+
+    def __exit__(self, *exc_info):
+        fd, self.fd = self.fd, None
+        if fd is None:
+            return False
+        try:
+            if fcntl is None:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)  # closing also drops a flock
+        return False
+
+
+def _atomic_write(path, text):
+    """Write ``text`` to ``path`` through a temporary file in the same directory and ``os.replace``."""
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix="tmp-", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def _read_json(path):
+    """The decoded JSON object in ``path``, or None when it is missing, unreadable or not an object."""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _count(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+class SessionState(object):
+    """One session's delivery state, read and written only inside ``Store.transaction``.
+
+    ``entries`` maps ``(key, rule identity)`` to ``{"state", "patterns", "generation", "write_id"}``.
+    A key is ``session`` for the main context and ``"session/agent"`` for a subagent; each key has its
+    own generation, 0 until bumped.
+    """
+
+    def __init__(self, store, session, generations, entries):
+        self.store = store
+        self.session = session
+        self.generations = generations
+        self.entries = entries
+
+    @classmethod
+    def load(cls, store, session, data):
+        generations = {}
+        entries = {}
+        if data is not None:
+            raw = data.get("generations")
+            for key, value in (raw.items() if isinstance(raw, dict) else ()):
+                if _count(value) is not None:
+                    generations[key] = value
+            for item in (data.get("entries") if isinstance(data.get("entries"), list) else ()):
+                parsed = cls._entry(item)
+                if parsed is not None:
+                    entries[parsed[0]] = parsed[1]
+        return cls(store, session, generations, entries)
+
+    @staticmethod
+    def _entry(item):
+        if not isinstance(item, dict):
+            return None
+        key, name, digest = item.get("key"), item.get("name"), item.get("sha256")
+        patterns = item.get("patterns")
+        if not (isinstance(key, str) and isinstance(name, str) and isinstance(digest, str)):
+            return None
+        if item.get("state") not in ENTRY_STATES or not isinstance(patterns, list):
+            return None
+        if not all(isinstance(pattern, str) for pattern in patterns):
+            return None
+        generation, write_id = _count(item.get("generation")), _count(item.get("write_id"))
+        if generation is None or write_id is None:
+            return None
+        return (key, (name, digest)), {
+            "state": item["state"],
+            "patterns": set(patterns),
+            "generation": generation,
+            "write_id": write_id,
+        }
+
+    def dump(self):
+        entries = []
+        for (key, (name, digest)), entry in sorted(self.entries.items()):
+            entries.append({
+                "key": key,
+                "name": name,
+                "sha256": digest,
+                "state": entry["state"],
+                "patterns": sorted(entry["patterns"]),
+                "generation": entry["generation"],
+                "write_id": entry["write_id"],
+            })
+        return json.dumps({
+            "version": STATE_VERSION,
+            "session": self.session,
+            "generations": self.generations,
+            "entries": entries,
+        }, sort_keys=True, indent=1) + "\n"
+
+    def generation(self, key):
+        return self.generations.get(key, 0)
+
+    def bump(self, key):
+        """Void every entry of ``key`` and no other key."""
+        self.generations[key] = self.generation(key) + 1
+
+    def bump_all(self):
+        """Bump the main key and every subagent key this session has used."""
+        keys = set(self.generations) | set(entry_key for entry_key, _ in self.entries)
+        keys.add(self.session)
+        for key in keys:
+            self.bump(key)
+
+    def put(self, key, identity, state, patterns):
+        """Record ``state`` for ``(key, identity)`` at the key's generation, with a fresh write id."""
+        if state not in ENTRY_STATES:
+            raise ValueError("unknown entry state %r" % (state,))
+        self.entries[(key, tuple(identity))] = {
+            "state": state,
+            "patterns": set(patterns),
+            "generation": self.generation(key),
+            "write_id": self.store.next_write_id(),
+        }
+
+
+class Store(object):
+    """The per-session JSON state under ``state_dir``, with a store-level index.
+
+    Files: ``<stem>.json`` and ``<stem>.lock`` per session (``stem`` is the sha256 of the session id, so no
+    session id can name another path), and ``index.json`` / ``index.lock``. The index holds the write-id
+    counter and a recency counter that orders the sessions for pruning; no clock is read.
+
+    Lock order: a session lock may be held while taking the index lock, never the other way round. The
+    index lock is only ever held for one short read-modify-write.
+    """
+
+    def __init__(self, state_dir, sleep=time.sleep, lock_attempts=50):
+        self.state_dir = state_dir
+        self.sleep = sleep
+        self.lock_attempts = lock_attempts
+
+    @staticmethod
+    def _stem(session):
+        return hashlib.sha256(session.encode("utf-8", "replace")).hexdigest()
+
+    def session_path(self, session):
+        return os.path.join(self.state_dir, self._stem(session) + ".json")
+
+    def session_lock_path(self, session):
+        return os.path.join(self.state_dir, self._stem(session) + ".lock")
+
+    def index_path(self):
+        return os.path.join(self.state_dir, "index.json")
+
+    def index_lock_path(self):
+        return os.path.join(self.state_dir, "index.lock")
+
+    def _lock(self, path):
+        return FileLock(path, self.sleep, self.lock_attempts)
+
+    def victim_lock(self, stem):
+        """A lock on a prune victim (named by its file stem) that fails at once when busy."""
+        return FileLock(os.path.join(self.state_dir, stem + ".lock"), self.sleep, 1)
+
+    def _read_index(self):
+        data = _read_json(self.index_path()) or {}
+        sessions = {}
+        raw = data.get("sessions")
+        for stem, order in (raw.items() if isinstance(raw, dict) else ()):
+            if _count(order) is not None:
+                sessions[stem] = order
+        return {
+            "write_id": _count(data.get("write_id")) or 0,
+            "order": _count(data.get("order")) or 0,
+            "sessions": sessions,
+        }
+
+    def _write_index(self, index):
+        _atomic_write(self.index_path(), json.dumps(index, sort_keys=True, indent=1) + "\n")
+
+    def next_write_id(self):
+        """The next write id; the counter lives in the index and is never reused."""
+        with self._lock(self.index_lock_path()):
+            index = self._read_index()
+            index["write_id"] += 1
+            self._write_index(index)
+            return index["write_id"]
+
+    def _touch(self, session):
+        with self._lock(self.index_lock_path()):
+            index = self._read_index()
+            index["order"] += 1
+            index["sessions"][self._stem(session)] = index["order"]
+            self._write_index(index)
+
+    @contextlib.contextmanager
+    def transaction(self, session):
+        """Hold the session lock, yield its ``SessionState`` and write it atomically when it changed.
+
+        A body that raises writes nothing. ``LockTimeout`` is raised, with the body not run, when the lock
+        stays busy for ``lock_attempts`` tries.
+        """
+        with self._lock(self.session_lock_path(session)):
+            data = _read_json(self.session_path(session))
+            state = SessionState.load(self, session, data)
+            before = state.dump()
+            yield state
+            after = state.dump()
+            if after != before:
+                _atomic_write(self.session_path(session), after)
+                self._touch(session)
+
+    def prune(self, current_session):
+        """Keep the newest 50 sessions by index order; never the current one; skip busy ones.
+
+        Call it after the session transaction has released its lock. The index lock is released before
+        any victim lock is tried, and a victim lock is tried once, without waiting.
+        """
+        current = self._stem(current_session)
+        with self._lock(self.index_lock_path()):
+            sessions = dict(self._read_index()["sessions"])
+        surplus = len(sessions) - KEEP_SESSIONS
+        if surplus <= 0:
+            return
+        oldest_first = sorted(sessions, key=lambda stem: sessions[stem])
+        for stem in [stem for stem in oldest_first if stem != current][:surplus]:
+            self._prune_one(stem, sessions[stem])
+
+    def _prune_one(self, stem, seen_order):
+        try:
+            return self._prune_locked(stem, seen_order, self.victim_lock(stem))
+        except (LockTimeout, OSError):
+            return None
+
+    def _prune_locked(self, stem, seen_order, lock):
+        with lock:
+            # With the victim's lock held, nobody can write it, so one look at the index is enough
+            # to know the order we planned from is still current.
+            with self._lock(self.index_lock_path()):
+                if self._read_index()["sessions"].get(stem) != seen_order:
+                    return
+            try:
+                os.unlink(os.path.join(self.state_dir, stem + ".json"))
+            except FileNotFoundError:
+                pass
+            with self._lock(self.index_lock_path()):
+                index = self._read_index()
+                index["sessions"].pop(stem, None)
+                self._write_index(index)
+            if fcntl is not None:
+                # POSIX only: Windows cannot delete an open file. FileLock re-checks the inode.
+                try:
+                    os.unlink(lock.path)
+                except OSError:
+                    pass
 
 
 def _default_root():

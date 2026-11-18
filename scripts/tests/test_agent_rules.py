@@ -14,7 +14,10 @@ from agent_rules import (  # noqa: E402
     Decision,
     Event,
     EventError,
+    FileLock,
+    LockTimeout,
     RuleError,
+    Store,
     checkout_for,
     load_rules,
     parse_event,
@@ -682,3 +685,256 @@ class CheckoutForTest(IsolatedGitTest):
         self.assertIsNone(checkout_for(os.path.join(self.tmp, "does-not-exist")))
         self.assertIsNone(checkout_for(""))
         self.assertIsNone(checkout_for(None))
+
+
+IDENTITY_A = ("repo-commit-types.md", "a" * 64)
+IDENTITY_B = ("repo-commit-types.md", "b" * 64)
+
+
+def no_sleep(seconds):
+    return None
+
+
+class StoreTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="veles-agent-store-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.state_dir = os.path.join(self.tmp, "agent-rules")
+        self.store = self.make_store()
+
+    def make_store(self, **overrides):
+        options = {"sleep": no_sleep, "lock_attempts": 3}
+        options.update(overrides)
+        return Store(self.state_dir, **options)
+
+    def deliver(self, session, identity=IDENTITY_A, key=None, patterns=("git commit",)):
+        with self.store.transaction(session) as state:
+            state.put(key or session, identity, "delivered", set(patterns))
+
+    def entries_of(self, session):
+        with self.store.transaction(session) as state:
+            return dict(state.entries)
+
+    def test_atomic_roundtrip(self):
+        with self.store.transaction("s1") as state:
+            self.assertEqual(state.entries, {})
+            state.put("s1", IDENTITY_A, "pending", {"b", "a"})
+            state.bump("s1/agent")
+        with self.store.transaction("s1") as state:
+            entry = state.entries[("s1", IDENTITY_A)]
+            self.assertEqual(entry["state"], "pending")
+            self.assertEqual(entry["patterns"], {"a", "b"})
+            self.assertEqual(entry["generation"], 0)
+            self.assertIsInstance(entry["write_id"], int)
+            self.assertEqual(state.generation("s1/agent"), 1)
+        leftovers = [n for n in os.listdir(self.state_dir) if n.endswith(".tmp") or n.startswith("tmp")]
+        self.assertEqual(leftovers, [])
+        with open(self.store.session_path("s1"), encoding="utf-8") as handle:
+            stored = json.load(handle)
+        self.assertEqual(stored["entries"][0]["patterns"], ["a", "b"])
+
+    def test_entry_records_generation_of_its_key(self):
+        with self.store.transaction("s1") as state:
+            state.bump("s1")
+            state.bump("s1")
+            state.put("s1", IDENTITY_A, "delivered", set())
+            state.put("s1/a", IDENTITY_A, "delivered", set())
+        entries = self.entries_of("s1")
+        self.assertEqual(entries[("s1", IDENTITY_A)]["generation"], 2)
+        self.assertEqual(entries[("s1/a", IDENTITY_A)]["generation"], 0)
+
+    def test_failed_transaction_writes_nothing(self):
+        with self.assertRaises(RuntimeError):
+            with self.store.transaction("s1") as state:
+                state.put("s1", IDENTITY_A, "delivered", set())
+                raise RuntimeError("boom")
+        self.assertFalse(os.path.exists(self.store.session_path("s1")))
+        self.assertEqual(self.entries_of("s1"), {})
+
+    def test_unchanged_transaction_does_not_write(self):
+        with self.store.transaction("s1"):
+            pass
+        self.assertFalse(os.path.exists(self.store.session_path("s1")))
+
+    def test_corrupt_session_file_is_empty_state(self):
+        self.deliver("s1")
+        with open(self.store.session_path("s1"), "w", encoding="utf-8") as handle:
+            handle.write("{not json")
+        self.assertEqual(self.entries_of("s1"), {})
+        with open(self.store.session_path("s1"), "w", encoding="utf-8") as handle:
+            json.dump({"entries": [{"key": 1}], "generations": {"s1": "x"}}, handle)
+        with self.store.transaction("s1") as state:
+            self.assertEqual(state.entries, {})
+            self.assertEqual(state.generation("s1"), 0)
+
+    def test_write_ids_monotonic(self):
+        seen = [self.store.next_write_id()]
+        for index in range(55):
+            self.deliver("s%02d" % index)
+            seen.append(self.store.next_write_id())
+        self.store.prune("s54")
+        seen.append(self.store.next_write_id())
+        self.deliver("s00")
+        seen.append(self.store.next_write_id())
+        self.assertEqual(seen, sorted(set(seen)))
+        ids = [e["write_id"] for e in self.entries_of("s00").values()]
+        self.assertGreater(min(ids), seen[-3])
+
+    def test_write_ids_survive_a_new_store_object(self):
+        first = self.store.next_write_id()
+        self.assertGreater(self.make_store().next_write_id(), first)
+
+    def test_lock_contention(self):
+        sleeps = []
+        store = self.make_store(sleep=sleeps.append, lock_attempts=4)
+        with FileLock(store.session_lock_path("s1"), no_sleep, 1):
+            with self.assertRaises(LockTimeout):
+                with store.transaction("s1"):
+                    self.fail("the body must not run without the lock")
+        self.assertEqual(len(sleeps), 3)  # sleeps between tries, none after the last
+        with store.transaction("s1"):
+            pass  # released again
+
+    def test_lock_is_per_session(self):
+        with FileLock(self.store.session_lock_path("s1"), no_sleep, 1):
+            self.deliver("s2")
+
+    def test_lock_released_after_body_error(self):
+        with self.assertRaises(RuntimeError):
+            with self.store.transaction("s1"):
+                raise RuntimeError("boom")
+        self.deliver("s1")
+
+    def test_per_key_generation(self):
+        with self.store.transaction("s") as state:
+            self.assertEqual(state.generation("s"), 0)
+            state.bump("s/a")
+            self.assertEqual(state.generation("s/a"), 1)
+            self.assertEqual(state.generation("s"), 0)
+            self.assertEqual(state.generation("s/b"), 0)
+        with self.store.transaction("s") as state:
+            self.assertEqual(state.generation("s/a"), 1)
+            self.assertEqual(state.generation("s"), 0)
+
+    def test_bump_all_bumps_main_and_every_known_key(self):
+        with self.store.transaction("s") as state:
+            state.put("s/a", IDENTITY_A, "delivered", set())
+            state.bump("s/b")
+        with self.store.transaction("s") as state:
+            state.bump_all()
+        with self.store.transaction("s") as state:
+            self.assertEqual(state.generation("s"), 1)
+            self.assertEqual(state.generation("s/a"), 1)
+            self.assertEqual(state.generation("s/b"), 2)
+            self.assertEqual(state.generation("s/never-seen"), 0)
+
+    def test_prune_keeps_50(self):
+        for index in range(52):
+            self.deliver("s%02d" % index)
+        self.store.prune("s51")
+        for index in range(52):
+            exists = os.path.exists(self.store.session_path("s%02d" % index))
+            self.assertEqual(exists, index >= 2, "s%02d" % index)
+
+    def test_prune_order_is_by_counter_not_by_name_or_time(self):
+        for index in range(51):
+            self.deliver("s%02d" % index)
+        self.deliver("s00")  # newest write now, though its name sorts first
+        self.store.prune("s00")
+        self.assertTrue(os.path.exists(self.store.session_path("s00")))
+        self.assertFalse(os.path.exists(self.store.session_path("s01")))
+        self.assertTrue(os.path.exists(self.store.session_path("s02")))
+
+    def test_prune_skips_busy(self):
+        for index in range(52):
+            self.deliver("s%02d" % index)
+        with FileLock(self.store.session_lock_path("s00"), no_sleep, 1):
+            self.store.prune("s51")
+        self.assertTrue(os.path.exists(self.store.session_path("s00")))
+        self.assertFalse(os.path.exists(self.store.session_path("s01")))
+
+    def test_prune_never_current(self):
+        for index in range(52):
+            self.deliver("s%02d" % index)
+        self.store.prune("s00")  # the oldest session is the current one
+        self.assertTrue(os.path.exists(self.store.session_path("s00")))
+        self.assertFalse(os.path.exists(self.store.session_path("s01")))
+        self.assertFalse(os.path.exists(self.store.session_path("s02")))
+        self.assertTrue(os.path.exists(self.store.session_path("s03")))
+
+    def test_prune_holds_no_index_lock_while_locking_victims(self):
+        outer = self
+        probes = []
+
+        class Probing(Store):
+            def victim_lock(self, session):
+                try:
+                    with FileLock(self.index_lock_path(), no_sleep, 1):
+                        probes.append("free")
+                except LockTimeout:
+                    probes.append("held")
+                return Store.victim_lock(self, session)
+
+        for index in range(53):
+            self.deliver("s%02d" % index)
+        Probing(outer.state_dir, sleep=no_sleep, lock_attempts=3).prune("s52")
+        self.assertEqual(probes, ["free"] * 3)
+
+    def test_prune_does_nothing_at_or_below_the_limit(self):
+        for index in range(50):
+            self.deliver("s%02d" % index)
+        self.store.prune("s49")
+        for index in range(50):
+            self.assertTrue(os.path.exists(self.store.session_path("s%02d" % index)))
+
+    def test_pruned_session_restarts(self):
+        with self.store.transaction("old") as state:
+            state.bump("old")
+            state.put("old", IDENTITY_A, "delivered", set())
+        for index in range(50):
+            self.deliver("s%02d" % index)
+        self.store.prune("s49")
+        with self.store.transaction("old") as state:
+            self.assertEqual(state.entries, {})
+            self.assertEqual(state.generation("old"), 0)
+
+    def test_two_sessions_isolated(self):
+        self.deliver("one", IDENTITY_A)
+        self.deliver("two", IDENTITY_B)
+        self.assertEqual(list(self.entries_of("one")), [("one", IDENTITY_A)])
+        self.assertEqual(list(self.entries_of("two")), [("two", IDENTITY_B)])
+        with self.store.transaction("one") as state:
+            state.bump_all()
+        with self.store.transaction("two") as state:
+            self.assertEqual(state.generation("two"), 0)
+
+    def test_rule_identity_differs(self):
+        self.deliver("s1", IDENTITY_A)
+        entries = self.entries_of("s1")
+        self.assertIn(("s1", IDENTITY_A), entries)
+        self.assertNotIn(("s1", IDENTITY_B), entries)
+
+    def test_session_ids_with_path_characters_stay_inside_the_store(self):
+        self.deliver("../../escape/x")
+        self.assertEqual(os.path.dirname(self.store.session_path("../../escape/x")), self.state_dir)
+        self.assertEqual(len(self.entries_of("../../escape/x")), 1)
+        self.assertEqual(os.listdir(self.tmp), ["agent-rules"])
+
+
+class FileLockTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="veles-agent-lock-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.path = os.path.join(self.tmp, "x.lock")
+
+    def test_exclusive_and_reusable(self):
+        with FileLock(self.path, no_sleep, 1):
+            with self.assertRaises(LockTimeout):
+                FileLock(self.path, no_sleep, 1).__enter__()
+        with FileLock(self.path, no_sleep, 1):
+            pass
+
+    def test_creates_missing_directory(self):
+        nested = os.path.join(self.tmp, "a", "b", "x.lock")
+        with FileLock(nested, no_sleep, 1):
+            self.assertTrue(os.path.exists(nested))
