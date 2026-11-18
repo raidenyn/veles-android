@@ -10,3 +10,5 @@
 /docs/superspec-workflow.md   @raidenyn
 /openspec/config.yaml         @raidenyn
 /openspec/schemas/            @raidenyn
+/scripts/agent_rules.py       @raidenyn
+/scripts/opencode-hooked-rules/ @raidenyn

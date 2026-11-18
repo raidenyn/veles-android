@@ -68,6 +68,8 @@ CODEOWNER_PATTERNS = (
     "/docs/superspec-workflow.md",
     "/openspec/config.yaml",
     "/openspec/schemas/",
+    "/scripts/agent_rules.py",
+    "/scripts/opencode-hooked-rules/",
 )
 CODEOWNER_MCP_PATTERN = "/.mcp.json"
 MCP_JSON = ".mcp.json"
@@ -81,6 +83,19 @@ CODEOWNER_SAMPLE_PATHS = (
     ("/docs/superspec-workflow.md", "docs/superspec-workflow.md"),
     ("/openspec/config.yaml", "openspec/config.yaml"),
     ("/openspec/schemas/", "openspec/schemas/superspec/schema.yaml"),
+    ("/scripts/agent_rules.py", "scripts/agent_rules.py"),
+    ("/scripts/opencode-hooked-rules/", "scripts/opencode-hooked-rules/index.js"),
+)
+
+# The Claude Code hooks that deliver the hooked rules: event -> expected matcher (None: no
+# `matcher` key). Each event has exactly one entry holding exactly one command.
+CLAUDE_HOOK_COMMAND = 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/agent_rules.py" hook --format claude'
+CLAUDE_HOOK_TIMEOUT = 5
+CLAUDE_HOOKS = (
+    ("PreToolUse", "Bash"),
+    ("PostToolUse", "Bash|Skill|Read"),
+    ("UserPromptSubmit", None),
+    ("PreCompact", None),
 )
 
 PLUGIN_MENTION_FILES = (ROOT_AGENTS, "CONTRIBUTING.md")
@@ -1167,6 +1182,83 @@ def check_codeowners(root):
     return findings
 
 
+def _hook_findings(event, expected_matcher, entries):
+    """Findings for one event's entry list in `.claude/settings.json`."""
+    def error(message):
+        return [Finding("error", SETTINGS_JSON, "hook %s %s" % (event, message))]
+
+    if not isinstance(entries, list) or not entries:
+        return error("must be a non-empty list holding exactly one entry")
+    if len(entries) != 1:
+        return error(
+            "has %d entries; expected exactly one entry with exactly one command" % len(entries)
+        )
+    entry = entries[0]
+    if not isinstance(entry, dict):
+        return error("entry must be an object")
+    commands = entry.get("hooks")
+    if not isinstance(commands, list) or len(commands) != 1:
+        return error("must hold exactly one command in its entry")
+    command = commands[0]
+    if not isinstance(command, dict):
+        return error("command must be an object")
+
+    findings = []
+    if expected_matcher is None:
+        if "matcher" in entry:
+            findings.extend(
+                error("has matcher %r; expected none (no `matcher` key)" % (entry["matcher"],))
+            )
+    elif entry.get("matcher") != expected_matcher:
+        findings.extend(
+            error("has matcher %r; expected %r" % (entry.get("matcher"), expected_matcher))
+        )
+    if command.get("type") != "command":
+        findings.extend(error("has type %r; expected 'command'" % (command.get("type"),)))
+    if command.get("command") != CLAUDE_HOOK_COMMAND:
+        findings.extend(
+            error("has command %r; expected %r" % (command.get("command"), CLAUDE_HOOK_COMMAND))
+        )
+    timeout = command.get("timeout")
+    if "timeout" not in command:
+        findings.extend(error("has no timeout; expected %d" % CLAUDE_HOOK_TIMEOUT))
+    elif (
+        not isinstance(timeout, int) or isinstance(timeout, bool) or timeout != CLAUDE_HOOK_TIMEOUT
+    ):
+        findings.extend(error("has timeout %r; expected %d" % (timeout, CLAUDE_HOOK_TIMEOUT)))
+    return findings
+
+
+def check_claude_hooks(root):
+    """Check that `.claude/settings.json` wires the hooked-rule engine into Claude Code.
+
+    Each of the four events has exactly one entry with exactly one command, the engine's `hook`
+    subcommand, the expected matcher (or none) and a 5-second timeout. Whether the engine may
+    ever answer `allow` is a property of the engine, tested there, not here.
+    """
+    if os.path.islink(os.path.join(root, SETTINGS_JSON)):
+        return []  # `check_links` reports the symlink; a dangling target is not a second error
+    text = _read_text(root, SETTINGS_JSON)
+    if text is None:
+        return [Finding("error", SETTINGS_JSON, "is missing")]
+    try:
+        data = json.loads(text)
+    except ValueError as error:
+        return [Finding("error", SETTINGS_JSON, "is not valid JSON (%s)" % error)]
+    if not isinstance(data, dict):
+        return [Finding("error", SETTINGS_JSON, "must be a JSON object")]
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return [Finding("error", SETTINGS_JSON, "has no `hooks` block")]
+    findings = []
+    for event, matcher in CLAUDE_HOOKS:
+        if event not in hooks:
+            findings.append(Finding("error", SETTINGS_JSON, "hook %s is missing" % event))
+            continue
+        findings.extend(_hook_findings(event, matcher, hooks[event]))
+    return findings
+
+
 def check_plugin_mentions(root):
     """Check the `opencode-rules` mentions and that only `opencode.json` pins the range."""
     findings = []
@@ -1212,6 +1304,7 @@ def check_repo(root, platform=sys.platform):
     findings.extend(check_links(root, files, platform))
     findings.extend(check_opencode(root))
     findings.extend(check_codeowners(root))
+    findings.extend(check_claude_hooks(root))
     findings.extend(check_plugin_mentions(root))
     return findings
 
