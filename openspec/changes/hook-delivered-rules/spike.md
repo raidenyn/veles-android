@@ -14,7 +14,26 @@ sessions. Only this file is kept. The raw logs, the clone and the stubs were del
 | Node | 26.13.1 (only used for `node --check`; OpenCode loads the plugin itself) |
 | OpenSpec | 2.0.0 |
 
-Antigravity was not exercised here. The controller covers it separately (step 6, Antigravity only).
+## Antigravity (step 1.5, pointer-only)
+
+Antigravity is pointer-only and is not part of the ship gate, which requires behaviours 1–6 in Claude Code and
+OpenCode. It was observed through the orchestrator's Antigravity driver (model `gemini-3.8-flash`) in the real
+working tree, with a temporary stub pointer block in the root `AGENTS.md` and a stub rule under
+`.agents/hooked-rules/`, both reverted afterwards.
+
+| Probe | Result |
+|---|---|
+| Stub rule body visible before any trigger | Not visible (as required) |
+| Stub pointer block visible | Not visible |
+| Control: root `AGENTS.md` itself in context at start | Not in context |
+| Control: any `.agents/rules` content in context at start | Not in context |
+
+**Result: inconclusive.** The body being absent holds, but the control shows that this driver loads neither the
+root `AGENTS.md` nor the rules at session start, so the missing pointer is not evidence about Antigravity's own
+behaviour. This matches the earlier agent-guidance verification, which also recorded an inconclusive Antigravity
+driver run. Whether Antigravity reads the root `AGENTS.md` natively stays unverified; it is recorded as a blocker
+for the owner to accept, and no later task depends on it.
+
 
 ## Open item 1: Claude Code facts
 
