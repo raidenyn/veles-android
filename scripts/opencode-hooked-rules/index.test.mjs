@@ -11,7 +11,9 @@ import { fileURLToPath } from "node:url"
 
 import plugin, {
   ENGINE_PATH,
+  HANDLER_BUDGET_MS,
   KILL_ATTEMPTS,
+  MAX_STDOUT_BYTES,
   NOTICE,
   createHandlers,
   createPlugin,
@@ -137,7 +139,14 @@ async function* quietStream(signal) {
  * of stream factories `(signal) => asyncIterable`, one per `event.subscribe` call (later calls get a quiet
  * stream); `events` is shorthand for one stream that yields them and then waits for the abort.
  */
-function fakeCtx({ sessions = {}, events = [], streams = null, syntheticError = null, disposeFails = null } = {}) {
+function fakeCtx({
+  sessions = {},
+  events = [],
+  streams = null,
+  syntheticError = null,
+  syntheticNever = false,
+  disposeFails = null,
+} = {}) {
   const hooks = {}
   const queue = streams
     ? streams.slice()
@@ -176,6 +185,7 @@ function fakeCtx({ sessions = {}, events = [], streams = null, syntheticError = 
       synthetic: async (message) => {
         if (syntheticError) throw syntheticError
         ctx.synthetics.push(message)
+        if (syntheticNever) await new Promise(() => {}) // the host never answers
       },
     },
     event: {
@@ -201,11 +211,20 @@ function fakeSleep() {
 }
 
 /** Boot the real plugin against the fakes; returns everything a test needs. */
-async function boot({ script, sessions, events, streams, env = {}, syntheticError, disposeFails } = {}) {
+async function boot({
+  script,
+  sessions,
+  events,
+  streams,
+  env = {},
+  syntheticError,
+  syntheticNever,
+  disposeFails,
+} = {}) {
   const timers = fakeTimers()
   const spawn = fakeSpawn(script ?? { code: 0, stdout: "" })
   const sleep = fakeSleep()
-  const ctx = fakeCtx({ sessions, events, streams, syntheticError, disposeFails })
+  const ctx = fakeCtx({ sessions, events, streams, syntheticError, syntheticNever, disposeFails })
   const instance = createPlugin({
     spawn,
     setTimer: timers.setTimer,
@@ -349,6 +368,74 @@ test("runEngine: undecodable or misshapen output is null", async () => {
     )
     assert.equal(result, null, stdout)
   }
+})
+
+test("runEngine: a deny with empty or blank text is malformed (null)", async () => {
+  for (const text of ["", " ", "\n\t"]) {
+    const timers = fakeTimers()
+    const result = await runEngine(
+      { event: "tool-before", session: "s", cwd: DIR },
+      { spawn: fakeSpawn(answer("deny", text, [entry("a.md", 1)])), setTimer: timers.setTimer, clearTimer: timers.clearTimer },
+    )
+    assert.equal(result, null, JSON.stringify(text))
+  }
+})
+
+test("execute.before: a deny with empty text does not stop the call", async () => {
+  const { hooks } = await boot({ script: answer("deny", "", []) })
+  assert.equal(await hooks["execute.before"](shellBefore("git commit")), undefined)
+})
+
+test("runEngine: stdout over the cap is null and the child is killed", async () => {
+  const timers = fakeTimers()
+  const spawn = fakeSpawn({ code: 0, stdout: Buffer.alloc(MAX_STDOUT_BYTES + 1, 0x20) })
+  const result = await runEngine(
+    { event: "prompt", session: "s", cwd: DIR },
+    { spawn, setTimer: timers.setTimer, clearTimer: timers.clearTimer },
+  )
+  assert.equal(result, null)
+  assert.deepEqual(spawn.calls[0].child.signals, ["SIGKILL"])
+  assert.equal(MAX_STDOUT_BYTES, 1024 * 1024)
+})
+
+test("runEngine: stdout of exactly the cap still decodes", async () => {
+  const timers = fakeTimers()
+  const body = JSON.stringify({ decision: "deny", text: "x", entries: [] })
+  const stdout = Buffer.concat([Buffer.from(body), Buffer.alloc(MAX_STDOUT_BYTES - body.length, 0x20)])
+  assert.equal(stdout.length, MAX_STDOUT_BYTES)
+  const result = await runEngine(
+    { event: "prompt", session: "s", cwd: DIR },
+    { spawn: fakeSpawn({ code: 0, stdout }), setTimer: timers.setTimer, clearTimer: timers.clearTimer },
+  )
+  assert.deepEqual(result, { decision: "deny", text: "x", entries: [] })
+})
+
+test("runEngine: an abort signal ends a hanging run with null and kills the child", async () => {
+  const timers = fakeTimers()
+  const spawn = fakeSpawn({ hang: true })
+  const controller = new AbortController()
+  const pending = runEngine(
+    { event: "prompt", session: "s", cwd: DIR },
+    { spawn, setTimer: timers.setTimer, clearTimer: timers.clearTimer, signal: controller.signal },
+  )
+  await spawn.called(1)
+  controller.abort()
+  assert.equal(await pending, null)
+  assert.deepEqual(spawn.calls[0].child.signals, ["SIGKILL"])
+  assert.equal(timers.timers[0].cleared, true)
+})
+
+test("runEngine: an already aborted signal spawns nothing", async () => {
+  const timers = fakeTimers()
+  const spawn = fakeSpawn({ code: 0, stdout: "" })
+  const controller = new AbortController()
+  controller.abort()
+  const result = await runEngine(
+    { event: "prompt", session: "s", cwd: DIR },
+    { spawn, setTimer: timers.setTimer, clearTimer: timers.clearTimer, signal: controller.signal },
+  )
+  assert.equal(result, null)
+  assert.equal(spawn.calls.length, 0)
 })
 
 /** A valid deny response whose `text` holds an invalid UTF-8 byte (0xff). */
@@ -1091,12 +1178,11 @@ test("the disposer resolves when an in-flight compaction lookup never answers", 
     events: [{ type: "session.compaction.started", data: { sessionID: "ses_stuck" } }],
   })
   await flush()
-  const disposing = dispose()
-  await flush()
+  assert.equal(timers.live().length, 1, "the compaction's budget timer")
+  // The abort ends the stuck lookup's wait at once, so the disposer needs no timer to finish.
+  await dispose()
   assert.deepEqual(ctx.disposed, ["session.prompt", "execute.after", "execute.before"])
-  assert.equal(timers.live().length, 1)
-  timers.fire()
-  await disposing
+  assert.equal(timers.live().length, 0)
 })
 
 test("the disposer clears its bound when the loop ends first", async () => {
@@ -1268,6 +1354,308 @@ test("a prompt without text sends nothing", async () => {
   const { hooks, spawn } = await boot()
   await hooks["session.prompt"]({ sessionID: "s", prompt: { files: [] } })
   assert.equal(spawn.calls.length, 0)
+})
+
+// ---- bounded host awaits (one budget per hook call) ---------------------------------------------------------
+
+/** A promise with its resolve function, for host calls a test answers by hand. */
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+/** Whether `promise` has settled after the pending microtasks ran. */
+async function settled(promise) {
+  let done = false
+  promise.then(
+    () => {
+      done = true
+    },
+    () => {
+      done = true
+    },
+  )
+  await flush()
+  return done
+}
+
+/** The budget timer of the first hook call: it is set before any engine run of that call. */
+const budgetTimer = (timers) => timers.timers[0]
+
+test("the handler budget is 5 seconds, one timer per hook call, cleared when the call ends", async () => {
+  const { hooks, timers } = await boot({ script: answer("context", "T", [entry("a.md", 1)]) })
+  await hooks["execute.after"](shellAfter("x"))
+  assert.equal(HANDLER_BUDGET_MS, 5000)
+  assert.deepEqual(timers.timers.map((timer) => timer.ms), [HANDLER_BUDGET_MS, 5000], "the budget, then the run")
+  assert.equal(timers.live().length, 0)
+})
+
+test("budget: a session lookup that never settles lets execute.before proceed when the budget fires", async () => {
+  const { hooks, spawn, timers } = await boot({ sessions: { ses_a: NEVER } })
+  const pending = hooks["execute.before"](shellBefore("git commit"))
+  assert.equal(await settled(pending), false, "held only until the budget")
+  timers.fire()
+  assert.equal(await pending, undefined)
+  assert.equal(spawn.calls.length, 0)
+})
+
+test("budget: a session lookup that never settles gives execute.after the notice when the budget fires", async () => {
+  const { hooks, spawn, timers } = await boot({ sessions: { ses_a: NEVER } })
+  const input = shellAfter("openspec archive x")
+  const pending = hooks["execute.after"](input)
+  assert.equal(await settled(pending), false)
+  timers.fire()
+  await pending
+  assert.deepEqual(input.result.content, [{ type: "text", text: FAIL_NOTICE_TEXT }])
+  assert.equal(spawn.calls.length, 0)
+})
+
+test("budget: a session lookup that never settles lets the prompt proceed when the budget fires", async () => {
+  const { hooks, spawn, timers, ctx } = await boot({ sessions: { ses_a: NEVER } })
+  const pending = hooks["session.prompt"]({ sessionID: "ses_a", prompt: { text: "/x", files: [] } })
+  assert.equal(await settled(pending), false)
+  timers.fire()
+  await pending
+  assert.equal(spawn.calls.length, 0)
+  assert.deepEqual(ctx.synthetics.map((message) => message.text), [FAIL_NOTICE_TEXT])
+})
+
+test("budget: a late lookup answer is ignored for the call that gave up on it", async () => {
+  const { hooks, spawn, timers, ctx } = await boot()
+  const lookup = deferred()
+  ctx.session.get = () => lookup.promise
+  const pending = hooks["execute.before"](shellBefore("git commit"))
+  await flush()
+  timers.fire()
+  assert.equal(await pending, undefined)
+  lookup.resolve({ id: "ses_a" })
+  await flush()
+  assert.equal(spawn.calls.length, 0, "no engine run after the call already proceeded")
+})
+
+test("budget: a synthetic injection that never settles lets the prompt proceed and voids nothing", async () => {
+  const { hooks, spawn, timers, ctx } = await boot({
+    script: answer("context", "RULES", [entry("a.md", 3)]),
+    syntheticNever: true,
+  })
+  const pending = hooks["session.prompt"]({ sessionID: "ses_a", prompt: { text: "/x", files: [] } })
+  await spawn.called(1)
+  assert.equal(await settled(pending), false)
+  timers.fire()
+  await pending
+  assert.equal(ctx.synthetics.length, 1)
+  // The injection's outcome is unknown, so the credit stays (a documented stale delivery).
+  assert.deepEqual(spawn.events().map((event) => event.event), ["prompt"])
+})
+
+test("budget: the notice's synthetic injection never holds the prompt past the budget", async () => {
+  const { hooks, timers } = await boot({ script: { code: 1, stdout: "" }, syntheticNever: true })
+  const pending = hooks["session.prompt"]({ sessionID: "ses_a", prompt: { text: "/x", files: [] } })
+  assert.equal(await settled(pending), false)
+  timers.fire()
+  await pending
+})
+
+test("budget: voids share the remaining budget; a hanging void ends the call and no later void starts", async () => {
+  let spawned = 0
+  const { hooks, spawn, timers } = await boot({
+    // `call.event` is parsed only after spawn, so the script answers by call order: the voids hang.
+    script: () => {
+      spawned += 1
+      return spawned === 1 ? answer("context", "T", [entry("a.md", 7), entry("b.md", 9)]) : { hang: true }
+    },
+    env: { VELES_AGENT_RULES_FAIL_INJECTION: "1" },
+  })
+  const pending = hooks["execute.after"](shellAfter("openspec archive x"))
+  await spawn.called(2)
+  assert.equal(await settled(pending), false)
+  // One budget, the tool-after run and the first void's run: no fresh budget per void.
+  assert.equal(timers.timers.length, 3)
+  // Fire only the budget: the void's own 5-second engine timer is not what ends the call.
+  budgetTimer(timers).fn()
+  await pending
+  assert.deepEqual(spawn.events().map((event) => event.event), ["tool-after", "void"])
+  assert.deepEqual(spawn.calls[1].child.signals, ["SIGKILL"], "the abandoned void is killed")
+})
+
+test("budget: a hanging engine run is cut by the budget, not by a fresh timer per run", async () => {
+  const { hooks, spawn, timers } = await boot({ script: { hang: true } })
+  const pending = hooks["execute.before"](shellBefore("git commit"))
+  await spawn.called(1)
+  budgetTimer(timers).fn()
+  assert.equal(await pending, undefined)
+  assert.deepEqual(spawn.calls[0].child.signals, ["SIGKILL"])
+})
+
+// ---- the session's own checkout ------------------------------------------------------------------------------
+
+const located = (id, directory, extra = {}) => ({ id, ...extra, location: { directory } })
+
+test("cwd: the engine runs in the event session's directory, not the plugin's", async () => {
+  const { hooks, spawn } = await boot({
+    script: (call) =>
+      call.event && call.event.event === "void"
+        ? { code: 0, stdout: "" }
+        : answer("context", "T", [entry("a.md", 5)]),
+    sessions: { ses_a: located("ses_a", "/other/checkout") },
+    env: { VELES_AGENT_RULES_FAIL_INJECTION: "1" },
+  })
+  await hooks["execute.after"](shellAfter("openspec archive x"))
+  assert.deepEqual(spawn.events().map((event) => event.cwd), ["/other/checkout", "/other/checkout"])
+  assert.deepEqual(spawn.calls.map((call) => call.options.cwd), ["/other/checkout", "/other/checkout"])
+})
+
+test("cwd: a child session uses its own directory, else its root's", async () => {
+  const { hooks, spawn } = await boot({
+    sessions: {
+      ses_c1: located("ses_c1", "/child/tree", { parentID: "ses_r" }),
+      ses_c2: { id: "ses_c2", parentID: "ses_r" },
+      ses_r: located("ses_r", "/root/tree"),
+    },
+  })
+  await hooks["execute.before"](shellBefore("git status", "ses_c1"))
+  await hooks["execute.before"](shellBefore("git status", "ses_c2"))
+  assert.deepEqual(spawn.events().map((event) => event.cwd), ["/child/tree", "/root/tree"])
+})
+
+test("cwd: an absent or invalid session location falls back to the plugin directory", async () => {
+  for (const location of [undefined, null, "dir", {}, { directory: "" }, { directory: 5 }, { directory: "relative/dir" }, { directory: "/a\0b" }]) {
+    const sessions = { ses_a: location === undefined ? { id: "ses_a" } : { id: "ses_a", location } }
+    const { hooks, spawn } = await boot({ sessions })
+    await hooks["execute.before"](shellBefore("git status"))
+    assert.equal(spawn.events()[0].cwd, DIR, JSON.stringify(location))
+  }
+})
+
+test("cwd: the directory is cached with the verified key", async () => {
+  const { hooks, spawn, ctx } = await boot({ sessions: { ses_a: located("ses_a", "/first") } })
+  await hooks["execute.before"](shellBefore("git status"))
+  let gets = 0
+  ctx.session.get = async ({ sessionID }) => {
+    gets += 1
+    return located(sessionID, "/second")
+  }
+  await hooks["execute.before"](shellBefore("git status"))
+  assert.equal(gets, 0)
+  assert.deepEqual(spawn.events().map((event) => event.cwd), ["/first", "/first"])
+})
+
+test("cwd: a compaction runs in the compacting session's directory", async () => {
+  const { spawn } = await boot({
+    sessions: { ses_root: located("ses_root", "/compacting/tree") },
+    events: [{ type: "session.compaction.started", data: { sessionID: "ses_root" } }],
+  })
+  await spawn.called(1)
+  assert.deepEqual(spawn.events(), [{ event: "compacted", session: "ses_root", cwd: "/compacting/tree" }])
+})
+
+// ---- compaction ordering and the disposed watcher -------------------------------------------------------------
+
+/** Handlers over a scripted engine: each call is recorded and answered by hand through `answers`. */
+function scriptedHandlers(ctx, timers) {
+  const calls = []
+  const engine = (event) => {
+    const answer = deferred()
+    calls.push({ event, answer })
+    return answer.promise
+  }
+  const handlers = createHandlers(ctx, {
+    engine,
+    env: {},
+    sleep: async () => {},
+    setTimer: timers.setTimer,
+    clearTimer: timers.clearTimer,
+  })
+  return { handlers, calls }
+}
+
+test("ordering: an observed compaction is sent before the next gate of that session", async () => {
+  const timers = fakeTimers()
+  const ctx = fakeCtx()
+  const { handlers, calls } = scriptedHandlers(ctx, timers)
+  const signal = new AbortController().signal
+  const compaction = handlers.onEvent({ type: "session.compaction.started", data: { sessionID: "ses_a" } }, signal)
+  const gate = handlers.before(shellBefore("git commit"))
+  await flush()
+  assert.deepEqual(calls.map((call) => call.event.event), ["compacted"], "the gate waits for the compaction")
+  calls[0].answer.resolve({ decision: "pass", text: "", entries: [] })
+  await compaction
+  await flush()
+  assert.deepEqual(calls.map((call) => call.event.event), ["compacted", "tool-before"])
+  calls[1].answer.resolve({ decision: "pass", text: "", entries: [] })
+  assert.equal(await gate, undefined)
+})
+
+test("ordering: a root compaction is awaited by a subagent's gate and moment as well", async () => {
+  const timers = fakeTimers()
+  const ctx = fakeCtx({ sessions: { ses_c: { id: "ses_c", parentID: "ses_r" } } })
+  const { handlers, calls } = scriptedHandlers(ctx, timers)
+  const signal = new AbortController().signal
+  handlers.onEvent({ type: "session.compaction.started", data: { sessionID: "ses_r" } }, signal)
+  const gate = handlers.before(shellBefore("git commit", "ses_c"))
+  const moment = handlers.after(shellAfter("openspec archive x", { sessionID: "ses_c" }))
+  await flush()
+  assert.deepEqual(calls.map((call) => call.event.event), ["compacted"])
+  calls[0].answer.resolve({ decision: "pass", text: "", entries: [] })
+  await flush()
+  assert.deepEqual(calls.map((call) => call.event.event).sort(), ["compacted", "tool-after", "tool-before"])
+  for (const call of calls.slice(1)) call.answer.resolve({ decision: "pass", text: "", entries: [] })
+  await gate
+  await moment
+})
+
+test("ordering: a compaction that never finishes holds the gate only until the gate's budget", async () => {
+  const timers = fakeTimers()
+  const ctx = fakeCtx()
+  const { handlers, calls } = scriptedHandlers(ctx, timers)
+  handlers.onEvent({ type: "session.compaction.started", data: { sessionID: "ses_a" } }, new AbortController().signal)
+  await flush()
+  const gate = handlers.before(shellBefore("git commit"))
+  await flush()
+  assert.equal(await settled(gate), false)
+  const gateBudget = timers.live().at(-1)
+  gateBudget.fn()
+  assert.equal(await gate, undefined, "the call proceeds")
+  assert.deepEqual(calls.map((call) => call.event.event), ["compacted"])
+})
+
+test("ordering: a compaction of another session does not hold the gate", async () => {
+  const timers = fakeTimers()
+  const ctx = fakeCtx()
+  const { handlers, calls } = scriptedHandlers(ctx, timers)
+  handlers.onEvent({ type: "session.compaction.started", data: { sessionID: "ses_other" } }, new AbortController().signal)
+  const gate = handlers.before(shellBefore("git commit"))
+  await flush()
+  assert.deepEqual(calls.map((call) => call.event.event).sort(), ["compacted", "tool-before"])
+  for (const call of calls) call.answer.resolve({ decision: "pass", text: "", entries: [] })
+  await gate
+})
+
+test("disposed: a watcher whose lookup answers after the disposer sends no late compaction", async () => {
+  const lookup = deferred()
+  const { ctx, spawn, dispose } = await boot({
+    events: [{ type: "session.compaction.started", data: { sessionID: "ses_late" } }],
+  })
+  ctx.session.get = () => lookup.promise
+  await flush()
+  await dispose()
+  lookup.resolve({ id: "ses_late" })
+  await flush()
+  assert.equal(spawn.calls.length, 0)
+})
+
+test("disposed: an event handed to onEvent after the abort is ignored", async () => {
+  const timers = fakeTimers()
+  const ctx = fakeCtx()
+  const { handlers, calls } = scriptedHandlers(ctx, timers)
+  const controller = new AbortController()
+  controller.abort()
+  await handlers.onEvent({ type: "session.compaction.started", data: { sessionID: "ses_a" } }, controller.signal)
+  await flush()
+  assert.equal(calls.length, 0)
 })
 
 // ---- module shape -----------------------------------------------------------------------------------------
