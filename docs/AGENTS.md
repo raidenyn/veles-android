@@ -36,11 +36,13 @@ elsewhere), `docs/assets/`, and the curated pages published in place (`BUILD.md`
 `docs/rfcs/` and `openspec/specs/`). The Overview page follows the root node map.
 
 - **Allowlist rule:** the first `.mintignore` pattern is `/*`; every other line is `!/path`,
-  `/folder/*` or `!/folder/path`. Publish a new file or folder by adding a re-include line and a
-  navigation entry in `docs.json`; anything not re-included stays private.
-- **`CONTRIBUTING.md` is not published:** Mintlify's built-in default ignore list beats a re-include
-  for it, so `docs/dev/contributing.mdx` summarises it and links to the file on GitHub.
-- **Wrapper rule:** each capability under `openspec/specs/` needs a wrapper page in `docs/dev/` and a
+  `/folder/*` or `!/folder/path`. A page inside an already re-included folder (`docs/user/`,
+  `docs/dev/`) needs only a navigation entry in `docs.json`; a file or folder outside them also needs
+  a re-include line. Anything not re-included stays private.
+- **Default ignores win:** Mintlify's built-in default ignore list (`README.md`, `CONTRIBUTING.md`, ...)
+  beats a re-include, so such a file cannot be published through `.mintignore`; link to it on GitHub
+  instead, as `docs/dev/contributing.mdx` does for `CONTRIBUTING.md`.
+- **Wrapper rule:** each capability under `openspec/specs/` needs a wrapper page in `docs/dev/specs/<capability>.mdx` and a
   navigation entry. When a capability is removed or renamed, remove or rename its wrapper in the same
   change.
 - **MDX constraint:** published Markdown files and specs are parsed as MDX. Bare `<`, `{`, `}` and
