@@ -30,8 +30,8 @@ Choose the type:
 - `revert` — undoes an earlier commit.
 - `chore` — only when nothing above fits.
 
-A `!` or a `BREAKING CHANGE:` footer bumps the major version of the touched components,
-whatever the type.
+Use `!` or a `BREAKING CHANGE:` footer only with `feat`: any `!` bumps the major version of the
+touched components, and major bumps are reserved for features.
 
 A mixed change takes the type of its purpose, not of most of its files: a user-visible feature
 with its tests and docs is `feat`, and new CI tooling with its docs is `ci`.

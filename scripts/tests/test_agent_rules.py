@@ -2386,6 +2386,15 @@ class RealRepoRuleTest(unittest.TestCase):
         self.assertIn("type(scope): description", rule.pointer)
         self.assertIn("type(scope): description", rule.body)
 
+    def test_commit_types_reserves_breaking_markers_for_feat(self):
+        body = " ".join(self.real_rule().body.split())
+        self.assertIn(
+            "Use `!` or a `BREAKING CHANGE:` footer only with `feat`: any `!` bumps the major version "
+            "of the touched components, and major bumps are reserved for features.",
+            body,
+        )
+        self.assertNotIn("whatever the type", body)
+
     def test_real_pointer_block_is_current(self):
         completed = subprocess.run(
             [sys.executable, "-I", CLI, "pointers", "--check", "--root", REPO_ROOT],
