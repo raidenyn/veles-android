@@ -8,6 +8,9 @@
 /.agents/                     @raidenyn
 **/AGENTS.md                  @raidenyn
 /docs/superspec-workflow.md   @raidenyn
+/docs/agent-guidance.md       @raidenyn
+/docs/openspec-workflow.md    @raidenyn
+/docs/opencode-rules.md       @raidenyn
 /openspec/config.yaml         @raidenyn
 /openspec/schemas/            @raidenyn
 /scripts/agent_rules.py       @raidenyn

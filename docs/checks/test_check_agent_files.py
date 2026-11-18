@@ -122,7 +122,7 @@ SIZE_CAP_CASES = (  # (case, rule name, scope, size, expected size findings)
     ("node over its cap", "android-cap.md", "android", RULE_SIZE_MAX + 1, 1),
 )
 # The brief's documented OpenSpec skill list, repeated here so a wrong parser cannot satisfy
-# its own fixture. `docs/AGENTS.md` is the authoritative source at check time.
+# its own fixture. `docs/openspec-skills.md` is the authoritative source at check time.
 EXPECTED_OPENSPEC_SKILLS = (
     "openspec-apply-change",
     "openspec-archive-change",
@@ -159,6 +159,9 @@ EXPECTED_CODEOWNER_PATTERNS = (
     "/.agents/",
     "**/AGENTS.md",
     "/docs/superspec-workflow.md",
+    "/docs/agent-guidance.md",
+    "/docs/openspec-workflow.md",
+    "/docs/opencode-rules.md",
     "/openspec/config.yaml",
     "/openspec/schemas/",
     "/scripts/agent_rules.py",
@@ -217,9 +220,7 @@ def skill_section(skills):
     return lines
 
 
-def nested_text(node, notice=EXPECTED_NOTICE_NESTED, rules=True, skills=None, target_lines=None):
-    if skills is None and node == "docs":
-        skills = EXPECTED_OPENSPEC_SKILLS
+def nested_text(node, notice=EXPECTED_NOTICE_NESTED, rules=True, target_lines=None):
     lines = ["# %s/AGENTS.md" % node, ""]
     if notice is not None:
         lines.extend([notice, ""])
@@ -228,8 +229,6 @@ def nested_text(node, notice=EXPECTED_NOTICE_NESTED, rules=True, skills=None, ta
         lines.extend(["## Rules", "", "Follow `.agents/rules/`."])
     else:
         lines.extend(["## Notes", "", "No rules section here."])
-    if skills is not None:
-        lines.extend([""] + skill_section(skills))
     if target_lines is not None:
         if len(lines) > target_lines:
             raise AssertionError("base nested text is already %d lines" % len(lines))
@@ -431,7 +430,12 @@ def clean_files(skills=None):
         files[".agents/rules/" + name] = repo_rule_text()
     for path in EXPECTED_NODE_FILES:
         node = path[: -len("/AGENTS.md")]
-        files[path] = nested_text(node, skills=skills if node == "docs" else None)
+        files[path] = nested_text(node)
+    files["docs/openspec-skills.md"] = "\n".join(skill_section(skills)) + "\n"
+    files["docs/agent-guidance.md"] = "# Agent-file guidance\n\nThe 40-line policy.\n"
+    files["docs/openspec-workflow.md"] = "# OpenSpec workflow\n\nThe update procedure.\n"
+    files["docs/opencode-rules.md"] = "# OpenCode\n\nThe plugin guidance.\n"
+    files["docs/android.md"] = "# Android\n\nThe architecture.\n"
     for name in skills:
         files[".agents/skills/%s/SKILL.md" % name] = "# %s\n\nGenerated skill fixture.\n" % name
     return files
@@ -1411,7 +1415,10 @@ class AgentFileCheckTest(unittest.TestCase):
     def test_documented_skill_section_parses(self):
         text = "# x\n\n## OpenSpec skills\n\n- `alpha`\n- `beta`\n\n## Next\n\n- `gamma`\n"
         self.assertEqual(parse_documented_skills(text), ("alpha", "beta"))
-        self.assertEqual(parse_documented_skills(nested_text("docs")), EXPECTED_OPENSPEC_SKILLS)
+        self.assertEqual(
+            parse_documented_skills("\n".join(skill_section(EXPECTED_OPENSPEC_SKILLS))),
+            EXPECTED_OPENSPEC_SKILLS,
+        )
         self.assertEqual(parse_documented_skills(""), ())
 
     def test_missing_rules_symlink_fails(self):
@@ -1526,13 +1533,22 @@ class AgentFileCheckTest(unittest.TestCase):
             findings,
             "error",
             ".agents/skills/" + dropped,
-            "is listed under `## OpenSpec skills` in docs/AGENTS.md but is missing",
+            "is listed under `## OpenSpec skills` in docs/openspec-skills.md but is missing",
         )
         self.assertEqual(len(findings), 1, findings)
 
         # Updating the doc together with the skill set passes.
         skills = [name for name in EXPECTED_OPENSPEC_SKILLS if name != dropped]
         self.assertEqual(check_repo(self.repo(clean_files(skills), default_symlinks(skills))), [])
+
+    def test_missing_documented_skill_list_fails(self):
+        files = clean_files()
+        del files["docs/openspec-skills.md"]
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", "docs/openspec-skills.md", "expected OpenSpec skill list"
+        )
+        self.assertEqual(len(findings), 1, findings)
 
     def test_settings_json_symlink_fails(self):
         files = clean_files()
@@ -1605,6 +1621,9 @@ class AgentFileCheckTest(unittest.TestCase):
             "**/AGENTS.md",
             "/.agents/",
             "/docs/superspec-workflow.md",
+            "/docs/agent-guidance.md",
+            "/docs/openspec-workflow.md",
+            "/docs/opencode-rules.md",
             "/openspec/config.yaml",
             "/openspec/schemas/",
             "/scripts/agent_rules.py",
@@ -2170,7 +2189,13 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assertEqual(len(findings), 2, findings)
 
     def test_plugin_range_not_repeated_in_docs(self):
-        for path in ("AGENTS.md", "CONTRIBUTING.md", "docs/AGENTS.md"):
+        for path in (
+            "AGENTS.md",
+            "CONTRIBUTING.md",
+            "docs/AGENTS.md",
+            "docs/opencode-rules.md",
+            "docs/agent-guidance.md",
+        ):
             with self.subTest(path=path):
                 files = clean_files()
                 files[path] += "\nThe plugin is `opencode-rules@2.x` here.\n"
