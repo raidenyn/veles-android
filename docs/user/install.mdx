@@ -1,0 +1,26 @@
+---
+title: "Install Veles"
+description: "Download the Veles APK from GitHub Releases and install it on an Android 13 or later phone."
+---
+
+Veles needs **Android 13 or later**.
+
+## Download
+
+Open the [latest release on GitHub](https://github.com/raidenyn/veles-android/releases/latest) and download the `.apk` file from the list of assets.
+
+## Install
+
+Open the downloaded `.apk` file on your phone. If Android asks, allow your browser or file manager to install apps, then confirm the install.
+
+If you prefer a computer, connect your phone with USB debugging turned on and run:
+
+```bash
+adb install -r <apk>
+```
+
+Replace `<apk>` with the path of the downloaded file.
+
+## Next step
+
+Veles needs permission to read your notifications before it can help. Continue with [Grant notification access](/docs/user/notification-access).

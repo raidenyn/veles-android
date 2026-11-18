@@ -34,11 +34,18 @@
         "groups": [
           {
             "group": "Get started",
-            "pages": []
+            "pages": [
+              "docs/user/index",
+              "docs/user/install",
+              "docs/user/notification-access",
+              "docs/user/sensitive-notifications"
+            ]
           },
           {
             "group": "Privacy",
-            "pages": []
+            "pages": [
+              "docs/user/privacy"
+            ]
           }
         ]
       },
