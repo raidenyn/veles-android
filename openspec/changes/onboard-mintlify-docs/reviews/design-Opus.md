@@ -56,3 +56,13 @@ Implementation-time re-review (after the code was built): calibration against th
 All three fixes confirmed; no statement false against the built behaviour (D4 heading wording noted, no change needed).
 
 Approved content: design sha256 5b11d7a9ce98550112951d0a763fa17caf5a4711639efa1128f00738a83f3080 (re-reviewed after triggering edits: D1 list, D3, D4 fallback verified, D6 default ignores and published imports and brace calibration, Goals, Risks)
+
+## Pass 3 — AGENTS.md line cap
+
+Master capped every AGENTS.md at 40 lines while the change was in review, so the site guidance moved from docs/AGENTS.md into docs/documentation-site.md (docs/AGENTS.md keeps a short pointer). The controller edited the spec, design, tasks and plan; Opus re-reviewed them.
+
+### Round 1 — approve
+
+No critical or high finding; D7 and the Risks lines are consistent with the new requirements.
+
+Approved content: design sha256 1ca82091c710a184fee6d1462dc4bceab1f29a47b0e5c5fedc4f3ddb30cafb78 (triggering edit re-reviewed: D7 and two Risks lines)

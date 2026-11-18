@@ -4,7 +4,7 @@
 - Reviewer: Opus (Opus-5.5, medium)
 - Session preset: `opus` = [Opus]
 - Cap: 5 rounds per reviewer per pass
-- Upstream: `brainstorm.md` sha256 c27ca9d75a2a5b085956825eb2aa827fd3b518d9f65ba6df139b52ff9670a0c7; `proposal.md` sha256 0260f7c0185b8f9957eb6026c228fd827d306227fa373dd5646729d673b4ea65; `design.md` sha256 5b11d7a9ce98550112951d0a763fa17caf5a4711639efa1128f00738a83f3080; `specs/documentation-site/spec.md` sha256 9fc6f000d8307f98a3984320370e5f527ea05cc232bc68314051bcf07ec35357; `specs/component-versioning/spec.md` sha256 714bad1f17bd08338e7a80400b21329ed17b0f97bf51025f3755be0eb8044d0e; `specs/ci-pipeline/spec.md` sha256 a975d5fae45639010597c16b0bfc5d54bac0e28c2631e3b4e3d26066e926b616
+- Upstream: `brainstorm.md` sha256 c27ca9d75a2a5b085956825eb2aa827fd3b518d9f65ba6df139b52ff9670a0c7; `proposal.md` sha256 0260f7c0185b8f9957eb6026c228fd827d306227fa373dd5646729d673b4ea65; `design.md` sha256 1ca82091c710a184fee6d1462dc4bceab1f29a47b0e5c5fedc4f3ddb30cafb78; `specs/documentation-site/spec.md` sha256 2fb46d9f585f826c87d5fc7f2268dc7000bd0092095c46c22caeb3ddc8c1f9bc; `specs/component-versioning/spec.md` sha256 714bad1f17bd08338e7a80400b21329ed17b0f97bf51025f3755be0eb8044d0e; `specs/ci-pipeline/spec.md` sha256 a975d5fae45639010597c16b0bfc5d54bac0e28c2631e3b4e3d26066e926b616
 - Upstream re-pointed after the implementation-time re-review (see the last pass below): the spec, design, tasks and plan were edited to match the built behaviour.
 
 ## Pass 1
@@ -55,3 +55,15 @@ Implementation-time re-review (after the code was built): calibration against th
 | medium | Task 5.3 cited the spec requirement by its old name after the rename. | Fixed: cites "Build page import and Contributing summary". |
 
 Approved content: tasks sha256 2835786f20f5943f3cbd7f15c3576d65fcecb496e97b83fdadf3a3468306e534 (re-pointed after two non-triggering minor fixes from the re-review, plus the appended "As built" section reviewed in this pass)
+
+## Pass 3 — AGENTS.md line cap
+
+Master capped every AGENTS.md at 40 lines while the change was in review, so the site guidance moved from docs/AGENTS.md into docs/documentation-site.md (docs/AGENTS.md keeps a short pointer). The controller edited the spec, design, tasks and plan; Opus re-reviewed them.
+
+### Round 1 — approve (one note fix)
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| medium | Task 6.5 cited the removed requirement name. | Fixed: cites the two new requirement names and the As built note. |
+
+Approved content: tasks sha256 be038bec4cb0b22e0b28a5a55ef1399b4cfb84646047fef7d7f715e80ce476de (re-pointed after one non-triggering minor fix plus the appended As built line reviewed in this pass)
