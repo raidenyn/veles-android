@@ -1182,6 +1182,23 @@ def check_codeowners(root):
     return findings
 
 
+class _StrictJsonError(ValueError):
+    """A JSON document that Python accepts but strict JSON does not."""
+
+
+def _reject_json_constant(name):
+    raise _StrictJsonError("has the non-JSON constant `%s`" % name)
+
+
+def _strict_object(pairs):
+    seen = set()
+    for key, _ in pairs:
+        if key in seen:
+            raise _StrictJsonError("has a duplicate key `%s`" % key)
+        seen.add(key)
+    return dict(pairs)
+
+
 def _hook_findings(event, expected_matcher, entries):
     """Findings for one event's entry list in `.claude/settings.json`."""
     def error(message):
@@ -1238,11 +1255,23 @@ def check_claude_hooks(root):
     """
     if os.path.islink(os.path.join(root, SETTINGS_JSON)):
         return []  # `check_links` reports the symlink; a dangling target is not a second error
-    text = _read_text(root, SETTINGS_JSON)
-    if text is None:
-        return [Finding("error", SETTINGS_JSON, "is missing")]
     try:
-        data = json.loads(text)
+        with open(os.path.join(root, SETTINGS_JSON), "rb") as handle:
+            raw = handle.read()
+    except (IOError, OSError):
+        return [Finding("error", SETTINGS_JSON, "is missing")]
+    # Claude Code may reject a file the lenient reader accepts and then load no hooks at all, so
+    # this file is read strictly: UTF-8 only, no NaN/Infinity constants, no duplicate members.
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        return [Finding("error", SETTINGS_JSON, "is not valid UTF-8 (%s)" % error)]
+    try:
+        data = json.loads(
+            text, parse_constant=_reject_json_constant, object_pairs_hook=_strict_object
+        )
+    except _StrictJsonError as error:
+        return [Finding("error", SETTINGS_JSON, str(error))]
     except ValueError as error:
         return [Finding("error", SETTINGS_JSON, "is not valid JSON (%s)" % error)]
     if not isinstance(data, dict):

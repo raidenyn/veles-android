@@ -1505,6 +1505,38 @@ class AgentFileCheckTest(unittest.TestCase):
                 )
                 self.assertEqual(len(findings), 1, findings)
 
+    def _hooks_findings_for_bytes(self, data):
+        root = self.repo()
+        with open(os.path.join(root, ".claude/settings.json"), "wb") as handle:
+            handle.write(data)
+        return check_repo(root)
+
+    def test_hooks_settings_invalid_utf8_fails(self):
+        valid = settings_text().encode("utf-8")
+        findings = self._hooks_findings_for_bytes(valid.replace(b'"enabledPlugins"', b'"enabled\xffPlugins"'))
+        self.assert_finding(findings, "error", ".claude/settings.json", "is not valid UTF-8")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_hooks_settings_non_json_constant_fails(self):
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(constant=constant):
+                text = settings_text(extra={"limit": 0}).replace('"limit": 0', '"limit": ' + constant)
+                findings = self._hooks_findings_for_bytes(text.encode("utf-8"))
+                self.assert_finding(findings, "error", ".claude/settings.json", "non-JSON constant")
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_hooks_settings_duplicate_key_fails(self):
+        text = settings_text()
+        # A second `PreToolUse` member would silently replace the first (last wins).
+        duplicate = text.replace('"PreToolUse": [', '"PreToolUse": [], "PreToolUse": [', 1)
+        findings = self._hooks_findings_for_bytes(duplicate.encode("utf-8"))
+        self.assert_finding(findings, "error", ".claude/settings.json", "duplicate key `PreToolUse`")
+        self.assertEqual(len(findings), 1, findings)
+        nested = text.replace('"type": "command",', '"type": "command", "type": "command",', 1)
+        findings = self._hooks_findings_for_bytes(nested.encode("utf-8"))
+        self.assert_finding(findings, "error", ".claude/settings.json", "duplicate key `type`")
+        self.assertEqual(len(findings), 1, findings)
+
     def test_hooks_keep_other_settings(self):
         files = clean_files()
         files[".claude/settings.json"] = settings_text(extra={"model": "x"})
