@@ -1,5 +1,7 @@
 import hashlib
+import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -8,7 +10,18 @@ import unittest
 SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SCRIPTS)
 
-from agent_rules import RuleError, load_rules, parse_rule, render_pointer_block  # noqa: E402
+from agent_rules import (  # noqa: E402
+    Decision,
+    Event,
+    EventError,
+    RuleError,
+    checkout_for,
+    load_rules,
+    parse_event,
+    parse_rule,
+    render,
+    render_pointer_block,
+)
 
 CLI = os.path.join(SCRIPTS, "agent_rules.py")
 
@@ -367,3 +380,272 @@ class PointerBlockTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IsolatedGitTest(unittest.TestCase):
+    """Runs git in a temporary directory that no developer configuration can influence."""
+
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="veles-agent-rules-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        config = os.path.join(self.tmp, "gitconfig-empty")
+        with open(config, "w", encoding="utf-8") as handle:
+            handle.write("")
+        self._saved_env = {}
+        for name, value in (("GIT_CONFIG_GLOBAL", config), ("GIT_CONFIG_NOSYSTEM", "1")):
+            self._saved_env[name] = os.environ.get(name)
+            os.environ[name] = value
+        self.addCleanup(self._restore_git_env)
+
+    def _restore_git_env(self):
+        for name, value in self._saved_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    def make_dir(self, *parts):
+        path = os.path.join(self.tmp, *parts)
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def hooked_rules(self, root):
+        os.makedirs(os.path.join(root, ".agents", "hooked-rules"), exist_ok=True)
+
+    def git_init(self, root):
+        subprocess.run(["git", "init", "-q", root], check=True)
+
+
+CLAUDE_BASE = {"session_id": "s1", "cwd": "/work/repo"}
+
+
+def claude(name, **fields):
+    payload = dict(CLAUDE_BASE)
+    payload["hook_event_name"] = name
+    payload.update(fields)
+    return payload
+
+
+class ParseEventTest(unittest.TestCase):
+    def test_parse_claude_pre_tool_use(self):
+        event = parse_event(
+            "claude",
+            claude("PreToolUse", tool_name="Bash", tool_input={"command": "git commit -m x"}),
+        )
+        self.assertEqual(event.kind, "tool-before")
+        self.assertEqual(event.command, "git commit -m x")
+        self.assertEqual(event.tool, "Bash")
+        self.assertEqual(event.session, "s1")
+        self.assertEqual(event.cwd, "/work/repo")
+        self.assertIsNone(event.agent)
+        self.assertIsNone(event.ok)
+
+    def test_parse_claude_post_bash_is_success(self):
+        event = parse_event(
+            "claude",
+            claude("PostToolUse", tool_name="Bash", tool_input={"command": "ls"}, tool_response={}),
+        )
+        self.assertEqual(event.kind, "tool-after")
+        self.assertEqual(event.command, "ls")
+        self.assertIs(event.ok, True)
+
+    def test_parse_claude_post_skill_and_read(self):
+        skill = parse_event(
+            "claude",
+            claude("PostToolUse", tool_name="Skill", tool_input={"skill": "opsx:apply"}),
+        )
+        self.assertEqual(skill.skill, "opsx:apply")
+        self.assertIsNone(skill.command)
+        read = parse_event(
+            "claude",
+            claude("PostToolUse", tool_name="Read", tool_input={"file_path": "/a/skills/x/SKILL.md"}),
+        )
+        self.assertEqual(read.path, "/a/skills/x/SKILL.md")
+        self.assertIsNone(read.skill)
+
+    def test_parse_claude_prompt_compact_and_agent(self):
+        prompt = parse_event("claude", claude("UserPromptSubmit", prompt="/opsx:apply now"))
+        self.assertEqual((prompt.kind, prompt.prompt), ("prompt", "/opsx:apply now"))
+        compact = parse_event("claude", claude("PreCompact", trigger="auto", agent_id="a1"))
+        self.assertEqual((compact.kind, compact.agent), ("compacted", "a1"))
+
+    def test_parse_claude_rejects_unknown_or_malformed(self):
+        for payload in (
+            claude("SessionStart"),
+            {"cwd": "/x", "session_id": "s"},
+            claude("PreCompact", session_id=None),
+            ["not", "a", "dict"],
+        ):
+            with self.assertRaises(EventError):
+                parse_event("claude", payload)
+        with self.assertRaises(EventError):
+            parse_event("nope", claude("PreCompact"))
+
+    def test_parse_plain_tool_before(self):
+        event = parse_event(
+            "plain",
+            {
+                "event": "tool-before", "session": "root", "agent": "child", "cwd": "/work/repo",
+                "tool": "shell", "command": "git commit",
+            },
+        )
+        self.assertEqual(event.kind, "tool-before")
+        self.assertEqual((event.session, event.agent, event.tool, event.command),
+                         ("root", "child", "shell", "git commit"))
+
+    def test_parse_plain_void(self):
+        event = parse_event(
+            "plain", {"event": "void", "session": "root", "cwd": "/work/repo", "write_ids": [3, 4]}
+        )
+        self.assertEqual(event.kind, "void")
+        self.assertEqual(list(event.write_ids), [3, 4])
+
+    def test_parse_plain_after_fields(self):
+        event = parse_event(
+            "plain",
+            {"event": "tool-after", "session": "r", "cwd": "/c", "ok": False, "skill": "x",
+             "path": "p", "prompt": "q"},
+        )
+        self.assertEqual((event.ok, event.skill, event.path, event.prompt), (False, "x", "p", "q"))
+
+    def test_parse_plain_rejects_bad_input(self):
+        base = {"event": "prompt", "session": "r", "cwd": "/c"}
+        bad = [
+            dict(base, event="PreToolUse"),
+            dict(base, event="allow"),
+            dict(base, session=None),
+            dict(base, cwd=3),
+            dict(base, ok="yes"),
+            dict(base, write_ids=["1"]),
+            dict(base, write_ids=[True]),
+            dict(base, write_ids=5),
+            dict(base, command=7),
+        ]
+        for payload in bad:
+            with self.assertRaises(EventError, msg=payload):
+                parse_event("plain", payload)
+        with self.assertRaises(EventError):
+            parse_event("plain", ["x"])
+
+    def test_large_tool_response(self):
+        huge = "x" * (5 * 1024 * 1024)
+        payload = claude(
+            "PostToolUse", tool_name="Bash", tool_input={"command": "make"},
+            tool_response={"stdout": huge, "stderr": "", "interrupted": False},
+        )
+        event = parse_event("claude", json.loads(json.dumps(payload)))
+        self.assertIsInstance(event, Event)
+        self.assertEqual(event.command, "make")
+        self.assertIs(event.ok, True)
+        for value in event:
+            if isinstance(value, str):
+                self.assertLess(len(value), 1000)
+        self.assertLess(len(repr(event)), 1000)
+
+
+class RenderTest(unittest.TestCase):
+    KINDS = ("tool-before", "tool-after", "prompt", "compacted", "void")
+    NAMES = {
+        "tool-before": "PreToolUse", "tool-after": "PostToolUse",
+        "prompt": "UserPromptSubmit", "compacted": "PreCompact", "void": "void",
+    }
+
+    def event(self, kind):
+        return Event(kind, "s", None, "/c", None, None, None, None, None, None, None)
+
+    def test_render_pass_is_empty(self):
+        for kind in self.KINDS:
+            for fmt in ("claude", "plain"):
+                self.assertEqual(render(fmt, self.event(kind), Decision("pass", "", [])), "")
+
+    def test_render_claude_deny_and_context(self):
+        deny = json.loads(render("claude", self.event("tool-before"), Decision("deny", "stop", [])))
+        self.assertEqual(
+            deny,
+            {"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                "permissionDecisionReason": "stop"}},
+        )
+        for kind in ("tool-before", "tool-after", "prompt"):
+            context = json.loads(render("claude", self.event(kind), Decision("context", "hi", [])))
+            self.assertEqual(
+                context,
+                {"hookSpecificOutput": {
+                    "hookEventName": self.NAMES[kind], "additionalContext": "hi"}},
+            )
+
+    def test_render_claude_deny_needs_tool_before(self):
+        with self.assertRaises(ValueError):
+            render("claude", self.event("prompt"), Decision("deny", "stop", []))
+
+    def test_render_never_allow(self):
+        entries = [(("r.md", "ab" * 32), 7)]
+        for kind in self.KINDS:
+            for fmt in ("claude", "plain"):
+                for decision in ("pass", "context", "deny"):
+                    try:
+                        out = render(fmt, self.event(kind), Decision(decision, "text", entries))
+                    except ValueError:
+                        continue
+                    self.assertNotIn("allow", out, (kind, fmt, decision))
+        self.assertNotIn("allow", render("claude", self.event("tool-before"),
+                                         Decision("deny", "text", [])))
+
+    def test_plain_entries(self):
+        entries = [(("a.md", "11" * 32), 5), (("b.md", "22" * 32), 6)]
+        out = json.loads(render("plain", self.event("tool-before"), Decision("deny", "why", entries)))
+        self.assertEqual(
+            out,
+            {"decision": "deny", "text": "why",
+             "entries": [{"rule": ["a.md", "11" * 32], "write_id": 5},
+                         {"rule": ["b.md", "22" * 32], "write_id": 6}]},
+        )
+
+    def test_render_rejects_unknown(self):
+        with self.assertRaises(ValueError):
+            render("xml", self.event("prompt"), Decision("pass", "", []))
+        with self.assertRaises(ValueError):
+            render("plain", self.event("prompt"), Decision("allow", "", []))
+
+
+class CheckoutForTest(IsolatedGitTest):
+    def test_inside_checkout(self):
+        root = self.make_dir("repo")
+        self.git_init(root)
+        self.hooked_rules(root)
+        sub = self.make_dir("repo", "a", "b")
+        result = checkout_for(sub)
+        self.assertEqual(result, (root, os.path.join(root, ".git")))
+        self.assertTrue(os.path.isabs(result[1]))
+
+    def test_common_dir_of_linked_worktree(self):
+        root = self.make_dir("repo")
+        self.git_init(root)
+        subprocess.run(
+            ["git", "-C", root, "-c", "user.name=t", "-c", "user.email=t@e", "commit", "-q",
+             "--allow-empty", "-m", "init"],
+            check=True,
+        )
+        self.hooked_rules(root)
+        linked = os.path.join(self.tmp, "linked")
+        subprocess.run(["git", "-C", root, "worktree", "add", "-q", "-b", "b", linked], check=True)
+        self.hooked_rules(linked)
+        self.assertEqual(checkout_for(linked), (linked, os.path.join(root, ".git")))
+
+    def test_outside_checkout_passes(self):
+        root = self.make_dir("repo")
+        self.git_init(root)
+        self.assertIsNone(checkout_for(root))
+        self.assertIsNone(checkout_for(self.make_dir("plain")))
+
+    def test_no_git_passes(self):
+        root = self.make_dir("nogit")
+        self.hooked_rules(root)
+        os.environ["GIT_CEILING_DIRECTORIES"] = self.tmp
+        self.addCleanup(os.environ.pop, "GIT_CEILING_DIRECTORIES", None)
+        self.assertIsNone(checkout_for(root))
+
+    def test_missing_or_bad_cwd_passes(self):
+        self.assertIsNone(checkout_for(os.path.join(self.tmp, "does-not-exist")))
+        self.assertIsNone(checkout_for(""))
+        self.assertIsNone(checkout_for(None))

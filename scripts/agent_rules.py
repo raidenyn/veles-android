@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hook-delivered agent rules: the rule parser and the root AGENTS.md pointer block.
+"""Hook-delivered agent rules: the rule parser, the pointer block and the hook event contract.
 
 Standard library only, Python 3.8+, run as ``python3 -I scripts/agent_rules.py``.
 
@@ -12,8 +12,10 @@ only the ``\\"`` and ``\\\\`` escapes are allowed, extended with a double-quoted
 import argparse
 import collections
 import hashlib
+import json
 import os
 import re
+import subprocess
 import sys
 
 RULES_DIR = ".agents/hooked-rules"
@@ -353,6 +355,188 @@ def _pointers(args):
         with open(path, "w", encoding="utf-8", newline="") as handle:
             handle.write(updated)
     return 0
+
+
+EVENT_KINDS = ("tool-before", "tool-after", "prompt", "compacted", "void")
+DECISION_KINDS = ("pass", "context", "deny")
+GIT_TIMEOUT_SECONDS = 5  # a runtime bound on the one git call, not test timing
+
+# Claude Code's hook_event_name for each engine event; ``void`` has no Claude Code form.
+CLAUDE_EVENTS = {
+    "PreToolUse": "tool-before",
+    "PostToolUse": "tool-after",
+    "UserPromptSubmit": "prompt",
+    "PreCompact": "compacted",
+}
+CLAUDE_NAMES = dict((kind, name) for name, kind in CLAUDE_EVENTS.items())
+
+
+class EventError(Exception):
+    """A hook event that is malformed or not one the engine handles."""
+
+
+# One normalized hook event. Only the fields the engine needs are kept: a tool response, which can be
+# megabytes, is never copied. ``write_ids`` is a list of ints on a ``void`` event and None otherwise.
+Event = collections.namedtuple(
+    "Event",
+    ["kind", "session", "agent", "cwd", "tool", "command", "ok", "skill", "path", "prompt", "write_ids"],
+)
+
+# kind is one of DECISION_KINDS; entries is a list of (rule identity, write id).
+Decision = collections.namedtuple("Decision", ["kind", "text", "entries"])
+
+
+def _text(payload, key, required=False):
+    value = payload.get(key)
+    if value is None:
+        if required:
+            raise EventError("the event has no `%s`" % key)
+        return None
+    if not isinstance(value, str):
+        raise EventError("`%s` must be a string" % key)
+    if required and not value:
+        raise EventError("`%s` must not be empty" % key)
+    return value
+
+
+def _parse_claude(payload):
+    name = payload.get("hook_event_name")
+    kind = CLAUDE_EVENTS.get(name) if isinstance(name, str) else None
+    if kind is None:
+        raise EventError("unsupported Claude Code hook event %r" % (name,))
+    tool = command = skill = path = prompt = ok = None
+    if kind in ("tool-before", "tool-after"):
+        tool = _text(payload, "tool_name", required=True)
+        tool_input = payload.get("tool_input")
+        if not isinstance(tool_input, dict):
+            tool_input = {}
+        if tool == "Bash":
+            command = _text(tool_input, "command")
+            if kind == "tool-after":
+                ok = True  # a failing Bash call fires PostToolUseFailure instead (spike.md)
+        elif kind == "tool-after" and tool == "Skill":
+            skill = _text(tool_input, "skill")
+        elif kind == "tool-after" and tool == "Read":
+            path = _text(tool_input, "file_path")
+    elif kind == "prompt":
+        prompt = _text(payload, "prompt")
+    return Event(
+        kind,
+        _text(payload, "session_id", required=True),
+        _text(payload, "agent_id"),
+        _text(payload, "cwd", required=True),
+        tool, command, ok, skill, path, prompt, None,
+    )
+
+
+def _parse_plain(payload):
+    kind = payload.get("event")
+    if kind not in EVENT_KINDS:
+        raise EventError("`event` must be one of %s, got %r" % (", ".join(EVENT_KINDS), kind))
+    ok = payload.get("ok")
+    if ok is not None and not isinstance(ok, bool):
+        raise EventError("`ok` must be a boolean")
+    write_ids = payload.get("write_ids")
+    if write_ids is not None:
+        if not isinstance(write_ids, list) or not all(
+            isinstance(item, int) and not isinstance(item, bool) for item in write_ids
+        ):
+            raise EventError("`write_ids` must be a list of integers")
+        write_ids = list(write_ids)
+    return Event(
+        kind,
+        _text(payload, "session", required=True),
+        _text(payload, "agent"),
+        _text(payload, "cwd", required=True),
+        _text(payload, "tool"),
+        _text(payload, "command"),
+        ok,
+        _text(payload, "skill"),
+        _text(payload, "path"),
+        _text(payload, "prompt"),
+        write_ids,
+    )
+
+
+def parse_event(fmt, payload):
+    """Turn one decoded hook payload (``fmt`` is ``"claude"`` or ``"plain"``) into an ``Event``.
+
+    Raises ``EventError`` for a payload the engine cannot handle; the caller fails open.
+    """
+    if fmt not in ("claude", "plain"):
+        raise EventError("unknown event format %r" % (fmt,))
+    if not isinstance(payload, dict):
+        raise EventError("the event must be a JSON object")
+    return _parse_claude(payload) if fmt == "claude" else _parse_plain(payload)
+
+
+def render(fmt, event, decision):
+    """The text the engine prints for ``decision``: ``""`` for a pass, JSON otherwise.
+
+    A decision is never a permission grant: Claude Code's ``allow`` is never written. Raises
+    ``ValueError`` for a decision or format that has no form.
+    """
+    if decision.kind not in DECISION_KINDS:
+        raise ValueError("unknown decision %r" % (decision.kind,))
+    if fmt not in ("claude", "plain"):
+        raise ValueError("unknown output format %r" % (fmt,))
+    if decision.kind == "pass":
+        return ""
+    if fmt == "plain":
+        return json.dumps({
+            "decision": decision.kind,
+            "text": decision.text,
+            "entries": [
+                {"rule": [identity[0], identity[1]], "write_id": write_id}
+                for identity, write_id in decision.entries
+            ],
+        })
+    if decision.kind == "deny":
+        if event.kind != "tool-before":
+            raise ValueError("Claude Code can only deny a tool-before event, not %r" % event.kind)
+        return json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": decision.text,
+        }})
+    name = CLAUDE_NAMES.get(event.kind)
+    if name is None or event.kind == "compacted":
+        return ""  # Claude Code has no context channel for a compaction, and no void event
+    return json.dumps({"hookSpecificOutput": {"hookEventName": name, "additionalContext": decision.text}})
+
+
+def checkout_for(cwd):
+    """``(toplevel, common_dir)`` of the checkout holding ``cwd``, or None.
+
+    One ``git rev-parse`` answers; ``common_dir`` is absolute, resolved against ``cwd`` when git prints
+    it relative. None means pass silently: git failed (no repository, a bad ``cwd``) or the top level has
+    no ``.agents/hooked-rules/`` directory.
+    """
+    if not isinstance(cwd, str) or not cwd or "\0" in cwd:
+        return None
+    try:
+        completed = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--show-toplevel", "--git-common-dir"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=GIT_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if completed.returncode != 0:
+        return None
+    try:
+        lines = completed.stdout.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return None
+    if len(lines) != 2 or not lines[0] or not lines[1]:
+        return None
+    toplevel = lines[0]
+    common_dir = os.path.normpath(os.path.join(os.path.abspath(cwd), lines[1]))
+    if not os.path.isdir(os.path.join(toplevel, *RULES_DIR.split("/"))):
+        return None
+    return toplevel, common_dir
 
 
 def _default_root():
