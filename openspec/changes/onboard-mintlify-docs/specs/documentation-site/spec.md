@@ -220,12 +220,21 @@ MUST say it also covers the files that decide what the documentation site publis
 - **WHEN** a pull request changes `.mintignore`
 - **THEN** GitHub requests review from the owner named in CODEOWNERS
 
-### Requirement: Site guidance
-`docs/AGENTS.md` SHALL have a "Documentation site" section stating the layout, the allowlist rule and its
-forms, the wrapper rule with removal and renaming, the MDX constraint for published Markdown and specs, that
-the guard sees only tracked files, the guard commands, the optional `npx mint@4.2.1199 validate`, and that the
-Overview page follows the root node map. `docs/ci.md` MUST list the guard step.
+### Requirement: Site guidance in AGENTS.md
+`docs/AGENTS.md` SHALL have a short "Documentation site" section that names the wrapper rule and the guard
+command and points to `docs/documentation-site.md`, because every `AGENTS.md` is capped at 40 lines.
+`docs/ci.md` MUST list the guard step.
 
 #### Scenario: Agent guidance names the wrapper rule
 - **WHEN** an agent reads `docs/AGENTS.md` before adding a capability
-- **THEN** it finds that a new capability needs a wrapper and a navigation entry, and a removed one needs its wrapper removed
+- **THEN** it finds that a new capability needs a wrapper page, and the link to `docs/documentation-site.md`, which also states that a removed capability needs its wrapper removed
+
+### Requirement: Site guidance document
+`docs/documentation-site.md` SHALL state the layout, the allowlist rule and its forms, the default-ignore rule,
+the wrapper rule with removal and renaming, the MDX constraint for published Markdown and specs, that the guard
+sees only tracked files, the guard commands, the optional `npx mint@4.2.1199 validate`, and that the Overview
+page follows the root node map. It MUST NOT be published.
+
+#### Scenario: Guidance document stays private
+- **WHEN** the published set is computed
+- **THEN** `docs/documentation-site.md` is not in it

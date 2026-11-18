@@ -143,7 +143,7 @@ re-included; that is the documented interim state for a newly archived capabilit
 - **Overview** is written for people: what Veles is, the components (Android app, web extension, Rust core,
   protocol, native bridge, installers, verifier, tooling) and where each lives, drawn from the root
   `AGENTS.md` node map. **Architecture** draws on `CONTRIBUTING.md` "How Veles Works" and the node
-  `AGENTS.md` files. Both are hand-written; `docs/AGENTS.md` asks for the Overview to be updated when the node
+  `AGENTS.md` files. Both are hand-written; `docs/documentation-site.md` asks for the Overview to be updated when the node
   map changes.
 - Curated `docs/` pages are published unchanged except: the RFC gets the minimal escape that makes it parse,
   and a relative link to an unpublished file, or one `mint broken-links` reports, becomes an absolute GitHub
@@ -215,7 +215,9 @@ plan).
 - `.github/components.json`: `docs.json` and `.mintignore` join the `docs` node's enumerated paths.
 - `.github/CODEOWNERS`: `/.mintignore` and `/docs.json` with the existing owner; the header comment is widened
   to "and the files that decide what the documentation site publishes".
-- `docs/AGENTS.md` gains a "Documentation site" section: layout, the allowlist rule, the wrapper rule (add a
+- `docs/AGENTS.md` gains a short "Documentation site" section (every `AGENTS.md` is capped at 40 lines) that
+  names the wrapper rule and the guard command and points to a new document, `docs/documentation-site.md`,
+  which holds the layout, the allowlist rule and its forms, the default-ignore rule, the wrapper rule (add a
   wrapper and navigation entry for a new capability; delete or rename it with the capability in the same
   change), the MDX authoring constraint for published `.md` files and specs, the guard commands, and the
   optional local preview. `docs/ci.md` lists the new step. `docs/mintlify-owner-setup.md` (unpublished)
@@ -237,13 +239,13 @@ plan).
 - [The guard's hazard rules are heuristics] → Calibrated against `mint validate`; stricter-than-Mintlify rules are
   narrowed; the brace rule is a warning although expression-like braces fail the build (follow-up change); unit tests cover each rule with a positive and a negative
   case. Today's published set has one real hazard, the RFC's `<1 KiB` (line 2663), which D4 escapes.
-- [Every future spec becomes MDX-constrained] → Stated in `docs/AGENTS.md`; the guard reports the exact line;
+- [Every future spec becomes MDX-constrained] → Stated in `docs/documentation-site.md`; the guard reports the exact line;
   today's 28 specs already comply.
 - [Newly archived capabilities appear only as raw "Spec" pages until wrapped] → The guard warns, naming the
   missing wrapper; the closeout's documentation review is the natural moment to add it.
 - [Absolute GitHub links leave the site for pages the site also publishes] → Accepted for this version; site
   routes can replace them in the `docs/` reorganisation change.
-- [Overview and Architecture can drift from the node map] → Short pages; `docs/AGENTS.md` names the update duty.
+- [Overview and Architecture can drift from the node map] → Short pages; `docs/documentation-site.md` names the update duty.
 - [Branch and directory are dashboard settings outside the repository] → `docs/mintlify-owner-setup.md`; the
   owner confirms them.
 

@@ -66,3 +66,4 @@ Closeout notes (not apply tasks): the pull request reports the "Mintlify Deploym
 - 5.4: all 28 wrapper descriptions were written by hand.
 - 5.6: two RFC links (the 2026-08-11 design files) are pinned to commit `f5ec4afb` because those files do not exist on `master`.
 - 7.4: the Contributing page check is its summary and GitHub link, not an imported text.
+- 6.5: master capped every `AGENTS.md` at 40 lines while this change was in review, so `docs/AGENTS.md` keeps only a short "Documentation site" pointer and the full section lives in the new `docs/documentation-site.md`.
