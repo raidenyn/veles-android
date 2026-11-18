@@ -14,7 +14,7 @@ by `docs.json` and `.mintignore`; see the *Documentation site* section of `docs/
 ## Reading the deployment check
 
 Mintlify reports a "Mintlify Deployment" check on commits. It is informational and is not a required
-status check: the required checks are the repository's own (`ci-ok`). A red Mintlify check means the hosted
+status check: the required checks are the repository's own (`ci-ok` and `pr-title`, see `docs/ci.md`). A red Mintlify check means the hosted
 build rejected something (a navigation page that is not published, an MDX parse error, a broken
 `docs.json`); open its details link, fix the named file and push. The `docs / agent-files` site guard
 catches most of these earlier, but it is stricter in some places and looser in others than the hosted
