@@ -6,9 +6,13 @@ sensitive notifications and testing: `docs/android.md`.
 
 ## Signing identities (Android)
 
-Reuse the existing debug fixture identity; never regenerate keys, uninstall or clear data as a
-workaround. The fixture keystore and init script are git-ignored under `android/config/android_keys/`
-(build line and backup rule: `docs/android.md`). Production signing is a separately reviewed migration.
+Reuse the existing debug fixture identity: `otp23-fixture.keystore` and `fixture-signing.gradle`,
+git-ignored under `android/config/android_keys/`; never regenerate keys, uninstall or clear data as a
+workaround. Before `adb install -r`, compare the new APK's signing-certificate fingerprint with the
+installed one; record only fingerprints read from real output; never borrow debug credentials for
+production. One stable key per app identity — the Android and macOS identities are separate (macOS:
+`native-bridge/installer/macos/AGENTS.md`). Production signing is a separately reviewed migration; the
+fixture build line and backup detail are in `docs/android.md`.
 
 ## Build & Test
 

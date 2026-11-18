@@ -47,7 +47,7 @@ Every file is at or under 40 lines.
 | Navigation | `docs/android.md` |
 | Testing Approach | `docs/android.md` |
 | Adding a New Bank Handler | `docs/android.md` |
-| Signing identities (Android) | stays, compressed; the fixture build line and backup detail move to `docs/android.md`; the heading is kept for `docs/otp-11-debug-controls.md` |
+| Signing identities (Android) | stays, compressed; the keystore/init-script names and every signing rule (fingerprint comparison before `adb install -r`, no borrowed credentials, no unread fingerprints, one key per app identity) stay; only the fixture build line and backup detail move to `docs/android.md`; the heading is kept for `docs/otp-11-debug-controls.md` |
 | Build & Test commands, NDK/rustup, `protocolJvmTest` | stay |
 | `androidGitVersion` version format | `docs/releasing.md` (single home); linked from the file |
 

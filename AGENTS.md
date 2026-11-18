@@ -31,8 +31,8 @@ Repo-wide rules in `.agents/rules/` are always on:
 `.agents/rules/repo-superspec-closeout.md`, `.agents/rules/repo-signing-keys.md`.
 Node rules are path-scoped and listed in each node's `AGENTS.md`.
 
-OpenCode needs the `opencode-rules` plugin pinned in `opencode.json`; do not run `/init`, and a parent
-`CLAUDE.md` hides `AGENTS.md`. Tool requirements and checkout setup: `CONTRIBUTING.md`.
+OpenCode needs the `opencode-rules` plugin pinned in `opencode.json` (`docs/opencode-rules.md`); do not run
+`/init`; a parent `CLAUDE.md` hides `AGENTS.md`. Tool and checkout setup: `CONTRIBUTING.md`.
 
 ## Hook-delivered rules
 <!-- hooked-rules:begin -->

@@ -1,8 +1,8 @@
 # docs/AGENTS.md
 
 Docs, decisions and the agent-file check; fork `(schema version v5)`. Rule/node:
-`docs/agent-guidance.md`; OpenSpec: `docs/openspec-workflow.md` and `docs/openspec-skills.md`;
-OpenCode (needs the pinned `opencode-rules` plugin): `docs/opencode-rules.md`.
+`docs/agent-guidance.md`; OpenSpec: `docs/openspec-workflow.md` and `docs/openspec-skills.md`; OpenCode
+needs the `opencode-rules` plugin pinned in `opencode.json`: `docs/opencode-rules.md`.
 
 ## Commands
 ```bash
@@ -16,10 +16,10 @@ with warnings, and never runs `openspec update`.
 
 ## Hook-delivered rules
 
-Start at the repository root; add one `.agents/hooked-rules/<scope>-<topic>.md` file, run
-`python3 -I scripts/agent_rules.py pointers --write`, then the check. Each rule adds one line to the
-root, which is capped at 40 lines: compress or link before adding. Grammar, delivery, degraded modes and
-versions: `docs/hook-delivered-rules.md`.
+Start at the repository root, with no parent `CLAUDE.md` or `CLAUDE.local.md`; add one
+`.agents/hooked-rules/<scope>-<topic>.md` file, run `python3 -I scripts/agent_rules.py pointers --write`,
+then the check. Each rule adds one line to the root, which is capped at 40 lines: compress or link before
+adding. Grammar, delivery, degraded modes and versions: `docs/hook-delivered-rules.md`.
 
 ## Rules
 
