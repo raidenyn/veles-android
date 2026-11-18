@@ -248,4 +248,5 @@ import Spec from "/openspec/specs/ci-pipeline/spec.md";
 - Task 4: calibration results are in the commit body of `test(docs): warn about unwrapped capabilities and calibrate the site guard`; braces stay a warning although expression-like braces fail the build.
 - Task 6: the privacy page states that Veles sends codes nowhere in this version and that Bluetooth sharing is in development, instead of the planned Bluetooth sentence, because the app does not send codes yet.
 - Task 7: Contributing is a summary page (Step 3 fallback), `!/CONTRIBUTING.md` is absent from `.mintignore`, and the Step 2 diagram shows Android app, native host and extension with no direct app-to-extension edge. Two RFC links are pinned to commit `f5ec4afb`. All 28 wrapper descriptions are hand-written.
-- Task 9 Step 2: the Contributing page shows its summary and GitHub link, not an imported text.
+- Task 9 Step 4: `/docs/dev/contributing` is expected to show the summary and the GitHub link to `CONTRIBUTING.md`, not the text "How Veles Works".
+- Task 5 Step 2: the expected published list no longer includes `CONTRIBUTING.md`, and the Architecture paragraph's list of published files ("`BUILD.md`, `CONTRIBUTING.md`" in the header) is superseded by these notes.

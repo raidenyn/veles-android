@@ -64,5 +64,5 @@ Closeout notes (not apply tasks): the pull request reports the "Mintlify Deploym
 - 4.4: the privacy page does not say codes leave the phone over Bluetooth, because this build sends no codes (`SessionHost.kt` `Deliver -> Unit`; the app says "does not share OTPs yet"). It says Veles sends codes nowhere in this version and that Bluetooth sharing with a computer is still in development.
 - 5.3: the fallback was taken for Contributing: Mintlify's default ignore list wins over `!/CONTRIBUTING.md`, so `docs/dev/contributing.mdx` is a summary page linking to the file on GitHub, and `.mintignore` has no `!/CONTRIBUTING.md` line.
 - 5.4: all 28 wrapper descriptions were written by hand.
-- 5.6, 3.4: two RFC links (the 2026-08-11 design files) are pinned to commit `f5ec4afb` because those files do not exist on `master`.
+- 5.6: two RFC links (the 2026-08-11 design files) are pinned to commit `f5ec4afb` because those files do not exist on `master`.
 - 7.4: the Contributing page check is its summary and GitHub link, not an imported text.

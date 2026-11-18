@@ -47,7 +47,7 @@ line MUST have one of the forms `!/path`, `/folder/*` or `!/folder/path`.
 - **THEN** the site guard reports an error naming the line
 
 ### Requirement: Published set
-The published files SHALL be exactly `docs.json`, `BUILD.md`, the files under
+The published files SHALL be exactly, apart from Mintlify's default ignores, `docs.json`, `BUILD.md`, the files under
 `docs/user/`, `docs/dev/` and `docs/assets/`, the pages `docs/ci.md`, `docs/releasing.md`,
 `docs/reproducible-builds.md` and `docs/superspec-workflow.md`, the files under `docs/decisions/` and
 `docs/rfcs/`, and the files under `openspec/specs/`. Every other file MUST stay unpublished until the
@@ -105,7 +105,7 @@ The Developers product SHALL contain a "Start here" group (Overview, Architectur
 - **WHEN** the Developers product is opened
 - **THEN** it shows the three groups, and the Specifications group lists one page per wrapped capability
 
-### Requirement: Single-source build and contributing pages
+### Requirement: Build page import and Contributing summary
 The Build page SHALL import `BUILD.md` rather than copy it. The Contributing page MUST summarise
 `CONTRIBUTING.md` and link to the file on GitHub, because Mintlify's default ignore list always applies to
 `CONTRIBUTING.md` and an import of it does not resolve. Any other import that does not resolve MUST likewise be

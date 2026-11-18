@@ -116,7 +116,7 @@ Each capability gets `docs/dev/specs/<capability>.mdx`:
 ```mdx
 ---
 title: "<Readable capability name>"
-description: "<one line from the spec's Purpose>"
+description: "<one-line description of the capability, written for the page>"
 ---
 
 import Spec from "/openspec/specs/<capability>/spec.md";
@@ -147,7 +147,7 @@ re-included; that is the documented interim state for a newly archived capabilit
   map changes.
 - Curated `docs/` pages are published unchanged except: the RFC gets the minimal escape that makes it parse,
   and a relative link to an unpublished file, or one `mint broken-links` reports, becomes an absolute GitHub
-  link.
+  link to `master`, or to the commit that holds the file when it no longer exists on `master`.
 
 ### D5. User pages
 
@@ -171,7 +171,7 @@ A standard-library Python 3.8+ script with the same finding format as the agent-
   which always apply: a `.mintignore` re-include does not lift them (verified, see D4). Pages are the
   `.md`/`.mdx` files in that set. Only tracked files are seen, so a new page must be `git add`ed before the guard sees it.
 - **Imports**: every `import ... from "<path>"` in a published `.mdx` page (the spec wrappers and the Build
-  and Contributing pages alike) is resolved from the root against the published set, so an imported file that
+  page) is resolved from the root against the published set, so an imported file that
   is tracked but unpublished is an error; the imported file is scanned as a `.md` page.
 - **Errors**:
   - `docs.json` is missing or not valid JSON, or a navigation page has no published `.md`/`.mdx` file;
