@@ -223,6 +223,13 @@ On a push to `master`, `commit-guard` runs `scripts/commitlint.py --message` on 
 with an annotation naming each commit that is not a Conventional Commit. The release planner ignores such
 commits.
 
+## Git hooks
+
+`./gradlew installGitHooks` sets `git core.hooksPath=.githooks`, whose `commit-msg` hook runs
+`scripts/commitlint.py`. It is also wired into `:app:preBuild`, acts only when `core.hooksPath` is unset
+(otherwise it warns and leaves the existing value alone, so the hook is not active) and is skipped when
+`CI=true`. The same task is shared by the root and the independent Android build.
+
 ## Future work
 
 These checks do not exist yet. Adding them is outside the component-tree change:
