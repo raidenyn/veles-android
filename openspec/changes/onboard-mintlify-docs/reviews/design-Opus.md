@@ -5,6 +5,7 @@
 - Session preset: `opus` = [Opus]
 - Cap: 5 rounds per reviewer per pass
 - Upstream: `brainstorm.md` sha256 c27ca9d75a2a5b085956825eb2aa827fd3b518d9f65ba6df139b52ff9670a0c7; `proposal.md` sha256 0260f7c0185b8f9957eb6026c228fd827d306227fa373dd5646729d673b4ea65
+- Upstream re-pointed after the implementation-time re-review (see the last pass below): the spec, design, tasks and plan were edited to match the built behaviour.
 
 ## Pass 1
 
@@ -37,3 +38,21 @@ All twelve round-1 fixes confirmed; the 28-capability assignment matches `opensp
 | low | Absolute links override the brainstorm's "site routes" without saying so. | Fixed: Open Questions states the replacement and why. |
 
 Approved content: design sha256 7820ef3cd781f22f5d64fa7df012d95e91ba6d3b0d9cfbde452690398b9db137 (re-pointed after four non-triggering low fixes from round 2: line reference, both mutation tests, brace narrowing note, link-rule note)
+
+## Pass 2 — implementation-time re-review
+
+Implementation-time re-review (after the code was built): calibration against the Mintlify CLI and the whole-branch review showed approved text stale in places (CONTRIBUTING.md default ignore, privacy wording, braces, pinned RFC links, hand-written descriptions). The controller edited the spec, design, tasks and plan; Opus re-reviewed them.
+
+### Round 1 — changes-required
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| medium | D3 wrapper template still said the description comes from the Purpose. | Fixed: one-line description written for the page. |
+| medium | D4 curated-page links allowed only master links, though two RFC links are commit-pinned. | Fixed: master or the commit that holds the file. |
+| low | D6 imports sentence still named the Contributing page. | Fixed. |
+
+### Round 2 — approve
+
+All three fixes confirmed; no statement false against the built behaviour (D4 heading wording noted, no change needed).
+
+Approved content: design sha256 5b11d7a9ce98550112951d0a763fa17caf5a4711639efa1128f00738a83f3080 (re-reviewed after triggering edits: D1 list, D3, D4 fallback verified, D6 default ignores and published imports and brace calibration, Goals, Risks)

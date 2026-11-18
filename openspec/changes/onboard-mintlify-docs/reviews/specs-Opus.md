@@ -4,7 +4,8 @@
 - Reviewer: Opus (Opus-5.5, medium)
 - Session preset: `opus` = [Opus]
 - Cap: 5 rounds per reviewer per pass
-- Upstream: `brainstorm.md` sha256 c27ca9d75a2a5b085956825eb2aa827fd3b518d9f65ba6df139b52ff9670a0c7; `proposal.md` sha256 0260f7c0185b8f9957eb6026c228fd827d306227fa373dd5646729d673b4ea65; `design.md` sha256 7820ef3cd781f22f5d64fa7df012d95e91ba6d3b0d9cfbde452690398b9db137
+- Upstream: `brainstorm.md` sha256 c27ca9d75a2a5b085956825eb2aa827fd3b518d9f65ba6df139b52ff9670a0c7; `proposal.md` sha256 0260f7c0185b8f9957eb6026c228fd827d306227fa373dd5646729d673b4ea65; `design.md` sha256 5b11d7a9ce98550112951d0a763fa17caf5a4711639efa1128f00738a83f3080
+- Upstream re-pointed after the implementation-time re-review (see the last pass below): the spec, design, tasks and plan were edited to match the built behaviour.
 
 ## Pass 1
 
@@ -42,3 +43,27 @@ Approved content: specs/component-versioning/spec.md sha256 714bad1f17bd08338e7a
 | low | Whether running the guard in a different job fails the contract. | Deferred: the scenario names the job, which suffices. |
 
 Approved content: specs/ci-pipeline/spec.md sha256 a975d5fae45639010597c16b0bfc5d54bac0e28c2631e3b4e3d26066e926b616
+
+## Pass 2 — implementation-time re-review
+
+Implementation-time re-review (after the code was built): calibration against the Mintlify CLI and the whole-branch review showed approved text stale in places (CONTRIBUTING.md default ignore, privacy wording, braces, pinned RFC links, hand-written descriptions). The controller edited the spec, design, tasks and plan; Opus re-reviewed them.
+
+### Round 1 — changes-required (specs approved; design, plan changes-required)
+
+#### specs/documentation-site/spec.md
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| low | "Published set" lacks the default-ignore caveat. | Fixed: "apart from Mintlify's default ignores". |
+| low | Requirement title "Single-source build and contributing pages" no longer fits. | Fixed: renamed "Build page import and Contributing summary". |
+| low | One source line much longer than the rest. | Deferred: cosmetic. |
+
+### Round 2 — approve
+
+Both fixes confirmed; `openspec validate --strict` passes; the spec is MDX-safe.
+
+Approved content: specs/documentation-site/spec.md sha256 9fc6f000d8307f98a3984320370e5f527ea05cc232bc68314051bcf07ec35357 (triggering normative edits re-reviewed: Published set, new Default ignores requirement, Build page import and Contributing summary with a new scenario, Absolute links to unpublished files, Capability wrapper pages description wording, Published-set computation, Structural errors)
+
+Approved content: specs/component-versioning/spec.md sha256 714bad1f17bd08338e7a80400b21329ed17b0f97bf51025f3755be0eb8044d0e (unchanged; upstream design re-pointed)
+
+Approved content: specs/ci-pipeline/spec.md sha256 a975d5fae45639010597c16b0bfc5d54bac0e28c2631e3b4e3d26066e926b616 (unchanged; upstream design re-pointed)

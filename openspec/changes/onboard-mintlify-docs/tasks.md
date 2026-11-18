@@ -32,7 +32,7 @@
 
 - [x] 5.1 Write `docs/dev/index.mdx` (Overview: the components and where each lives, written for people from the root `AGENTS.md` node map)
 - [x] 5.2 Write `docs/dev/architecture.mdx` from `CONTRIBUTING.md` "How Veles Works" and the node `AGENTS.md` files
-- [x] 5.3 Write `docs/dev/build.mdx` and `docs/dev/contributing.mdx` importing `/BUILD.md` and `/CONTRIBUTING.md`; if an import does not resolve in `mint dev`, use the fallback page and drop the file from `.mintignore` (spec: *Single-source build and contributing pages*)
+- [x] 5.3 Write `docs/dev/build.mdx` and `docs/dev/contributing.mdx` importing `/BUILD.md` and `/CONTRIBUTING.md`; if an import does not resolve in `mint dev`, use the fallback page and drop the file from `.mintignore` (spec: *Build page import and Contributing summary*)
 - [x] 5.4 Write the 28 wrappers `docs/dev/specs/CAPABILITY.mdx` per design D3 (title rule, description from the Purpose or by hand where it is `TBD`)
 - [x] 5.5 Fill the Developers product: "Start here", "Engineering reference" (`docs/ci`, `docs/releasing`, `docs/reproducible-builds`, `docs/superspec-workflow`, both decision records, the RFC) and "Specifications" with the five sub-groups of design D2 (spec: *Developer page set*)
 - [x] 5.6 `git add` every new page, wrapper and asset; run `npx mint@4.2.1199 broken-links` from the root; turn each reported link, and each link in any published page (old or new) to an unpublished file, into an absolute GitHub link (design D4). Files under `openspec/specs/` are never edited (none has a relative link today); if one is reported, stop and report it instead

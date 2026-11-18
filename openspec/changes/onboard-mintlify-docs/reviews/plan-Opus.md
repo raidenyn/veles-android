@@ -4,7 +4,8 @@
 - Reviewer: Opus (Opus-5.5, medium)
 - Session preset: `opus` = [Opus]
 - Cap: 5 rounds per reviewer per pass
-- Upstream: `brainstorm.md` sha256 c27ca9d75a2a5b085956825eb2aa827fd3b518d9f65ba6df139b52ff9670a0c7; `proposal.md` sha256 0260f7c0185b8f9957eb6026c228fd827d306227fa373dd5646729d673b4ea65; `design.md` sha256 7820ef3cd781f22f5d64fa7df012d95e91ba6d3b0d9cfbde452690398b9db137; `specs/documentation-site/spec.md` sha256 ba76b767564a083feb4f09b8c3d96625ad2e35b4e63cd950bffaf170c447455c; `specs/component-versioning/spec.md` sha256 714bad1f17bd08338e7a80400b21329ed17b0f97bf51025f3755be0eb8044d0e; `specs/ci-pipeline/spec.md` sha256 a975d5fae45639010597c16b0bfc5d54bac0e28c2631e3b4e3d26066e926b616; `tasks.md` sha256 e97cf94b486c2a71fb9f61059edc61059746642619f10f181731315071e69ebc
+- Upstream: `brainstorm.md` sha256 c27ca9d75a2a5b085956825eb2aa827fd3b518d9f65ba6df139b52ff9670a0c7; `proposal.md` sha256 0260f7c0185b8f9957eb6026c228fd827d306227fa373dd5646729d673b4ea65; `design.md` sha256 5b11d7a9ce98550112951d0a763fa17caf5a4711639efa1128f00738a83f3080; `specs/documentation-site/spec.md` sha256 9fc6f000d8307f98a3984320370e5f527ea05cc232bc68314051bcf07ec35357; `specs/component-versioning/spec.md` sha256 714bad1f17bd08338e7a80400b21329ed17b0f97bf51025f3755be0eb8044d0e; `specs/ci-pipeline/spec.md` sha256 a975d5fae45639010597c16b0bfc5d54bac0e28c2631e3b4e3d26066e926b616; `tasks.md` sha256 2835786f20f5943f3cbd7f15c3576d65fcecb496e97b83fdadf3a3468306e534
+- Upstream re-pointed after the implementation-time re-review (see the last pass below): the spec, design, tasks and plan were edited to match the built behaviour.
 
 ## Pass 1
 
@@ -43,3 +44,20 @@ All three round-2 fixes confirmed; the base fixture publishes everything Tasks 2
 | low | `base_site()` navigation and logo paths only implied. | Fixed: named. |
 
 Approved content: plan sha256 37aaa94afdf8d082a9ccc54418abeaa0fa927f2a926ccc3d97e16684404d9a1b (re-pointed after two non-triggering low fixes from round 3: outside-git test fixture, base fixture navigation and logo)
+
+## Pass 2 — implementation-time re-review
+
+Implementation-time re-review (after the code was built): calibration against the Mintlify CLI and the whole-branch review showed approved text stale in places (CONTRIBUTING.md default ignore, privacy wording, braces, pinned RFC links, hand-written descriptions). The controller edited the spec, design, tasks and plan; Opus re-reviewed them.
+
+### Round 1 — changes-required
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| medium | "As built" named Task 9 Step 2; the affected check is Step 4. | Fixed: Step 4, with the new expectation (summary and GitHub link). |
+| medium | Plan lines 7 and 162 still listed CONTRIBUTING.md as published. | Fixed: an As built note for Task 5 Step 2 and the Architecture paragraph. |
+
+### Round 2 — approve
+
+Both fixes confirmed; the Task 5 Step 2 note verified by running its own command.
+
+Approved content: plan sha256 8355551c47f25b4b44f442ff27f19da3652c7e428392f1632e0ab79dbf13c641 (re-reviewed after the appended "As built" section and its two fixes)
