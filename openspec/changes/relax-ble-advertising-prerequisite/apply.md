@@ -123,6 +123,6 @@ Opus reviewed the whole branch (`d41085c..d07b7b1`):
 
 ## Next step
 
-1. Reframe the proposal/design motivation and the Gate B goal, then re-run the Sol review gate on them.
+1. Done (`e4b2e05`): the brainstorm, proposal and design are reframed as a hardening, and Sol re-approved them in review pass 2. Follow-up `raidenyn/veles-android#169` is filed.
 2. Done: the owner accepted 4.2's deviations and asked for the follow-up issue for "sharing enabled but the transport not running after a reinstall or process death".
 3. Run `/openspec-verify-change`.
