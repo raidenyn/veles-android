@@ -90,7 +90,7 @@
 
 Each step below that changes a file the agent-file check inspects lands together with its 6.1 invariant and tests, so the check stays green after every step.
 
-- [ ] 4.1 Land in the same step as the hook-wiring invariant of 6.1 and its tests, and no earlier than 6.3 (CODEOWNERS), which must land first or in the same step so the engine and plugin are owner-covered from the first commit that activates them. Add the four hooks to `.claude/settings.json`: `PreToolUse` `Bash`, `PostToolUse` `Bash|Skill|Read`, `UserPromptSubmit` and `PreCompact`. Use the exact engine command and `timeout: 5`, with field handling as recorded in 1.3.
+- [x] 4.1 Land in the same step as the hook-wiring invariant of 6.1 and its tests, and no earlier than 6.3 (CODEOWNERS), which must land first or in the same step so the engine and plugin are owner-covered from the first commit that activates them. Add the four hooks to `.claude/settings.json`: `PreToolUse` `Bash`, `PostToolUse` `Bash|Skill|Read`, `UserPromptSubmit` and `PreCompact`. Use the exact engine command and `timeout: 5`, with field handling as recorded in 1.3.
 - [ ] 4.2 Create the V2 plugin in `scripts/opencode-hooked-rules/`. It maps:
   - `execute.before` to a deny;
   - `execute.after` to an output append;
@@ -134,7 +134,7 @@ Each step below that changes a file the agent-file check inspects lands together
   - an engine-only change selects exactly `tooling` and `docs`;
   - a test iterates over every tracked file under `scripts/opencode-hooked-rules/` and asserts that each, changed alone, selects exactly `tooling` and `docs`;
   - the guidance-edit case uses `.agents/hooked-rules/repo-commit-types.md` and selects only `docs`.
-- [ ] 6.3 Add `/scripts/agent_rules.py` and `/scripts/opencode-hooked-rules/` to `.github/CODEOWNERS`, with the existing agent-guidance owner, in the same step as the CODEOWNERS invariant and its tests in `check_agent_files.py`.
+- [x] 6.3 Add `/scripts/agent_rules.py` and `/scripts/opencode-hooked-rules/` to `.github/CODEOWNERS`, with the existing agent-guidance owner, in the same step as the CODEOWNERS invariant and its tests in `check_agent_files.py`.
 
 ## 7. Verification
 
