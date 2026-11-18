@@ -1537,6 +1537,30 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assert_finding(findings, "error", ".claude/settings.json", "duplicate key `type`")
         self.assertEqual(len(findings), 1, findings)
 
+    def test_hooks_settings_duplicate_surrogate_key_is_ascii_and_printable(self):
+        # `"\ud800"` is ASCII on disk and passes UTF-8 decoding, but decodes to a lone surrogate
+        # that a strict stdout cannot encode, so the finding must carry an escaped form.
+        text = settings_text().replace(
+            '"enabledPlugins": {}', '"enabledPlugins": {}, "\\ud800": 1, "\\ud800": 2', 1
+        )
+        self.assertIn('"\\ud800": 1, "\\ud800": 2', text)
+        root = self.repo()
+        with open(os.path.join(root, ".claude/settings.json"), "wb") as handle:
+            handle.write(text.encode("utf-8"))
+        findings = check_repo(root)
+        self.assert_finding(findings, "error", ".claude/settings.json", "duplicate key")
+        self.assertEqual(len(findings), 1, findings)
+        message = findings[0].message
+        self.assertIn("\\ud800", message)
+        self.assertTrue(message.isascii() and "\n" not in message, message)
+        raw = io.BytesIO()
+        stdout = io.TextIOWrapper(raw, encoding="utf-8", errors="strict", newline="\n")
+        with contextlib.redirect_stdout(stdout):
+            code = main(["--root", root])
+        stdout.flush()
+        self.assertEqual(code, 1)
+        self.assertIn(b"duplicate key", raw.getvalue())
+
     def test_hooks_keep_other_settings(self):
         files = clean_files()
         files[".claude/settings.json"] = settings_text(extra={"model": "x"})

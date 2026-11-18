@@ -1194,7 +1194,9 @@ def _strict_object(pairs):
     seen = set()
     for key, _ in pairs:
         if key in seen:
-            raise _StrictJsonError("has a duplicate key `%s`" % key)
+            # `ascii` keeps the message one plain-ASCII line, even for a lone-surrogate escape
+            # such as "\\ud800" that a strict stdout could not encode.
+            raise _StrictJsonError("has a duplicate key `%s`" % ascii(key)[1:-1])
         seen.add(key)
     return dict(pairs)
 
