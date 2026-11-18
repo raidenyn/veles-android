@@ -5,9 +5,9 @@
 - Session preset: `sol` = [Sol]
 - Cap: 5 rounds per reviewer per pass
 - Upstream:
-  - brainstorm sha256 727342681a009204f8dd7209d1e77024bb4616e82c26b33eb40f07c943cdd040
-  - proposal sha256 f029fdb6639ca9d4eb3f03b0c1db725957d3c580806b3ae84f681caf46040a8b
-  - design sha256 3bf8a0bbeb8b2d544f18e9e17bd6456b7ee514e4c24f2fb9b40fe4884cc1184d
+  - brainstorm sha256 0dd5b5ff7c4e5e73ccfa73a45add4b80226a891bdefebe694e8e88e6e53d9b70 — re-pointed from 72734268… after the pass-2 reframe of the disproved premise (2026-11-18), approved by Sol; pass 2 checked the spec, tasks and plan for consistency
+  - proposal sha256 b95589b23ea346551478295e40da157ad1d09d6d7d9f69401b7f83dbece010c0 — re-pointed from f029fdb6… after the pass-2 reframe of the disproved premise (2026-11-18), approved by Sol; pass 2 checked the spec, tasks and plan for consistency
+  - design sha256 5ff56fe37158dc3b8dff75ae999429534aaa1fba2d08871241ddd8dd61f77057 — re-pointed from 3bf8a0bb… after the pass-2 reframe of the disproved premise (2026-11-18), approved by Sol; pass 2 checked the spec, tasks and plan for consistency
 
 ## Pass 1
 

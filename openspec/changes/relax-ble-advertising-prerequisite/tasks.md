@@ -54,12 +54,12 @@
 - [x] 4.1 Build the fixture APK and test APK from `android/` with the approved fixture signing init script (`android/AGENTS.md`).
   - Compare the new APK's signing certificate with the installed app's before `adb install -r`.
   - Never regenerate a key, uninstall or clear data. If the key is missing, stop and ask.
-- [x] 4.2 OnePlus 6T (single-advertisement): the issue's acceptance scenario. Follow `docs/otp-12-gate-b-runbook.md`'s "Common commands" and `locked-phone-20min` sections, with `APP=me.nagaev.veles.otp23` (the fixture build) and `R=$APP/me.nagaev.veles.debugprobe.ProbeReceiver`. Capture `adb logcat -v time -s VelesProbe` for the whole run.
+- [x] 4.2 OnePlus 6T: the issue's acceptance scenario. Follow `docs/otp-12-gate-b-runbook.md`'s "Common commands" and `locked-phone-20min` sections, with `APP=me.nagaev.veles.otp23` (the fixture build) and `R=$APP/me.nagaev.veles.debugprobe.ProbeReceiver`. Capture `adb logcat -v time -s VelesProbe` for the whole run.
 
   This run is stricter than the runbook: the phone stays locked and asleep, with the task removed, until the push has arrived.
 
   Steps:
-  1. Enable the transport from the Home card. Confirm the card leaves `Unsupported` and reaches `Advertising`.
+  1. Enable the transport from the Home card. Confirm the card reaches `Advertising` (whatever it showed before Start).
   2. Chrome (development-channel connector) discovers and authenticates a `full` session; keep it open.
   3. Seed: `adb shell am broadcast -a me.nagaev.veles.debug.GATE_B_SEED -n "$R"`. With no `lifetimes` extra, the five default 600 s lifetimes are seeded.
   4. Schedule: `adb shell am broadcast -a me.nagaev.veles.debug.GATE_B_SCHEDULE_PUSH -n "$R" --es delay 1200`. Confirm the `scheduled` line with the process id; its controller-clock reading is minute 0, using the runbook's offset method.

@@ -15,9 +15,23 @@ places:
 2. `SharingService.onStartCommand`, before foreground promotion;
 3. `SharingService`'s `ACTION_STATE_CHANGED` receiver, which fails the service on any non-null result.
 
-Its last check, `!adapter.isMultipleAdvertisementSupported → Unsupported`, rejects the OnePlus 6T
-(Android 15). As a result, that phone can neither share nor run the OTP-12 locked-phone Gate B
-scenario.
+Its last check is `!adapter.isMultipleAdvertisementSupported → Unsupported`. It was added with the
+first transport (OTP-06) as the proxy for "peripheral advertising is unsupported", with no other
+recorded reason. The proxy is stale:
+
+- On Android 5.0 `getBluetoothLeAdvertiser()` returned `null` unless the flag was true; on 5.1–7.x
+  unless it or a hidden peripheral-mode flag was. From Android 8.0 the advertiser no longer depends
+  on it, and the app's `minSdk` is 33.
+- The Android 15 Bluetooth service reports the flag as true only when the controller declares at
+  least 5 hardware advertising instances (`MIN_ADVT_INSTANCES_FOR_MA`) in a vendor-specific
+  capability. Controllers with 1–4 instances, or without that capability, read false yet can
+  advertise once.
+
+The tracked issue attributed the OnePlus 6T's unavailable transport to this check. The device run
+disproved it: the 6T (Android 15) reports the flag as true (`max_adv_instances: 16`), and unchanged
+master advertises there. The card text the issue quoted is the `Disabled` state that a reinstall
+leaves while sharing stays enabled; follow-up `raidenyn/veles-android#169` covers it. This design is
+therefore a hardening of the prerequisite, not the fix for an observed 6T failure.
 
 In `SharingGattServer`, the `AdvertiseCallback` maps:
 - `onStartSuccess` → `Advertising`;
@@ -42,7 +56,11 @@ Constraints:
   non-capability errors), and the existing Start retry path still works.
 - Multi-advertisement phones behave as today: same checks, same successful start, same failure
   handling. The single exception is the `FEATURE_UNSUPPORTED` mapping below.
-- The tracked issue's locked-phone Gate B scenario passes on the OnePlus 6T.
+- The tracked issue's acceptance scenario, the locked-phone Gate B run, still runs on the OnePlus 6T
+  as that issue's acceptance. Since the 6T reports the flag as true, the run checks that the
+  transport keeps working end to end, not that this change unblocked it. The 6T run met the timing,
+  task-removal and screen-off conditions but not "locked and asleep" (no lock screen; `Dozing`); the
+  owner accepted those deviations, recorded in `apply.md`.
 
 **Non-Goals:**
 - Changing the advertisement data or settings, or using extended advertising sets.
@@ -146,7 +164,10 @@ JVM/Robolectric only, with no sleeps and no wall clock:
 Fixture build (`assembleDebug assembleDebugAndroidTest` with the approved fixture signing init
 script), installed over the existing app after comparing signing certificates:
 
-1. **OnePlus 6T (single-advertisement)**, the tracked issue's acceptance scenario:
+Neither available phone reports the flag as false, so the relaxed branch is proven by the JVM tests
+in D4 and the device runs are regression and acceptance checks.
+
+1. **OnePlus 6T**, the tracked issue's acceptance scenario:
    - the service starts and advertises, and Chrome discovers and authenticates a `full` session;
    - seed five fixture records with their default lifetimes;
    - `GATE_B_SCHEDULE_PUSH --es delay 1200` logs `scheduled` with the process id;
@@ -167,7 +188,12 @@ The results are recorded in the change's `apply.md` and the PR note.
 
 - **[Risk] The 6T controller rejects even one advertisement (`FEATURE_UNSUPPORTED`).**
   → The card then shows `Unsupported` and the acceptance gate cannot pass. Report it to the user as
-  a hardware finding; never hide it or retry endlessly.
+  a hardware finding; never hide it or retry endlessly. (Did not occur: the 6T advertised.)
+- **[Risk] A controller with few advertising instances has them all in use by other advertisers.**
+  → Advertising fails with `TOO_MANY_ADVERTISERS`, which maps to `Failed`; the service tears down and
+  Start retries. Such a phone was refused outright before, so this is no worse.
+- **[Gap] No available phone reports the flag as false.** → The relaxed branch is covered by the
+  JVM tests only; the device runs are regression checks. Stated in `apply.md` and the PR note.
 - **[Risk] A phone that cannot advertise briefly shows the foreground notification before
   failing.** → Acceptable: the service tears itself down on the failure callback, as it does today
   for `Failed`, and the state stays visible on the card.
@@ -184,4 +210,4 @@ None: there is no stored state, schema or protocol change. Rollback is reverting
 
 ## Open Questions
 
-None blocking. The 6T outcome in Risks is the only unknown, and it is settled by the device run.
+None blocking. The 6T outcome in Risks was settled by the device run: the 6T advertised.

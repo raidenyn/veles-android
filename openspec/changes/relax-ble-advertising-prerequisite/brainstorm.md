@@ -1,3 +1,17 @@
+## Correction after apply (2026-11-18)
+
+The intent below records the tracked issue's premise, which the device run disproved: the OnePlus
+6T reports `isMultipleAdvertisementSupported` as true, and unchanged master advertises there. The
+card text the issue quoted was the `Disabled` state a reinstall leaves; follow-up
+`raidenyn/veles-android#169` covers it.
+
+The approach still holds, for a different reason. The check came from Android 5, where the flag
+gated `getBluetoothLeAdvertiser()`. Since Android 8.0 it no longer does, and the app's `minSdk` is 33.
+On Android 15 the flag means at least 5 hardware advertising instances, so it can refuse a phone
+that advertises once. The change is a hardening that removes a stale proxy. The 6T Gate B run stays
+the tracked issue's acceptance check, not proof that this change unblocked it. The user agreed to
+this reframing on 2026-11-18.
+
 ## Design Summary
 
 Tracked task: the OTP-12 follow-up "Relax the BLE multi-advertisement prerequisite for

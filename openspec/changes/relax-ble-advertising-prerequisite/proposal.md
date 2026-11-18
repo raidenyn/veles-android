@@ -1,11 +1,26 @@
 ## Why
 
-The Device sharing transport refuses to start on phones whose BLE controller reports no support for
-*multiple simultaneous* advertisements, such as the OnePlus 6T. The transport only ever starts one
-advertisement, so this gate is stricter than what it uses. It leaves those phones without sharing
-and blocks the OTP-12 locked-phone Gate B scenario on the 6T. Gating on the real advertising result
-lets every phone that can advertise once run the transport, while a phone that truly cannot still
-gets a clear `Unsupported` state.
+`SharingState.prerequisite` refuses to start the Device sharing transport when
+`BluetoothAdapter.isMultipleAdvertisementSupported` is false. That check is a leftover from Android 5,
+and today it can refuse phones that advertise fine:
+
+- **Origin.** It arrived with the first transport (OTP-06) as the proxy for the RFC's "unsupported
+  peripheral advertising is an explicit unavailable state", with no other recorded reason. On
+  Android 5.0 `getBluetoothLeAdvertiser()` returned `null` unless the flag was true, and on 5.1–7.x
+  unless it or a hidden peripheral-mode flag was. Since Android 8.0 the advertiser no longer depends
+  on it, and the app's `minSdk` is 33.
+- **What it means now.** The Android 15 Bluetooth service reports it as true only when the controller
+  declares at least 5 hardware advertising instances in a vendor-specific capability. A controller
+  with 1–4 instances, or one that does not report that capability, reads false yet can advertise.
+- **What the transport needs.** One connectable advertisement carrying one service UUID. Serving
+  several clients uses several GATT connections, not several advertisements.
+
+The tracked issue blamed this check for the OnePlus 6T showing the transport as unavailable. The
+device run disproved that: the 6T reports the flag as true, and unchanged master advertises there.
+The text the issue quoted was the `Disabled` state left after a reinstall, which follow-up
+`raidenyn/veles-android#169` covers. This change is therefore a hardening, not the fix for an observed
+failure: it removes a stale proxy and lets the real advertising attempt decide capability, while a
+phone that truly cannot advertise still gets a clear `Unsupported` state.
 
 ## What Changes
 
@@ -14,10 +29,10 @@ gets a clear `Unsupported` state.
   `BluetoothAdapter.isMultipleAdvertisementSupported` is false.
 - To: that condition is removed. The BLE feature, permission, adapter-present and Bluetooth-on checks
   stay unchanged and in the same order.
-- Reason: the flag answers a different question (several concurrent advertisements) than the one
-  the transport needs answered (one advertisement).
-- Impact: non-breaking. Single-advertisement phones can now start the service, and
-  multi-advertisement phones see no difference at this check.
+- Reason: the flag answers a different question (at least 5 hardware advertising instances) than
+  the one the transport needs answered (one advertisement).
+- Impact: non-breaking. Phones that report the flag as false can now start the service, and phones
+  that report it as true see no difference at this check.
 
 **Advertising failure mapping**
 - From: every `AdvertiseCallback.onStartFailure` code becomes `Failed`.
@@ -50,5 +65,6 @@ debug/release boundary.
   adapter.
 - **Real devices**: the tracked issue's locked-phone Gate B scenario on the OnePlus 6T with the
   fixture build, a Stop/Start retry there, and a start-and-advertise regression on the OnePlus 10
-  Pro.
+  Pro. Both phones report the flag as true, so no available phone exercises the relaxed branch on
+  hardware; the JVM tests cover it.
 - **Dependencies**: none added. The protocol and the web extension are unaffected.
