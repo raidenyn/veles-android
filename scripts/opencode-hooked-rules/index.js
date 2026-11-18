@@ -12,6 +12,9 @@ export const ENGINE_PATH = fileURLToPath(new URL("../agent_rules.py", import.met
 export const NOTICE =
   "Rule hooks failed: read the hooked rules listed in AGENTS.md by hand at the moments they name."
 export const TIMEOUT_MS = 5000
+export const KILL_ATTEMPTS = 5 // SIGKILL attempts on a child that must not outlive its call
+export const CLEANUP_MS = 1000 // between SIGKILL attempts
+export const DISPOSE_BOUND_MS = 1000 // how long the disposer waits for the watcher loop
 export const FAIL_INJECTION_VARIABLE = "VELES_AGENT_RULES_FAIL_INJECTION"
 
 const PASS = Object.freeze({ decision: "pass", text: "", entries: Object.freeze([]) })
@@ -85,18 +88,40 @@ export function runEngine(
     setTimer = setTimeout,
     clearTimer = clearTimeout,
     engine = ENGINE_PATH,
+    cleanupMs = CLEANUP_MS,
   } = {},
 ) {
   return new Promise((resolve) => {
     let settled = false
     let timer
     let child
-    const hardKill = () => {
+    let exited = false
+    let cleaning = false
+    let cleanupTimer
+    let attempts = 0
+    const stopCleanup = () => {
+      if (cleanupTimer !== undefined) clearTimer(cleanupTimer)
+      cleanupTimer = undefined
+    }
+    // Child cleanup is independent of the fail-open result: SIGKILL again every `cleanupMs` until the child
+    // has exited or the attempts run out. A false return or a throw is a failed attempt.
+    const attemptKill = () => {
+      cleanupTimer = undefined
+      if (exited) return
+      attempts += 1
       try {
         child.kill("SIGKILL")
       } catch {
-        // already gone
+        // a failed attempt; the next one follows
       }
+      if (exited || attempts >= KILL_ATTEMPTS) return
+      cleanupTimer = setTimer(attemptKill, cleanupMs)
+      if (cleanupTimer && typeof cleanupTimer.unref === "function") cleanupTimer.unref()
+    }
+    const startCleanup = () => {
+      if (cleaning || !child || exited) return
+      cleaning = true // a synchronous 'error' from kill() re-enters fail(); this keeps it to one cleanup
+      attemptKill()
     }
     const finish = (value) => {
       if (settled) return
@@ -104,10 +129,10 @@ export function runEngine(
       if (timer !== undefined) clearTimer(timer)
       resolve(value)
     }
-    // Any transport failure: the call passes (null), and the child is killed so nothing lingers.
+    // Any transport failure: the call passes (null) at once, then the child is cleaned up.
     const fail = () => {
-      if (child) hardKill()
       finish(null)
+      startCleanup()
     }
     try {
       child = spawn("python3", ["-I", engine, "hook", "--format", "plain"], {
@@ -123,7 +148,13 @@ export function runEngine(
     const chunks = []
     if (child.stdout) child.stdout.on("data", (chunk) => chunks.push(Buffer.from(chunk)))
     child.on("error", fail)
+    child.on("exit", () => {
+      exited = true
+      stopCleanup()
+    })
     child.on("close", (code) => {
+      exited = true
+      stopCleanup()
       if (settled) return
       if (code !== 0) return finish(null)
       finish(decode(Buffer.concat(chunks)))
@@ -170,7 +201,7 @@ export function createHandlers(
       let current = sessionID
       for (let depth = 0; depth < MAX_PARENT_DEPTH; depth += 1) {
         const info = await ctx.session.get({ sessionID: current })
-        if (!isPlainObject(info)) return null
+        if (!isPlainObject(info) || info.id !== current) return null // a record of another session is not this one
         const parent = info.parentID
         if (parent === undefined || parent === null) {
           const key = current === sessionID ? { session: sessionID } : { session: current, agent: sessionID }
@@ -208,10 +239,10 @@ export function createHandlers(
     if (response.decision !== "context") return
     if (response.text === "" && response.entries.length === 0) return
     try {
-      // Every context response with entries goes through the injection step, even with empty text, so
-      // a recorded credit is voided when the injection fails.
+      // Every context response with entries goes through the real injection, whatever the text length, so
+      // a recorded credit is voided when the injection (or its channel) fails.
       if (env[FAIL_INJECTION_VARIABLE] === "1") throw new Error(`${FAIL_INJECTION_VARIABLE}=1`)
-      if (response.text !== "") await inject(response.text)
+      await inject(response.text) // as it is, even when empty: the entries were recorded for it
     } catch {
       await voidEntries(key, response.entries)
     }
@@ -347,7 +378,14 @@ function abortableSleep(ms, signal) {
  * `setup` returns an async disposer, like `opencode-rules`: it aborts the event stream, waits for the
  * watcher to stop and disposes the hook registrations.
  */
-export function createPlugin({ spawn, setTimer, clearTimer, env = process.env, sleep } = {}) {
+export function createPlugin({
+  spawn,
+  setTimer,
+  clearTimer,
+  env = process.env,
+  sleep,
+  disposeBoundMs = DISPOSE_BOUND_MS,
+} = {}) {
   const runtime = {}
   if (spawn) runtime.spawn = spawn
   if (setTimer) runtime.setTimer = setTimer
@@ -367,8 +405,10 @@ export function createPlugin({ spawn, setTimer, clearTimer, env = process.env, s
       const controller = new AbortController()
       const watcher = handlers.watch(controller.signal)
       return async () => {
+        // First stop the stream, then release the hooks (never dependent on the loop), and only then wait
+        // for the loop, and only up to a bound: a `next()` that ignores the signal or a lookup that never
+        // answers must not hold the disposer.
         controller.abort()
-        await watcher
         for (const registration of registrations.reverse()) {
           try {
             if (registration && typeof registration.dispose === "function") await registration.dispose()
@@ -376,6 +416,14 @@ export function createPlugin({ spawn, setTimer, clearTimer, env = process.env, s
             // a registration that cannot be disposed is already gone
           }
         }
+        const timers = { set: runtime.setTimer || setTimeout, clear: runtime.clearTimer || clearTimeout }
+        await new Promise((resolve) => {
+          const bound = timers.set(resolve, disposeBoundMs)
+          watcher.then(() => {
+            timers.clear(bound)
+            resolve()
+          })
+        })
       }
     },
   }

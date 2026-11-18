@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url"
 
 import plugin, {
   ENGINE_PATH,
+  KILL_ATTEMPTS,
   NOTICE,
   createHandlers,
   createPlugin,
@@ -37,10 +38,14 @@ function fakeTimers() {
       timer.cleared = true
     },
     fire() {
-      for (const timer of timers) if (!timer.cleared) timer.fn()
+      for (const timer of timers.slice()) {
+        if (timer.cleared || timer.fired) continue
+        timer.fired = true
+        timer.fn()
+      }
     },
     live() {
-      return timers.filter((timer) => !timer.cleared)
+      return timers.filter((timer) => !timer.cleared && !timer.fired)
     },
   }
 }
@@ -54,6 +59,7 @@ function fakeTimers() {
  *   {stdinError}     stdin emits an "error" event, then the rest of the response plays
  *   {endThrows}      stdin.end throws synchronously
  *   {noStdin}        the child has no stdin
+ *   {kill}           (child, attempt) => result of kill(): false, a throw, or a synchronous "error" event
  */
 function fakeSpawn(script) {
   const calls = []
@@ -70,6 +76,8 @@ function fakeSpawn(script) {
     child.kill = (signal) => {
       child.killed = true
       child.signals.push(signal)
+      // `{kill: (child, attempt) => ...}` scripts a kill that returns false, throws or emits an error
+      return response && response.kill ? response.kill(child, child.signals.length) : true
     }
     child.stdout = new EventEmitter()
     child.stderr = new EventEmitter()
@@ -115,6 +123,8 @@ const answer = (decision, text, entries = []) => ({
 })
 const entry = (name, writeId) => ({ rule: [name, "f".repeat(64)], write_id: writeId })
 
+const NEVER = Symbol("never answers")
+
 /** An event stream that yields nothing and ends only when the host aborts it. */
 async function* quietStream(signal) {
   if (signal && !signal.aborted) {
@@ -127,7 +137,7 @@ async function* quietStream(signal) {
  * of stream factories `(signal) => asyncIterable`, one per `event.subscribe` call (later calls get a quiet
  * stream); `events` is shorthand for one stream that yields them and then waits for the abort.
  */
-function fakeCtx({ sessions = {}, events = [], streams = null, syntheticError = null } = {}) {
+function fakeCtx({ sessions = {}, events = [], streams = null, syntheticError = null, disposeFails = null } = {}) {
   const hooks = {}
   const queue = streams
     ? streams.slice()
@@ -137,6 +147,10 @@ function fakeCtx({ sessions = {}, events = [], streams = null, syntheticError = 
           yield* quietStream(signal)
         },
       ]
+  const disposeOf = (name) => {
+    if (name === disposeFails) throw new Error(`cannot dispose ${name}`)
+    ctx.disposed.push(name)
+  }
   const ctx = {
     location: { directory: DIR },
     synthetics: [],
@@ -147,15 +161,18 @@ function fakeCtx({ sessions = {}, events = [], streams = null, syntheticError = 
     tool: {
       hook: async (name, handler) => {
         hooks[name] = handler
-        return { dispose: async () => ctx.disposed.push(name) }
+        return { dispose: async () => disposeOf(name) }
       },
     },
     session: {
       hook: async (name, handler) => {
         hooks[`session.${name}`] = handler
-        return { dispose: async () => ctx.disposed.push(`session.${name}`) }
+        return { dispose: async () => disposeOf(`session.${name}`) }
       },
-      get: async ({ sessionID }) => (sessionID in sessions ? sessions[sessionID] : { id: sessionID }),
+      get: ({ sessionID }) => {
+        if (sessions[sessionID] === NEVER) return new Promise(() => {}) // a lookup that never answers
+        return Promise.resolve(sessionID in sessions ? sessions[sessionID] : { id: sessionID })
+      },
       synthetic: async (message) => {
         if (syntheticError) throw syntheticError
         ctx.synthetics.push(message)
@@ -184,11 +201,11 @@ function fakeSleep() {
 }
 
 /** Boot the real plugin against the fakes; returns everything a test needs. */
-async function boot({ script, sessions, events, streams, env = {}, syntheticError } = {}) {
+async function boot({ script, sessions, events, streams, env = {}, syntheticError, disposeFails } = {}) {
   const timers = fakeTimers()
   const spawn = fakeSpawn(script ?? { code: 0, stdout: "" })
   const sleep = fakeSleep()
-  const ctx = fakeCtx({ sessions, events, streams, syntheticError })
+  const ctx = fakeCtx({ sessions, events, streams, syntheticError, disposeFails })
   const instance = createPlugin({
     spawn,
     setTimer: timers.setTimer,
@@ -264,7 +281,7 @@ test("runEngine: a missing python (error event) is null", async () => {
     { spawn: fakeSpawn({ error }), setTimer: timers.setTimer, clearTimer: timers.clearTimer },
   )
   assert.equal(result, null)
-  assert.equal(timers.live().length, 0)
+  assert.equal(timers.timers[0].cleared, true, "the deadline timer is cleared once settled")
 })
 
 test("runEngine: spawn throwing synchronously is null", async () => {
@@ -334,9 +351,22 @@ test("runEngine: undecodable or misshapen output is null", async () => {
   }
 })
 
+/** A valid deny response whose `text` holds an invalid UTF-8 byte (0xff). */
+const BAD_UTF8_DENY = Buffer.concat([
+  Buffer.from('{"decision":"deny","text":"a'),
+  Buffer.from([0xff]),
+  Buffer.from('b","entries":[]}'),
+])
+
+test("the invalid UTF-8 fixture would parse under a lenient decoder", () => {
+  const lenient = JSON.parse(new TextDecoder("utf-8").decode(BAD_UTF8_DENY))
+  assert.equal(lenient.decision, "deny")
+  assert.throws(() => new TextDecoder("utf-8", { fatal: true }).decode(BAD_UTF8_DENY))
+})
+
 test("runEngine: invalid UTF-8 and a byte order mark are null", async () => {
   for (const stdout of [
-    Buffer.from([0x7b, 0xff, 0x7d]),
+    BAD_UTF8_DENY,
     Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('{"decision":"deny","text":"x","entries":[]}')]),
   ]) {
     const timers = fakeTimers()
@@ -368,7 +398,7 @@ test("runEngine: a stdin error event is null and the child is killed", async () 
   )
   assert.equal(result, null)
   assert.deepEqual(spawn.calls[0].child.signals, ["SIGKILL"])
-  assert.equal(timers.live().length, 0)
+  assert.equal(timers.timers[0].cleared, true)
 })
 
 test("runEngine: an early exit 0 with no output after a stdin error is still null", async () => {
@@ -391,7 +421,7 @@ test("runEngine: stdin.end throwing is null, the child is killed and no timer is
   )
   assert.equal(result, null)
   assert.deepEqual(spawn.calls[0].child.signals, ["SIGKILL"])
-  assert.equal(timers.live().length, 0)
+  assert.equal(timers.timers[0].cleared, true)
 })
 
 test("runEngine: a child without stdin is null and killed", async () => {
@@ -447,7 +477,7 @@ test("execute.before: a malformed deny does not stop the call", async () => {
     '{"decision":"deny","text":"x","entries":[{"write_id":1}]}',
     '{"decision":"deny","text":"x"}',
     " ",
-    Buffer.from([0xff]),
+    BAD_UTF8_DENY,
   ]) {
     const { hooks } = await boot({ script: { code: 0, stdout } })
     assert.equal(await hooks["execute.before"](shellBefore("git commit")), undefined)
@@ -455,7 +485,7 @@ test("execute.before: a malformed deny does not stop the call", async () => {
 })
 
 test("execute.after: whitespace-only or invalid UTF-8 output appends the notice", async () => {
-  for (const stdout of ["\n", Buffer.from([0xc3, 0x28])]) {
+  for (const stdout of ["\n", BAD_UTF8_DENY]) {
     const { hooks } = await boot({ script: { code: 0, stdout } })
     const input = shellAfter("ls")
     await hooks["execute.after"](input)
@@ -655,12 +685,48 @@ test("an empty-text context with entries still goes through the injection step a
   ])
 })
 
-test("an empty-text context with entries and a working injection appends nothing and voids nothing", async () => {
+test("an empty-text context with entries goes through the real append and voids nothing on success", async () => {
   const { hooks, spawn } = await boot({ script: answer("context", "", [entry("a.md", 33)]) })
   const input = shellAfter("x")
   await hooks["execute.after"](input)
-  assert.deepEqual(input.result.content, [])
-  assert.equal(spawn.calls.length, 1)
+  assert.deepEqual(input.result.content, [{ type: "text", text: "" }], "the text is passed as it is")
+  assert.deepEqual(spawn.events().map((event) => event.event), ["tool-after"])
+})
+
+test("an empty-text context with entries and no result.content voids every entry", async () => {
+  const { hooks, spawn } = await boot({
+    script: (call) =>
+      call.event && call.event.event === "void"
+        ? { code: 0, stdout: "" }
+        : answer("context", "", [entry("a.md", 41), entry("b.md", 42)]),
+  })
+  const input = { ...shellAfter("x"), result: { metadata: { exit: 0 } } }
+  await hooks["execute.after"](input)
+  assert.deepEqual(spawn.events().slice(1), [
+    { event: "void", session: "ses_a", cwd: DIR, write_ids: [41] },
+    { event: "void", session: "ses_a", cwd: DIR, write_ids: [42] },
+  ])
+})
+
+test("an empty-text context with entries and a rejecting synthetic voids every entry", async () => {
+  const { hooks, spawn } = await boot({
+    script: (call) =>
+      call.event && call.event.event === "void"
+        ? { code: 0, stdout: "" }
+        : answer("context", "", [entry("a.md", 43)]),
+    syntheticError: new Error("host refused"),
+  })
+  await hooks["session.prompt"]({ sessionID: "ses_a", prompt: { text: "/x", files: [] } })
+  assert.deepEqual(spawn.events().map((event) => event.event), ["prompt", "void"])
+  assert.deepEqual(spawn.events()[1].write_ids, [43])
+})
+
+test("an empty-text context with entries and a working synthetic injects the text as it is", async () => {
+  const { hooks, spawn, ctx } = await boot({ script: answer("context", "", [entry("a.md", 44)]) })
+  await hooks["session.prompt"]({ sessionID: "ses_a", prompt: { text: "/x", files: [] } })
+  assert.equal(ctx.synthetics.length, 1)
+  assert.equal(ctx.synthetics[0].text, "")
+  assert.deepEqual(spawn.events().map((event) => event.event), ["prompt"])
 })
 
 test("an empty-text context with no entries injects and voids nothing, even with the switch", async () => {
@@ -716,6 +782,17 @@ const UNVERIFIED = {
     ses_c: { id: "ses_c", parentID: "ses_a" },
   },
   "a malformed ancestor": { ses_a: { id: "ses_a", parentID: "ses_b" }, ses_b: 7 },
+  "a first hop with no id": { ses_a: {} },
+  "a first hop with a numeric id": { ses_a: { id: 5 } },
+  "a first hop with another session's id": { ses_a: { id: "ses_other" } },
+  "a first hop with another session's record that names a parent": {
+    ses_a: { id: "ses_other", parentID: "ses_r" },
+  },
+  "an ancestor with no id": { ses_a: { id: "ses_a", parentID: "ses_b" }, ses_b: {} },
+  "an ancestor with another id": {
+    ses_a: { id: "ses_a", parentID: "ses_b" },
+    ses_b: { id: "ses_zzz" },
+  },
   "a chain past the depth cap": { ...chain(15), ses_a: { id: "ses_a", parentID: "s0" } },
 }
 
@@ -987,6 +1064,126 @@ test("the disposer ends a watcher that has already re-subscribed after a failure
   await dispose()
   assert.equal(ctx.signals[1].aborted, true)
   assert.equal(ctx.subscribeCalls, 2)
+})
+
+test("the disposer disposes the hooks and resolves (bounded) when next() never settles and ignores the signal", async () => {
+  const stuck = () => ({ [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }) })
+  const { ctx, dispose, timers } = await boot({ streams: [stuck] })
+  await flush()
+  let done = false
+  const disposing = dispose().then(() => {
+    done = true
+  })
+  await flush()
+  assert.equal(ctx.signals[0].aborted, true)
+  assert.deepEqual(ctx.disposed, ["session.prompt", "execute.after", "execute.before"])
+  assert.equal(done, false, "waiting for the bounded timeout, not for the loop")
+  const [bound] = timers.live()
+  assert.equal(bound.ms, 1000)
+  timers.fire()
+  await disposing
+  assert.equal(done, true)
+})
+
+test("the disposer resolves when an in-flight compaction lookup never answers", async () => {
+  const { ctx, dispose, timers } = await boot({
+    sessions: { ses_stuck: NEVER },
+    events: [{ type: "session.compaction.started", data: { sessionID: "ses_stuck" } }],
+  })
+  await flush()
+  const disposing = dispose()
+  await flush()
+  assert.deepEqual(ctx.disposed, ["session.prompt", "execute.after", "execute.before"])
+  assert.equal(timers.live().length, 1)
+  timers.fire()
+  await disposing
+})
+
+test("the disposer clears its bound when the loop ends first", async () => {
+  const { dispose, timers } = await boot()
+  await flush()
+  await dispose()
+  assert.equal(timers.live().length, 0)
+})
+
+test("the disposer disposes every hook even when one dispose rejects", async () => {
+  const { ctx, dispose } = await boot({ disposeFails: "execute.after" })
+  await flush()
+  await dispose()
+  assert.deepEqual(ctx.disposed, ["session.prompt", "execute.before"])
+})
+
+// ---- engine process cleanup ---------------------------------------------------------------------------------
+
+async function failedRun(script) {
+  const timers = fakeTimers()
+  const spawn = fakeSpawn({ stdinError: true, hang: true, ...script })
+  const result = await runEngine(
+    { event: "prompt", session: "s", cwd: DIR },
+    { spawn, setTimer: timers.setTimer, clearTimer: timers.clearTimer },
+  )
+  return { result, timers, child: spawn.calls[0].child }
+}
+
+test("cleanup: a kill that returns false is retried until the child exits", async () => {
+  const { result, timers, child } = await failedRun({ kill: (_child, attempt) => attempt >= 3 })
+  assert.equal(result, null, "the result is settled at once")
+  assert.equal(child.signals.length, 1)
+  assert.equal(timers.live().length, 1, "an independent cleanup timer stays")
+  timers.fire()
+  assert.equal(child.signals.length, 2)
+  timers.fire()
+  assert.equal(child.signals.length, 3)
+  child.emit("exit", null, "SIGKILL")
+  assert.equal(timers.live().length, 0, "the child's exit clears the cleanup timer")
+  timers.fire()
+  assert.equal(child.signals.length, 3)
+})
+
+test("cleanup: a kill that throws is caught and retried", async () => {
+  const { result, timers, child } = await failedRun({
+    kill: () => {
+      throw new Error("EPERM")
+    },
+  })
+  assert.equal(result, null)
+  assert.equal(child.signals.length, 1)
+  timers.fire()
+  assert.equal(child.signals.length, 2)
+})
+
+test("cleanup: an error event emitted synchronously from kill() does not re-enter or double-settle", async () => {
+  const { result, timers, child } = await failedRun({
+    kill: (self) => {
+      self.emit("error", new Error("kill failed"))
+      return true
+    },
+  })
+  assert.equal(result, null)
+  assert.equal(child.signals.length, 1, "no recursion: one attempt so far")
+  timers.fire()
+  assert.equal(child.signals.length, 2)
+})
+
+test("cleanup: attempts are bounded and the cleanup timer ends with them", async () => {
+  const { timers, child } = await failedRun({ kill: () => false })
+  for (let round = 0; round < 20; round += 1) timers.fire()
+  assert.equal(child.signals.length, KILL_ATTEMPTS)
+  assert.equal(timers.live().length, 0)
+})
+
+test("cleanup: a child that already exited is not killed again", async () => {
+  const timers = fakeTimers()
+  const spawn = fakeSpawn({ hang: true })
+  const pending = runEngine(
+    { event: "prompt", session: "s", cwd: DIR },
+    { spawn, setTimer: timers.setTimer, clearTimer: timers.clearTimer },
+  )
+  await spawn.called(1)
+  spawn.calls[0].child.emit("exit", 1, null)
+  spawn.calls[0].child.emit("close", 1, null)
+  assert.equal(await pending, null)
+  assert.deepEqual(spawn.calls[0].child.signals, [])
 })
 
 // ---- prompt -----------------------------------------------------------------------------------------------
