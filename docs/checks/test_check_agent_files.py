@@ -1278,6 +1278,22 @@ class AgentFileCheckTest(unittest.TestCase):
         findings = self.hooked_findings(hooked_rule_text(lines=['gates: ["("]']))
         self.assert_single(findings, HOOKED_PATH, "invalid regex")
 
+    def test_marker_found_in_a_damaged_root_agents_md(self):
+        for block, expected in ((None, 1), (False, 0)):
+            with self.subTest(block=block):
+                files = clean_files()
+                del files[HOOKED_PATH]
+                del files[ENGINE_FILE]
+                files["AGENTS.md"] = root_text(block=block)
+                root = self.repo(files)
+                with open(os.path.join(root, "AGENTS.md"), "ab") as handle:
+                    handle.write(b"A damaged byte: \xff\n")
+                findings = check_repo(root)
+                if expected:
+                    self.assert_single(findings, ENGINE_FILE, "cannot be imported")
+                else:
+                    self.assertEqual(findings, [])
+
     def test_no_hooked_rules_and_no_block_passes(self):
         files = clean_files()
         del files[HOOKED_PATH]

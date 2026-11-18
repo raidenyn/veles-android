@@ -803,12 +803,20 @@ def _check_hooked(root, files):
     """
     rule_findings, candidates = _hooked_name_findings(files)
     try:
-        with open(os.path.join(root, ROOT_AGENTS), "r", encoding="utf-8", newline="") as handle:
-            raw = handle.read()
-    except (IOError, OSError, UnicodeDecodeError):
-        raw = None
+        with open(os.path.join(root, ROOT_AGENTS), "rb") as handle:
+            data = handle.read()
+    except (IOError, OSError):
+        data = None
+    raw = None
+    if data is not None:
+        try:
+            raw = data.decode("utf-8")
+        except UnicodeDecodeError:
+            raw = None  # the pointer comparison needs valid text; marker detection does not
+    # The ASCII markers are detected on a lenient decoding, so a damaged byte elsewhere in the
+    # file cannot hide a retained marker line.
     needed = bool(_hooked_paths(files)) or _hooked_files_on_disk(root) or (
-        raw is not None and _has_marker(raw)
+        data is not None and _has_marker(data.decode("utf-8", "replace"))
     )
     if not needed:
         return rule_findings, []
