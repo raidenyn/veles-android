@@ -1,5 +1,5 @@
 # Instruction files that agents follow: agent guidance, configuration, the workflow
-# procedure and the OpenSpec schema. Instructions and configuration can make a
+# procedure and the OpenSpec schema, and the files that decide what the documentation site publishes. Instructions and configuration can make a
 # contributor's agent tool install and run code, so these files require the owner's
 # review (branch protection, not this file, decides whether code-owner review is enforced).
 /opencode.json                @raidenyn
@@ -10,3 +10,5 @@
 /docs/superspec-workflow.md   @raidenyn
 /openspec/config.yaml         @raidenyn
 /openspec/schemas/            @raidenyn
+/docs.json                    @raidenyn
+/.mintignore                  @raidenyn

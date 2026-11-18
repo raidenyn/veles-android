@@ -62,7 +62,7 @@ What each check runs:
 | `bridge-scaffold / unit-tests` | `bridgeNpmTest`, `bridgeRustTest` |
 | `supply-chain / build` | `verify/verify-supply-chain.sh` and the report upload (`build-supply-chain.yml`, shared with `publish-release.yml`) |
 | `tooling / unit-tests` | `node --test verify/test/workflow-contracts.test.mjs`, `./gradlew scriptsTest` |
-| `docs / agent-files` | `python3 docs/checks/check_agent_files.py --root .` |
+| `docs / agent-files` | `python3 docs/checks/check_agent_files.py --root .`, `python3 docs/checks/check_site.py --root .` |
 | `docs / unit-tests` | `python3 -m unittest discover -s docs/checks -p 'test_*.py'` |
 
 The extension jobs import the generated WASM package, so each one activates the pinned

@@ -26,6 +26,36 @@ structural: it never runs `openspec update` or compares generated skill text.
 
 - `docs/checks/check_gate_b_matrix.py` validates `docs/gate-b/matrix.json`; run `python3 docs/checks/check_gate_b_matrix.py` (a clean result is necessary, not sufficient, and it never records the Gate B decision).
 
+## Documentation site
+
+The Mintlify site is built from the repository root: `docs.json` is its configuration and the root
+`.mintignore` is an allowlist that decides which files it publishes. Layout: `docs/user/` (the Users
+product), `docs/dev/` (the Developers product, with thin pages that summarise or link to files kept
+elsewhere), `docs/assets/`, and the curated pages published in place (`BUILD.md`, `docs/ci.md`,
+`docs/releasing.md`, `docs/reproducible-builds.md`, `docs/superspec-workflow.md`, `docs/decisions/`,
+`docs/rfcs/` and `openspec/specs/`). The Overview page follows the root node map.
+
+- **Allowlist rule:** the first `.mintignore` pattern is `/*`; every other line is `!/path`,
+  `/folder/*` or `!/folder/path`. Publish a new file or folder by adding a re-include line and a
+  navigation entry in `docs.json`; anything not re-included stays private.
+- **`CONTRIBUTING.md` is not published:** Mintlify's built-in default ignore list beats a re-include
+  for it, so `docs/dev/contributing.mdx` summarises it and links to the file on GitHub.
+- **Wrapper rule:** each capability under `openspec/specs/` needs a wrapper page in `docs/dev/` and a
+  navigation entry. When a capability is removed or renamed, remove or rename its wrapper in the same
+  change.
+- **MDX constraint:** published Markdown files and specs are parsed as MDX. Bare `<`, `{`, `}` and
+  similar text outside code spans and fences can break the build; write them inside backticks.
+- **The guard sees only tracked files:** `git add` a new page before running it.
+
+```bash
+python3 docs/checks/check_site.py --root .
+python3 -m unittest discover -s docs/checks -p 'test_*.py' -v
+```
+
+The guard is standard-library Python and runs in CI as the second step of `docs / agent-files`. A
+local preview or full validation is optional: `npx mint@4.2.1199 validate`. Owner-side hosting settings
+are in `docs/mintlify-owner-setup.md` (unpublished).
+
 ## Adding a rule or a node
 
 **A rule** is one concern in one file in the flat `.agents/rules/` directory (no subdirectories),
