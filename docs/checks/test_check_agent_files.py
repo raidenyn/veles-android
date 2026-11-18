@@ -1279,7 +1279,9 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assert_single(findings, HOOKED_PATH, "invalid regex")
 
     def test_marker_found_in_a_damaged_root_agents_md(self):
-        for block, expected in ((None, 1), (False, 0)):
+        # With a marker the hooked-rule check needs the engine; without one only the configured
+        # Claude Code hooks do, which is reported as such.
+        for block, fragment in ((None, "cannot be imported"), (False, "the Claude Code hooks")):
             with self.subTest(block=block):
                 files = clean_files()
                 del files[HOOKED_PATH]
@@ -1288,20 +1290,17 @@ class AgentFileCheckTest(unittest.TestCase):
                 root = self.repo(files)
                 with open(os.path.join(root, "AGENTS.md"), "ab") as handle:
                     handle.write(b"A damaged byte: \xff\n")
-                findings = check_repo(root)
-                if expected:
-                    self.assert_single(findings, ENGINE_FILE, "cannot be imported")
-                else:
-                    self.assertEqual(findings, [])
+                self.assert_single(check_repo(root), ENGINE_FILE, fragment)
 
     def test_no_hooked_rules_and_no_block_passes(self):
         files = clean_files()
         del files[HOOKED_PATH]
         files["AGENTS.md"] = root_text(block=False)
+        # Hooks with zero hooked rules are valid: the engine passes silently.
         self.assertEqual(check_repo(self.repo(files)), [])
-        # Without hooked rules the engine is not needed either.
+        # The configured Claude Code hooks still run the engine, so it must exist.
         del files[ENGINE_FILE]
-        self.assertEqual(check_repo(self.repo(files)), [])
+        self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "the Claude Code hooks")
 
     def test_pointer_block_stale(self):
         files = clean_files()
@@ -1878,6 +1877,82 @@ class AgentFileCheckTest(unittest.TestCase):
         stdout.flush()
         self.assertEqual(code, 1)
         self.assertIn(b"duplicate key", raw.getvalue())
+
+    def test_hooks_reject_any_extra_key_on_a_hook_command(self):
+        for key, value in (
+            ("async", True),
+            ("async", False),
+            ("onFailure", "ignore"),
+            ("if", "Bash(git *)"),
+            ("shell", "powershell"),
+            ("statusMessage", "x"),
+        ):
+            for event, _ in EXPECTED_HOOKS:
+                with self.subTest(key=key, value=value, event=event):
+                    block = hooks_block()
+                    block[event][0]["hooks"][0][key] = value
+                    files = clean_files()
+                    files[".claude/settings.json"] = settings_text(block)
+                    findings = check_repo(self.repo(files))
+                    self.assert_finding(
+                        findings, "error", ".claude/settings.json", "hook %s has unexpected key `%s`" % (event, key)
+                    )
+                    self.assertEqual(len(findings), 1, findings)
+
+    def test_hooks_reject_any_extra_key_on_a_matcher_group(self):
+        for event, _ in EXPECTED_HOOKS:
+            with self.subTest(event=event):
+                block = hooks_block()
+                block[event][0]["disabled"] = True
+                files = clean_files()
+                files[".claude/settings.json"] = settings_text(block)
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings, "error", ".claude/settings.json", "hook %s entry has unexpected key `disabled`" % event
+                )
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_hooks_exact_keys_pass(self):
+        # The clean block has exactly type, command and timeout, and matcher plus hooks (or hooks alone).
+        block = hooks_block()
+        for event, matcher in EXPECTED_HOOKS:
+            self.assertEqual(sorted(block[event][0]["hooks"][0]), ["command", "timeout", "type"])
+            expected = ["hooks", "matcher"] if matcher is not None else ["hooks"]
+            self.assertEqual(sorted(block[event][0]), expected)
+        self.assertEqual(check_claude_hooks(self.repo()), [])
+
+    def test_disable_all_hooks_truthy_fails(self):
+        for value in (True, 1, "yes", ["x"], {"a": 1}):
+            with self.subTest(value=value):
+                files = clean_files()
+                files[".claude/settings.json"] = settings_text(extra={"disableAllHooks": value})
+                findings = check_repo(self.repo(files))
+                self.assert_finding(findings, "error", ".claude/settings.json", "disableAllHooks")
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_disable_all_hooks_falsy_passes(self):
+        for value in (False, 0, "", None, [], {}):
+            with self.subTest(value=value):
+                files = clean_files()
+                files[".claude/settings.json"] = settings_text(extra={"disableAllHooks": value})
+                self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_hooks_with_missing_engine_fail(self):
+        files = clean_files()
+        del files[ENGINE_FILE]
+        findings = check_claude_hooks(self.repo(files))
+        self.assert_finding(findings, "error", ENGINE_FILE, "is missing; the Claude Code hooks")
+        self.assertEqual(len(findings), 1, findings)
+        # With hooked rules present too, the engine is still reported once.
+        self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "")
+
+    def test_missing_engine_without_hooks_is_not_a_hook_finding(self):
+        files = clean_files()
+        del files[ENGINE_FILE]
+        files[".claude/settings.json"] = json.dumps({"enabledPlugins": {}}) + "\n"
+        findings = check_claude_hooks(self.repo(files))
+        self.assert_finding(findings, "error", ".claude/settings.json", "has no `hooks` block")
+        self.assertEqual(len(findings), 1, findings)
 
     def test_hooks_keep_other_settings(self):
         files = clean_files()

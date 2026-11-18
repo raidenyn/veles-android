@@ -92,9 +92,13 @@ CODEOWNER_SAMPLE_PATHS = (
 )
 
 # The Claude Code hooks that deliver the hooked rules: event -> expected matcher (None: no
-# `matcher` key). Each event has exactly one entry holding exactly one command.
+# `matcher` key). Each event has exactly one entry holding exactly one command. Any other key on a
+# command (`async`, `onFailure`, `if`, `shell`, ...) or on an entry could change how or whether the
+# hook runs, so only these keys are allowed.
 CLAUDE_HOOK_COMMAND = 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/agent_rules.py" hook --format claude'
 CLAUDE_HOOK_TIMEOUT = 5
+CLAUDE_HOOK_COMMAND_KEYS = ("type", "command", "timeout")
+CLAUDE_HOOK_ENTRY_KEYS = ("matcher", "hooks")
 CLAUDE_HOOKS = (
     ("PreToolUse", "Bash"),
     ("PostToolUse", "Bash|Skill|Read"),
@@ -1540,6 +1544,17 @@ def _hook_findings(event, expected_matcher, entries):
         not isinstance(timeout, int) or isinstance(timeout, bool) or timeout != CLAUDE_HOOK_TIMEOUT
     ):
         findings.extend(error("has timeout %r; expected %d" % (timeout, CLAUDE_HOOK_TIMEOUT)))
+    for key in sorted(set(entry) - set(CLAUDE_HOOK_ENTRY_KEYS)):
+        findings.extend(
+            error("entry has unexpected key `%s`; only `matcher` and `hooks` are allowed" % ascii(key)[1:-1])
+        )
+    for key in sorted(set(command) - set(CLAUDE_HOOK_COMMAND_KEYS)):
+        findings.extend(
+            error(
+                "has unexpected key `%s`; only `type`, `command` and `timeout` are allowed"
+                % ascii(key)[1:-1]
+            )
+        )
     return findings
 
 
@@ -1547,8 +1562,10 @@ def check_claude_hooks(root):
     """Check that `.claude/settings.json` wires the hooked-rule engine into Claude Code.
 
     Each of the four events has exactly one entry with exactly one command, the engine's `hook`
-    subcommand, the expected matcher (or none) and a 5-second timeout. Whether the engine may
-    ever answer `allow` is a property of the engine, tested there, not here.
+    subcommand, the expected matcher (or none) and a 5-second timeout, and no other key on the entry
+    or the command. `disableAllHooks` must not be set to a true value, and the engine the hooks run
+    must exist. Whether the engine may ever answer `allow` is a property of the engine, tested there,
+    not here. A repository with these hooks and no hooked rule is valid: the engine passes silently.
     """
     if os.path.islink(os.path.join(root, SETTINGS_JSON)):
         return []  # `check_links` reports the symlink; a dangling target is not a second error
@@ -1573,10 +1590,28 @@ def check_claude_hooks(root):
         return [Finding("error", SETTINGS_JSON, "is not valid JSON (%s)" % error)]
     if not isinstance(data, dict):
         return [Finding("error", SETTINGS_JSON, "must be a JSON object")]
+    findings = []
+    if data.get("disableAllHooks"):
+        findings.append(
+            Finding(
+                "error",
+                SETTINGS_JSON,
+                "sets `disableAllHooks`; the hooked-rule hooks must stay enabled",
+            )
+        )
     hooks = data.get("hooks")
     if not isinstance(hooks, dict):
-        return [Finding("error", SETTINGS_JSON, "has no `hooks` block")]
-    findings = []
+        return findings + [Finding("error", SETTINGS_JSON, "has no `hooks` block")]
+    if any(event in hooks for event, _ in CLAUDE_HOOKS) and not os.path.isfile(
+        os.path.join(root, *ENGINE_FILE.split("/"))
+    ):
+        findings.append(
+            Finding(
+                "error",
+                ENGINE_FILE,
+                "is missing; the Claude Code hooks in `%s` run it" % SETTINGS_JSON,
+            )
+        )
     for event, matcher in CLAUDE_HOOKS:
         if event not in hooks:
             findings.append(Finding("error", SETTINGS_JSON, "hook %s is missing" % event))
@@ -1634,7 +1669,13 @@ def check_repo(root, platform=sys.platform):
     findings.extend(check_links(root, files, platform))
     findings.extend(check_opencode(root))
     findings.extend(check_codeowners(root))
-    findings.extend(check_claude_hooks(root))
+    # A missing engine is one finding: the hooked-rule check may already have reported it.
+    engine_reported = any(finding.path == ENGINE_FILE for finding in hooked_findings)
+    findings.extend(
+        finding
+        for finding in check_claude_hooks(root)
+        if not (engine_reported and finding.path == ENGINE_FILE)
+    )
     findings.extend(check_plugin_mentions(root))
     return findings
 
