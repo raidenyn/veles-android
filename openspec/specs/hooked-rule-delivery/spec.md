@@ -1,7 +1,7 @@
 # hooked-rule-delivery Specification
 
 ## Purpose
-Deliver agent rules only at the moments they apply, and again after a conversation is summarized, through hooks in Claude Code and a plugin in OpenCode, so that rules cost no context until needed and are not forgotten in long sessions. This capability covers the hooked-rule file format, the pointer block, the engine's decisions, delivery state, fail-open behaviour, the two host adapters and the ship gate.
+Deliver agent rules at the moments they apply instead of loading them at session start, and deliver them again at the next moment or gate after a conversation is summarized, through hooks in Claude Code and a plugin in OpenCode, so that a rule costs no context until it is needed and is not forgotten in a long session. A one-line pointer per rule stays always on as the fallback for tools without hooks. This capability covers the hooked-rule file format, the pointer block, the engine's decisions, delivery state, fail-open behaviour, the two host adapters and the ship gate.
 
 ## Requirements
 
@@ -110,7 +110,7 @@ The engine SHALL deliver a rule as added context, without blocking, at each mome
 - **a command moment:** a shell call whose whole string a `commands` regex matches with `re.search`, and that
   completed with a zero exit. A backgrounded command counts when it launches.
 
-No other prompt text MUST be matched.
+No other prompt text is matched.
 
 #### Scenario: Skill invoked by the model
 - **WHEN** the model invokes `openspec-apply-change`
