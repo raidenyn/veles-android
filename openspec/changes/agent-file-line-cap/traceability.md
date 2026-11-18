@@ -169,8 +169,6 @@ warning and links D-01; no evaluation text was lost.
 - `git grep '/opsx:' openspec/schemas` — no hits.
 - `git diff --name-only "$(git merge-base origin/master HEAD)" -- .agents/skills .claude/skills` —
   empty.
-- `node --test verify/test/*.test.mjs` — one environmental failure in
-  `license-policy.test.mjs` ("pins the license checker package while accepting its reviewed stale CLI
-  banner") because `verify/node_modules/.bin/license-checker-rseidelsohn` is not installed in this
-  worktree; the file is untouched by this change and the test needs the `npm ci --prefix verify`
-  prerequisite.
+- `node --test verify/test/*.test.mjs` — 116 tests, 115 pass, 1 skipped, 0 fail. The earlier
+  `license-policy.test.mjs` failure was the missing `verify/node_modules` toolchain; after
+  `npm ci --ignore-scripts --prefix verify` it passes. The change touches no file under `verify/`.
