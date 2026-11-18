@@ -39,12 +39,12 @@
 
 ## 6. CI, ownership and guidance
 
-- [ ] 6.1 Add `docs.json` and `.mintignore` to the `docs` node paths in `.github/components.json`, and update the path tuple in `test_docs_only_change_selects_only_docs` in `scripts/tests/test_components.py` (lines 240-249); run `python3 -I scripts/components.py check` and the components tests (spec delta: component-versioning *Documentation node*)
-- [ ] 6.2 Add `/.mintignore` and `/docs.json` with the existing owner to `.github/CODEOWNERS` and widen its header comment (spec: *Allowlist ownership*)
-- [ ] 6.3 Add the step `python3 docs/checks/check_site.py --root .` to the `agent-files` job of `.github/workflows/check-docs.yml` after the agent-file check, and update the workflow's header comment to name the site guard
-- [ ] 6.4 Update `verify/test/workflow-contracts.test.mjs`: the docs-node `run:` count from 2 to 3 (line 3701), a new assertion that `agent-files` runs exactly the guard command, the `/exactly the agent-file check/` messages in both mutation tests (line 3744 and the chained-install one at 3733), the test's title and messages that say it runs only the agent-file check, and two new mutation tests that must throw: the guard step removed, and its arguments changed (for example `--root docs`); run the workflow contract suite (spec delta: ci-pipeline *Component-tree CI*)
-- [ ] 6.5 Add the "Documentation site" section to `docs/AGENTS.md` (layout, allowlist rule and forms, wrapper rule with removal and renaming, MDX constraint for published Markdown and specs, tracked files only, guard commands, `npx mint@4.2.1199 validate`, Overview follows the node map) and the guard step to `docs/ci.md` (spec: *Site guidance*)
-- [ ] 6.6 Write `docs/mintlify-owner-setup.md` (unpublished): docs directory = repository root, branch `master`, how to read the "Mintlify Deployment" check (spec: *Hosting settings*)
+- [x] 6.1 Add `docs.json` and `.mintignore` to the `docs` node paths in `.github/components.json`, and update the path tuple in `test_docs_only_change_selects_only_docs` in `scripts/tests/test_components.py` (lines 240-249); run `python3 -I scripts/components.py check` and the components tests (spec delta: component-versioning *Documentation node*)
+- [x] 6.2 Add `/.mintignore` and `/docs.json` with the existing owner to `.github/CODEOWNERS` and widen its header comment (spec: *Allowlist ownership*)
+- [x] 6.3 Add the step `python3 docs/checks/check_site.py --root .` to the `agent-files` job of `.github/workflows/check-docs.yml` after the agent-file check, and update the workflow's header comment to name the site guard
+- [x] 6.4 Update `verify/test/workflow-contracts.test.mjs`: the docs-node `run:` count from 2 to 3 (line 3701), a new assertion that `agent-files` runs exactly the guard command, the `/exactly the agent-file check/` messages in both mutation tests (line 3744 and the chained-install one at 3733), the test's title and messages that say it runs only the agent-file check, and two new mutation tests that must throw: the guard step removed, and its arguments changed (for example `--root docs`); run the workflow contract suite (spec delta: ci-pipeline *Component-tree CI*)
+- [x] 6.5 Add the "Documentation site" section to `docs/AGENTS.md` (layout, allowlist rule and forms, wrapper rule with removal and renaming, MDX constraint for published Markdown and specs, tracked files only, guard commands, `npx mint@4.2.1199 validate`, Overview follows the node map) and the guard step to `docs/ci.md` (spec: *Site guidance*)
+- [x] 6.6 Write `docs/mintlify-owner-setup.md` (unpublished): docs directory = repository root, branch `master`, how to read the "Mintlify Deployment" check (spec: *Hosting settings*)
 
 ## 7. Verification
 
