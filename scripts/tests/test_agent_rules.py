@@ -78,6 +78,15 @@ class ParseRuleTest(unittest.TestCase):
         with self.assertRaises(RuleError):
             parse_rule("x.md", rule_text(lines=['pointer: "p"', 'gates: ["(unbalanced"]']))
 
+    def test_oversized_repeat_regex(self):
+        with self.assertRaises(RuleError):
+            parse_rule("x.md", rule_text(lines=['pointer: "p"', 'gates: ["a{99999999999}"]']))
+
+    def test_deeply_nested_regex(self):
+        pattern = "(?:" * 3000 + "a" + ")" * 3000
+        with self.assertRaises(RuleError):
+            parse_rule("x.md", rule_text(lines=['pointer: "p"', 'commands: ["%s"]' % pattern]))
+
     def test_no_trigger(self):
         with self.assertRaises(RuleError):
             parse_rule("x.md", rule_text(lines=['pointer: "p"']))
@@ -104,6 +113,24 @@ class ParseRuleTest(unittest.TestCase):
         self.assertEqual(len(body.encode("utf-8")), 4098)
         with self.assertRaises(RuleError):
             parse_rule("x.md", rule_text(body=body))
+
+    def test_body_boundary_counts_original_crlf_bytes(self):
+        # 4,094 characters plus CRLF are 4,096 bytes on disk and pass; one more character is 4,097.
+        parse_rule("x.md", rule_text(body="a" * 4094 + "\r\n"))
+        with self.assertRaises(RuleError):
+            parse_rule("x.md", rule_text(body="a" * 4095 + "\r\n"))
+
+    def test_body_boundary_counts_original_crlf_file(self):
+        crlf = rule_text(body="a" * 4094 + "\r\n").replace("\n", "\r\n").replace("\r\r\n", "\r\n")
+        self.assertEqual(len(parse_rule("x.md", crlf).body.encode("utf-8")), 4095)
+        over = rule_text(body="a" * 4095 + "\r\n").replace("\n", "\r\n").replace("\r\r\n", "\r\n")
+        with self.assertRaises(RuleError):
+            parse_rule("x.md", over)
+
+    def test_body_boundary_counts_lone_cr(self):
+        parse_rule("x.md", rule_text(body="a" * 4095 + "\r"))
+        with self.assertRaises(RuleError):
+            parse_rule("x.md", rule_text(body="a" * 4096 + "\r"))
 
     def test_identity_raw_bytes(self):
         text = rule_text()
@@ -254,6 +281,42 @@ class PointerBlockTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("repo-bad.md", result.stderr)
         self.assertEqual(self.agents_text(), "# Agents\n")
+
+    def test_pointer_check_fails_without_heading_and_write_repairs_it(self):
+        self.rule("repo-a.md", "First")
+        self.agents_text("# Agents\n")
+        self.assertEqual(self.run_cli("--write").returncode, 0)
+        good = self.agents_text()
+        self.agents_text(good.replace("## Hook-delivered rules\n\n", ""))
+        self.assertNotIn("## Hook-delivered rules", self.agents_text())
+        self.assertEqual(self.run_cli("--check").returncode, 1)
+        self.assertEqual(self.run_cli("--write").returncode, 0)
+        self.assertEqual(self.agents_text(), good)
+        self.assertEqual(self.run_cli("--check").returncode, 0)
+
+    def test_pointer_check_fails_when_heading_is_not_before_the_block(self):
+        self.rule("repo-a.md", "First")
+        self.agents_text("# Agents\n")
+        self.assertEqual(self.run_cli("--write").returncode, 0)
+        good = self.agents_text()
+        moved = good.replace("## Hook-delivered rules\n\n", "") + "\n## Hook-delivered rules\n"
+        self.agents_text(moved)
+        self.assertEqual(self.run_cli("--check").returncode, 1)
+
+    def test_pointer_containing_marker_text_is_idempotent(self):
+        self.rule("repo-a.md", "See <!-- hooked-rules:end --> and <!-- hooked-rules:begin --> here")
+        self.agents_text("# Agents\n")
+        self.assertEqual(self.run_cli("--write").returncode, 0)
+        once = self.agents_text()
+        self.assertEqual(self.run_cli("--write").returncode, 0)
+        self.assertEqual(self.agents_text(), once)
+        self.assertEqual(self.run_cli("--check").returncode, 0)
+
+    def test_pointer_unbalanced_markers_fail(self):
+        self.rule("repo-a.md", "First")
+        self.agents_text("# Agents\n\n## Hook-delivered rules\n\n<!-- hooked-rules:end -->\n")
+        self.assertEqual(self.run_cli("--check").returncode, 1)
+        self.assertEqual(self.run_cli("--write").returncode, 1)
 
     def test_commit_types_pointer_keeps_format(self):
         pointer = (

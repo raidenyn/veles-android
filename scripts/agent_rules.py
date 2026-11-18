@@ -88,14 +88,16 @@ def _scalar(key, value):
 
 
 def _split(text):
-    """Return ``(values, body)`` for a rule's text, or raise ``RuleError``.
+    """Return ``(values, body, original_body)`` for a rule's text, or raise ``RuleError``.
 
     The text may use CRLF or a lone CR and start with a UTF-8 BOM. The body is everything after
-    the closing ``---`` line, unchanged apart from the newline normalisation.
+    the closing ``---`` line, unchanged apart from the newline normalisation; ``original_body``
+    is the same text before that normalisation, which is what the size cap counts.
     """
-    if text.startswith("﻿"):
+    if text.startswith("\ufeff"):
         text = text[1:]
-    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    pieces = re.split(r"(\r\n|\r|\n)", text)  # line, terminator, line, terminator, ..., line
+    lines = pieces[0::2]
     start = None
     for index, line in enumerate(lines):
         if line.rstrip():
@@ -110,7 +112,7 @@ def _split(text):
         if line == "---":
             if block_key is not None and not values[block_key]:
                 raise RuleError("`%s` has no list items" % block_key)
-            return values, "\n".join(lines[index + 1:])
+            return values, "\n".join(lines[index + 1:]), "".join(pieces[2 * index + 2:])
         if block_key is not None:
             item = FRONTMATTER_BLOCK_RE.match(line)
             if item is not None:
@@ -151,8 +153,11 @@ def _regexes(key, patterns):
     for pattern in patterns:
         try:
             compiled.append(re.compile(pattern))
-        except re.error as error:
-            raise RuleError("`%s` holds an invalid regex %r: %s" % (key, pattern, error))
+        except (re.error, OverflowError, RecursionError) as error:
+            raise RuleError(
+                "`%s` holds an invalid regex %r: %s: %s"
+                % (key, pattern[:80], type(error).__name__, error)
+            )
     return compiled
 
 
@@ -161,7 +166,7 @@ def parse_rule(name, text):
 
     The identity hash covers the text as given (the raw file, before newline normalisation).
     """
-    values, body = _split(text)
+    values, body, original_body = _split(text)
     pointer = values.get("pointer")
     if pointer is None:
         raise RuleError("`pointer` is required")
@@ -172,7 +177,7 @@ def parse_rule(name, text):
     gates = _regexes("gates", values.get("gates", []))
     if not (skills or commands or gates):
         raise RuleError("a rule needs at least one entry in `skills`, `commands` or `gates`")
-    size = len(body.encode("utf-8", "surrogatepass"))
+    size = len(original_body.encode("utf-8", "surrogatepass"))
     if size > BODY_LIMIT:
         raise RuleError("the body is %d bytes, over the %d byte limit" % (size, BODY_LIMIT))
     digest = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
@@ -205,24 +210,69 @@ def load_rules(root):
 
 
 def render_pointer_block(rules):
-    """The generated block, markers included: the fixed sentence and one line per rule."""
+    """The generated block, markers included: the fixed sentence and one line per rule.
+
+    Every rule line starts with ``- `` so it can never equal a marker line, whatever text its
+    pointer holds; the block is still checked, so a change here cannot break that silently.
+    """
     lines = [POINTER_BEGIN, POINTER_SENTENCE, ""]
     for rule in sorted(rules, key=lambda item: item.name):
-        lines.append("- %s — %s/%s" % (rule.pointer, RULES_DIR, rule.name))
+        lines.append("- %s \u2014 %s/%s" % (rule.pointer, RULES_DIR, rule.name))
     lines.append(POINTER_END)
+    for line in lines[1:-1]:
+        if line in (POINTER_BEGIN, POINTER_END):
+            raise RuleError("a pointer line must not equal a hooked-rules marker line")
     return "\n".join(lines)
 
 
+# What _locate_block found: where the begin marker line starts, where the end marker line ends
+# (before its line break) and whether the heading is the last non-blank line before the begin marker.
+BlockLocation = collections.namedtuple("BlockLocation", ["begin", "end", "heading_ok"])
+
+
+def _locate_block(text):
+    """Find the block in ``text`` by its standalone marker lines, or return None when absent.
+
+    A marker is recognised only when the whole line (ignoring a trailing CR) equals it, so marker
+    text inside a pointer line is ignored. Raises ``RuleError`` for any other marker layout than
+    one begin line followed by one end line.
+    """
+    lines = []
+    position = 0
+    for line in text.split("\n"):
+        lines.append((position, line.rstrip("\r")))
+        position += len(line) + 1
+    begins = [i for i, (_, content) in enumerate(lines) if content == POINTER_BEGIN]
+    ends = [i for i, (_, content) in enumerate(lines) if content == POINTER_END]
+    if not begins and not ends:
+        return None
+    if len(begins) != 1 or len(ends) != 1 or ends[0] < begins[0]:
+        raise RuleError(
+            "%s must hold exactly one hooked-rules begin line followed by one end line" % AGENTS_FILE
+        )
+    previous = begins[0] - 1
+    while previous >= 0 and not lines[previous][1].strip():
+        previous -= 1
+    heading_ok = previous >= 0 and lines[previous][1] == POINTER_HEADING
+    end_position, end_content = lines[ends[0]]
+    return BlockLocation(lines[begins[0]][0], end_position + len(end_content), heading_ok)
+
+
 def _apply_block(text, block):
-    """``text`` with the block replaced between its markers, or appended under its heading."""
-    begin = text.find(POINTER_BEGIN)
-    end = text.find(POINTER_END)
-    if begin != -1 and end > begin:
-        return text[:begin] + block + text[end + len(POINTER_END):]
-    if begin != -1 or end != -1:
-        raise RuleError("the hooked-rules markers are unbalanced in %s" % AGENTS_FILE)
-    separator = "" if not text or text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
-    return "%s%s%s\n\n%s\n" % (text, separator, POINTER_HEADING, block)
+    """``text`` with the block replaced between its markers, or appended under its heading.
+
+    A block that is already current under its heading leaves the text untouched; a missing
+    heading is written back in front of the begin marker.
+    """
+    location = _locate_block(text)
+    if location is None:
+        separator = "" if not text or text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
+        return "%s%s%s\n\n%s\n" % (text, separator, POINTER_HEADING, block)
+    current = text[location.begin:location.end].replace("\r\n", "\n")
+    if location.heading_ok and current == block:
+        return text
+    heading = "" if location.heading_ok else POINTER_HEADING + "\n\n"
+    return text[:location.begin] + heading + block + text[location.end:]
 
 
 def _read_agents(path):
@@ -243,16 +293,29 @@ def _pointers(args):
     except (IOError, OSError, UnicodeDecodeError) as error:
         sys.stderr.write("%s cannot be read: %s\n" % (AGENTS_FILE, error))
         return 1
-    block = render_pointer_block(rules)
+    try:
+        block = render_pointer_block(rules)
+    except RuleError as error:
+        sys.stderr.write("%s\n" % error)
+        return 1
     if args.check:
-        begin = current.find(POINTER_BEGIN)
-        end = current.find(POINTER_END)
-        if begin == -1 or end <= begin:
+        try:
+            location = _locate_block(current)
+        except RuleError as error:
+            sys.stderr.write("%s\n" % error)
+            return 1
+        if location is None:
             sys.stderr.write(
                 "%s has no hooked-rules block; run `agent_rules.py pointers --write`\n" % AGENTS_FILE
             )
             return 1
-        if current[begin:end + len(POINTER_END)] != block:
+        if not location.heading_ok:
+            sys.stderr.write(
+                "%s lacks the `%s` heading before the hooked-rules block; "
+                "run `agent_rules.py pointers --write`\n" % (AGENTS_FILE, POINTER_HEADING)
+            )
+            return 1
+        if current[location.begin:location.end].replace("\r\n", "\n") != block:
             sys.stderr.write(
                 "the hooked-rules block in %s is stale; run `agent_rules.py pointers --write`\n"
                 % AGENTS_FILE
