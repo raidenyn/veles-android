@@ -76,4 +76,4 @@
   If the 6T reports `ADVERTISE_FAILED_FEATURE_UNSUPPORTED` (the card shows `Unsupported` after Start), stop and report it to the user as a hardware finding; do not mark this task done. A missed window or an unlock before arrival is a `FAIL`, recorded as is.
 - [x] 4.3 OnePlus 6T restart: Stop sharing, then Start again, and confirm it advertises again. Record that a real `onStartFailure` → teardown → retry was not observed on hardware; task 3.3 covers it.
 - [x] 4.4 OnePlus 10 Pro (multi-advertisement) regression: the same build starts sharing, reaches `Advertising`, and a Chrome session authenticates.
-- [ ] 4.5 State what ran on which device in `apply.md` and the PR note. If a device or Chrome is unavailable, stop and ask; never report the change as tested.
+- [x] 4.5 State what ran on which device in `apply.md` and the PR note. If a device or Chrome is unavailable, stop and ask; never report the change as tested.

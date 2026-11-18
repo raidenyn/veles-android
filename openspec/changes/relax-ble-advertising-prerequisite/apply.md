@@ -32,9 +32,8 @@
 
 ## Tasks
 
-- **Completed**: `13 of 14` checkboxes in tasks.md flipped to `- [x]`
-- **Remaining**:
-  - `4.5`: this receipt and the PR note state what ran; it is ticked when the PR note exists.
+- **Completed**: `14 of 14` checkboxes in tasks.md flipped to `- [x]`
+- **Remaining**: none. `4.5` was ticked once the PR note on #168 stated what ran on which device.
 
 ---
 
