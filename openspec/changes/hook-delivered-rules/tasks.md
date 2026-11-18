@@ -102,10 +102,10 @@ Each step below that changes a file the agent-file check inspects lands together
 
 ## 5. The pilot rule and guidance edits
 
-- [ ] 5.1 Create `.agents/hooked-rules/repo-commit-types.md`. It holds the format rule, the 11-type guide, the breaking-change and purpose rules, and the pilot skills, commands and gates. Add a test that compares the guide's type lines with the `TYPES` list of `scripts/commitlint.py` (one line per type).
-- [ ] 5.2 Land in the same step as the moved-rule, pointer-freshness and hooked-rule-format invariants of 6.1 and their tests. Remove `.agents/rules/repo-conventional-commits.md`. Update the root `AGENTS.md`: drop the entry from the `## Rules` list, leaving eight `repo-*` rules, and generate the pointer block with `pointers --write`.
-- [ ] 5.3 Update `scripts/AGENTS.md`: guidance-only changes are typed `docs`.
-- [ ] 5.4 Add the "Hook-delivered rules" section to `docs/AGENTS.md`. It covers:
+- [x] 5.1 Create `.agents/hooked-rules/repo-commit-types.md`. It holds the format rule, the 11-type guide, the breaking-change and purpose rules, and the pilot skills, commands and gates. Add a test that compares the guide's type lines with the `TYPES` list of `scripts/commitlint.py` (one line per type).
+- [x] 5.2 Land in the same step as the moved-rule, pointer-freshness and hooked-rule-format invariants of 6.1 and their tests. Remove `.agents/rules/repo-conventional-commits.md`. Update the root `AGENTS.md`: drop the entry from the `## Rules` list, leaving eight `repo-*` rules, and generate the pointer block with `pointers --write`.
+- [x] 5.3 Update `scripts/AGENTS.md`: guidance-only changes are typed `docs`.
+- [x] 5.4 Add the "Hook-delivered rules" section to `docs/AGENTS.md`. It covers:
   - adding a rule;
   - delivery, gates, pending entries and re-arm;
   - the supported configuration;
@@ -114,7 +114,7 @@ Each step below that changes a file the agent-file check inspects lands together
   - the verified tools and versions.
 
   Also extend the untrusted-checkout warning to the hooks. Replace the reference to the old rule path in `docs/AGENTS.md` and in the root `AGENTS.md`.
-- [ ] 5.5 Do not rewrite any other file that names the old path. These are left alone:
+- [x] 5.5 Do not rewrite any other file that names the old path. These are left alone:
   - `openspec/specs/**`, which is synced from the deltas at closeout;
   - this change's artifacts and `reviews/`, which are approval evidence;
   - archived changes, which are history.
@@ -123,7 +123,7 @@ Each step below that changes a file the agent-file check inspects lands together
 
 ## 6. Checks, routing and ownership (each with its config change, green together)
 
-- [ ] 6.1 Extend `docs/checks/check_agent_files.py` and `docs/checks/test_check_agent_files.py` together. Each invariant is landed with the configuration change it checks (4.1, 4.3, 5.2); this task owns the invariants and their tests. The check imports the parser from `scripts/agent_rules.py`. Each invariant gets a positive and a negative test:
+- [x] 6.1 Extend `docs/checks/check_agent_files.py` and `docs/checks/test_check_agent_files.py` together. Each invariant is landed with the configuration change it checks (4.1, 4.3, 5.2); this task owns the invariants and their tests. The check imports the parser from `scripts/agent_rules.py`. Each invariant gets a positive and a negative test:
   - the hooked-rule format, including the 4,096/4,097-byte boundary;
   - pointer-block freshness;
   - each Claude Code hook individually: missing, wrong matcher, wrong command, missing timeout;
