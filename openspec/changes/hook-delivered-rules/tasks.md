@@ -41,7 +41,7 @@
 
 ## 3. Engine: contract, state, decisions (tests first)
 
-- [ ] 3.1 Define the engine contract and test it before any behaviour:
+- [x] 3.1 Define the engine contract and test it before any behaviour:
   - the input parsing for `--format claude` and `--format plain`;
   - the plain response `{decision, text, entries: [{rule, write_id}]}`, emitted only when output is emitted;
   - `pass` emitting nothing;
