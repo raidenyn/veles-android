@@ -55,3 +55,14 @@
 - [x] 7.5 Run the pre-push checks: `python3 -I scripts/components.py changed --base $(git merge-base origin/master HEAD)` and the checks in the `AGENTS.md` of every node it selects
 
 Closeout notes (not apply tasks): the pull request reports the "Mintlify Deployment" check result as it is; after the archive creates `openspec/specs/documentation-site/spec.md`, the closeout's documentation review adds its wrapper and navigation entry; after merge, the deployed site gets the spot check of 7.4 and the result is reported.
+
+## As built (deviations from the approved task text)
+
+- 1.1: the default-ignore fixture changed twice: first to `docs/node_modules/x.md` and `docs/README.md` under `!/docs/` (the `.github/` fixture could not show the default ignore at work), then, after calibration, the exact re-include test was flipped: a default-ignored file such as `CONTRIBUTING.md` stays unpublished even with `!/CONTRIBUTING.md`.
+- 1.3: imports are resolved against the published set, not the tracked files, so an import of an unpublished file is an error.
+- 1.6: calibration found that `{a: 1}`, `{a b}` and `{{x}}` fail the Mintlify build while `{x}`, `{}` and a lone `}` pass. The brace rule stays a warning (the spec fixes it); promoting expression-like braces to an error is a follow-up change.
+- 4.4: the privacy page does not say codes leave the phone over Bluetooth, because this build sends no codes (`SessionHost.kt` `Deliver -> Unit`; the app says "does not share OTPs yet"). It says Veles sends codes nowhere in this version and that Bluetooth sharing with a computer is still in development.
+- 5.3: the fallback was taken for Contributing: Mintlify's default ignore list wins over `!/CONTRIBUTING.md`, so `docs/dev/contributing.mdx` is a summary page linking to the file on GitHub, and `.mintignore` has no `!/CONTRIBUTING.md` line.
+- 5.4: all 28 wrapper descriptions were written by hand.
+- 5.6, 3.4: two RFC links (the 2026-08-11 design files) are pinned to commit `f5ec4afb` because those files do not exist on `master`.
+- 7.4: the Contributing page check is its summary and GitHub link, not an imported text.

@@ -47,7 +47,7 @@ line MUST have one of the forms `!/path`, `/folder/*` or `!/folder/path`.
 - **THEN** the site guard reports an error naming the line
 
 ### Requirement: Published set
-The published files SHALL be exactly `docs.json`, `BUILD.md`, `CONTRIBUTING.md`, the files under
+The published files SHALL be exactly `docs.json`, `BUILD.md`, the files under
 `docs/user/`, `docs/dev/` and `docs/assets/`, the pages `docs/ci.md`, `docs/releasing.md`,
 `docs/reproducible-builds.md` and `docs/superspec-workflow.md`, the files under `docs/decisions/` and
 `docs/rfcs/`, and the files under `openspec/specs/`. Every other file MUST stay unpublished until the
@@ -60,6 +60,14 @@ allowlist names it.
 #### Scenario: A new internal note
 - **WHEN** a contributor adds a new Markdown file directly under `docs/`
 - **THEN** it is not published, because no allowlist line names it
+
+### Requirement: Default ignores
+A file on Mintlify's default ignore list, such as `CONTRIBUTING.md`, SHALL NOT be treated as published, because
+Mintlify ignores it even when `.mintignore` re-includes it.
+
+#### Scenario: Contributing guide cannot be imported
+- **WHEN** `.mintignore` contains `!/CONTRIBUTING.md` and a page imports `/CONTRIBUTING.md`
+- **THEN** the site guard reports an error naming the import
 
 ### Requirement: User page set
 The Users product SHALL contain the pages Welcome (`docs/user/index.mdx`), Install (`install.mdx`), Grant
@@ -98,17 +106,24 @@ The Developers product SHALL contain a "Start here" group (Overview, Architectur
 - **THEN** it shows the three groups, and the Specifications group lists one page per wrapped capability
 
 ### Requirement: Single-source build and contributing pages
-The Build and Contributing pages SHALL import `BUILD.md` and `CONTRIBUTING.md` rather than copy them. If such
-an import does not resolve, the page MUST instead summarise and link to the file on GitHub, and the allowlist
-and the published set then drop that file.
+The Build page SHALL import `BUILD.md` rather than copy it. The Contributing page MUST summarise
+`CONTRIBUTING.md` and link to the file on GitHub, because Mintlify's default ignore list always applies to
+`CONTRIBUTING.md` and an import of it does not resolve. Any other import that does not resolve MUST likewise be
+replaced by a summary page that links to the file on GitHub, and the allowlist and the published set then drop
+that file.
 
 #### Scenario: Build guide has one source
 - **WHEN** `BUILD.md` changes
 - **THEN** the site's Build page shows the change without any other file being edited
 
+#### Scenario: Contributing guide is linked, not imported
+- **WHEN** a visitor opens the Contributing page
+- **THEN** it shows a short summary and a link to `CONTRIBUTING.md` on GitHub
+
 ### Requirement: Absolute links to unpublished files
 Every relative link in `BUILD.md` and `CONTRIBUTING.md`, and every link in a published page that points to an
-unpublished file or that `mint broken-links` reports, SHALL be an absolute GitHub link to the `master` branch.
+unpublished file or that `mint broken-links` reports, SHALL be an absolute GitHub link to the `master` branch, or to the commit that holds the file when the file
+exists only at that commit.
 
 #### Scenario: Link to an unpublished file
 - **WHEN** a published page links to a file the allowlist does not publish
@@ -117,7 +132,7 @@ unpublished file or that `mint broken-links` reports, SHALL be an absolute GitHu
 ### Requirement: Capability wrapper pages
 Each capability folder CAPABILITY in `openspec/specs/` SHALL have, except as *Wrapper lifecycle* permits,
 a page `docs/dev/specs/CAPABILITY.mdx` listed in the Specifications group that sets a `title` (sentence case,
-acronyms kept) and a one-line `description` (from the Purpose, or by hand where it is `TBD`) and renders
+acronyms kept) and a one-line `description` of the capability written for the page and renders
 exactly `/openspec/specs/CAPABILITY/spec.md`, imported. `openspec/` files MUST NOT be edited for the site.
 
 #### Scenario: Readable spec title
@@ -151,7 +166,8 @@ warnings are found.
 The site guard SHALL compute the published set as the tracked files minus those git reports as ignored by
 `.mintignore` (`git ls-files -c -i --exclude-from=.mintignore`), minus Mintlify's default ignores (`.git`,
 `.github`, `.claude`, `.agents`, `.idea`, `.vscode`, `.cursor`, `.mintlify`, `node_modules`, `README.md`,
-`LICENSE.md`, `CHANGELOG.md`, `CONTRIBUTING.md`) unless `.mintignore` re-includes the path.
+`LICENSE.md`, `CHANGELOG.md`, `CONTRIBUTING.md`), which always apply and which `.mintignore` cannot
+re-include.
 
 #### Scenario: Untracked page
 - **WHEN** a page file exists but is not tracked by git
@@ -159,8 +175,8 @@ The site guard SHALL compute the published set as the tracked files minus those 
 
 ### Requirement: Structural errors
 The site guard SHALL report as errors: a missing or invalid `docs.json`; a navigation page with no published
-`.md` or `.mdx` file; a page listed twice; an import in a published `.mdx` page that points at a missing
-file; a wrapper whose import does not match its file name; a wrapper missing from navigation; a logo or
+`.md` or `.mdx` file; a page listed twice; an import in a published `.mdx` page that points at a missing or
+unpublished file; a wrapper whose import does not match its file name; a wrapper missing from navigation; a logo or
 favicon that is not a published file; and a `.mintignore` line outside the allowed forms.
 
 #### Scenario: Missing navigation page

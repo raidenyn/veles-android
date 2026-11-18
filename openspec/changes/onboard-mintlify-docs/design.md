@@ -28,8 +28,8 @@ only the standard-library Python on the runner.
 **Goals:**
 
 - One public Mintlify site with a Users product and a Developers product.
-- Publish exactly the intended files: new user and developer pages, the curated `docs/` references, `BUILD.md`,
-  `CONTRIBUTING.md` and `openspec/specs/` — nothing else from the monorepo.
+- Publish exactly the intended files: new user and developer pages, the curated `docs/` references, `BUILD.md`
+  and `openspec/specs/` — nothing else from the monorepo. (`CONTRIBUTING.md` is linked on GitHub instead; see D4.)
 - Readable titles for every capability spec without editing `openspec/`.
 - A CI guard in the `docs` node that fails before Mintlify would, for every error class seen locally.
 
@@ -53,7 +53,6 @@ inside it. The initial list:
 /*
 !/docs.json
 !/BUILD.md
-!/CONTRIBUTING.md
 !/docs/
 /docs/*
 !/docs/user/
@@ -132,13 +131,15 @@ re-included; that is the documented interim state for a newly archived capabilit
 
 ### D4. Single-source developer pages
 
-- **Build** and **Contributing** are wrappers that import `/BUILD.md` and `/CONTRIBUTING.md`. Every
+- **Build** is a wrapper that imports `/BUILD.md`; **Contributing** is a summary page that links to
+  `CONTRIBUTING.md` on GitHub (as built, see below). Every
   relative link in those files (today `BUILD.md` lines 16, 63, 84, 112, 124 and `CONTRIBUTING.md` lines 95-97)
   becomes an absolute `https://github.com/raidenyn/veles-android/blob/master/...` link, which works on GitHub
   and on the site.
-  `CONTRIBUTING.md` is on Mintlify's default ignore list; if the `!/CONTRIBUTING.md` re-include does not make
-  the import resolve (locally or hosted), the fallback is a short page that summarises and links to the file
-  on GitHub.
+  `CONTRIBUTING.md` is on Mintlify's default ignore list. Verified with the pinned CLI (`mint@4.2.1199`): a
+  `!/CONTRIBUTING.md` re-include does not make `import ... from "/CONTRIBUTING.md"` resolve ("Could not find
+  file"), so the default ignore list always wins. The fallback was therefore taken: `docs/dev/contributing.mdx`
+  is a short summary that links to the file on GitHub, and `.mintignore` has no `!/CONTRIBUTING.md` line.
 - **Overview** is written for people: what Veles is, the components (Android app, web extension, Rust core,
   protocol, native bridge, installers, verifier, tooling) and where each lives, drawn from the root
   `AGENTS.md` node map. **Architecture** draws on `CONTRIBUTING.md` "How Veles Works" and the node
@@ -166,16 +167,17 @@ A standard-library Python 3.8+ script with the same finding format as the agent-
 - **Published set**: tracked files (`git ls-files -z`) minus those `git ls-files -z -c -i
   --exclude-from=.mintignore` reports, so gitignore matching is git's own, not a reimplementation; minus
   Mintlify's documented default ignores (`.git`, `.github`, `.claude`, `.agents`, `.idea`, `.vscode`,
-  `.cursor`, `.mintlify`, `node_modules`, `README.md`, `LICENSE.md`, `CHANGELOG.md`, `CONTRIBUTING.md`)
-  unless `.mintignore` re-includes the path explicitly (assumed to override the default; the import fallback
-  in D4 and the deployed spot check cover the case where it does not). Pages are the `.md`/`.mdx` files in
-  that set. Only tracked files are seen, so a new page must be `git add`ed before the guard sees it.
+  `.cursor`, `.mintlify`, `node_modules`, `README.md`, `LICENSE.md`, `CHANGELOG.md`, `CONTRIBUTING.md`),
+  which always apply: a `.mintignore` re-include does not lift them (verified, see D4). Pages are the
+  `.md`/`.mdx` files in that set. Only tracked files are seen, so a new page must be `git add`ed before the guard sees it.
 - **Imports**: every `import ... from "<path>"` in a published `.mdx` page (the spec wrappers and the Build
-  and Contributing pages alike) is resolved from the root; the imported file is scanned as a `.md` page.
+  and Contributing pages alike) is resolved from the root against the published set, so an imported file that
+  is tracked but unpublished is an error; the imported file is scanned as a `.md` page.
 - **Errors**:
   - `docs.json` is missing or not valid JSON, or a navigation page has no published `.md`/`.mdx` file;
   - a page listed twice in navigation;
-  - an import in a published `.mdx` page that points at a missing file, or a wrapper in `docs/dev/specs/`
+  - an import in a published `.mdx` page that points at a missing or unpublished file, or a wrapper in
+    `docs/dev/specs/`
     whose import does not match its file name;
   - a wrapper not listed in navigation;
   - `logo`/`favicon` paths that are not published files;
@@ -187,9 +189,11 @@ A standard-library Python 3.8+ script with the same finding format as the agent-
     `docs/superspec-workflow.md` are not flagged. In `.mdx` pages, only `<!--` outside code is an error
     (components and expressions are intended).
 - **Warnings**: a capability folder in `openspec/specs/` with no wrapper; a `{` or `}` outside code in a `.md`
-  page or imported file (seen to parse in `mint validate` but may be evaluated as an expression; promoted to an
-  error only if calibration shows the build rejects it). This narrows the brainstorm's *Site guard*, which
-  listed braces among the failing hazards, because no observed build failed on a brace.
+  page or imported file. Calibration with the pinned CLI (`mint@4.2.1199`) found that braces are not uniformly
+  safe: `{x}`, `{}` and a lone `}` are accepted, but `{a: 1}`, `{a b}` and `{{x}}` are rejected. The rule stays
+  a warning because the approved spec fixes it as one and today's published set contains no such brace;
+  promoting expression-like braces to an error is a follow-up change. This narrows the brainstorm's *Site
+  guard*, which listed braces among the failing hazards.
 
 Calibration: the guard is run against the current published set; it must report no error for any of the 28
 current specs unchanged, and every rule must correspond to input `mint validate` rejects. A rule that flags
@@ -225,12 +229,13 @@ plan).
 
 - [The hosted build may treat `.mintignore` or imports differently from the local CLI] → After deployment,
   request a sample of unpublished paths (an `otp-*` page, `docs/superpowers/...`, an archived change,
-  `AGENTS.md`) and expect Not Found; request a wrapper page and the Contributing page and expect their imported
-  text; request `/` and record which page it serves. Report the result.
+  `AGENTS.md`) and expect Not Found; request a wrapper page and the Build page and expect their imported
+  text, and the Contributing page and expect its summary and GitHub link; request `/` and record which page it
+  serves. Report the result.
 - [The Mintlify PR check may stay red on the Free plan (previews are paid-only)] → The site guard is the CI gate;
   the check's result is reported, never masked. It is not a required check.
 - [The guard's hazard rules are heuristics] → Calibrated against `mint validate`; stricter-than-Mintlify rules are
-  narrowed; the unverified brace rule is a warning; unit tests cover each rule with a positive and a negative
+  narrowed; the brace rule is a warning although expression-like braces fail the build (follow-up change); unit tests cover each rule with a positive and a negative
   case. Today's published set has one real hazard, the RFC's `<1 KiB` (line 2663), which D4 escapes.
 - [Every future spec becomes MDX-constrained] → Stated in `docs/AGENTS.md`; the guard reports the exact line;
   today's 28 specs already comply.
