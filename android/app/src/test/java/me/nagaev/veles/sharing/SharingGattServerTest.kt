@@ -9,6 +9,8 @@ import android.bluetooth.BluetoothGattServerCallback
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.le.AdvertiseCallback
+import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.BluetoothLeAdvertiser
 import android.content.Context
 import android.os.Looper
@@ -254,6 +256,60 @@ class SharingGattServerTest {
         verify(exactly = 0) { advertiser.startAdvertising(any(), any(), any()) }
         verify { platform.close() }
         assertEquals(emptyList<SharingAvailability>(), states)
+    }
+
+    private fun advertisingCallback(): AdvertiseCallback {
+        callback.captured.onServiceAdded(BluetoothGatt.GATT_SUCCESS, service.captured)
+        flush()
+        val cb = slot<AdvertiseCallback>()
+        verify { advertiser.startAdvertising(any(), any(), capture(cb)) }
+        return cb.captured
+    }
+
+    @Test fun advertiseFailureStateMapsOnlyFeatureUnsupportedToUnsupported() {
+        assertEquals(SharingAvailability.Unsupported, advertiseFailureState(AdvertiseCallback.ADVERTISE_FAILED_FEATURE_UNSUPPORTED))
+        listOf(
+            AdvertiseCallback.ADVERTISE_FAILED_DATA_TOO_LARGE,
+            AdvertiseCallback.ADVERTISE_FAILED_TOO_MANY_ADVERTISERS,
+            AdvertiseCallback.ADVERTISE_FAILED_ALREADY_STARTED,
+            AdvertiseCallback.ADVERTISE_FAILED_INTERNAL_ERROR,
+            99,
+        ).forEach { code -> assertEquals("code $code", SharingAvailability.Failed, advertiseFailureState(code)) }
+    }
+
+    @Test fun featureUnsupportedStartFailureReportsUnsupported() {
+        advertisingCallback().onStartFailure(AdvertiseCallback.ADVERTISE_FAILED_FEATURE_UNSUPPORTED)
+        flush()
+        assertEquals(SharingAvailability.Unsupported, states.last())
+    }
+
+    @Test fun otherStartFailureReportsFailed() {
+        advertisingCallback().onStartFailure(AdvertiseCallback.ADVERTISE_FAILED_INTERNAL_ERROR)
+        flush()
+        assertEquals(SharingAvailability.Failed, states.last())
+    }
+
+    @Test fun startSuccessStillReportsAdvertising() {
+        advertisingCallback().onStartSuccess(mockk<AdvertiseSettings>(relaxed = true))
+        flush()
+        assertEquals(SharingAvailability.Advertising, states.last())
+    }
+
+    @Test fun advertisingCallbacksAfterCloseAreIgnored() {
+        val advertising = advertisingCallback()
+        subject.close()
+        val before = states.toList()
+        advertising.onStartSuccess(mockk<AdvertiseSettings>(relaxed = true))
+        advertising.onStartFailure(AdvertiseCallback.ADVERTISE_FAILED_FEATURE_UNSUPPORTED)
+        flush()
+        assertEquals(before, states)
+    }
+
+    @Test fun nullAdvertiserReportsUnsupported() {
+        every { adapter.bluetoothLeAdvertiser } returns null
+        callback.captured.onServiceAdded(BluetoothGatt.GATT_SUCCESS, service.captured)
+        flush()
+        assertEquals(SharingAvailability.Unsupported, states.last())
     }
 
     @Test fun ninthClientRejectedAndMtuOnlyClientTimesOut() {
