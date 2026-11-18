@@ -57,28 +57,28 @@
 
   Tests cover lock contention (with the lock held in-process) and differing rule identities across worktrees.
 - [x] 3.3 Implement pruning: 50 sessions, ordered by the index counter, never by the clock. It skips a busy victim and never prunes the current session. Tests cover both cases, and a pruned session returning at generation 0.
-- [ ] 3.4 Implement the moments, with failing tests first:
+- [x] 3.4 Implement the moments, with failing tests first:
   - skill tool calls;
   - a leading `/<skill>` prompt;
   - `SKILL.md` reads matched by real path;
   - successful command moments matched by whole-string `re.search`, including a backgrounded launch.
 
   Tests cover a nonzero exit as no moment, and a successful workflow command followed by an unblocked `git commit`.
-- [ ] 3.5 Implement the gates and the pending set, with failing tests first:
+- [x] 3.5 Implement the gates and the pending set, with failing tests first:
   - block-once and the re-run;
   - `deny A → deny B → retry A`;
   - overlapping patterns recorded together;
   - a different-pattern sibling denied again.
 
   Also cover the table-driven matched forms of the spec, and the `"work;tree"` boundary as unmatched.
-- [ ] 3.6 Implement combining, with failing tests first:
+- [x] 3.6 Implement combining, with failing tests first:
   - filename order and the 9,000-byte cap with whole-rule inclusion;
   - cap at a moment (only included rules credited);
   - cap at a denial with three rules (the omitted rule is not pending, and the retry is denied again).
-- [ ] 3.7 Implement `compacted` and `void`, with failing tests first.
+- [x] 3.7 Implement `compacted` and `void`, with failing tests first.
   - `compacted` re-arms per key, so a child reset leaves the parent intact, with the whole-session fallback when no agent id is given.
   - `void` removes only an exact write-id match, and is a no-op after a sibling rewrite, after pruning, or for another key.
-- [ ] 3.8 Implement fail-open, with failing tests first. These cases pass with the read-by-hand notice:
+- [x] 3.8 Implement fail-open, with failing tests first. These cases pass with the read-by-hand notice:
   - a malformed event;
   - an unreadable rule;
   - a corrupt state file;
