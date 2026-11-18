@@ -123,7 +123,7 @@ A `changes` job SHALL run the component map check on every run and compute affec
 - **THEN** no node runs and `ci-ok` passes
 
 #### Scenario: Agent guidance edit
-- **WHEN** a PR changes only `.agents/rules/repo-conventional-commits.md`, the root `AGENTS.md` or `opencode.json`
+- **WHEN** a PR changes only `.agents/hooked-rules/repo-commit-types.md`, the root `AGENTS.md` or `opencode.json`
 - **THEN** only `docs` runs
 
 #### Scenario: Nested AGENTS.md selects only docs
@@ -185,6 +185,11 @@ A `changes` job SHALL run the component map check on every run and compute affec
 #### Scenario: Moved-away path
 - **WHEN** the PR that moves `app/` to `android/` deletes `app/build.gradle.kts`
 - **THEN** validation succeeds through the `retired-paths` entry and `android` runs
+
+#### Scenario: Rule engine edit selects docs too
+- **WHEN** a PR changes only `scripts/agent_rules.py`, or, separately, only one file under `scripts/opencode-hooked-rules/`
+- **THEN** in each case exactly `tooling` and `docs` run and no other node starts, because `global-overrides` maps each of those files to both nodes and the agent-file check imports the engine's parser
+
 ### Requirement: Single aggregate gate
 `ci.yml` SHALL end with `ci-ok`, which depends on every node, runs with `always()`, and fails when `changes` did not succeed or any needed job's result is `failure` or `cancelled`. `ci-ok` MUST be the only required check from `ci.yml`. A node skipped because the selection excluded it, including because of last-green evidence, MUST NOT fail `ci-ok`.
 
