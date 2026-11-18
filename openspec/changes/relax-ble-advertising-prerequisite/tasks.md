@@ -54,7 +54,7 @@
 - [x] 4.1 Build the fixture APK and test APK from `android/` with the approved fixture signing init script (`android/AGENTS.md`).
   - Compare the new APK's signing certificate with the installed app's before `adb install -r`.
   - Never regenerate a key, uninstall or clear data. If the key is missing, stop and ask.
-- [ ] 4.2 OnePlus 6T (single-advertisement): the issue's acceptance scenario. Follow `docs/otp-12-gate-b-runbook.md`'s "Common commands" and `locked-phone-20min` sections, with `APP=me.nagaev.veles.otp23` (the fixture build) and `R=$APP/me.nagaev.veles.debugprobe.ProbeReceiver`. Capture `adb logcat -v time -s VelesProbe` for the whole run.
+- [x] 4.2 OnePlus 6T (single-advertisement): the issue's acceptance scenario. Follow `docs/otp-12-gate-b-runbook.md`'s "Common commands" and `locked-phone-20min` sections, with `APP=me.nagaev.veles.otp23` (the fixture build) and `R=$APP/me.nagaev.veles.debugprobe.ProbeReceiver`. Capture `adb logcat -v time -s VelesProbe` for the whole run.
 
   This run is stricter than the runbook: the phone stays locked and asleep, with the task removed, until the push has arrived.
 

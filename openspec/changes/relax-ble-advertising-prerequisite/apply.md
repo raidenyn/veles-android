@@ -32,9 +32,8 @@
 
 ## Tasks
 
-- **Completed**: `12 of 14` checkboxes in tasks.md flipped to `- [x]`
+- **Completed**: `13 of 14` checkboxes in tasks.md flipped to `- [x]`
 - **Remaining**:
-  - `4.2`: the run passed its timing, but the gate's "locked and asleep" condition could not be met on this phone; see below.
   - `4.5`: this receipt and the PR note state what ran; it is ticked when the PR note exists.
 
 ---
@@ -102,7 +101,8 @@ These ran locally with a full JDK 21 (`/home/dev/.jdk/zulu21`), because the syst
     - (a) This 6T has its lock screen disabled (`locksettings get-disabled` → `true`; `isKeyguardShowing=false`). The phone could not be *locked*, and its security settings were not changed.
     - (b) With the screen off, the phone reported `Dozing` (doze dream, display off), never `Asleep`.
 
-    The timing, task-removal and screen-off conditions held. The "locked and asleep" conditions did not. Task 4.2 is therefore left open for the owner's decision. Nothing here is Gate B evidence.
+    The timing, task-removal and screen-off conditions held. The "locked and asleep" conditions did not.
+  - **Owner decision (2026-11-18):** the owner accepted this run with deviations (a) and (b) as the task's acceptance, so 4.2 is ticked. The deviations stay recorded here and in the PR note.
 - **Cleanup:** after the run, `GATE_B_DISARM` returned `gate-b disarm ok`, and Chrome was disconnected.
 
 ### OnePlus 10 Pro (4.4)
@@ -124,5 +124,5 @@ Opus reviewed the whole branch (`d41085c..d07b7b1`):
 ## Next step
 
 1. Reframe the proposal/design motivation and the Gate B goal, then re-run the Sol review gate on them.
-2. Ask the owner about task 4.2's deviations, and about a follow-up issue for "sharing enabled but the transport not running after a reinstall or process death".
+2. Done: the owner accepted 4.2's deviations and asked for the follow-up issue for "sharing enabled but the transport not running after a reinstall or process death".
 3. Run `/openspec-verify-change`.
