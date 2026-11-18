@@ -1,4 +1,6 @@
+import contextlib
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -15,6 +17,8 @@ from agent_rules import (  # noqa: E402
     Decision,
     Event,
     EventError,
+    FAILURE_NOTICE,
+    FAIL_AFTER_WRITE,
     FileLock,
     LockTimeout,
     RuleError,
@@ -23,6 +27,7 @@ from agent_rules import (  # noqa: E402
     checkout_for,
     context_key,
     decide,
+    handle,
     load_rules,
     parse_event,
     parse_rule,
@@ -1762,3 +1767,329 @@ class VoidTest(EngineTest):
         self.run_event(event("prompt", prompt="/opsx:apply"))
         self.void([])
         self.assertEqual(self.entry()["state"], "delivered")
+
+
+def quick_store(state_dir):
+    return Store(state_dir, sleep=no_sleep, lock_attempts=2)
+
+
+class CheckoutFixture(IsolatedGitTest):
+    """A temporary checkout with one hooked rule, and helpers to run events through ``handle``."""
+
+    def setUp(self):
+        super(CheckoutFixture, self).setUp()
+        self.root = self.make_dir("repo")
+        self.git_init(self.root)
+        self.hooked_rules(self.root)
+        self.rule = make_rule("repo-commit-types.md")
+        self.write_rule("repo-commit-types.md", self.rule_source())
+        self.state_dir = os.path.join(self.root, ".git", "agent-rules")
+        self.store = quick_store(self.state_dir)
+
+    def rule_source(self, body="Commit types guide.\n"):
+        lines = [
+            'pointer: "Read repo-commit-types.md."',
+            "skills: " + flow(("openspec-apply-change", "opsx:apply")),
+            "commands: " + flow((FINALIZE_COMMAND,)),
+            "gates: " + flow((GIT_COMMIT_GATE, PR_CREATE_GATE, PR_EDIT_GATE)),
+        ]
+        return "---\n" + "\n".join(lines) + "\n---\n" + body
+
+    def write_rule(self, name, data):
+        path = os.path.join(self.root, ".agents", "hooked-rules", name)
+        with open(path, "wb") as handle_:
+            handle_.write(data if isinstance(data, bytes) else data.encode("utf-8"))
+
+    def call(self, payload, fmt="plain", env=None, store_factory=quick_store):
+        text = payload if isinstance(payload, str) else json.dumps(payload)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            out, code = handle(text, fmt, env or {}, store_factory)
+        self.stderr = stderr.getvalue()
+        return out, code
+
+    def plain(self, kind, **fields):
+        payload = {"event": kind, "session": "s1", "cwd": self.root}
+        payload.update(fields)
+        return payload
+
+    def claude_event(self, name, **fields):
+        payload = {"hook_event_name": name, "session_id": "s1", "cwd": self.root}
+        payload.update(fields)
+        return payload
+
+    def claude_bash(self, name, command):
+        return self.claude_event(name, tool_name="Bash", tool_input={"command": command})
+
+    def entries(self, session="s1"):
+        with self.store.transaction(session) as state:
+            return dict(state.entries)
+
+    def assert_plain_notice(self, out, code):
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), {"decision": "context", "text": FAILURE_NOTICE, "entries": []})
+
+    def assert_silent_notice(self, out, code):
+        self.assertEqual((out, code), ("", 0))
+        self.assertIn(FAILURE_NOTICE, self.stderr)
+
+
+class HandleTest(CheckoutFixture):
+    """``handle`` end to end, as the ``hook`` subcommand runs it."""
+
+    def test_plain_deny_then_pass(self):
+        out, code = self.call(self.plain("tool-before", command='git commit -m "feat: x"'))
+        self.assertEqual(code, 0)
+        response = json.loads(out)
+        entry = self.entries()[("s1", self.rule.identity)]
+        self.assertEqual(response, {
+            "decision": "deny",
+            "text": "Commit types guide.",
+            "entries": [{"rule": list(self.rule.identity), "write_id": entry["write_id"]}],
+        })
+        self.assertTrue(os.path.isfile(self.store.session_path("s1")))
+        self.assertEqual(self.call(self.plain("tool-before", command='git commit -m "docs: x"')), ("", 0))
+        self.assertEqual(self.entries()[("s1", self.rule.identity)]["state"], "delivered")
+        self.assertEqual(self.stderr, "")
+
+    def test_plain_moment_then_void(self):
+        out, code = self.call(self.plain("tool-after", tool="skill", skill="opsx:apply"))
+        response = json.loads(out)
+        self.assertEqual(response["decision"], "context")
+        write_id = response["entries"][0]["write_id"]
+        self.assertEqual(self.call(self.plain("void", write_ids=[write_id])), ("", 0))
+        self.assertEqual(self.entries(), {})
+        self.assertEqual(json.loads(self.call(self.plain("tool-before", command="git commit"))[0])["decision"],
+                         "deny")
+
+    def test_claude_deny_and_context(self):
+        out, code = self.call(self.claude_bash("PreToolUse", "git commit -m x"), fmt="claude")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), {"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "Commit types guide.",
+        }})
+        self.assertNotIn("allow", out)
+        out, code = self.call(
+            self.claude_event("PostToolUse", tool_name="Skill", tool_input={"skill": "opsx:apply"}),
+            fmt="claude",
+        )
+        self.assertEqual(json.loads(out), {"hookSpecificOutput": {
+            "hookEventName": "PostToolUse", "additionalContext": "Commit types guide.",
+        }})
+
+    def test_claude_compacted_renders_nothing_and_rearms(self):
+        self.call(self.claude_event("UserPromptSubmit", prompt="/opsx:apply"), fmt="claude")
+        self.assertEqual(self.call(self.claude_event("PreCompact", trigger="manual"), fmt="claude"), ("", 0))
+        out, _ = self.call(self.claude_bash("PreToolUse", "git commit -m x"), fmt="claude")
+        self.assertEqual(json.loads(out)["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_plain_compacted_renders_nothing(self):
+        self.assertEqual(self.call(self.plain("compacted", agent="a1")), ("", 0))
+
+    def test_outside_checkout_passes_and_writes_nothing(self):
+        plain = self.make_dir("plain-dir")
+        bare = self.make_dir("no-rules")
+        self.git_init(bare)
+        for cwd in (plain, bare):
+            payload = {"event": "tool-before", "session": "s1", "cwd": cwd, "command": "git commit"}
+            self.assertEqual(self.call(payload), ("", 0))
+            self.assertEqual(self.stderr, "")
+        self.assertFalse(os.path.exists(os.path.join(bare, ".git", "agent-rules")))
+
+    def test_no_rules_passes_and_writes_nothing(self):
+        os.unlink(os.path.join(self.root, ".agents", "hooked-rules", "repo-commit-types.md"))
+        self.assertEqual(self.call(self.plain("tool-before", command="git commit")), ("", 0))
+        self.assertFalse(os.path.exists(self.state_dir))
+
+    def test_pass_writes_no_state(self):
+        self.assertEqual(self.call(self.plain("tool-before", command="git status")), ("", 0))
+        self.assertFalse(os.path.exists(self.store.session_path("s1")))
+
+    def test_malformed_event_plain(self):
+        for text in ("not json", "[1, 2]", json.dumps({"event": "tool-before"}), "", "{\"event\": "):
+            with self.subTest(text=text):
+                out, code = self.call(text)
+                self.assert_plain_notice(out, code)
+                self.assertTrue(self.stderr.strip())
+                self.assertEqual(len(self.stderr.strip().splitlines()), 1, self.stderr)
+
+    def test_malformed_event_claude(self):
+        for text in ("not json", "", "[]", json.dumps({"hook_event_name": ["PreToolUse"]})):
+            with self.subTest(text=text):
+                self.assert_silent_notice(*self.call(text, fmt="claude"))
+
+    def test_claude_failure_with_a_context_channel(self):
+        for name in ("PostToolUse", "UserPromptSubmit"):
+            out, code = self.call(json.dumps({"hook_event_name": name, "cwd": self.root}), fmt="claude")
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out), {"hookSpecificOutput": {
+                "hookEventName": name, "additionalContext": FAILURE_NOTICE,
+            }})
+
+    def test_claude_failure_without_a_context_channel(self):
+        for name in ("PreToolUse", "PreCompact", "SessionStart"):
+            text = json.dumps({"hook_event_name": name, "cwd": self.root})
+            self.assert_silent_notice(*self.call(text, fmt="claude"))
+
+    def test_unknown_format(self):
+        self.assert_silent_notice(*self.call(self.plain("tool-before", command="git commit"), fmt="xml"))
+
+    def test_unreadable_rule(self):
+        self.write_rule("repo-broken.md", b"---\npointer: \"\xff\xfe\"\ngates: [\"git\"]\n---\nx\n")
+        out, code = self.call(self.plain("tool-before", command="git commit"))
+        self.assert_plain_notice(out, code)
+        self.assertIn("repo-broken.md", self.stderr)
+        self.assert_silent_notice(*self.call(self.claude_bash("PreToolUse", "git commit"), fmt="claude"))
+        out, code = self.call(self.claude_bash("PostToolUse", "openspec instructions finalize"), fmt="claude")
+        self.assertEqual(json.loads(out)["hookSpecificOutput"]["additionalContext"], FAILURE_NOTICE)
+        self.assertFalse(os.path.exists(self.store.session_path("s1")))
+
+    def test_invalid_rule_grammar(self):
+        self.write_rule("repo-bad.md", "---\npointer: \"p\"\nsticky: yes\n---\n")
+        self.assert_plain_notice(*self.call(self.plain("tool-before", command="git commit")))
+
+    def test_corrupt_state(self):
+        os.makedirs(self.state_dir, exist_ok=True)
+        path = self.store.session_path("s1")
+        with open(path, "w", encoding="utf-8") as handle_:
+            handle_.write("{not json")
+        self.assert_plain_notice(*self.call(self.plain("tool-before", command="git commit")))
+        self.assert_silent_notice(*self.call(self.claude_bash("PreToolUse", "git commit"), fmt="claude"))
+        with open(path, "r", encoding="utf-8") as handle_:
+            self.assertEqual(handle_.read(), "{not json")
+
+    def test_lock_timeout_passes(self):
+        with FileLock(self.store.session_lock_path("s1"), no_sleep, 1):
+            self.assert_plain_notice(*self.call(self.plain("tool-before", command="git commit")))
+            self.assertIn("LockTimeout", self.stderr)
+        self.assertFalse(os.path.exists(self.store.session_path("s1")))
+
+    def test_any_store_error_passes(self):
+        def broken(state_dir):
+            raise RuntimeError("boom")
+
+        def raw_os_error(state_dir):
+            store = quick_store(state_dir)
+            store._publish = mock.Mock(side_effect=OSError("disk full"))
+            return store
+
+        for factory in (broken, raw_os_error):
+            self.assert_plain_notice(*self.call(self.plain("tool-before", command="git commit"),
+                                                store_factory=factory))
+        self.assertFalse(os.path.exists(self.store.session_path("s1")))
+
+    def test_render_error_passes(self):
+        with mock.patch("agent_rules.decide", return_value=Decision("deny", "x", [])):
+            out, code = self.call(self.claude_event("UserPromptSubmit", prompt="/opsx:apply"), fmt="claude")
+        self.assertEqual(json.loads(out)["hookSpecificOutput"]["additionalContext"], FAILURE_NOTICE)
+        self.assertEqual(code, 0)
+
+    def test_prune_failure_is_swallowed(self):
+        for error in (StoreError("index busy"), LockTimeout("index.lock"), OSError("gone")):
+            def factory(state_dir, error=error):
+                store = quick_store(state_dir)
+                store.prune = mock.Mock(side_effect=error)
+                return store
+
+            out, code = self.call(self.plain("tool-before", session="p-%s" % type(error).__name__,
+                                             command="git commit"), store_factory=factory)
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out)["decision"], "deny")
+
+    def test_prune_runs_after_the_transaction(self):
+        seen = []
+
+        def factory(state_dir):
+            store = quick_store(state_dir)
+
+            def prune(session):
+                with FileLock(store.session_lock_path(session), no_sleep, 1):
+                    seen.append(session)  # the session lock is free again
+            store.prune = prune
+            return store
+
+        self.call(self.plain("tool-before", command="git commit"), store_factory=factory)
+        self.assertEqual(seen, ["s1"])
+
+    def test_fail_after_write_switch(self):
+        out, code = self.call(self.plain("tool-before", command="git commit -m x"),
+                              env={FAIL_AFTER_WRITE: "1"})
+        self.assertEqual((out, code), ("", 1))
+        self.assertIn(FAIL_AFTER_WRITE, self.stderr)
+        self.assertEqual(self.entries()[("s1", self.rule.identity)]["state"], "pending")
+        # Stale credit (accepted residual): the first later call confirms, the second passes as delivered.
+        self.assertEqual(self.call(self.plain("tool-before", command="git commit -m y")), ("", 0))
+        self.assertEqual(self.call(self.plain("tool-before", command="git commit -m z")), ("", 0))
+        out, code = self.call(self.claude_bash("PostToolUse", "openspec instructions finalize"),
+                              fmt="claude", env={FAIL_AFTER_WRITE: "1"})
+        self.assertEqual((out, code), ("", 1))
+
+    def test_fail_after_write_needs_exactly_one(self):
+        for value in ("0", "", "true"):
+            out, code = self.call(self.plain("tool-before", session="v%r" % value, command="git commit"),
+                                  env={FAIL_AFTER_WRITE: value})
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out)["decision"], "deny")
+
+    def test_state_lives_in_the_common_dir_of_a_linked_worktree(self):
+        subprocess.run(
+            ["git", "-C", self.root, "-c", "user.name=t", "-c", "user.email=t@e", "commit", "-q",
+             "--allow-empty", "-m", "init"],
+            check=True,
+        )
+        linked = os.path.join(self.tmp, "linked")
+        subprocess.run(["git", "-C", self.root, "worktree", "add", "-q", "-b", "b", linked], check=True)
+        os.makedirs(os.path.join(linked, ".agents", "hooked-rules"))
+        shutil.copy(os.path.join(self.root, ".agents", "hooked-rules", "repo-commit-types.md"),
+                    os.path.join(linked, ".agents", "hooked-rules", "repo-commit-types.md"))
+        payload = {"event": "tool-before", "session": "s9", "cwd": linked, "command": "git commit"}
+        self.assertEqual(json.loads(self.call(payload)[0])["decision"], "deny")
+        self.assertTrue(os.path.isfile(self.store.session_path("s9")))
+
+
+class HookCliTest(CheckoutFixture):
+    def run_cli(self, stdin, *args):
+        return subprocess.run(
+            [sys.executable, "-I", CLI, "hook"] + list(args),
+            input=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+
+    def test_cli_plain_deny(self):
+        payload = json.dumps(self.plain("tool-before", command="git commit -m x")).encode("utf-8")
+        completed = self.run_cli(payload, "--format", "plain")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout.decode("utf-8"))["decision"], "deny")
+
+    def test_cli_claude_pass_prints_nothing(self):
+        payload = json.dumps(self.claude_bash("PreToolUse", "ls")).encode("utf-8")
+        completed = self.run_cli(payload, "--format", "claude")
+        self.assertEqual((completed.returncode, completed.stdout), (0, b""))
+
+    def test_cli_bad_input_fails_open(self):
+        for stdin in (b"\xff\xfe not utf-8", b"{"):
+            completed = self.run_cli(stdin, "--format", "claude")
+            self.assertEqual((completed.returncode, completed.stdout), (0, b""))
+            self.assertIn(FAILURE_NOTICE.encode("utf-8"), completed.stderr)
+            completed = self.run_cli(stdin, "--format", "plain")
+            self.assertEqual(completed.returncode, 0)
+            self.assertEqual(json.loads(completed.stdout.decode("utf-8"))["text"], FAILURE_NOTICE)
+
+    def test_cli_missing_or_unknown_format_fails_open(self):
+        payload = json.dumps(self.claude_bash("PreToolUse", "git commit")).encode("utf-8")
+        for args in ((), ("--format", "xml")):
+            completed = self.run_cli(payload, *args)
+            self.assertEqual((completed.returncode, completed.stdout), (0, b""), args)
+            self.assertIn(FAILURE_NOTICE.encode("utf-8"), completed.stderr)
+
+    def test_cli_fail_after_write_exits_one(self):
+        payload = json.dumps(self.plain("tool-before", command="git commit -m x")).encode("utf-8")
+        environment = dict(os.environ)
+        environment[FAIL_AFTER_WRITE] = "1"
+        completed = subprocess.run(
+            [sys.executable, "-I", CLI, "hook", "--format", "plain"],
+            input=payload, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment,
+        )
+        self.assertEqual((completed.returncode, completed.stdout), (1, b""))
+        self.assertTrue(os.path.isfile(self.store.session_path("s1")))

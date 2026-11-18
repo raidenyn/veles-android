@@ -1183,6 +1183,85 @@ def _gate(rules, state, key, event):
     return Decision("deny", text, _recorded(state, key, included))
 
 
+FAILURE_NOTICE = (
+    "Rule hooks failed: read the hooked rules listed in AGENTS.md by hand at the moments they name."
+)
+FAIL_AFTER_WRITE = "VELES_AGENT_RULES_FAIL_AFTER_WRITE"
+
+
+# Claude Code events whose output has a model-visible context channel (PreToolUse has only a deny).
+CLAUDE_CONTEXT_EVENTS = ("tool-after", "prompt")
+
+
+def _diagnose(what, error):
+    """One stderr line for ``error``."""
+    message = " ".join(str(error).split())
+    sys.stderr.write("agent_rules.py hook: %s: %s: %s\n" % (what, type(error).__name__, message))
+
+
+def _failure_output(fmt, payload):
+    """The read-by-hand notice where the host has a context channel; otherwise ``""`` and stderr."""
+    if fmt == "plain":
+        return render("plain", None, Decision("context", FAILURE_NOTICE, []))
+    if fmt == "claude" and isinstance(payload, dict):
+        name = payload.get("hook_event_name")
+        if isinstance(name, str) and CLAUDE_EVENTS.get(name) in CLAUDE_CONTEXT_EVENTS:
+            return json.dumps({"hookSpecificOutput": {
+                "hookEventName": name, "additionalContext": FAILURE_NOTICE,
+            }})
+    sys.stderr.write(FAILURE_NOTICE + "\n")
+    return ""
+
+
+def handle(stdin_text, fmt, env, store_factory):
+    """Run one hook event and return ``(stdout text, exit code)``; the exit code is never 2.
+
+    The decision is made, rendered and recorded in one ``Store.transaction``; the prune follows it,
+    best effort. Every failure passes with the notice (``_failure_output``) and exit 0. Only the
+    test-only ``FAIL_AFTER_WRITE`` switch returns ``("", 1)``, after the state was committed.
+    """
+    payload = None
+    try:
+        payload = json.loads(stdin_text)
+        event = parse_event(fmt, payload)
+        checkout = checkout_for(event.cwd)
+        if checkout is None:
+            return "", 0
+        toplevel, common_dir = checkout
+        rules, errors = load_rules(toplevel)
+        if errors:
+            raise RuleError("; ".join("%s %s" % error for error in errors))
+        if not rules:
+            return "", 0
+        store = store_factory(os.path.join(common_dir, "agent-rules"))
+        with store.transaction(event.session) as state:
+            # Rendering inside the transaction: a decision that cannot be printed is never recorded.
+            output = render(fmt, event, decide(rules, state, context_key(event), event))
+        try:
+            store.prune(event.session)
+        except Exception as error:  # pruning is housekeeping; the decision stands
+            _diagnose("prune skipped", error)
+        if env.get(FAIL_AFTER_WRITE) == "1":
+            sys.stderr.write("agent_rules.py hook: %s=1: failing after the write\n" % FAIL_AFTER_WRITE)
+            return "", 1
+        return output, 0
+    except Exception as error:
+        _diagnose("failed open", error)
+        return _failure_output(fmt, payload), 0
+
+
+def _hook(args):
+    raw = sys.stdin.buffer.read()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = ""  # not an event: fails open like any malformed input
+    output, code = handle(text, args.format, os.environ, Store)
+    if output:
+        sys.stdout.write(output + "\n")
+    return code
+
+
 def _default_root():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -1197,6 +1276,10 @@ def main(argv=None):
     mode.add_argument("--check", action="store_true", help="exit 1 when the block is stale or missing")
     pointers.add_argument("--root", default=_default_root(), help="repository root")
     pointers.set_defaults(handler=_pointers)
+    hook = commands.add_parser("hook", help="decide one hook event read as JSON on stdin")
+    # No ``choices``: an unknown format must fail open in ``handle``, not exit 2 (a blocking hook error).
+    hook.add_argument("--format", help="claude or plain")
+    hook.set_defaults(handler=_hook)
     args = parser.parse_args(argv)
     return args.handler(args)
 
