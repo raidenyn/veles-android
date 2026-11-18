@@ -246,6 +246,8 @@ class SelectionTest(unittest.TestCase):
             "README.md",
             "BUILD.md",
             "CONTRIBUTING.md",
+            "docs.json",
+            ".mintignore",
             "native-bridge/AGENTS.md",
         ):
             with self.subTest(path=path):

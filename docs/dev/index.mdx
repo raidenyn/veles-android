@@ -1,0 +1,30 @@
+---
+title: "Overview"
+description: "The parts of the Veles repository and where each one lives."
+---
+
+Veles turns noisy bank one-time-code notifications into a clean, copy-ready code. It extracts the code, the amount and the merchant on the phone and shows them again with a one-tap Copy action. It is free, open source and works offline: the app has no internet permission and no telemetry.
+
+The repository holds the Android app and the tooling around an in-development way to share codes with a computer. Each folder below is a component with its own build and checks.
+
+## Components
+
+| Folder | What it is |
+| --- | --- |
+| `android/` | The Android app: notification handling, permissions, pairing and the app build and tests. |
+| `web-extension/` | The Chrome extension (Manifest V3): the connector and its pairing screen. |
+| `rust/` | The shared Rust crypto core, built for Android (JNI), the browser (WASM) and the host JVM used in tests. |
+| `protocol/` | The versioned contract between the phone and a computer, with conformance fixtures. |
+| `native-bridge/` | The packaging scaffold for the Native Messaging host. |
+| `native-bridge/host/` | The production Native Messaging host, a plain Rust program without Tauri. |
+| `native-bridge/installer/` | The standalone installer engine and its Windows and macOS frontends. |
+| `verify/` | The supply-chain verifier and the repository policy checks. |
+| `scripts/` | Release tooling, commit message checks and the component map. |
+| `docs/` | Documentation, decision records and the agent-file check. |
+| `openspec/` | The specifications of the project, one per capability. |
+
+## Where to go next
+
+- [Architecture](/docs/dev/architecture) shows how a notification becomes a copy-ready code and how the computer path fits in.
+- [Build](/docs/dev/build) and [Contributing](/docs/dev/contributing) explain how to work on the code.
+- The Specifications group lists what each capability must do.

@@ -1,0 +1,32 @@
+---
+title: "Contributing"
+description: "A short guide to contributing to Veles, with a link to the full contributing guide."
+---
+
+The full guide is [CONTRIBUTING.md](https://github.com/raidenyn/veles-android/blob/master/CONTRIBUTING.md) in the repository. This page summarises it.
+
+## Keep the privacy guarantees
+
+Veles handles sensitive financial codes on the device. A contribution must keep these guarantees:
+
+- The Android app does not request or use the internet permission.
+- No telemetry, analytics, crash reporting or tracking.
+- Bank templates live only in the local database, and notification text is processed in memory and discarded.
+
+## Adding a bank
+
+Test new patterns with the test screen inside the app: enter a sample notification, post it and check that the code, the amount and the merchant are all parsed. Default bank presets are seeded in the database migrations, so a new preset is a pull request that changes those seeds. See [Architecture](/docs/dev/architecture) for how the three patterns are used.
+
+## Commits and pull requests
+
+Commit subjects and pull request titles follow Conventional Commits, such as `feat:`, `fix:` and `docs:`. Pull requests are squash-merged, so the title becomes the final commit. A local commit-msg hook that checks messages is installed with `./gradlew installGitHooks`.
+
+## Working with AI agents
+
+Agent guidance is tool-neutral: a short root `AGENTS.md` and one `AGENTS.md` per component describe its commands and rules, and scoped rules live in `.agents/rules/`. Start your agent at the repository root so those rules load. The full guide lists the version and setup notes for each supported tool.
+
+## Build and release documentation
+
+- [Build](/docs/dev/build) explains how to compile, test and install the app.
+- [CI pipeline](/docs/ci) describes the continuous integration workflows.
+- [Releasing](/docs/releasing) covers versioning rules and release runbooks.

@@ -14,7 +14,7 @@ toolchain entry points are npm scripts, not Gradle tasks; all amendments
 are consolidated into this body.
 
 Amended on 2026-10-26 by the OTP-23 contract-alignment review
-([`docs/otp-23-contract-alignment.md`](../otp-23-contract-alignment.md)):
+([`docs/otp-23-contract-alignment.md`](https://github.com/raidenyn/veles-android/blob/master/docs/otp-23-contract-alignment.md)):
 (a) the desktop native host is a **plain Rust executable**; the Tauri 2.6 event
 loop is not the runtime (it showed a visible helper window on an interactive
 Windows desktop and needed a forced-exit fallback), so those Tauri findings are
@@ -188,8 +188,8 @@ The decisions in this RFC are based on the following sources:
 
 - [PR #78: tab-owned Web Bluetooth transport spike](https://github.com/raidenyn/veles-android/pull/78)
 - [Issue #77: remaining transport validation](https://github.com/raidenyn/veles-android/issues/77)
-- [Original Android-Chrome sharing roadmap](../superpowers/specs/2026-08-11-android-chrome-bluetooth-otp-sharing-design.md)
-- [Original popup feasibility design](../superpowers/specs/2026-08-11-popup-web-bluetooth-spike-design.md)
+- [Original Android-Chrome sharing roadmap](https://github.com/raidenyn/veles-android/blob/f5ec4afbd587c57e844d9d58b635211dde86f9c3/docs/superpowers/specs/2026-08-11-android-chrome-bluetooth-otp-sharing-design.md)
+- [Original popup feasibility design](https://github.com/raidenyn/veles-android/blob/f5ec4afbd587c57e844d9d58b635211dde86f9c3/docs/superpowers/specs/2026-08-11-popup-web-bluetooth-spike-design.md)
 - [PR #78 application-security design](https://github.com/raidenyn/veles-android/blob/f5ec4afbd587c57e844d9d58b635211dde86f9c3/docs/superpowers/specs/2026-08-14-bluetooth-application-security-design.md)
 - [PR #78 physical-validation report](https://github.com/raidenyn/veles-android/blob/f5ec4afbd587c57e844d9d58b635211dde86f9c3/docs/spikes/2026-08-11-popup-web-bluetooth-validation.md)
 - [RFC 8125: Requirements for PAKE schemes](https://www.rfc-editor.org/rfc/rfc8125.html)
@@ -601,8 +601,8 @@ later plain-Rust successes (Windows `d5b6f2d`, macOS `fb224e8`) are likewise
 historical PoC evidence, recorded separately. Whether Tauri is worth retaining
 **for packaging only** was evaluated with *current* dependency-graph, SBOM and
 binary-size evidence (matrix row D-01 in
-[`docs/otp-23-requirements-matrix.md`](../otp-23-requirements-matrix.md),
-[`docs/otp-23-tauri-packaging-evaluation.md`](../otp-23-tauri-packaging-evaluation.md)).
+[`docs/otp-23-requirements-matrix.md`](https://github.com/raidenyn/veles-android/blob/master/docs/otp-23-requirements-matrix.md),
+[`docs/otp-23-tauri-packaging-evaluation.md`](https://github.com/raidenyn/veles-android/blob/master/docs/otp-23-tauri-packaging-evaluation.md)).
 Decision: retaining Tauri solely for packaging is **not approved and not justified**
 by that cost proxy; OTP-25 chooses another packaging pipeline or brings a separately
 reviewed justification (including a bundler proof) to revisit it. No installer is
@@ -1424,7 +1424,7 @@ downgrade policy.
 `attribute_budget = min(ATT_MTU − 3, 512)`, `payload = attribute_budget − 4`, exact
 non-final/final rules in both directions, MTU floor 185 and record maximum 4096
 unchanged (OTP2-GAT-010; vectors `frag-r2-*`). See
-[`docs/otp-23-contract-alignment.md`](../otp-23-contract-alignment.md) for the
+[`docs/otp-23-contract-alignment.md`](https://github.com/raidenyn/veles-android/blob/master/docs/otp-23-contract-alignment.md) for the
 compatibility and rollout reasoning.
 
 **Exclusions:** Production implementation and UI.
@@ -2660,7 +2660,7 @@ They become binding in the follow-up amendment or RFC after OTP-26/OTP-27:
 
 The firmware is expected to be pure Rust on ESP-IDF std
 (`esp-idf-svc` + `esp32-nimble` host + RustCrypto `p256`/`aes-gcm`/`hkdf`/
-`sha2` in software, fast enough at <1 KiB records), UI via Slint or
+`sha2` in software, fast enough at `<1 KiB` records), UI via Slint or
 embedded-graphics, board support via a small `Board` HAL over AXP2101/FT6336/
 ST7789. A C++/LVGL hybrid with the SPAKE2 core linked as a Rust staticlib is
 the recorded fallback if BSP bring-up dominates; a bare-`no_std`/`trouble`

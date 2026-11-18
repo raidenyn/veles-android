@@ -1,0 +1,141 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "Veles",
+  "theme": "mint",
+  "colors": {
+    "primary": "#1e6b47",
+    "light": "#8fdbb0",
+    "dark": "#1e6b47"
+  },
+  "logo": "/docs/assets/veles-icon.png",
+  "favicon": "/docs/assets/veles-icon.png",
+  "integrations": {
+    "telemetry": {
+      "enabled": false
+    }
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/raidenyn/veles-android"
+      },
+      {
+        "label": "Releases",
+        "href": "https://github.com/raidenyn/veles-android/releases"
+      }
+    ]
+  },
+  "navigation": {
+    "products": [
+      {
+        "product": "Users",
+        "icon": "book-open",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": [
+              "docs/user/index",
+              "docs/user/install",
+              "docs/user/notification-access",
+              "docs/user/sensitive-notifications"
+            ]
+          },
+          {
+            "group": "Privacy",
+            "pages": [
+              "docs/user/privacy"
+            ]
+          }
+        ]
+      },
+      {
+        "product": "Developers",
+        "icon": "code",
+        "groups": [
+          {
+            "group": "Start here",
+            "pages": [
+              "docs/dev/index",
+              "docs/dev/architecture",
+              "docs/dev/build",
+              "docs/dev/contributing"
+            ]
+          },
+          {
+            "group": "Engineering reference",
+            "pages": [
+              "docs/ci",
+              "docs/releasing",
+              "docs/reproducible-builds",
+              "docs/superspec-workflow",
+              "docs/decisions/2026-11-08-self-signed-completion-identity",
+              "docs/decisions/2026-11-09-self-signed-macos-acceptance",
+              "docs/rfcs/2026-08-21-otp-external-devices"
+            ]
+          },
+          {
+            "group": "Specifications",
+            "pages": [
+              {
+                "group": "Android app",
+                "pages": [
+                  "docs/dev/specs/android-standalone-build",
+                  "docs/dev/specs/ble-sharing-availability",
+                  "docs/dev/specs/sharing-card-copy"
+                ]
+              },
+              {
+                "group": "Pairing and trust",
+                "pages": [
+                  "docs/dev/specs/spake2-enrollment-exchange",
+                  "docs/dev/specs/pairing-window-admission",
+                  "docs/dev/specs/protected-record-session",
+                  "docs/dev/specs/reconnect-authentication",
+                  "docs/dev/specs/peer-revocation",
+                  "docs/dev/specs/mutual-peer-removal",
+                  "docs/dev/specs/trust-activation-recovery",
+                  "docs/dev/specs/trust-store-failure-recovery",
+                  "docs/dev/specs/synthetic-session-probe",
+                  "docs/dev/specs/pairing-debug-harness"
+                ]
+              },
+              {
+                "group": "Gate B testing",
+                "pages": [
+                  "docs/dev/specs/gate-b-evidence-matrix",
+                  "docs/dev/specs/gate-b-history-fixture",
+                  "docs/dev/specs/gate-b-journey-harness"
+                ]
+              },
+              {
+                "group": "Build, CI and release",
+                "pages": [
+                  "docs/dev/specs/ci-pipeline",
+                  "docs/dev/specs/component-versioning",
+                  "docs/dev/specs/release-publishing",
+                  "docs/dev/specs/pr-last-green-selection",
+                  "docs/dev/specs/commit-conventions",
+                  "docs/dev/specs/documentation-site"
+                ]
+              },
+              {
+                "group": "Contributor workflow",
+                "pages": [
+                  "docs/dev/specs/agent-guidance-layout",
+                  "docs/dev/specs/openspec-skills-delivery",
+                  "docs/dev/specs/superspec-review-gate",
+                  "docs/dev/specs/superspec-closeout",
+                  "docs/dev/specs/superspec-tracker-intake",
+                  "docs/dev/specs/github-project-automation",
+                  "docs/dev/specs/real-device-testing",
+                  "docs/dev/specs/hooked-rule-delivery"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

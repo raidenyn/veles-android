@@ -34,11 +34,16 @@ TBD - created by archiving change component-releases-and-conventional-commits. U
 
 #### Scenario: Docs node
 - **WHEN** the `docs` node runs
-- **THEN** it reports `docs / agent-files` (the agent-file layout check) and `docs / unit-tests` (the tests of that check), and it reports no release or build job
+- **THEN** it reports `docs / agent-files` (the agent-file layout check, then the documentation site guard `python3 docs/checks/check_site.py --root .`) and `docs / unit-tests` (the tests of both checks), and it reports no release or build job
+
+#### Scenario: Site guard step in the workflow contract
+- **WHEN** the `agent-files` job of `check-docs.yml` drops the site guard step or runs it with other arguments
+- **THEN** the workflow contract suite fails
 
 #### Scenario: Declared checks drift
 - **WHEN** a check workflow adds, removes or renames a job without updating the node's declared check names
 - **THEN** the workflow contract suite fails
+
 ### Requirement: No existing check is lost
 Every command run by `ci.yml` and `build-native-host.yml` before this change SHALL still run in exactly one CI node, and the clean contract MUST keep its order: build JNI and extension outputs, clean, assert clean, rebuild and re-verify the APK, in one job.
 

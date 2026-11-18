@@ -1,0 +1,17 @@
+/*
+!/docs.json
+!/BUILD.md
+!/docs/
+/docs/*
+!/docs/user/
+!/docs/dev/
+!/docs/assets/
+!/docs/ci.md
+!/docs/releasing.md
+!/docs/reproducible-builds.md
+!/docs/superspec-workflow.md
+!/docs/decisions/
+!/docs/rfcs/
+!/openspec/
+/openspec/*
+!/openspec/specs/

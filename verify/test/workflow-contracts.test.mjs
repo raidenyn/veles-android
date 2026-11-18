@@ -3698,8 +3698,9 @@ function assertDocsCheckWorkflow(source, name = 'check-docs.yml') {
   for (const run of runs) {
     assert.ok(DOCS_RUN_ALLOWLIST.some((prefix) => run.startsWith(prefix)), `${name} run command "${run}" must start with python3 docs/checks/ or python3 -m unittest`);
   }
-  assert.equal(runs.length, 2, `${name} must run exactly the agent-file check and its tests`);
+  assert.equal(runs.length, 3, `${name} must run exactly the agent-file check, the site guard and their tests`);
   assert.match(jobs['agent-files'], /^      - run: python3 docs\/checks\/check_agent_files\.py --root \.$/m, `${name} must run the agent-file check from the repository root`);
+  assert.match(jobs['agent-files'], /^      - run: python3 docs\/checks\/check_site\.py --root \.$/m, `${name} must run the documentation site guard from the repository root`);
   assert.match(jobs['unit-tests'], /^      - run: python3 -m unittest discover -s docs\/checks -p 'test_\*\.py' -v$/m, `${name} must run the agent-file check suite`);
 
   for (const forbidden of [/\bnpm\b/, /\bnpx\b/, /\bpip\b/, /\bcurl\b/, /\bwget\b/, /setup-node/, /setup-java/, /setup-gradle/]) {
@@ -3707,7 +3708,7 @@ function assertDocsCheckWorkflow(source, name = 'check-docs.yml') {
   }
 }
 
-test('docs workflow runs only the agent-file check and its tests from the allow-list', async () => {
+test('docs workflow runs only the agent-file check, the site guard and their tests from the allow-list', async () => {
   const source = await workflow('check-docs.yml');
   assertDocsCheckWorkflow(source);
 
@@ -3730,7 +3731,7 @@ test('docs workflow runs only the agent-file check and its tests from the allow-
   // YAML block scalar: either the command no longer matches the allow-list or the count changes.
   const chained = `${source}\n      - run: python3 docs/checks/check_agent_files.py --root . ; npm ci\n`;
   assert.notEqual(chained, source, 'the chained-install mutation must change check-docs.yml');
-  assert.throws(() => assertDocsCheckWorkflow(chained), /exactly the agent-file check/, 'the contract must reject a chained install');
+  assert.throws(() => assertDocsCheckWorkflow(chained), /exactly the agent-file check, the site guard/, 'the contract must reject a chained install');
 
   const blockScalar = `${source}\n      - run: |\n          python3 docs/checks/check_agent_files.py --root .\n          npm ci\n`;
   assert.notEqual(blockScalar, source, 'the block-scalar mutation must change check-docs.yml');
@@ -3741,7 +3742,13 @@ test('docs workflow runs only the agent-file check and its tests from the allow-
   assert.throws(() => assertDocsCheckWorkflow(renamed), /must start with python3/);
   const dropped = source.replace(/^ *- run: python3 -m unittest discover -s docs\/checks -p 'test_\*\.py' -v\n/m, '');
   assert.notEqual(dropped, source, 'the dropped-tests mutation must change check-docs.yml');
-  assert.throws(() => assertDocsCheckWorkflow(dropped), /exactly the agent-file check/);
+  assert.throws(() => assertDocsCheckWorkflow(dropped), /exactly the agent-file check, the site guard/);
+  const droppedGuard = source.replace(/^ *- run: python3 docs\/checks\/check_site\.py --root \.\n/m, '');
+  assert.notEqual(droppedGuard, source, 'the dropped-guard mutation must change check-docs.yml');
+  assert.throws(() => assertDocsCheckWorkflow(droppedGuard), /exactly the agent-file check, the site guard/);
+  const guardArgs = source.replace('python3 docs/checks/check_site.py --root .', 'python3 docs/checks/check_site.py --root docs');
+  assert.notEqual(guardArgs, source, 'the guard-arguments mutation must change check-docs.yml');
+  assert.throws(() => assertDocsCheckWorkflow(guardArgs), /must run the documentation site guard/);
 });
 
 function assertBuildAndroidArtifacts(source) {

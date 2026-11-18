@@ -1,7 +1,8 @@
 name: check-docs
 
 # Docs node of the CI component tree (ci.yml -> `docs / agent-files`, `docs / unit-tests`): the
-# structural agent-file check and its stdlib-only Python suite. The node runs plain Python on the
+# structural agent-file check, the documentation site guard (what the Mintlify site publishes) and
+# their stdlib-only Python suite. The node runs plain Python on the
 # runner's system interpreter: it installs nothing (no npm, pip, Node, Java or Gradle) and downloads
 # nothing, so the workflow contract allow-lists every command here. Any workflow edit is a global
 # path, so the nodes that read this file run too.
@@ -25,6 +26,7 @@ jobs:
         with:
           ref: ${{ inputs.commit-sha }}
       - run: python3 docs/checks/check_agent_files.py --root .
+      - run: python3 docs/checks/check_site.py --root .
 
   unit-tests:
     name: unit-tests

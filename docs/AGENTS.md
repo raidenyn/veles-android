@@ -21,6 +21,12 @@ Start at the repository root, with no parent `CLAUDE.md` or `CLAUDE.local.md`; a
 then the check. Each rule adds one line to the root, which is capped at 40 lines: compress or link before
 adding. Grammar, delivery, degraded modes and versions: `docs/hook-delivered-rules.md`.
 
+## Documentation site
+
+`docs.json` and the allowlist `.mintignore` at the root publish the Mintlify site from `docs/user/`, `docs/dev/`
+and `openspec/specs/`. A new capability needs `docs/dev/specs/<capability>.mdx`; run
+`python3 docs/checks/check_site.py --root .` after `git add`. Rules and layout: `docs/documentation-site.md`.
+
 ## Rules
 
 None.
