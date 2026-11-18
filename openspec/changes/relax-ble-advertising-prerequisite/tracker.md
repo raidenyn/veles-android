@@ -3,4 +3,4 @@
 - Issue: raidenyn/veles-android#165
 - Source documents: https://github.com/raidenyn/veles-android/issues/165, android/app/src/main/java/me/nagaev/veles/sharing/SharingState.kt, openspec/changes/archive/2026-11-17-otp-12-gate-b-validation/
 - Created: 2026-11-17
-- Implementation PR: (pending)
+- Implementation PR: https://github.com/raidenyn/veles-android/pull/168
