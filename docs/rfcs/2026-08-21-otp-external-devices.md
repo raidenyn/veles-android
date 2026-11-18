@@ -188,8 +188,8 @@ The decisions in this RFC are based on the following sources:
 
 - [PR #78: tab-owned Web Bluetooth transport spike](https://github.com/raidenyn/veles-android/pull/78)
 - [Issue #77: remaining transport validation](https://github.com/raidenyn/veles-android/issues/77)
-- [Original Android-Chrome sharing roadmap](https://github.com/raidenyn/veles-android/blob/master/docs/superpowers/specs/2026-08-11-android-chrome-bluetooth-otp-sharing-design.md)
-- [Original popup feasibility design](https://github.com/raidenyn/veles-android/blob/master/docs/superpowers/specs/2026-08-11-popup-web-bluetooth-spike-design.md)
+- [Original Android-Chrome sharing roadmap](https://github.com/raidenyn/veles-android/blob/f5ec4afbd587c57e844d9d58b635211dde86f9c3/docs/superpowers/specs/2026-08-11-android-chrome-bluetooth-otp-sharing-design.md)
+- [Original popup feasibility design](https://github.com/raidenyn/veles-android/blob/f5ec4afbd587c57e844d9d58b635211dde86f9c3/docs/superpowers/specs/2026-08-11-popup-web-bluetooth-spike-design.md)
 - [PR #78 application-security design](https://github.com/raidenyn/veles-android/blob/f5ec4afbd587c57e844d9d58b635211dde86f9c3/docs/superpowers/specs/2026-08-14-bluetooth-application-security-design.md)
 - [PR #78 physical-validation report](https://github.com/raidenyn/veles-android/blob/f5ec4afbd587c57e844d9d58b635211dde86f9c3/docs/spikes/2026-08-11-popup-web-bluetooth-validation.md)
 - [RFC 8125: Requirements for PAKE schemes](https://www.rfc-editor.org/rfc/rfc8125.html)

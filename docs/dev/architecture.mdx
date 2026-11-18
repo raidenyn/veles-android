@@ -28,9 +28,8 @@ Sharing codes with a computer over Bluetooth is still in development. The design
 
 ```mermaid
 flowchart LR
-  A[Android app] -- Bluetooth --> H[Native Messaging host]
-  H --> E[Web extension]
-  A -. Bluetooth .-> E
+  A[Android app] <-- Bluetooth --> H[Native Messaging host]
+  H <--> E[Web extension]
 ```
 
 - The phone is paired once with a computer using a six-digit code and a SPAKE2 exchange.
