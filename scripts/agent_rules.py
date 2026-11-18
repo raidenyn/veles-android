@@ -859,19 +859,31 @@ class Store(object):
         """A lock on a prune victim (named by its file stem) that fails at once when busy."""
         return FileLock(os.path.join(self.state_dir, stem + ".lock"), self.sleep, 1)
 
+    def _marker_present(self):
+        """Whether the marker file exists; only FileNotFoundError means absent, other errors raise."""
+        try:
+            os.stat(os.path.join(self.state_dir, INITIALIZED_MARKER))
+        except FileNotFoundError:
+            return False
+        except OSError as error:
+            raise StoreError("cannot inspect the delivery-state marker in %s: %s" % (self.state_dir, error))
+        return True
+
     def _initialized(self):
         """Whether this store was used before: the marker, or any session file, exists.
 
-        StoreError when that cannot be checked, rather than assuming a fresh store.
+        The marker counts when it stats or when the directory listing names it. StoreError when that
+        cannot be checked, rather than assuming a fresh store.
         """
-        if os.path.exists(os.path.join(self.state_dir, INITIALIZED_MARKER)):
+        if self._marker_present():
             return True
         try:
-            return any(SESSION_FILE_RE.fullmatch(name) for name in os.listdir(self.state_dir))
+            names = os.listdir(self.state_dir)
         except FileNotFoundError:
             return False
         except OSError as error:
             raise StoreError("cannot inspect the delivery-state directory %s: %s" % (self.state_dir, error))
+        return any(name == INITIALIZED_MARKER or SESSION_FILE_RE.fullmatch(name) for name in names)
 
     def _write_marker(self):
         _atomic_write(os.path.join(self.state_dir, INITIALIZED_MARKER), "initialized\n")
@@ -908,7 +920,7 @@ class Store(object):
                 "the delivery-state index %s is invalid; remove the agent-rules directory %s to "
                 "start afresh" % (self.index_path(), self.state_dir)
             )
-        if create and not os.path.exists(os.path.join(self.state_dir, INITIALIZED_MARKER)):
+        if create and not self._marker_present():
             self._write_marker()
         return {"write_id": write_id, "order": order, "sessions": dict(raw)}
 

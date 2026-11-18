@@ -1152,6 +1152,37 @@ class StoreTest(unittest.TestCase):
         with self.assertRaises(StoreError):
             self.store.next_write_id()
 
+    def stat_failing_for_marker(self, error):
+        marker = os.path.join(self.state_dir, "initialized")
+        real_stat = os.stat
+
+        def stat(path, *args, **kwargs):
+            if path == marker:
+                raise error
+            return real_stat(path, *args, **kwargs)
+
+        return mock.patch("os.stat", side_effect=stat)
+
+    def test_marker_stat_error_is_not_a_fresh_store(self):
+        self.store.next_write_id()
+        os.unlink(self.store.index_path())
+        with self.stat_failing_for_marker(PermissionError("denied")):
+            with self.assertRaises(StoreError):
+                self.store.next_write_id()
+        self.assertFalse(os.path.exists(self.store.index_path()))
+
+    def test_marker_in_listing_blocks_reinitialisation(self):
+        self.store.next_write_id()
+        os.unlink(self.store.index_path())
+        with self.stat_failing_for_marker(FileNotFoundError("lies")):
+            with self.assertRaises(StoreError):
+                self.store.next_write_id()
+        self.assertFalse(os.path.exists(self.store.index_path()))
+
+    def test_absent_marker_in_an_empty_directory_initialises(self):
+        os.makedirs(self.state_dir)
+        self.assertEqual(self.store.next_write_id(), 1)
+
     def test_unreadable_store_directory_is_not_a_fresh_store(self):
         with mock.patch("os.listdir", side_effect=PermissionError("denied")):
             with self.assertRaises(StoreError):
