@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,9 @@ except ImportError:  # POSIX
 RULES_DIR = ".agents/hooked-rules"
 AGENTS_FILE = "AGENTS.md"
 BODY_LIMIT = 4096
+# The most bytes read from one rule file; a larger file is an error. A valid rule is far smaller (the
+# body cap plus its frontmatter), so the cap only bounds what a damaged or hostile file can cost.
+RULE_FILE_LIMIT = 65536
 
 POINTER_HEADING = "## Hook-delivered rules"
 POINTER_BEGIN = "<!-- hooked-rules:begin -->"
@@ -174,10 +178,26 @@ def _regexes(key, patterns):
     return compiled
 
 
+def rule_text(body):
+    """The text a rule contributes when it is emitted: its body without leading or trailing blank lines.
+
+    ``body`` already has LF line endings (``_split``). A blank line is one that is empty or holds only
+    whitespace. Nothing else changes, so Markdown indentation and trailing spaces inside the text stay.
+    """
+    lines = body.split("\n")
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines)
+
+
 def parse_rule(name, text):
     """Parse one hooked rule file's text into a ``Rule``, or raise ``RuleError``.
 
-    The identity hash covers the text as given (the raw file, before newline normalisation).
+    The identity hash covers the text as given (the raw file, before newline normalisation). A body
+    with no text (empty or only blank lines) is an error: a gate would deny with no reason and a moment
+    would credit a rule it never showed.
     """
     values, body, original_body = _split(text)
     pointer = values.get("pointer")
@@ -193,25 +213,63 @@ def parse_rule(name, text):
     size = len(original_body.encode("utf-8", "surrogatepass"))
     if size > BODY_LIMIT:
         raise RuleError("the body is %d bytes, over the %d byte limit" % (size, BODY_LIMIT))
+    if not rule_text(body):
+        raise RuleError("the body is empty; a rule needs text to show at its moments and gates")
     digest = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
     return Rule(name, (name, digest), pointer, skills, commands, gates, body)
 
 
+def _read_rule_file(path):
+    """The bytes of the regular file ``path``, read without following a symlink; RuleError otherwise.
+
+    The type is checked with ``lstat`` and again on the open descriptor (``O_NOFOLLOW`` and
+    ``O_NONBLOCK`` where the platform has them, so a swapped-in symlink or FIFO cannot redirect or block
+    the read). At most ``RULE_FILE_LIMIT`` + 1 bytes are read.
+    """
+    mode = os.lstat(path).st_mode
+    if stat.S_ISLNK(mode):
+        raise RuleError("is a symlink; hooked rules are regular files")
+    if not stat.S_ISREG(mode):
+        raise RuleError("is not a regular file; hooked rules are regular files")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise RuleError("is not a regular file; hooked rules are regular files")
+        chunks = []
+        size = 0
+        while size <= RULE_FILE_LIMIT:
+            chunk = os.read(fd, RULE_FILE_LIMIT + 1 - size)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+    finally:
+        os.close(fd)
+    if size > RULE_FILE_LIMIT:
+        raise RuleError("is larger than %d bytes" % RULE_FILE_LIMIT)
+    return b"".join(chunks)
+
+
 def load_rules(root):
-    """Return ``(rules sorted by name, [(path, message), ...])`` for ``root``'s hooked rules."""
+    """Return ``(rules sorted by name, [(path, message), ...])`` for ``root``'s hooked rules.
+
+    Every ``*.md`` entry of the directory is a rule: one that is a symlink, not a regular file, larger
+    than ``RULE_FILE_LIMIT`` bytes, unreadable or invalid is an error for its path.
+    """
     directory = os.path.join(root, *RULES_DIR.split("/"))
     rules = []
     errors = []
     if not os.path.isdir(directory):
         return rules, errors
     for name in sorted(os.listdir(directory)):
-        path = os.path.join(directory, name)
-        if not name.endswith(".md") or not os.path.isfile(path):
+        if not name.endswith(".md"):
             continue
+        path = os.path.join(directory, name)
         relative = "%s/%s" % (RULES_DIR, name)
         try:
-            with open(path, "rb") as handle:
-                raw = handle.read()
+            raw = _read_rule_file(path)
             rules.append(parse_rule(name, raw.decode("utf-8")))
         except UnicodeDecodeError as error:
             errors.append((relative, "is not valid UTF-8: %s" % error))
@@ -739,6 +797,7 @@ class SessionState(object):
         self.session = session
         self.generations = generations
         self.entries = entries
+        self.wrote = False  # set by ``Store.transaction`` once it published a changed state
 
     @classmethod
     def load(cls, store, session, data):
@@ -988,7 +1047,8 @@ class Store(object):
         A body that raises writes nothing. ``LockTimeout`` is raised, with the body not run, when the lock
         stays busy for ``lock_attempts`` tries; ``StoreError`` when the stored state is invalid. The
         index registers the session before the file is published, so a published file is always
-        indexed; an index entry without a file is harmless.
+        indexed; an index entry without a file is harmless. ``state.wrote`` tells the caller afterwards
+        whether the state was published.
         """
         self._stem(session)
         with self._lock(self.session_lock_path(session)):
@@ -999,36 +1059,91 @@ class Store(object):
             if after != before:
                 self._touch(session)
                 self._publish(session, after)
+                state.wrote = True
 
     @staticmethod
     def _victims(sessions, current):
-        """The stems beyond the newest 50, oldest first, the current session never among them."""
+        """The stems outside the newest 50 by index order, oldest first, minus the current session.
+
+        Only sessions outside the newest 50 are ever victims: skipping the current one (or, later, a
+        busy one) leaves a temporary surplus rather than evicting one of the newest 50 instead.
+        """
         surplus = len(sessions) - KEEP_SESSIONS
         if surplus <= 0:
             return []
         oldest_first = sorted(sessions, key=lambda stem: sessions[stem])
-        return [stem for stem in oldest_first if stem != current][:surplus]
+        return [stem for stem in oldest_first[:surplus] if stem != current]
 
     def prune(self, current_session):
         """Keep the newest 50 sessions by index order; never the current one; skip busy ones.
 
-        Call it after the session transaction has released its lock. A first look at the index plans
-        the victims. Each victim lock is then tried once, without waiting, and with only that lock
-        held the index is re-read under its lock and the victim re-checked, so two concurrent prunes
-        cannot together remove more than the surplus.
+        Call it after a session transaction that wrote (``state.wrote``), once that transaction has
+        released its lock. A first look at the index plans the victims. Each victim lock is then tried
+        once, without waiting, and with only that lock held the index is re-read under its lock and the
+        victim re-checked, so two concurrent prunes cannot together remove more than the surplus.
+        Orphan lock files are removed last (``_prune_orphan_lock``).
         """
         current = self._stem(current_session)
         with self._lock(self.index_lock_path()):
             planned = self._victims(self._load_index(create=False)["sessions"], current)
         for stem in planned:
             self._prune_one(stem, current)
+        for stem in self._orphan_lock_stems(current):
+            self._prune_orphan_lock(stem)
+
+    def _orphan_lock_stems(self, current):
+        """Stems of ``<stem>.lock`` files whose session the index does not hold, the current one excepted.
+
+        A pass that writes nothing still creates its session's lock file, and on Windows a pruned
+        victim's lock file stays, so these are swept here. The candidates are only planned: each one is
+        re-checked under its own lock.
+        """
+        try:
+            names = os.listdir(self.state_dir)
+        except OSError:
+            return []
+        with self._lock(self.index_lock_path()):
+            indexed = self._load_index(create=False)["sessions"]
+        stems = []
+        for name in sorted(names):
+            stem = name[:-len(".lock")] if name.endswith(".lock") else None
+            if stem and STEM_RE.fullmatch(stem) and stem != current and stem not in indexed:
+                stems.append(stem)
+        return stems
+
+    def _prune_orphan_lock(self, stem):
+        """Remove one orphan lock file, best effort; a busy lock (a session in use) stays.
+
+        The lock is tried once without waiting and with no index lock held; then the index is re-read
+        under its lock, and the file is removed only if the session is still not indexed. POSIX removes
+        it while holding the lock (``FileLock`` re-checks the inode); Windows cannot delete an open
+        file, so it is removed after the release, and a removal that fails because another process has
+        just opened it leaves it in place.
+        """
+        path = os.path.join(self.state_dir, stem + ".lock")
+        removable = False
+        try:
+            with self.victim_lock(stem):
+                with self._lock(self.index_lock_path()):
+                    removable = stem not in self._load_index(create=False)["sessions"]
+                if removable and fcntl is not None:
+                    os.unlink(path)
+                    return
+        except (LockTimeout, OSError):
+            return
+        if removable:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
     def _prune_one(self, stem, current):
         """Prune one victim, best effort: busy or failing victims stay where they are.
 
-        A busy victim lock (LockTimeout) or any OSError on the victim leaves it in place with no index
-        change, since the file is removed before the index entry. StoreError from the index lock
-        or contents propagates.
+        A busy victim lock (LockTimeout), or an OSError before the session file is gone (taking the
+        lock, removing the file), leaves the victim's file and its index record in place. An OSError
+        after the file is gone (writing the index) leaves a stale index record without a file, which is
+        harmless and is pruned on a later pass. StoreError from the index lock or contents propagates.
         """
         with contextlib.ExitStack() as stack:
             try:
@@ -1056,8 +1171,8 @@ class Store(object):
                 return
 
 
-CONTEXT_CAP = 9000  # bytes of joined rule text, below Claude Code's 10,000-character context limit
-RULE_SEPARATOR = "\n\n"
+CONTEXT_CAP = 9000  # UTF-8 bytes of the emitted text, below Claude Code's 10,000-character context limit
+RULE_SEPARATOR = "\n\n"  # one blank line between two rule texts
 
 
 def context_key(event):
@@ -1129,24 +1244,30 @@ def _moment_rules(rules, event):
     return matched
 
 
+def _utf8_size(text):
+    return len(text.encode("utf-8", "surrogatepass"))
+
+
 def _capped(rules):
     """``(included rules, joined text)``: rules in name order, each whole, the text at most CONTEXT_CAP bytes.
 
-    A rule that does not fit is left out and the next one is still tried.
+    Each rule contributes ``rule_text(rule.body)`` (never empty: ``parse_rule`` rejects a blank body),
+    and the texts are joined with one blank line (``RULE_SEPARATOR``). The cap counts the UTF-8 bytes
+    of exactly the text returned, separators included. A rule that does not fit is left out and the
+    next one is still tried.
     """
     included = []
     parts = []
     size = 0
     for rule in sorted(rules, key=lambda item: item.name):
-        part = rule.body.strip()
-        added = len(part.encode("utf-8", "surrogatepass"))
-        if parts and part:
-            added += len(RULE_SEPARATOR)
+        part = rule_text(rule.body)
+        if not part:
+            continue  # unreachable for a parsed rule; a rule with no text is never credited
+        added = _utf8_size(part) + (_utf8_size(RULE_SEPARATOR) if parts else 0)
         if size + added > CONTEXT_CAP:
             continue
         included.append(rule)
-        if part:
-            parts.append(part)
+        parts.append(part)
         size += added
     return included, RULE_SEPARATOR.join(parts)
 
@@ -1223,8 +1344,10 @@ FAILURE_NOTICE = (
 FAIL_AFTER_WRITE = "VELES_AGENT_RULES_FAIL_AFTER_WRITE"
 
 
-# Claude Code events whose output has a model-visible context channel (PreToolUse has only a deny).
-CLAUDE_CONTEXT_EVENTS = ("tool-after", "prompt")
+# Claude Code events whose output has a model-visible context channel. PreToolUse context without a
+# permission decision reached the model on Claude Code 2.1.326 and left the permission flow untouched
+# (docs/hook-delivered-rules.md); PreCompact has no such channel.
+CLAUDE_CONTEXT_EVENTS = ("tool-before", "tool-after", "prompt")
 
 
 STREAM_FDS = {"stdout": 1, "stderr": 2}
@@ -1293,8 +1416,8 @@ def _failure_output(fmt, payload):
 def handle(stdin_text, fmt, env, store_factory):
     """Run one hook event and return ``(stdout text, exit code)``; the exit code is never 2.
 
-    The decision is made, rendered and recorded in one ``Store.transaction``; the prune follows it,
-    best effort. Every failure passes with the notice (``_failure_output``) and exit 0. Only the
+    The decision is made, rendered and recorded in one ``Store.transaction``; the prune follows a
+    transaction that wrote, best effort. Every failure passes with the notice (``_failure_output``) and exit 0. Only the
     test-only ``FAIL_AFTER_WRITE`` switch returns ``("", 1)``, after the state was committed.
     """
     payload = None
@@ -1314,10 +1437,11 @@ def handle(stdin_text, fmt, env, store_factory):
         with store.transaction(event.session) as state:
             # Rendering inside the transaction: a decision that cannot be printed is never recorded.
             output = render(fmt, event, decide(rules, state, context_key(event), event))
-        try:
-            store.prune(event.session)
-        except Exception as error:  # pruning is housekeeping; the decision stands
-            _diagnose("prune skipped", error)
+        if state.wrote:
+            try:
+                store.prune(event.session)
+            except Exception as error:  # pruning is housekeeping; the decision stands
+                _diagnose("prune skipped", error)
         if env.get(FAIL_AFTER_WRITE) == "1":
             _stderr("agent_rules.py hook: %s=1: failing after the write\n" % FAIL_AFTER_WRITE)
             return "", 1

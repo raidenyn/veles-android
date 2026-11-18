@@ -131,6 +131,12 @@ class ParseRuleTest(unittest.TestCase):
         with self.assertRaises(RuleError):
             parse_rule("x.md", "no frontmatter\n")
 
+    def test_blank_body_is_rejected(self):
+        for body in ("", "\n", "  \n\t\n", "\r\n\r\n", " "):
+            with self.subTest(body=body):
+                with self.assertRaisesRegex(RuleError, "body"):
+                    parse_rule("x.md", rule_text(body=body))
+
     def test_body_boundary(self):
         self.assertEqual(len(parse_rule("x.md", rule_text(body="a" * 4096)).body), 4096)
         with self.assertRaises(RuleError):
@@ -207,6 +213,65 @@ class LoadRulesTest(unittest.TestCase):
         rules, errors = load_rules(self.root)
         self.assertEqual(rules, [])
         self.assertEqual(len(errors), 1)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "no symlinks on this platform")
+    def test_symlinked_rule_is_an_error(self):
+        target = os.path.join(self.root, "outside.md")
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write(rule_text())
+        os.makedirs(self.dir, exist_ok=True)
+        try:
+            os.symlink(target, os.path.join(self.dir, "repo-link.md"))
+        except (OSError, NotImplementedError) as error:
+            self.skipTest("cannot create a symlink: %s" % error)
+        self.write("repo-a.md", rule_text(pointer="A"))
+        rules, errors = load_rules(self.root)
+        self.assertEqual([rule.name for rule in rules], ["repo-a.md"])
+        self.assertEqual(len(errors), 1, errors)
+        self.assertEqual(errors[0][0], ".agents/hooked-rules/repo-link.md")
+        self.assertIn("symlink", errors[0][1])
+
+    def test_directory_named_like_a_rule_is_an_error(self):
+        os.makedirs(os.path.join(self.dir, "repo-dir.md"))
+        rules, errors = load_rules(self.root)
+        self.assertEqual(rules, [])
+        self.assertEqual([path for path, _ in errors], [".agents/hooked-rules/repo-dir.md"])
+        self.assertIn("regular file", errors[0][1])
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "no FIFOs on this platform")
+    def test_fifo_named_like_a_rule_is_an_error_without_blocking(self):
+        os.makedirs(self.dir, exist_ok=True)
+        os.mkfifo(os.path.join(self.dir, "repo-pipe.md"))
+        rules, errors = load_rules(self.root)
+        self.assertEqual(rules, [])
+        self.assertEqual([path for path, _ in errors], [".agents/hooked-rules/repo-pipe.md"])
+
+    def test_oversized_rule_file_is_an_error_and_the_read_is_capped(self):
+        self.write("repo-big.md", rule_text(pointer="p" * (70 * 1024)))
+        reads = []
+        real_read = os.read
+
+        def tracking_read(fd, size):
+            reads.append(size)
+            return real_read(fd, size)
+
+        with mock.patch("agent_rules.os.read", side_effect=tracking_read):
+            rules, errors = load_rules(self.root)
+        self.assertEqual(rules, [])
+        self.assertEqual([path for path, _ in errors], [".agents/hooked-rules/repo-big.md"])
+        self.assertIn("65536", errors[0][1])
+        self.assertTrue(reads, "the rule is read through os.read")
+        self.assertLessEqual(sum(reads), 65537 + 65537, reads)
+
+    def test_rule_file_at_the_read_cap_loads(self):
+        # A long pointer fills the file: the body cap alone would reject a long body first.
+        filler = 65536 - len(rule_text(pointer="").encode("utf-8"))
+        text = rule_text(pointer="p" * filler)
+        self.assertEqual(len(text.encode("utf-8")), 65536)
+        self.write("repo-full.md", text)
+        rules, errors = load_rules(self.root)
+        self.assertEqual(errors, [])
+        self.assertEqual([rule.name for rule in rules], ["repo-full.md"])
 
 
 class PointerBlockTest(unittest.TestCase):
@@ -419,10 +484,6 @@ class PointerBlockTest(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class IsolatedGitTest(unittest.TestCase):
     """Runs git in a temporary directory that no developer configuration can influence."""
 
@@ -613,6 +674,11 @@ class RenderTest(unittest.TestCase):
             for fmt in ("claude", "plain"):
                 self.assertEqual(render(fmt, self.event(kind), Decision("pass", "", [])), "")
 
+    def test_render_claude_pretooluse_context_has_no_permission_decision(self):
+        out = render("claude", self.event("tool-before"), Decision("context", "note", []))
+        self.assertEqual(json.loads(out), {"hookSpecificOutput": {
+            "hookEventName": "PreToolUse", "additionalContext": "note"}})
+
     def test_render_claude_deny_and_context(self):
         deny = json.loads(render("claude", self.event("tool-before"), Decision("deny", "stop", [])))
         self.assertEqual(
@@ -645,6 +711,14 @@ class RenderTest(unittest.TestCase):
                     self.assertNotIn("allow", out, (kind, fmt, decision))
         self.assertNotIn("allow", render("claude", self.event("tool-before"),
                                          Decision("deny", "text", [])))
+
+    def test_failure_output_never_allows(self):
+        import agent_rules
+        for name in ("PreToolUse", "PostToolUse", "UserPromptSubmit", "PreCompact", "SessionStart"):
+            with contextlib.redirect_stderr(io.StringIO()):
+                out = agent_rules._failure_output("claude", {"hook_event_name": name})
+            self.assertNotIn("allow", out, name)
+            self.assertNotIn("permissionDecision", out, name)
 
     def test_plain_entries(self):
         entries = [(("a.md", "11" * 32), 5), (("b.md", "22" * 32), 6)]
@@ -959,8 +1033,91 @@ class StoreTest(unittest.TestCase):
         self.store.prune("s00")  # the oldest session is the current one
         self.assertTrue(os.path.exists(self.store.session_path("s00")))
         self.assertFalse(os.path.exists(self.store.session_path("s01")))
-        self.assertFalse(os.path.exists(self.store.session_path("s02")))
-        self.assertTrue(os.path.exists(self.store.session_path("s03")))
+        # s02 is one of the newest 50: it is never evicted to make room for the current session,
+        # so the store keeps a temporary surplus of one.
+        for index in range(2, 52):
+            self.assertTrue(os.path.exists(self.store.session_path("s%02d" % index)), index)
+
+    def test_prune_never_evicts_one_of_the_newest_50_for_a_busy_victim(self):
+        for index in range(52):
+            self.deliver("s%02d" % index)
+        with FileLock(self.store.session_lock_path("s00"), no_sleep, 1):
+            self.store.prune("s51")
+        self.assertTrue(os.path.exists(self.store.session_path("s00")))
+        self.assertFalse(os.path.exists(self.store.session_path("s01")))
+        self.assertTrue(os.path.exists(self.store.session_path("s02")))
+
+    def lock_files(self):
+        return sorted(name for name in os.listdir(self.state_dir) if name.endswith(".lock"))
+
+    def test_prune_removes_orphan_lock_files(self):
+        for index in range(3):
+            self.deliver("s%02d" % index)
+        with self.store.transaction("pass-only"):
+            pass  # a pass: no write, no index entry, but a lock file
+        orphan = os.path.basename(self.store.session_lock_path("pass-only"))
+        self.assertIn(orphan, self.lock_files())
+        self.store.prune("s02")
+        self.assertNotIn(orphan, self.lock_files())
+        for index in range(3):
+            self.assertTrue(os.path.exists(self.store.session_path("s%02d" % index)))
+        self.assertIn(os.path.basename(self.store.session_lock_path("s00")), self.lock_files())
+
+    def test_prune_keeps_a_busy_orphan_lock(self):
+        self.deliver("s00")
+        path = self.store.session_lock_path("in-flight")
+        with FileLock(path, no_sleep, 1):
+            self.store.prune("s00")
+            self.assertTrue(os.path.exists(path))
+        self.assertTrue(os.path.exists(path))
+
+    def test_prune_keeps_the_current_sessions_orphan_lock(self):
+        self.deliver("s00")
+        with self.store.transaction("current"):
+            pass
+        self.store.prune("current")
+        self.assertTrue(os.path.exists(self.store.session_lock_path("current")))
+
+    def test_prune_ignores_lock_files_that_are_not_session_stems(self):
+        self.deliver("s00")
+        stray = os.path.join(self.state_dir, "notes.lock")
+        with open(stray, "w", encoding="utf-8") as handle:
+            handle.write("")
+        self.store.prune("s00")
+        self.assertTrue(os.path.exists(stray))
+        self.assertTrue(os.path.exists(self.store.index_lock_path()))
+
+    def test_orphan_lock_cleanup_holds_no_index_lock_while_taking_a_session_lock(self):
+        probes = []
+        state_dir = self.state_dir
+
+        class ProbingLock(FileLock):
+            def __enter__(self):
+                try:
+                    with FileLock(os.path.join(state_dir, "index.lock"), no_sleep, 1):
+                        probes.append("free")
+                except LockTimeout:
+                    probes.append("held")
+                return FileLock.__enter__(self)
+
+        class Probing(Store):
+            def victim_lock(self, stem):
+                return ProbingLock(os.path.join(self.state_dir, stem + ".lock"), no_sleep, 1)
+
+        self.deliver("s00")
+        with self.store.transaction("orphan"):
+            pass
+        Probing(state_dir, sleep=no_sleep, lock_attempts=3).prune("s00")
+        self.assertEqual(probes, ["free"])
+        self.assertFalse(os.path.exists(self.store.session_lock_path("orphan")))
+
+    def test_transaction_reports_whether_it_wrote(self):
+        with self.store.transaction("s1") as state:
+            pass
+        self.assertFalse(state.wrote)
+        with self.store.transaction("s1") as state:
+            state.put("s1", IDENTITY_A, "delivered", set())
+        self.assertTrue(state.wrote)
 
     def test_prune_holds_no_index_lock_while_acquiring_victim_locks(self):
         probes = []
@@ -985,7 +1142,7 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(probes, ["free"] * 3)
 
     def test_concurrent_prunes_leave_exactly_50(self):
-        for index in range(51):
+        for index in range(52):
             self.deliver("s%02d" % index)
         other = self.make_store()
         state_dir = self.state_dir
@@ -994,14 +1151,12 @@ class StoreTest(unittest.TestCase):
             def victim_lock(self, stem):
                 if not getattr(self, "ran", False):
                     self.ran = True
-                    other.prune("s00")  # a whole second prune between the first one's snapshot and lock
+                    other.prune("s50")  # a whole second prune between the first one's snapshot and lock
                 return Store.victim_lock(self, stem)
 
-        Interleaved(state_dir, sleep=no_sleep, lock_attempts=3).prune("s50")
-        remaining = [i for i in range(51) if os.path.exists(self.store.session_path("s%02d" % i))]
-        self.assertEqual(len(remaining), 50)
-        self.assertIn(0, remaining)  # the second prune's current session
-        self.assertIn(50, remaining)
+        Interleaved(state_dir, sleep=no_sleep, lock_attempts=3).prune("s51")
+        remaining = [i for i in range(52) if os.path.exists(self.store.session_path("s%02d" % i))]
+        self.assertEqual(remaining, list(range(2, 52)))
 
     def test_prune_without_index_does_nothing(self):
         self.store.prune("s1")
@@ -1660,9 +1815,30 @@ class CapTest(EngineTest):
         ]
 
     def test_join_format(self):
+        # Leading and trailing blank lines go; everything else, indentation included, is kept.
         rules = [make_rule("repo-b.md", body="\n  Second.  \n\n"), make_rule("repo-a.md", body="First.\n")]
         decision = self.run_event(event("prompt", prompt="/opsx:apply"), rules=rules)
-        self.assertEqual(decision.text, "First.\n\nSecond.")
+        self.assertEqual(decision.text, "First.\n\n  Second.  ")
+
+    def test_join_preserves_markdown_indentation_and_normalises_line_endings(self):
+        body = "    indented code\r\n  - nested item\r\n\r\n\tTabbed.\r\n\r\n"
+        rules = [make_rule("repo-a.md", body=body), make_rule("repo-b.md", body="B\n")]
+        decision = self.run_event(event("prompt", prompt="/opsx:apply"), rules=rules)
+        self.assertEqual(decision.text, "    indented code\n  - nested item\n\n\tTabbed.\n\nB")
+
+    def test_cap_counts_the_emitted_bytes_including_indentation(self):
+        # 3,000 + 2 + 2,996 + 2 + 3,000 emitted bytes fit exactly; one more byte of indentation does not.
+        def rules(indent):
+            return [make_rule("repo-a.md", body="a" * 3000 + "\n"),
+                    make_rule("repo-b.md", body=" " * indent + "b" * 2993 + "\n"),
+                    make_rule("repo-c.md", body="c" * 3000 + "\n")]
+
+        decision = self.run_event(event("prompt", prompt="/opsx:apply"), rules=rules(3))
+        self.assertEqual(len(decision.text.encode("utf-8")), 9000)
+        self.assertEqual(len(decision.entries), 3)
+        decision = self.run_event(event("prompt", prompt="/opsx:apply", session="s2"), rules=rules(4))
+        self.assertEqual([identity[0] for identity, _ in decision.entries], ["repo-a.md", "repo-b.md"])
+        self.assertEqual(decision.text, "a" * 3000 + "\n\n    " + "b" * 2993)
 
     def test_filename_order(self):
         rules = [make_rule("repo-c.md", body="C\n"), make_rule("repo-a.md", body="A\n"),
@@ -1893,6 +2069,15 @@ class CheckoutFixture(IsolatedGitTest):
         self.assertEqual((out, code), ("", 0))
         self.assertIn(FAILURE_NOTICE, self.stderr)
 
+    def assert_pretool_notice(self, out, code):
+        """The notice as PreToolUse context: no permission decision, so the normal permission flow runs."""
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), {"hookSpecificOutput": {
+            "hookEventName": "PreToolUse", "additionalContext": FAILURE_NOTICE,
+        }})
+        self.assertNotIn("allow", out)
+        self.assertNotIn("permissionDecision", out)
+
 
 class HandleTest(CheckoutFixture):
     """``handle`` end to end, as the ``hook`` subcommand runs it."""
@@ -1981,7 +2166,7 @@ class HandleTest(CheckoutFixture):
                 self.assert_silent_notice(*self.call(text, fmt="claude"))
 
     def test_claude_failure_with_a_context_channel(self):
-        for name in ("PostToolUse", "UserPromptSubmit"):
+        for name in ("PreToolUse", "PostToolUse", "UserPromptSubmit"):
             out, code = self.call(json.dumps({"hook_event_name": name, "cwd": self.root}), fmt="claude")
             self.assertEqual(code, 0)
             self.assertEqual(json.loads(out), {"hookSpecificOutput": {
@@ -1989,7 +2174,7 @@ class HandleTest(CheckoutFixture):
             }})
 
     def test_claude_failure_without_a_context_channel(self):
-        for name in ("PreToolUse", "PreCompact", "SessionStart"):
+        for name in ("PreCompact", "SessionStart"):
             text = json.dumps({"hook_event_name": name, "cwd": self.root})
             self.assert_silent_notice(*self.call(text, fmt="claude"))
 
@@ -2001,7 +2186,7 @@ class HandleTest(CheckoutFixture):
         out, code = self.call(self.plain("tool-before", command="git commit"))
         self.assert_plain_notice(out, code)
         self.assertIn("repo-broken.md", self.stderr)
-        self.assert_silent_notice(*self.call(self.claude_bash("PreToolUse", "git commit"), fmt="claude"))
+        self.assert_pretool_notice(*self.call(self.claude_bash("PreToolUse", "git commit"), fmt="claude"))
         out, code = self.call(self.claude_bash("PostToolUse", "openspec instructions finalize"), fmt="claude")
         self.assertEqual(json.loads(out)["hookSpecificOutput"]["additionalContext"], FAILURE_NOTICE)
         self.assertFalse(os.path.exists(self.store.session_path("s1")))
@@ -2016,7 +2201,7 @@ class HandleTest(CheckoutFixture):
         with open(path, "w", encoding="utf-8") as handle_:
             handle_.write("{not json")
         self.assert_plain_notice(*self.call(self.plain("tool-before", command="git commit")))
-        self.assert_silent_notice(*self.call(self.claude_bash("PreToolUse", "git commit"), fmt="claude"))
+        self.assert_pretool_notice(*self.call(self.claude_bash("PreToolUse", "git commit"), fmt="claude"))
         with open(path, "r", encoding="utf-8") as handle_:
             self.assertEqual(handle_.read(), "{not json")
 
@@ -2057,6 +2242,18 @@ class HandleTest(CheckoutFixture):
                                              command="git commit"), store_factory=factory)
             self.assertEqual(code, 0)
             self.assertEqual(json.loads(out)["decision"], "deny")
+
+    def test_no_prune_after_a_transaction_that_wrote_nothing(self):
+        seen = []
+
+        def factory(state_dir):
+            store = quick_store(state_dir)
+            store.prune = seen.append
+            return store
+
+        self.call(self.plain("tool-before", command="git status"), store_factory=factory)  # a pass
+        self.call(self.plain("compacted", session="fresh"), store_factory=factory)  # bumps: a write
+        self.assertEqual(seen, ["fresh"])
 
     def test_prune_runs_after_the_transaction(self):
         seen = []
@@ -2401,3 +2598,7 @@ class RealRepoRuleTest(unittest.TestCase):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()
