@@ -143,15 +143,12 @@ discoverable if the plugin is not active.
   one session can drop the scoped rule that the first read delivered, so a rule that applied earlier
   can stop applying. If a scoped rule appears to vanish, read the rule files listed in the node's
   `## Rules` section by hand; the always-on `repo-*` rules are unaffected.
-- **Untrusted checkouts**: `opencode.json` and any repo-controlled agent configuration can make your
-  tool install and run code, so read `opencode.json` and `.claude/settings.json` before launching an
-  agent in an untrusted PR checkout. Once an agent starts in the checkout, the repository's Claude
-  Code hooks and the local OpenCode plugin run a script on every shell command and prompt, so also
-  read `scripts/agent_rules.py` and `scripts/opencode-hooked-rules/` first. To review such a
-  checkout safely, start OpenCode from outside it so the project configuration is not loaded, or
-  disable both checkout-controlled entries in your local uncommitted `opencode.json` (the
-  `opencode-rules` entry and the local `./scripts/opencode-hooked-rules` plugin path); for Claude
-  Code, likewise disable the project's configuration, including the `.claude/settings.json` hooks. `opencode debug config` lists the configuration sources being loaded.
+- **Untrusted checkouts**: any agent configuration in a checkout (`opencode.json`,
+  `.claude/settings.json`, auto-discovered plugins and more) can make your tool install and run code,
+  and this repository's hooks run a script on every shell command and prompt. Review an untrusted PR
+  from a trusted checkout (its diff, not its working tree) or with a file viewer that is not an agent.
+  Run an agent in it only after disabling all of that tool's project configuration; removing the
+  known entries is not enough, since the checkout can add others.
 - **Plugin unavailable**: with an offline cache miss, an install failure or the plugin disabled,
   OpenCode still starts; scoped rules are simply not delivered, and the root `AGENTS.md` pointer plus
   each node's listed rule files keep them discoverable. This degraded state is supported, not a
