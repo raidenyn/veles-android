@@ -48,10 +48,10 @@
 
 ## 7. Verification
 
-- [ ] 7.1 Confirm `git status` shows no untracked file under `docs/`, `docs.json`, `.mintignore` or `docs/checks/`, then run the guard on the repository: no error and no warning (all 28 capabilities wrapped)
-- [ ] 7.2 Run `python3 docs/checks/check_agent_files.py --root .` and the `docs/checks` unit tests
-- [ ] 7.3 Run `npx mint@4.2.1199 validate` and `npx mint@4.2.1199 broken-links` from the root: both clean; re-read `docs.json` against the *Site configuration* and *Site branding* scenarios (name, theme, telemetry off, colours, logo, favicon, navbar links)
-- [ ] 7.4 Run `npx mint@4.2.1199 dev` and check: the product switcher shows Users and Developers; the logo and navbar links render; `/` serves the Welcome page; a wrapper (`docs/dev/specs/ci-pipeline`) is titled "CI pipeline" with the full spec text; the Build and Contributing pages show the imported files; an `otp-*` page, a `docs/superpowers/` file, an `openspec/changes/` file and `AGENTS.md` return Not Found
-- [ ] 7.5 Run the pre-push checks: `python3 -I scripts/components.py changed --base $(git merge-base origin/master HEAD)` and the checks in the `AGENTS.md` of every node it selects
+- [x] 7.1 Confirm `git status` shows no untracked file under `docs/`, `docs.json`, `.mintignore` or `docs/checks/`, then run the guard on the repository: no error and no warning (all 28 capabilities wrapped)
+- [x] 7.2 Run `python3 docs/checks/check_agent_files.py --root .` and the `docs/checks` unit tests
+- [x] 7.3 Run `npx mint@4.2.1199 validate` and `npx mint@4.2.1199 broken-links` from the root: both clean; re-read `docs.json` against the *Site configuration* and *Site branding* scenarios (name, theme, telemetry off, colours, logo, favicon, navbar links)
+- [x] 7.4 Run `npx mint@4.2.1199 dev` and check: the product switcher shows Users and Developers; the logo and navbar links render; `/` serves the Welcome page; a wrapper (`docs/dev/specs/ci-pipeline`) is titled "CI pipeline" with the full spec text; the Build and Contributing pages show the imported files; an `otp-*` page, a `docs/superpowers/` file, an `openspec/changes/` file and `AGENTS.md` return Not Found
+- [x] 7.5 Run the pre-push checks: `python3 -I scripts/components.py changed --base $(git merge-base origin/master HEAD)` and the checks in the `AGENTS.md` of every node it selects
 
 Closeout notes (not apply tasks): the pull request reports the "Mintlify Deployment" check result as it is; after the archive creates `openspec/specs/documentation-site/spec.md`, the closeout's documentation review adds its wrapper and navigation entry; after merge, the deployed site gets the spot check of 7.4 and the result is reported.
