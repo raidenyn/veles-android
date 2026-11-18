@@ -4,9 +4,11 @@
 Standard library only, Python 3.8+, run as ``python3 -I scripts/agent_rules.py``.
 
 A hooked rule is one file in ``.agents/hooked-rules/``. Its frontmatter uses the restricted
-grammar of ``docs/checks/check_agent_files.py`` (copied here, not shared, until the checker
-switches to this parser): ``key: scalar`` lines and flat lists of double-quoted strings in which
-only the ``\\"`` and ``\\\\`` escapes are allowed, extended with a double-quoted ``pointer``.
+grammar of ``docs/checks/check_agent_files.py``: ``key: scalar`` lines and flat lists of
+double-quoted strings in which only the ``\\"`` and ``\\\\`` escapes are allowed, extended with a
+double-quoted ``pointer``. This module is the one parser for hooked rules: the agent-file check
+imports it by path for ``.agents/hooked-rules/``, while ``.agents/rules/`` frontmatter keeps the
+checker's own parser.
 """
 
 import argparse
@@ -37,9 +39,6 @@ BODY_LIMIT = 4096
 POINTER_HEADING = "## Hook-delivered rules"
 POINTER_BEGIN = "<!-- hooked-rules:begin -->"
 POINTER_END = "<!-- hooked-rules:end -->"
-POINTER_SENTENCE = (
-    "If your tool did not deliver a rule below, read its file yourself at the moment it names."
-)
 
 SCALAR_KEYS = ("pointer",)
 LIST_KEYS = ("skills", "commands", "gates")
@@ -224,12 +223,12 @@ def load_rules(root):
 
 
 def render_pointer_block(rules):
-    """The generated block, markers included: the fixed sentence and one line per rule.
+    """The generated block, markers included: one line per rule and nothing else.
 
-    Every rule line starts with ``- `` so it can never equal a marker line, whatever text its
+    Each rule's ``pointer`` says when to read its file, so the block needs no sentence. Every rule line starts with ``- `` so it can never equal a marker line, whatever text its
     pointer holds; the block is still checked, so a change here cannot break that silently.
     """
-    lines = [POINTER_BEGIN, POINTER_SENTENCE, ""]
+    lines = [POINTER_BEGIN]
     for rule in sorted(rules, key=lambda item: item.name):
         lines.append("- %s \u2014 %s/%s" % (rule.pointer, RULES_DIR, rule.name))
     lines.append(POINTER_END)
@@ -254,8 +253,9 @@ def _line_ending(text):
 
 
 # What _locate_block found: where the begin marker line starts, where the end marker line ends
-# (before its line break) and whether the heading is the last non-blank line before the begin marker.
-BlockLocation = collections.namedtuple("BlockLocation", ["begin", "end", "heading_ok"])
+# (before its line break), whether the heading is the line right before the begin marker, and where
+# the heading line starts when it is the last non-blank line before the marker (None otherwise).
+BlockLocation = collections.namedtuple("BlockLocation", ["begin", "end", "heading_ok", "heading"])
 
 
 def _locate_block(text):
@@ -282,16 +282,20 @@ def _locate_block(text):
     previous = begins[0] - 1
     while previous >= 0 and not lines[previous][1].strip():
         previous -= 1
-    heading_ok = previous >= 0 and lines[previous][1] == POINTER_HEADING
+    heading = lines[previous][0] if previous >= 0 and lines[previous][1] == POINTER_HEADING else None
+    heading_ok = heading is not None and previous == begins[0] - 1
     end_position, end_content = lines[ends[0]]
-    return BlockLocation(lines[begins[0]][0], end_position + len(end_content), heading_ok)
+    return BlockLocation(
+        lines[begins[0]][0], end_position + len(end_content), heading_ok, heading
+    )
 
 
 def _apply_block(text, block):
     """``text`` with the block replaced between its markers, or appended under its heading.
 
-    A block that is already current under its heading leaves the text untouched; a missing
-    heading is written back in front of the begin marker.
+    A block that is already current right under its heading leaves the text untouched; blank lines
+    between the heading and the begin marker are removed, and a missing heading is written back in
+    front of the begin marker.
     """
     location = _locate_block(text)
     eol = _line_ending(text)
@@ -303,12 +307,12 @@ def _apply_block(text, block):
         else:
             separator = eol + eol
         return "%s%s%s%s%s%s" % (
-            text, separator, POINTER_HEADING, eol + eol, block.replace("\n", eol), eol,
+            text, separator, POINTER_HEADING, eol, block.replace("\n", eol), eol,
         )
     if location.heading_ok and _normalise(text[location.begin:location.end]) == block:
         return text
-    heading = "" if location.heading_ok else POINTER_HEADING + eol + eol
-    return text[:location.begin] + heading + block.replace("\n", eol) + text[location.end:]
+    start = location.begin if location.heading is None else location.heading
+    return text[:start] + POINTER_HEADING + eol + block.replace("\n", eol) + text[location.end:]
 
 
 def _read_agents(path):
@@ -347,7 +351,7 @@ def _pointers(args):
             return 1
         if not location.heading_ok:
             sys.stderr.write(
-                "%s lacks the `%s` heading before the hooked-rules block; "
+                "%s lacks the `%s` heading on the line before the hooked-rules block; "
                 "run `agent_rules.py pointers --write`\n" % (AGENTS_FILE, POINTER_HEADING)
             )
             return 1

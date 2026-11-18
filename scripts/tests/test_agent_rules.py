@@ -243,27 +243,54 @@ class PointerBlockTest(unittest.TestCase):
         rules, errors = load_rules(self.root)
         self.assertEqual(errors, [])
         block = render_pointer_block(rules)
-        self.assertTrue(block.startswith("<!-- hooked-rules:begin -->\n"))
-        self.assertTrue(block.endswith("<!-- hooked-rules:end -->"))
-        self.assertIn(
-            "If your tool did not deliver a rule below, read its file yourself at the moment it names.",
+        # The markers and one line per rule, in name order: no sentence and no blank line.
+        self.assertEqual(
             block,
+            "<!-- hooked-rules:begin -->\n"
+            "- First — .agents/hooked-rules/repo-a.md\n"
+            "- Second — .agents/hooked-rules/repo-b.md\n"
+            "<!-- hooked-rules:end -->",
         )
-        lines = block.split("\n")
-        first = lines.index("- First — .agents/hooked-rules/repo-a.md")
-        second = lines.index("- Second — .agents/hooked-rules/repo-b.md")
-        self.assertLess(first, second)
 
     def test_pointer_write_then_check(self):
         self.rule("repo-a.md", "First")
         self.agents_text("# Agents\n\nIntro.\n")
         self.assertEqual(self.run_cli("--check").returncode, 1)
         self.assertEqual(self.run_cli("--write").returncode, 0)
-        text = self.agents_text()
-        self.assertTrue(text.startswith("# Agents\n\nIntro.\n"))
-        self.assertIn("## Hook-delivered rules", text)
-        self.assertIn("- First — .agents/hooked-rules/repo-a.md", text)
+        self.assertEqual(
+            self.agents_text(),
+            "# Agents\n\nIntro.\n\n## Hook-delivered rules\n<!-- hooked-rules:begin -->\n"
+            "- First — .agents/hooked-rules/repo-a.md\n<!-- hooked-rules:end -->\n",
+        )
         self.assertEqual(self.run_cli("--check").returncode, 0)
+
+    def test_pointer_old_layout_is_stale_and_rewritten(self):
+        # The earlier layout (a blank line after the heading and a fixed sentence) is stale.
+        self.rule("repo-a.md", "First")
+        old = (
+            "# Agents\n\n## Hook-delivered rules\n\n<!-- hooked-rules:begin -->\n"
+            "If your tool did not deliver a rule below, read its file yourself at the moment it names.\n\n"
+            "- First — .agents/hooked-rules/repo-a.md\n<!-- hooked-rules:end -->\n\n## After\n"
+        )
+        self.agents_text(old)
+        self.assertEqual(self.run_cli("--check").returncode, 1)
+        self.assertEqual(self.run_cli("--write").returncode, 0)
+        self.assertEqual(
+            self.agents_text(),
+            "# Agents\n\n## Hook-delivered rules\n<!-- hooked-rules:begin -->\n"
+            "- First — .agents/hooked-rules/repo-a.md\n<!-- hooked-rules:end -->\n\n## After\n",
+        )
+        self.assertEqual(self.run_cli("--check").returncode, 0)
+
+    def test_pointer_blank_line_after_heading_fails_and_write_repairs_it(self):
+        self.rule("repo-a.md", "First")
+        self.agents_text("# Agents\n")
+        self.assertEqual(self.run_cli("--write").returncode, 0)
+        good = self.agents_text()
+        self.agents_text(good.replace("## Hook-delivered rules\n", "## Hook-delivered rules\n\n"))
+        self.assertEqual(self.run_cli("--check").returncode, 1)
+        self.assertEqual(self.run_cli("--write").returncode, 0)
+        self.assertEqual(self.agents_text(), good)
 
     def test_pointer_check_stale(self):
         self.rule("repo-a.md", "First")
@@ -315,7 +342,7 @@ class PointerBlockTest(unittest.TestCase):
         self.agents_text("# Agents\n")
         self.assertEqual(self.run_cli("--write").returncode, 0)
         good = self.agents_text()
-        self.agents_text(good.replace("## Hook-delivered rules\n\n", ""))
+        self.agents_text(good.replace("## Hook-delivered rules\n", ""))
         self.assertNotIn("## Hook-delivered rules", self.agents_text())
         self.assertEqual(self.run_cli("--check").returncode, 1)
         self.assertEqual(self.run_cli("--write").returncode, 0)
@@ -327,7 +354,7 @@ class PointerBlockTest(unittest.TestCase):
         self.agents_text("# Agents\n")
         self.assertEqual(self.run_cli("--write").returncode, 0)
         good = self.agents_text()
-        moved = good.replace("## Hook-delivered rules\n\n", "") + "\n## Hook-delivered rules\n"
+        moved = good.replace("## Hook-delivered rules\n", "") + "\n## Hook-delivered rules\n"
         self.agents_text(moved)
         self.assertEqual(self.run_cli("--check").returncode, 1)
 
@@ -342,16 +369,15 @@ class PointerBlockTest(unittest.TestCase):
 
     def test_pointer_unbalanced_markers_fail(self):
         self.rule("repo-a.md", "First")
-        self.agents_text("# Agents\n\n## Hook-delivered rules\n\n<!-- hooked-rules:end -->\n")
+        self.agents_text("# Agents\n\n## Hook-delivered rules\n<!-- hooked-rules:end -->\n")
         self.assertEqual(self.run_cli("--check").returncode, 1)
         self.assertEqual(self.run_cli("--write").returncode, 1)
 
     def test_stale_block_is_replaced_in_place_for_every_line_ending(self):
         self.rule("repo-a.md", "Fresh")
         template = (
-            "# Agents\n\n## Hook-delivered rules\n\n"
+            "# Agents\n\n## Hook-delivered rules\n"
             "<!-- hooked-rules:begin -->\n"
-            "If your tool did not deliver a rule below, read its file yourself at the moment it names.\n\n"
             "- %s \u2014 .agents/hooked-rules/repo-a.md\n"
             "<!-- hooked-rules:end -->\n\n## After\n\nKept.\n"
         )

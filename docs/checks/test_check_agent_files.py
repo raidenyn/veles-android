@@ -330,7 +330,7 @@ def root_text(
     if block is not False:
         lines.append("")
         if heading:
-            lines.extend(["## Hook-delivered rules", ""])
+            lines.append("## Hook-delivered rules")
         lines.extend((pointer_block() if block is None else block).split("\n"))
     if target_lines is not None:
         while len(lines) < target_lines:
@@ -1324,6 +1324,11 @@ class AgentFileCheckTest(unittest.TestCase):
         cases = (
             ("no block", root_text(block=False), "no hooked-rules pointer block"),
             ("no heading", root_text(heading=False), "Hook-delivered rules"),
+            (
+                "blank line after the heading",
+                root_text().replace("## Hook-delivered rules\n", "## Hook-delivered rules\n\n"),
+                "Hook-delivered rules",
+            ),
             ("no end marker", root_text().replace(ENGINE.POINTER_END + "\n", ""), "begin line"),
             (
                 "two blocks",

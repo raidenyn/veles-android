@@ -51,9 +51,6 @@ scoped rule, read the file the node lists.
 - Do not run `/init` in any agent tool: it rewrites guidance and can create a nested `CLAUDE.md`.
 
 ## Hook-delivered rules
-
 <!-- hooked-rules:begin -->
-If your tool did not deliver a rule below, read its file yourself at the moment it names.
-
 - Every commit subject and PR title is a Conventional Commit `type(scope): description`; the type guide is delivered when you apply or finalize a change and before `git commit`, `gh pr create` or `gh pr edit`; read this file at those moments if it was not. — .agents/hooked-rules/repo-commit-types.md
 <!-- hooked-rules:end -->
