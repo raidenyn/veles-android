@@ -170,7 +170,8 @@ always-on fallback.
   agent-file check.
 - **Supported configuration**: start the agent at the repository root, with no parent `CLAUDE.md` or
   `CLAUDE.local.md`.
-- Grammar, delivery, gates, degraded modes and verified versions: `docs/hook-delivered-rules.md`.
+- Grammar, delivery, gates, degraded modes and verified versions:
+  [docs/hook-delivered-rules.md](hook-delivered-rules.md).
 
 ## Rules
 
