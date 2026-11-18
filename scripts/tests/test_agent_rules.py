@@ -2107,6 +2107,34 @@ class DiscoveryFailureTest(CheckoutFixture):
         self.assertEqual(self.call(payload), ("", 0))
         self.assertEqual(self.stderr, "")
 
+    def test_classified_by_the_diagnostic_line_only(self):
+        lookalike = os.path.join(self.tmp, "missing", "not a git repository")
+        with self.assertRaises(CheckoutError):
+            discover_checkout(lookalike)
+        payload = {"event": "tool-before", "session": "s1", "cwd": lookalike, "command": "git commit"}
+        self.assert_plain_notice(*self.call(payload))
+
+    def test_git_metadata_directory_is_silent(self):
+        inside = os.path.join(self.root, ".git", "refs")
+        self.assertIsNone(discover_checkout(inside))
+        payload = {"event": "tool-before", "session": "s1", "cwd": inside, "command": "git commit"}
+        self.assertEqual(self.call(payload), ("", 0))
+        self.assertEqual(self.stderr, "")
+
+    def test_diagnostic_must_start_the_first_line(self):
+        for stderr in (b"warning: x\nfatal: not a git repository\n",
+                       b"error: fatal: not a git repository\n",
+                       b"fatal: cannot change to 'fatal: not a git repository': No such file\n"):
+            failed = subprocess.CompletedProcess(["git"], 128, b"", stderr)
+            with mock.patch("agent_rules.subprocess.run", return_value=failed):
+                with self.assertRaises(CheckoutError, msg=stderr):
+                    discover_checkout(self.root)
+        for stderr in (b"fatal: not a git repository (or any parent up to mount point /)\n",
+                       b"fatal: this operation must be run in a work tree\n"):
+            failed = subprocess.CompletedProcess(["git"], 128, b"", stderr)
+            with mock.patch("agent_rules.subprocess.run", return_value=failed):
+                self.assertIsNone(discover_checkout(self.root), stderr)
+
     def test_localized_git_still_reads_as_non_checkout(self):
         plain_dir = self.make_dir("plain-dir")
         os.environ["GIT_CEILING_DIRECTORIES"] = self.tmp
@@ -2234,6 +2262,47 @@ class HookCliTest(CheckoutFixture):
         completed = self.run_cli(b"", "--help")
         self.assertEqual(completed.returncode, 0)
         self.assertIn(b"--format", completed.stdout)
+
+    def run_broken(self, args, stdin, broken):
+        """Run the CLI with each stream in ``broken`` connected to a pipe whose reader is gone."""
+        pipes = {}
+        for name in broken:
+            read_end, write_end = os.pipe()
+            os.close(read_end)
+            pipes[name] = write_end
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-I", CLI, "hook"] + list(args), input=stdin,
+                stdout=pipes.get("stdout", subprocess.PIPE), stderr=pipes.get("stderr", subprocess.PIPE),
+            )
+        finally:
+            for write_end in pipes.values():
+                os.close(write_end)
+        return completed
+
+    def test_cli_broken_streams_exit_zero(self):
+        scenarios = (
+            ("usage", ("--format", "claude", "--bogus"), lambda index: b""),
+            ("help", ("--help",), lambda index: b""),
+            ("valid", ("--format", "plain"), lambda index: json.dumps(
+                self.plain("tool-before", session="broken-%d" % index, command="git commit -m x")
+            ).encode("utf-8")),
+            ("fail-open", ("--format", "plain"), lambda index: b"garbage"),
+            ("fail-open-claude", ("--format", "claude"), lambda index: b"garbage"),
+        )
+        index = 0
+        for label, args, stdin in scenarios:
+            for broken in (("stdout",), ("stderr",), ("stdout", "stderr")):
+                index += 1
+                with self.subTest(scenario=label, broken=broken):
+                    completed = self.run_broken(args, stdin(index), broken)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_cli_help_goes_to_stdout(self):
+        completed = self.run_cli(b"", "--help")
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn(b"--format", completed.stdout)
+        self.assertNotIn(FAILURE_NOTICE.encode("utf-8"), completed.stderr)
 
     def test_cli_fail_after_write_exits_one(self):
         payload = json.dumps(self.plain("tool-before", command="git commit -m x")).encode("utf-8")

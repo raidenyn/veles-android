@@ -379,6 +379,11 @@ GIT_SELECTION_VARIABLES = (
     "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX",
 )
 GIT_TIMEOUT_SECONDS = 5  # a runtime bound on the one git call, not test timing
+# The first stderr line (LC_ALL=C) of a ``git rev-parse`` run outside a work tree: a pass, not a failure.
+NON_CHECKOUT_DIAGNOSTICS = (
+    "fatal: not a git repository",
+    "fatal: this operation must be run in a work tree",
+)
 
 # Claude Code's hook_event_name for each engine event; ``void`` has no Claude Code form.
 CLAUDE_EVENTS = {
@@ -533,7 +538,9 @@ def discover_checkout(cwd):
 
     One ``git rev-parse`` answers; ``common_dir`` is absolute, resolved against ``cwd`` when git prints
     it relative. None means pass silently: git reports "not a git repository" or the top level has no
-    ``.agents/hooked-rules/`` directory. ``CheckoutError`` for anything else: an invalid ``cwd``, git
+    ``.agents/hooked-rules/`` directory. Only the first line of git's stderr is classified, anchored at
+    its start (``NON_CHECKOUT_DIAGNOSTICS``), so a quoted path cannot pass for a diagnostic.
+    ``CheckoutError`` for anything else: an invalid ``cwd`` (``fatal: cannot change to``), git
     missing or timing out, any other git failure or unexpected output. git runs under ``LC_ALL=C`` so
     its message is not translated.
     """
@@ -556,7 +563,9 @@ def discover_checkout(cwd):
     except (OSError, subprocess.SubprocessError, ValueError) as error:
         raise CheckoutError("git could not run: %s: %s" % (type(error).__name__, error))
     if completed.returncode != 0:
-        if b"not a git repository" in (completed.stderr or b""):
+        diagnostic = (completed.stderr or b"").decode("utf-8", "replace")
+        first_line = diagnostic.splitlines()[0] if diagnostic else ""
+        if first_line.startswith(NON_CHECKOUT_DIAGNOSTICS):
             return None
         raise CheckoutError(
             "git rev-parse failed with exit %d: %s"
@@ -1214,12 +1223,47 @@ FAIL_AFTER_WRITE = "VELES_AGENT_RULES_FAIL_AFTER_WRITE"
 CLAUDE_CONTEXT_EVENTS = ("tool-after", "prompt")
 
 
+STREAM_FDS = {"stdout": 1, "stderr": 2}
+
+
+def _neutralise(name):
+    """Point the real ``sys.<name>`` at the null device, so no later write or exit flush can fail."""
+    try:
+        null = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(null, STREAM_FDS[name])
+        finally:
+            os.close(null)
+    except OSError:
+        pass
+    try:
+        setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
+    except OSError:
+        pass
+
+
+def _emit(name, text, stream=None):
+    """The one guarded writer for the hook path: write and flush, and on failure silence the stream.
+
+    ``stream`` defaults to the current ``sys.<name>``; a real standard stream that fails is redirected to
+    the null device (``_neutralise``). Returns whether the text was written.
+    """
+    stream = getattr(sys, name) if stream is None else stream
+    if stream is None:  # a standard stream that was closed when Python started
+        return False
+    try:
+        stream.write(text)
+        stream.flush()
+        return True
+    except (OSError, ValueError):
+        if stream is getattr(sys, name) or stream is getattr(sys, "__%s__" % name):
+            _neutralise(name)
+        return False
+
+
 def _stderr(text):
     """Write to stderr, best effort: a broken stderr must not turn a pass into a failure."""
-    try:
-        sys.stderr.write(text)
-    except Exception:
-        pass
+    _emit("stderr", text)
 
 
 def _diagnose(what, error):
@@ -1291,35 +1335,32 @@ class _HookParser(argparse.ArgumentParser):
 
 
 def _hook_parser():
-    parser = _HookParser(prog="agent_rules.py hook", description="Decide one hook event read as JSON on stdin.")
-    parser.add_argument("--format", required=True, choices=("claude", "plain"), help="the event format")
+    # add_help=False: argparse's own help action writes and exits outside the guarded emitter.
+    parser = _HookParser(
+        prog="agent_rules.py hook", description="Decide one hook event read as JSON on stdin.", add_help=False,
+    )
+    parser.add_argument("-h", "--help", action="store_true", help="show this help message and exit")
+    parser.add_argument("--format", choices=("claude", "plain"), help="the event format (required)")
     return parser
-
-
-def _silence_stdout(stdout):
-    """Point a broken real stdout at the null device, so the flush at exit cannot fail again."""
-    try:
-        if stdout is sys.stdout:
-            null = os.open(os.devnull, os.O_WRONLY)
-            os.dup2(null, stdout.fileno())
-            os.close(null)
-    except Exception:
-        pass
 
 
 def hook_main(argv, stdin=None, stdout=None, env=None, store_factory=Store):
     """The ``hook`` subcommand: never exits 2, and fails open on usage, stdin and stdout errors.
 
-    Only the test-only ``FAIL_AFTER_WRITE`` switch returns 1. ``--help`` keeps argparse's exit 0.
+    Every byte it prints goes through ``_emit``. Only the test-only ``FAIL_AFTER_WRITE`` switch returns 1.
     """
     stdin = sys.stdin if stdin is None else stdin
-    stdout = sys.stdout if stdout is None else stdout
     env = os.environ if env is None else env
     parser = _hook_parser()
     try:
         args = parser.parse_args(argv)
+        if not args.help and args.format is None:
+            raise _UsageError("the following arguments are required: --format")
     except _UsageError as error:
         _stderr("%sagent_rules.py hook: error: %s\n%s\n" % (parser.format_usage(), error, FAILURE_NOTICE))
+        return 0
+    if args.help:
+        _emit("stdout", parser.format_help(), stdout)
         return 0
     try:
         text = stdin.buffer.read().decode("utf-8", "replace")
@@ -1328,15 +1369,9 @@ def hook_main(argv, stdin=None, stdout=None, env=None, store_factory=Store):
         output, code = _failure_output(args.format, None), 0
     else:
         output, code = handle(text, args.format, env, store_factory)
-    if output:
-        try:
-            stdout.write(output + "\n")
-            stdout.flush()
-        except Exception as error:
-            _diagnose("stdout unwritable", error)
-            _silence_stdout(stdout)
-            _stderr(FAILURE_NOTICE + "\n")
-            return 0
+    if output and not _emit("stdout", output + "\n", stdout):
+        _stderr("agent_rules.py hook: stdout unwritable\n%s\n" % FAILURE_NOTICE)
+        return 0
     return code
 
 
