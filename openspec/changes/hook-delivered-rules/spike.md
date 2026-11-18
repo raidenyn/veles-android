@@ -22,7 +22,7 @@ Antigravity was not exercised here. The controller covers it separately (step 6,
   names included (`"superpowers:verification-before-completion"`). `tool_response` is
   `{success, commandName}`.
 - **`/<skill>` typed by the user.** It reaches `UserPromptSubmit` verbatim: `prompt` is the raw text, starting with
-  `/spike-skill`. It does not also produce a `Skill` tool call. Additional context returned from
+  `/<skill>`. It does not also produce a `Skill` tool call. Additional context returned from
   `UserPromptSubmit` reached the model.
 - **`PreCompact` and `agent_id`.** A manual `/compact` (`claude -p --resume <id> "/compact"`) fires `PreCompact`
   with `trigger: "manual"` and no `agent_id`, then `SessionStart` with `source: "compact"`. `/compact` does not
@@ -167,7 +167,7 @@ export default {
 | 1 | Integration loads from its tracked location | Pass (`.claude/settings.json` hooks) | Pass (directory entry next to `opencode-rules`, outside `.opencode/`) |
 | 1 | A command that normally asks still asks | Pass: the hook passed silently and the command was refused for lack of approval | Pass: project `ask` rule; the hook passed and the host still asked, rejected headless |
 | 2 | Gated command stopped once with the rule text; re-run proceeds | Pass | Pass |
-| 2 | Re-run whose title the model changed proceeds | Pass | Pass (see the pointer note under "Concerns") |
+| 2 | Re-run whose title the model changed proceeds | Pass | Conditional pass: the gated commit was denied with the rule text, the model then changed the commit title, and the re-run proceeded. Driven with the pointer block removed from the clone's `AGENTS.md`; with the pointer intact the model reads the rule first and never sends a non-conforming title (see the bullet "Changed-title re-run on OpenCode") |
 | 2 | Parallel sibling with a different gate pattern also stopped | Pass: both denied, then both retries passed | Pass: both denied, then both retries passed |
 | 2 | Residual A: moment and gate in one batch | Recorded: the gate **passed**, because Claude ran the moment's call first, so the moment landed before the gate | Recorded: the gate was **denied**, because hooks ran concurrently and the gate decided before the moment's after-hook |
 | 2 | Residual B: two same-kind gates in one batch | Recorded: first denied, second **passed** as a "re-run" without the model having seen the rule | Recorded: same as Claude Code |
@@ -186,8 +186,9 @@ export default {
 | 6 | Stale credit on the first and second later gated call | Observed: the first later call passed by confirming the stale pending entry, and the second passed as delivered | Observed: same as Claude Code |
 | 6 | Forced injection failure sends `void`; the next gate is denied again | Not applicable (OpenCode only) | Pass: `void` removed the entry with that write id, and the next gate was denied |
 
-**Result:** every behaviour 1–6 outcome passes in both Claude Code and OpenCode. Both residual batch cases were
-run and their outcomes recorded.
+**Result:** every behaviour 1–6 outcome passes in both Claude Code and OpenCode, except that the changed-title
+re-run on OpenCode is a conditional pass (pointer removed; see the bullet "Changed-title re-run on OpenCode"). Both
+residual batch cases were run and their outcomes recorded.
 
 ## How the hard cases were driven
 
@@ -197,7 +198,11 @@ run and their outcomes recorded.
 - **OpenCode compaction.** As described above, through `ctx.session.compact` from a test-only prompt trigger. The
   child session was compacted by resuming it directly with `opencode run -s <child>`.
 - **Changed-title re-run on OpenCode.** The pointer block was removed from the clone's `AGENTS.md` for these runs.
-  Otherwise the model followed the pointer, read the rule first and never sent a non-conforming title.
+  Otherwise the model followed the pointer, read the rule first and never sent a non-conforming title. The
+  sequence was: the initial gated commit was denied with the rule text, the model changed the commit title, and the
+  re-run proceeded. This shows the gate path under a modified setup, not the same outcome with the pointer intact,
+  so it is a conditional pass. The final verification (plan Task 10) must drive this same sequence with the same
+  test-only driver (pointer removed) and report it as conditional again.
 - **Workflow moment.** Only the trigger command ran, against a dummy change created in the clone with
   `openspec new change spike-dummy`. The test agents were told not to carry out the returned workflow. `gh` was a
   `PATH` shim that only logged.
@@ -205,7 +210,7 @@ run and their outcomes recorded.
 ## Concerns for later tasks
 
 1. **Reading the rule file through the pointer is not a moment.** OpenCode's model followed the pointer and read
-   `.agents/hooked-rules/repo-spike.md` before almost every commit. It still got one denial, because a read of the
+   the stub rule file before almost every commit. It still got one denial, because a read of the
    rule file earns no credit. Counting a read of a hooked rule's own file as a delivery of that rule would remove
    this needless block. This is a design change, so the owner decides.
 2. **Main-context compaction re-arms subagents.** The re-arm fallback ("no agent id → increment every key of the
