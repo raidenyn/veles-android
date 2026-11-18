@@ -13,9 +13,12 @@ The enabled preference and actual availability are separate: an enabled but
 unavailable transport offers retry and disable. Android may restore a killed
 sticky service while the preference remains enabled; restoration rechecks all
 prerequisites. Force-stop, reboot, or an explicit failure does not promise an
-automatic restart: reopen Home and retry. Disable clears intent and closes all
-advertising, links, queues and reassembly state. Capability/permission failures
-are explicit. There is no scan, location, bonding, or network requirement.
+automatic restart: reopen Home and retry. When the process later starts again
+with the preference still on and no service running, the card says that the
+Bluetooth service is not running and how to start it again; the restart stays
+manual. Disable clears intent and closes all advertising, links, queues and
+reassembly state. Capability/permission failures are explicit. There is no scan,
+location, bonding, or network requirement.
 
 ## GATT contract
 
