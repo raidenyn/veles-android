@@ -127,9 +127,7 @@ internal class SharingService : Service() {
                 } else {
                     sessionHost(transport)
                 }
-                gatt = SharingGattServer(this, { state ->
-                    if (state == SharingAvailability.Advertising) SharingState.update(state) else fail(state)
-                }, listener).also {
+                gatt = SharingGattServer(this, ::onGattState, listener).also {
                     transport.server = it
                     it.start()
                 }
@@ -221,6 +219,14 @@ internal class SharingService : Service() {
             scope.launch { host.cancelPairings() }
         }
         return host
+    }
+
+    /**
+     * The GATT server's state sink: `Advertising` is published; every other state (a failed or
+     * unsupported advertising start included) tears the service down, and the user's Start retries.
+     */
+    internal fun onGattState(state: SharingAvailability) {
+        if (state == SharingAvailability.Advertising) SharingState.update(state) else fail(state)
     }
 
     private fun fail(state: SharingAvailability) {

@@ -1,5 +1,9 @@
 package me.nagaev.veles.sharing
 
+import android.Manifest
+import android.app.Application
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -17,15 +21,19 @@ import me.nagaev.veles.trust.TrustException
 import me.nagaev.veles.trust.TrustStatus
 import me.nagaev.veles.trust.TrustStoreException
 import me.nagaev.veles.trust.TrustedPeer
+import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.android.controller.ServiceController
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -251,5 +259,62 @@ class SharingServiceTest {
         assertTrue("android.permission.BLUETOOTH_CONNECT" in permissions)
         assertFalse("android.permission.BLUETOOTH_SCAN" in permissions)
         assertFalse("android.permission.ACCESS_FINE_LOCATION" in permissions)
+    }
+
+    private val started = mutableListOf<ServiceController<SharingService>>()
+
+    @After fun resetSharingState() {
+        started.forEach { it.destroy() }
+        started.clear()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        SharingState.update(SharingAvailability.Disabled)
+        SharingState.setEnabled(context, false)
+    }
+
+    /** BLE-capable, permitted, enabled adapter that reports no multi-advertisement support. */
+    private fun singleAdvertisementPhone(): Application {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val adapter = context.getSystemService(BluetoothManager::class.java).adapter
+        shadowOf(context.packageManager).setSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE, true)
+        shadowOf(context).grantPermissions(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_ADVERTISE)
+        shadowOf(adapter).setState(BluetoothAdapter.STATE_ON)
+        shadowOf(adapter).setIsMultipleAdvertisementSupported(false)
+        SharingState.update(SharingAvailability.Disabled)
+        context.getSharedPreferences("sharing", Context.MODE_PRIVATE).edit().putBoolean("enabled", true).commit()
+        return context
+    }
+
+    private fun startedService(): SharingService {
+        val controller = Robolectric.buildService(SharingService::class.java).create().also { started += it }
+        val service = controller.get()
+        assertEquals(android.app.Service.START_STICKY, service.onStartCommand(null, 0, 1))
+        return service
+    }
+
+    @Test fun singleAdvertisementAdapterStartsTheForegroundService() {
+        singleAdvertisementPhone()
+        val service = startedService()
+        assertEquals(SharingAvailability.Starting, SharingState.availability.value)
+        assertNotNull(shadowOf(service).lastForegroundNotification)
+        assertFalse(shadowOf(service).isStoppedBySelf)
+    }
+
+    @Test fun advertisingFailureStopsServiceAndAFreshStartRetries() {
+        singleAdvertisementPhone()
+        val failed = startedService()
+
+        failed.onGattState(SharingAvailability.Unsupported)
+
+        assertEquals(SharingAvailability.Unsupported, SharingState.availability.value)
+        assertTrue(shadowOf(failed).isStoppedBySelf)
+        assertTrue(shadowOf(failed).isForegroundStopped)
+        assertNull(shadowOf(failed).lastForegroundNotification)
+
+        val retried = startedService()
+        assertEquals(SharingAvailability.Starting, SharingState.availability.value)
+        assertNotNull(shadowOf(retried).lastForegroundNotification)
+
+        retried.onGattState(SharingAvailability.Advertising)
+        assertEquals(SharingAvailability.Advertising, SharingState.availability.value)
     }
 }
