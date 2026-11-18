@@ -1,6 +1,0 @@
-- Repository: raidenyn/veles-android
-- Project: Veles OTP external devices (https://github.com/users/raidenyn/projects/3)
-- Issue: raidenyn/veles-android#120
-- Source documents: https://github.com/raidenyn/veles-android/issues/120, docs/otp-06-transport.md
-- Created: 2026-11-17
-- Implementation PR: (pending)
