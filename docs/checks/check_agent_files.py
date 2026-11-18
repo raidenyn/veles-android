@@ -53,7 +53,7 @@ SKILLS_DIR = ".agents/skills"
 SKILLS_MARKER = ".openspec-target"
 SKILL_TARGET = "../../.agents/skills/%s"
 SETTINGS_JSON = ".claude/settings.json"
-DOCUMENTED_SKILLS = "docs/AGENTS.md"
+DOCUMENTED_SKILLS = "docs/openspec-skills.md"
 
 OPENCODE_JSON = "opencode.json"
 OPENCODE_KEYS = ("$schema", "plugins")
@@ -70,6 +70,9 @@ CODEOWNER_PATTERNS = (
     "/.agents/",
     "**/AGENTS.md",
     "/docs/superspec-workflow.md",
+    "/docs/agent-guidance.md",
+    "/docs/openspec-workflow.md",
+    "/docs/opencode-rules.md",
     "/openspec/config.yaml",
     "/openspec/schemas/",
     "/scripts/agent_rules.py",
@@ -85,6 +88,9 @@ CODEOWNER_SAMPLE_PATHS = (
     ("**/AGENTS.md", "android/AGENTS.md"),
     ("**/AGENTS.md", "native-bridge/host/AGENTS.md"),
     ("/docs/superspec-workflow.md", "docs/superspec-workflow.md"),
+    ("/docs/agent-guidance.md", "docs/agent-guidance.md"),
+    ("/docs/openspec-workflow.md", "docs/openspec-workflow.md"),
+    ("/docs/opencode-rules.md", "docs/opencode-rules.md"),
     ("/openspec/config.yaml", "openspec/config.yaml"),
     ("/openspec/schemas/", "openspec/schemas/superspec/schema.yaml"),
     ("/scripts/agent_rules.py", "scripts/agent_rules.py"),
@@ -107,11 +113,16 @@ CLAUDE_HOOKS = (
 )
 
 PLUGIN_MENTION_FILES = (ROOT_AGENTS, "CONTRIBUTING.md")
-PLUGIN_RANGE_DOCS = (ROOT_AGENTS, "CONTRIBUTING.md", DOCUMENTED_SKILLS)
+PLUGIN_RANGE_DOCS = (
+    ROOT_AGENTS,
+    "CONTRIBUTING.md",
+    "docs/AGENTS.md",
+    "docs/opencode-rules.md",
+    "docs/agent-guidance.md",
+)
 PLUGIN_RANGE_RE = re.compile(r"opencode-rules@[^\s`\"'<>()\[\],;]+")
 
-ROOT_LINE_WARN = 60
-ROOT_LINE_MAX = 120
+AGENTS_LINE_MAX = 40
 
 NODE_MAP_RE = re.compile(r"^-\s+`([^`\s]+)/`\s+—")
 
@@ -411,30 +422,29 @@ def _check_legacy(files):
     return findings
 
 
+def _check_line_cap(path, text):
+    """One error when a guidance file is over the 40-line cap; a missing file is the caller's finding."""
+    if text is None:
+        return []
+    lines = len(text.splitlines())
+    if lines > AGENTS_LINE_MAX:
+        return [
+            Finding(
+                "error",
+                path,
+                "has %d lines; the AGENTS.md cap is %d lines" % (lines, AGENTS_LINE_MAX),
+            )
+        ]
+    return []
+
+
 def _check_root(text):
     if text is None:
         return [Finding("error", ROOT_AGENTS, "is missing")]
     findings = []
     if NOTICE_ROOT not in text:
         findings.append(Finding("error", ROOT_AGENTS, "is missing the run-from-root notice"))
-    lines = len(text.splitlines())
-    if lines > ROOT_LINE_MAX:
-        findings.append(
-            Finding(
-                "error",
-                ROOT_AGENTS,
-                "has %d lines; the root AGENTS.md hard limit is %d lines"
-                % (lines, ROOT_LINE_MAX),
-            )
-        )
-    elif lines > ROOT_LINE_WARN:
-        findings.append(
-            Finding(
-                "warning",
-                ROOT_AGENTS,
-                "has %d lines; the root AGENTS.md cap is %d lines" % (lines, ROOT_LINE_WARN),
-            )
-        )
+    findings.extend(_check_line_cap(ROOT_AGENTS, text))
     return findings
 
 
@@ -455,6 +465,7 @@ def _check_nested_files(root, tracked_nested):
             findings.append(Finding("error", path, "is missing the nested run-from-root notice"))
         if not _has_rules_section(text):
             findings.append(Finding("error", path, "is missing a `## Rules` section"))
+        findings.extend(_check_line_cap(path, text))
     return findings
 
 
@@ -905,7 +916,7 @@ def check_pointer_block(root, files=None):
 
 
 def parse_documented_skills(text):
-    """Skill names from the bullets under the `## OpenSpec skills` heading of `docs/AGENTS.md`.
+    """Skill names from the bullets under the `## OpenSpec skills` heading of `docs/openspec-skills.md`.
 
     Bullets are backticked names (``- `openspec-propose```); a bullet without backticks uses
     its first token. The section ends at the next level-two heading, and a missing section
@@ -1017,7 +1028,7 @@ def _claude_skill_entries(files):
 
 
 def check_links(root, files, platform=sys.platform):
-    """Check the `.claude/` symlinks and the skill set against `docs/AGENTS.md`."""
+    """Check the `.claude/` symlinks and the skill set against `docs/openspec-skills.md`."""
     entries = index_entries(root)
     findings = []
     findings.extend(_check_required_link(root, CLAUDE_RULES, CLAUDE_RULES_TARGET, entries, platform))
@@ -1050,7 +1061,15 @@ def check_links(root, files, platform=sys.platform):
         )
 
     documented_text = _read_text(root, DOCUMENTED_SKILLS)
-    if documented_text is not None:
+    if documented_text is None:
+        findings.append(
+            Finding(
+                "error",
+                DOCUMENTED_SKILLS,
+                "is missing; it holds the expected OpenSpec skill list",
+            )
+        )
+    else:
         documented = set(parse_documented_skills(documented_text))
         present = set(name for name in skills if name.startswith("openspec-"))
         for name in sorted(documented - present):
@@ -1058,8 +1077,8 @@ def check_links(root, files, platform=sys.platform):
                 Finding(
                     "error",
                     SKILLS_DIR + "/" + name,
-                    "is listed under `## OpenSpec skills` in docs/AGENTS.md but is missing "
-                    "from .agents/skills",
+                    "is listed under `## OpenSpec skills` in docs/openspec-skills.md but is "
+                    "missing from .agents/skills",
                 )
             )
         for name in sorted(present - documented):
@@ -1067,7 +1086,7 @@ def check_links(root, files, platform=sys.platform):
                 Finding(
                     "error",
                     SKILLS_DIR + "/" + name,
-                    "is not listed under `## OpenSpec skills` in docs/AGENTS.md",
+                    "is not listed under `## OpenSpec skills` in docs/openspec-skills.md",
                 )
             )
     return findings
