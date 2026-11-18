@@ -1022,6 +1022,149 @@ class Store(object):
                 return
 
 
+CONTEXT_CAP = 9000  # bytes of joined rule text, below Claude Code's 10,000-character context limit
+RULE_SEPARATOR = "\n\n"
+
+
+def context_key(event):
+    """The delivery-state key of ``event``'s context: the session, or ``session/agent`` for a subagent."""
+    if event.agent:
+        return "%s/%s" % (event.session, event.agent)
+    return event.session
+
+
+def _live(state, key, identity):
+    """The entry for ``(key, identity)``, or None when absent or voided by a later re-arm."""
+    entry = state.entries.get((key, tuple(identity)))
+    if entry is None or entry["generation"] < state.generation(key):
+        return None
+    return entry
+
+
+def _skill_dirs(rule):
+    """The skill directory names a rule answers to: each skill, and its part after the last ``:``."""
+    return set(rule.skills) | set(skill.rsplit(":", 1)[-1] for skill in rule.skills)
+
+
+def _prompt_skill(prompt):
+    """The ``<skill>`` of a prompt whose first word is ``/<skill>``, or None."""
+    if not prompt:
+        return None
+    words = prompt.split(None, 1)
+    if not words or not words[0].startswith("/") or len(words[0]) < 2:
+        return None
+    return words[0][1:]
+
+
+def _read_skill_dirs(event):
+    """The ``<name>`` of each ``/skills/<name>/SKILL.md`` suffix of the read path, given and real."""
+    raw = event.path.replace("\\", "/")
+    candidates = [raw]
+    try:
+        base = event.cwd if isinstance(event.cwd, str) else ""
+        candidates.append(os.path.realpath(os.path.join(base, raw)).replace("\\", "/"))
+    except (OSError, ValueError):
+        pass
+    names = set()
+    for candidate in candidates:
+        parts = candidate.split("/")
+        if len(parts) >= 3 and parts[-1] == "SKILL.md" and parts[-3] == "skills" and parts[-2]:
+            names.add(parts[-2])
+    return names
+
+
+def _moment_rules(rules, event):
+    """The rules whose moment ``event`` is: a skill tool call, a ``/<skill>`` prompt, a SKILL.md read, or
+    a successful command."""
+    if event.kind == "prompt":
+        skill = _prompt_skill(event.prompt)
+        return [rule for rule in rules if skill is not None and skill in rule.skills]
+    if event.kind != "tool-after":
+        return []
+    matched = []
+    read_dirs = _read_skill_dirs(event) if event.path else set()
+    for rule in rules:
+        if event.skill is not None and event.skill in rule.skills:
+            matched.append(rule)
+        elif read_dirs & _skill_dirs(rule):
+            matched.append(rule)
+        elif event.command is not None and event.ok is True and any(
+            pattern.search(event.command) for pattern in rule.commands
+        ):
+            matched.append(rule)
+    return matched
+
+
+def _capped(rules):
+    """``(included rules, joined text)``: rules in name order, each whole, the text at most CONTEXT_CAP bytes.
+
+    A rule that does not fit is left out and the next one is still tried.
+    """
+    included = []
+    parts = []
+    size = 0
+    for rule in sorted(rules, key=lambda item: item.name):
+        part = rule.body.strip()
+        added = len(part.encode("utf-8", "surrogatepass"))
+        if parts and part:
+            added += len(RULE_SEPARATOR)
+        if size + added > CONTEXT_CAP:
+            continue
+        included.append(rule)
+        if part:
+            parts.append(part)
+        size += added
+    return included, RULE_SEPARATOR.join(parts)
+
+
+def _recorded(state, key, rules):
+    return [(rule.identity, state.entries[(key, rule.identity)]["write_id"]) for rule in rules]
+
+
+def decide(rules, state, key, event):
+    """The ``Decision`` for ``event`` in context ``key``; records it in ``state`` (one transaction).
+
+    Moments (``tool-after``, ``prompt``) add the matched rules as context and mark them delivered. Gates
+    (``tool-before`` with a command) deny a call matching a rule not delivered in this context, record
+    the denied rules as pending with the matched patterns, and confirm a pending rule when a call matches
+    one of its pending patterns. Only rules included under the cap are recorded.
+    """
+    if event.kind in ("prompt", "tool-after"):
+        included, text = _capped(_moment_rules(rules, event))
+        if not included:
+            return Decision("pass", "", [])
+        for rule in included:
+            state.put(key, rule.identity, "delivered", set())
+        return Decision("context", text, _recorded(state, key, included))
+    if event.kind == "tool-before":
+        return _gate(rules, state, key, event)
+    return Decision("pass", "", [])
+
+
+def _gate(rules, state, key, event):
+    if event.command is None:
+        return Decision("pass", "", [])
+    denied = {}
+    for rule in rules:
+        patterns = set(pattern.pattern for pattern in rule.gates if pattern.search(event.command))
+        if not patterns:
+            continue
+        entry = _live(state, key, rule.identity)
+        if entry is None:
+            denied[rule.name] = (rule, patterns)
+        elif entry["state"] == "pending":
+            if patterns & entry["patterns"]:
+                state.put(key, rule.identity, "delivered", entry["patterns"])
+            else:
+                denied[rule.name] = (rule, patterns | entry["patterns"])
+    if not denied:
+        return Decision("pass", "", [])
+    included, text = _capped([rule for rule, _ in denied.values()])
+    for rule in included:
+        state.put(key, rule.identity, "pending", denied[rule.name][1])
+    return Decision("deny", text, _recorded(state, key, included))
+
+
 def _default_root():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

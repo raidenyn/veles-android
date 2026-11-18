@@ -21,6 +21,8 @@ from agent_rules import (  # noqa: E402
     Store,
     StoreError,
     checkout_for,
+    context_key,
+    decide,
     load_rules,
     parse_event,
     parse_rule,
@@ -1273,3 +1275,378 @@ class FileLockTest(unittest.TestCase):
         nested = os.path.join(self.tmp, "a", "b", "x.lock")
         with FileLock(nested, no_sleep, 1):
             self.assertTrue(os.path.exists(nested))
+
+
+GIT_COMMIT_GATE = r"\bgit\b[^;&|\n]*?\scommit\b"
+PR_CREATE_GATE = r"\bgh\s+pr\s+create\b"
+PR_EDIT_GATE = r"\bgh\s+pr\s+edit\b"
+FINALIZE_COMMAND = r"\bopenspec\s+instructions\s+finalize\b"
+
+
+def quoted(value):
+    return '"%s"' % value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def flow(values):
+    return "[%s]" % ", ".join(quoted(value) for value in values)
+
+
+def make_rule(name, body="Commit types guide.\n", skills=("openspec-apply-change", "opsx:apply"),
+              commands=(FINALIZE_COMMAND,), gates=(GIT_COMMIT_GATE, PR_CREATE_GATE, PR_EDIT_GATE)):
+    lines = ['pointer: "Read %s."' % name]
+    if skills:
+        lines.append("skills: " + flow(skills))
+    if commands:
+        lines.append("commands: " + flow(commands))
+    if gates:
+        lines.append("gates: " + flow(gates))
+    return parse_rule(name, "---\n" + "\n".join(lines) + "\n---\n" + body)
+
+
+def event(kind, session="s1", agent=None, cwd="/work/repo", tool=None, command=None, ok=None,
+          skill=None, path=None, prompt=None, write_ids=None):
+    return Event(kind, session, agent, cwd, tool, command, ok, skill, path, prompt, write_ids)
+
+
+def bash_before(command, **fields):
+    return event("tool-before", tool="Bash", command=command, **fields)
+
+
+def bash_after(command, ok=True, **fields):
+    return event("tool-after", tool="Bash", command=command, ok=ok, **fields)
+
+
+class EngineTest(unittest.TestCase):
+    """``decide`` against a real temporary store, one transaction per event as ``handle`` runs it."""
+
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="veles-agent-engine-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.store = Store(os.path.join(self.tmp, "agent-rules"), sleep=no_sleep, lock_attempts=2)
+        self.rules = [make_rule("repo-commit-types.md")]
+
+    def run_event(self, ev, rules=None):
+        with self.store.transaction(ev.session) as state:
+            return decide(self.rules if rules is None else rules, state, context_key(ev), ev)
+
+    def entries(self, session="s1"):
+        with self.store.transaction(session) as state:
+            return dict(
+                (identity, entry) for identity, entry in state.entries.items()
+                if entry["generation"] >= state.generation(identity[0])
+            )
+
+    def entry(self, rule=None, key="s1"):
+        rule = rule or self.rules[0]
+        return self.entries(key.split("/")[0]).get((key, rule.identity))
+
+
+class ContextKeyTest(unittest.TestCase):
+    def test_main_and_subagent_keys(self):
+        self.assertEqual(context_key(event("prompt")), "s1")
+        self.assertEqual(context_key(event("prompt", agent="a7")), "s1/a7")
+        self.assertEqual(context_key(event("prompt", agent="")), "s1")
+
+
+class MomentTest(EngineTest):
+    def assert_moment(self, decision):
+        rule = self.rules[0]
+        self.assertEqual(decision.kind, "context")
+        self.assertEqual(decision.text, "Commit types guide.")
+        entry = self.entry()
+        self.assertEqual(entry["state"], "delivered")
+        self.assertEqual(decision.entries, [(rule.identity, entry["write_id"])])
+
+    def test_skill_tool_moment(self):
+        self.assert_moment(self.run_event(event("tool-after", tool="Skill", skill="openspec-apply-change")))
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "pass")
+
+    def test_namespaced_skill_tool_moment(self):
+        self.assert_moment(self.run_event(event("tool-after", tool="Skill", skill="opsx:apply")))
+
+    def test_other_skill_is_not_a_moment(self):
+        decision = self.run_event(event("tool-after", tool="Skill", skill="opsx:archive"))
+        self.assertEqual(decision.kind, "pass")
+        self.assertEqual(self.entries(), {})
+
+    def test_slash_prompt_moment(self):
+        self.assert_moment(self.run_event(event("prompt", prompt="/opsx:apply hook-delivered-rules")))
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "pass")
+
+    def test_slash_prompt_alone_and_with_leading_space(self):
+        self.assert_moment(self.run_event(event("prompt", prompt="/openspec-apply-change")))
+        self.assert_moment(self.run_event(event("prompt", prompt="  /opsx:apply\nnow")))
+
+    def test_plain_prompt_text_is_not_a_moment(self):
+        for prompt in (
+            "please run opsx:apply now",
+            "use /opsx:apply for this",
+            "opsx:apply",
+            "/opsx:applyx",
+            "<task-notification>/opsx:apply</task-notification>",
+            "",
+            None,
+        ):
+            decision = self.run_event(event("prompt", prompt=prompt))
+            self.assertEqual(decision.kind, "pass", prompt)
+        self.assertEqual(self.entries(), {})
+
+    def test_skill_md_read_moment(self):
+        for path in (
+            "/work/repo/.agents/skills/openspec-apply-change/SKILL.md",
+            ".agents/skills/openspec-apply-change/SKILL.md",
+            "C:\\work\\repo\\.agents\\skills\\openspec-apply-change\\SKILL.md",
+            "/work/repo/.claude/skills/apply/SKILL.md",
+        ):
+            session = "read-%d" % len(path)
+            decision = self.run_event(event("tool-after", session=session, tool="Read", path=path))
+            self.assertEqual(decision.kind, "context", path)
+            self.assertEqual(self.entry(key=session)["state"], "delivered")
+
+    def test_skill_md_read_by_real_path(self):
+        skill_dir = os.path.join(self.tmp, "repo", ".agents", "skills", "openspec-apply-change")
+        os.makedirs(skill_dir)
+        with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as handle:
+            handle.write("skill\n")
+        os.makedirs(os.path.join(self.tmp, "repo", ".claude"))
+        link = os.path.join(self.tmp, "repo", ".claude", "linked")
+        try:
+            os.symlink(os.path.join(self.tmp, "repo", ".agents", "skills"), link)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks are unavailable")
+        decision = self.run_event(
+            event("tool-after", tool="Read", path=os.path.join(link, "openspec-apply-change", "SKILL.md"))
+        )
+        self.assertEqual(decision.kind, "context")
+
+    def test_other_reads_are_not_moments(self):
+        for path in (
+            "/work/repo/.agents/skills/openspec-archive-change/SKILL.md",
+            "/work/repo/.agents/skills/openspec-apply-change/README.md",
+            "/work/repo/.agents/hooked-rules/repo-commit-types.md",
+            "/work/repo/xskills/openspec-apply-change/SKILL.md",
+            "/work/repo/skills/openspec-apply-change/SKILL.md.bak",
+        ):
+            self.assertEqual(self.run_event(event("tool-after", tool="Read", path=path)).kind, "pass", path)
+        self.assertEqual(self.entries(), {})
+
+    def test_command_moment_success(self):
+        command = "openspec instructions finalize --change x"
+        self.assert_moment(self.run_event(bash_after(command)))
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "pass")
+
+    def test_command_moment_matches_anywhere_in_the_string(self):
+        self.assert_moment(self.run_event(bash_after("cd a && openspec instructions finalize --json")))
+
+    def test_command_moment_failure(self):
+        for ok in (False, None):
+            decision = self.run_event(bash_after("openspec instructions finalize --change x", ok=ok))
+            self.assertEqual(decision.kind, "pass")
+        self.assertEqual(self.entries(), {})
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "deny")
+
+    def test_command_before_is_not_a_moment(self):
+        decision = self.run_event(bash_before("openspec instructions finalize --change x"))
+        self.assertEqual(decision.kind, "pass")
+        self.assertEqual(self.entries(), {})
+
+    def test_background_launch(self):
+        payload = claude(
+            "PostToolUse", tool_name="Bash",
+            tool_input={"command": "openspec instructions finalize --change x", "run_in_background": True},
+            tool_response={"backgroundTaskId": "b1"},
+        )
+        self.assert_moment(self.run_event(parse_event("claude", payload)))
+        self.assert_moment(self.run_event(bash_after("openspec instructions finalize --change x &")))
+
+    def test_gate_only_rule_has_no_moments(self):
+        rule = make_rule("repo-gate-only.md", skills=(), commands=())
+        for ev in (
+            event("tool-after", tool="Skill", skill="opsx:apply"),
+            event("prompt", prompt="/opsx:apply"),
+            bash_after("git commit -m x"),
+        ):
+            self.assertEqual(self.run_event(ev, rules=[rule]).kind, "pass")
+        self.assertEqual(self.entries(), {})
+
+    def test_moment_redelivers_with_a_fresh_write_id(self):
+        first = self.run_event(event("prompt", prompt="/opsx:apply"))
+        second = self.run_event(event("prompt", prompt="/opsx:apply"))
+        self.assertEqual(second.kind, "context")
+        self.assertGreater(second.entries[0][1], first.entries[0][1])
+
+    def test_moment_confirms_a_pending_rule(self):
+        self.assertEqual(self.run_event(bash_before("gh pr create --fill")).kind, "deny")
+        self.run_event(event("prompt", prompt="/opsx:apply"))
+        self.assertEqual(self.entry()["state"], "delivered")
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "pass")
+
+    def test_moment_in_a_subagent_is_not_credited_to_the_parent(self):
+        self.run_event(event("prompt", agent="a1", prompt="/opsx:apply"))
+        self.assertEqual(self.entry(key="s1/a1")["state"], "delivered")
+        self.assertIsNone(self.entry())
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "deny")
+        self.assertEqual(self.run_event(bash_before("git commit -m x", agent="a1")).kind, "pass")
+
+    def test_other_identity_is_not_credited(self):
+        self.run_event(event("prompt", prompt="/opsx:apply"))
+        sibling = [make_rule("repo-commit-types.md", body="A different guide.\n")]
+        self.assertEqual(self.run_event(bash_before("git commit -m x"), rules=sibling).kind, "deny")
+
+
+class GateTest(EngineTest):
+    def assert_denied(self, command, **fields):
+        decision = self.run_event(bash_before(command, **fields))
+        self.assertEqual(decision.kind, "deny", command)
+        self.assertEqual(decision.text, "Commit types guide.")
+        return decision
+
+    def assert_passes(self, command, **fields):
+        decision = self.run_event(bash_before(command, **fields))
+        self.assertEqual(decision.kind, "pass", command)
+        return decision
+
+    def test_block_once_then_retry(self):
+        decision = self.assert_denied('git commit -m "feat: x"')
+        entry = self.entry()
+        self.assertEqual(entry["state"], "pending")
+        self.assertEqual(entry["patterns"], {GIT_COMMIT_GATE})
+        self.assertEqual(decision.entries, [(self.rules[0].identity, entry["write_id"])])
+        self.assert_passes('git commit -m "docs: x"')
+        self.assertEqual(self.entry()["state"], "delivered")
+        self.assert_passes('git commit -m "docs: y"')
+        self.assert_passes("gh pr create --fill")
+
+    def test_accumulated_pending(self):
+        self.assert_denied("git commit -m x")
+        self.assert_denied("gh pr create --fill")
+        self.assertEqual(self.entry()["patterns"], {GIT_COMMIT_GATE, PR_CREATE_GATE})
+        self.assert_passes("git commit -m x")
+        self.assertEqual(self.entry()["state"], "delivered")
+
+    def test_sibling_denied(self):
+        self.assert_denied("git commit -m x")
+        self.assert_denied("gh pr edit 5 --title x")
+        self.assertEqual(self.entry()["state"], "pending")
+        self.assertEqual(self.entry()["patterns"], {GIT_COMMIT_GATE, PR_EDIT_GATE})
+
+    def test_overlap_patterns(self):
+        self.assert_denied("git commit -m x && gh pr create --fill")
+        self.assertEqual(self.entry()["patterns"], {GIT_COMMIT_GATE, PR_CREATE_GATE})
+        self.assert_passes("gh pr create --fill")
+
+    def test_matched_forms(self):
+        forms = (
+            'git -C "work tree" commit',
+            "git -c k=v commit",
+            "git --no-pager commit",
+            'git --git-dir="a b/.git" commit',
+            "git --work-tree . commit",
+            "GIT_AUTHOR_NAME=x git commit",
+            "git add -A && git commit -m x",
+            'bash -c "git commit -m x"',
+            "git commit --amend",
+            "gh pr create --fill",
+            "gh pr edit 5 --title x",
+        )
+        for index, form in enumerate(forms):
+            with self.subTest(form=form):
+                self.assert_denied(form, session="form-%d" % index)
+
+    def test_boundary_semicolon(self):
+        # Accepted out-of-scope form (design section 6): the quoted `;` reads as a shell operator.
+        self.assert_passes('git -C "work;tree" commit')
+        self.assertEqual(self.entries(), {})
+
+    def test_ungated_commands_pass_without_state(self):
+        for command in ("git status", "ls -la", "gh pr view 5", ""):
+            self.assert_passes(command)
+        self.assertEqual(self.entries(), {})
+
+    def test_non_shell_tool_before_passes(self):
+        decision = self.run_event(event("tool-before", tool="Read", path="/x"))
+        self.assertEqual(decision.kind, "pass")
+
+    def test_tool_after_never_gates(self):
+        self.assertEqual(self.run_event(bash_after("git commit -m x")).kind, "pass")
+        self.assertEqual(self.entries(), {})
+
+    def test_pending_entry_keeps_its_patterns_when_denied_again(self):
+        self.assert_denied("gh pr create --fill")
+        self.assert_denied("gh pr edit 5")
+        self.assert_denied("git commit -m x")
+        self.assertEqual(self.entry()["patterns"], {GIT_COMMIT_GATE, PR_CREATE_GATE, PR_EDIT_GATE})
+
+    def test_confirm_records_a_new_write_id(self):
+        denied = self.assert_denied("git commit -m x")
+        self.assert_passes("git commit -m y")
+        self.assertGreater(self.entry()["write_id"], denied.entries[0][1])
+
+
+def sized_body(size, letter):
+    return letter * (size - 1) + "\n"
+
+
+class CapTest(EngineTest):
+    def setUp(self):
+        super(CapTest, self).setUp()
+        self.rules = [
+            make_rule("repo-%s.md" % letter, body=sized_body(4000, letter)) for letter in "abc"
+        ]
+
+    def test_join_format(self):
+        rules = [make_rule("repo-b.md", body="\n  Second.  \n\n"), make_rule("repo-a.md", body="First.\n")]
+        decision = self.run_event(event("prompt", prompt="/opsx:apply"), rules=rules)
+        self.assertEqual(decision.text, "First.\n\nSecond.")
+
+    def test_filename_order(self):
+        rules = [make_rule("repo-c.md", body="C\n"), make_rule("repo-a.md", body="A\n"),
+                 make_rule("repo-b.md", body="B\n")]
+        decision = self.run_event(bash_before("git commit -m x"), rules=rules)
+        self.assertEqual(decision.text, "A\n\nB\n\nC")
+        self.assertEqual([identity[0] for identity, _ in decision.entries],
+                         ["repo-a.md", "repo-b.md", "repo-c.md"])
+
+    def test_cap_moment(self):
+        decision = self.run_event(event("prompt", prompt="/opsx:apply"))
+        self.assertEqual(decision.kind, "context")
+        self.assertEqual(decision.text, "a" * 3999 + "\n\n" + "b" * 3999)
+        self.assertLessEqual(len(decision.text.encode("utf-8")), 9000)
+        self.assertEqual([identity[0] for identity, _ in decision.entries], ["repo-a.md", "repo-b.md"])
+        self.assertEqual(self.entry(self.rules[0])["state"], "delivered")
+        self.assertEqual(self.entry(self.rules[1])["state"], "delivered")
+        self.assertIsNone(self.entry(self.rules[2]))
+
+    def test_cap_counts_utf8_bytes(self):
+        rules = [make_rule("repo-a.md", body="\u00e9" * 2000 + "\n"),
+                 make_rule("repo-b.md", body="\u00e9" * 2000 + "\n"),
+                 make_rule("repo-c.md", body="\u00e9" * 600 + "\n")]
+        decision = self.run_event(event("prompt", prompt="/opsx:apply"), rules=rules)
+        # 4000 + 2 + 4000 bytes fit; adding 2 + 1200 more would pass 9,000.
+        self.assertEqual([identity[0] for identity, _ in decision.entries], ["repo-a.md", "repo-b.md"])
+
+    def test_cap_skips_a_misfit_and_keeps_a_later_rule_that_fits(self):
+        rules = [make_rule("repo-a.md", body=sized_body(4000, "a")),
+                 make_rule("repo-b.md", body=sized_body(4000, "b")),
+                 make_rule("repo-c.md", body=sized_body(4000, "c")),
+                 make_rule("repo-d.md", body="d" * 900 + "\n")]
+        decision = self.run_event(event("prompt", prompt="/opsx:apply"), rules=rules)
+        self.assertEqual([identity[0] for identity, _ in decision.entries],
+                         ["repo-a.md", "repo-b.md", "repo-d.md"])
+        self.assertLessEqual(len(decision.text.encode("utf-8")), 9000)
+
+    def test_cap_denial(self):
+        first = self.run_event(bash_before("git commit -m x"))
+        self.assertEqual(first.kind, "deny")
+        self.assertEqual([identity[0] for identity, _ in first.entries], ["repo-a.md", "repo-b.md"])
+        self.assertEqual(self.entry(self.rules[0])["state"], "pending")
+        self.assertEqual(self.entry(self.rules[1])["state"], "pending")
+        self.assertIsNone(self.entry(self.rules[2]))
+        retry = self.run_event(bash_before("git commit -m x"))
+        self.assertEqual(retry.kind, "deny")
+        self.assertEqual(retry.text, "c" * 3999)
+        self.assertEqual([identity[0] for identity, _ in retry.entries], ["repo-c.md"])
+        self.assertEqual(self.entry(self.rules[0])["state"], "delivered")
+        self.assertEqual(self.entry(self.rules[1])["state"], "delivered")
+        self.assertEqual(self.entry(self.rules[2])["state"], "pending")
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "pass")
