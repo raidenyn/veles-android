@@ -91,14 +91,14 @@
 Each step below that changes a file the agent-file check inspects lands together with its 6.1 invariant and tests, so the check stays green after every step.
 
 - [x] 4.1 Land in the same step as the hook-wiring invariant of 6.1 and its tests, and no earlier than 6.3 (CODEOWNERS), which must land first or in the same step so the engine and plugin are owner-covered from the first commit that activates them. Add the four hooks to `.claude/settings.json`: `PreToolUse` `Bash`, `PostToolUse` `Bash|Skill|Read`, `UserPromptSubmit` and `PreCompact`. Use the exact engine command and `timeout: 5`, with field handling as recorded in 1.3.
-- [ ] 4.2 Create the V2 plugin in `scripts/opencode-hooked-rules/`. It maps:
+- [x] 4.2 Create the V2 plugin in `scripts/opencode-hooked-rules/`. It maps:
   - `execute.before` to a deny;
   - `execute.after` to an output append;
   - `prompt` to context;
   - `session.compaction.started` to `compacted`.
 
   The plugin treats only an engine response whose decision is `deny` as a denial. A spawn failure, a 5-second timeout, a nonzero exit, undecodable output and a failed host injection all pass the call with the notice, never a denial. After a failed injection it sends one `void` per response entry.
-- [ ] 4.3 Also no earlier than 6.3. Add the local plugin entry to `opencode.json` next to `opencode-rules`, with the syntax recorded in 1.4. Land it in the same step as the two-entry allow-list invariant of 6.1 and its tests.
+- [x] 4.3 Also no earlier than 6.3. Add the local plugin entry to `opencode.json` next to `opencode-rules`, with the syntax recorded in 1.4. Land it in the same step as the two-entry allow-list invariant of 6.1 and its tests.
 
 ## 5. The pilot rule and guidance edits
 
