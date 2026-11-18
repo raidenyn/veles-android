@@ -134,6 +134,8 @@ ENGINE_NAMES = (
     "_locate_block",
     "_normalise",
 )
+POINTER_BEGIN = "<!-- hooked-rules:begin -->"
+POINTER_END = "<!-- hooked-rules:end -->"
 POINTERS_COMMAND = "python3 -I scripts/agent_rules.py pointers --write"
 # The always-on Conventional Commits rule became the hook-delivered commit-type guide.
 MOVED_RULES = {
@@ -743,12 +745,8 @@ def _hooked_paths(files):
     return sorted(path for path in files if path.startswith(HOOKED_RULES_DIR + "/"))
 
 
-def check_hooked_rules(root, files):
-    """Check `.agents/hooked-rules/`: flat `<scope>-<topic>.md` regular files the engine parses.
-
-    The format, the 4,096-byte body cap and regex validity are the engine's own `parse_rule`
-    errors. The `.agents/rules/` frontmatter, size and listing checks do not apply here.
-    """
+def _hooked_name_findings(files):
+    """Name and file-type findings for listed `.agents/hooked-rules/` paths, and the candidates."""
     findings = []
     candidates = []
     for path in _hooked_paths(files):
@@ -775,61 +773,83 @@ def check_hooked_rules(root, files):
                 Finding("error", path, "has an empty topic; name rules `<scope>-<topic>.md`")
             )
             continue
-        full = os.path.join(root, path)
-        if os.path.islink(full) or not os.path.isfile(full):
-            findings.append(
-                Finding("error", path, "is a symlink or not a regular file; hooked rules are plain files")
-            )
-            continue
         candidates.append((path, relative))
-    if not candidates:
-        return findings
-    try:
-        engine = _load_engine(root)
-    except _EngineError as error:
-        return findings + [_engine_finding(error)]
-    for path, relative in candidates:
-        try:
-            with open(os.path.join(root, path), "rb") as handle:
-                text = handle.read().decode("utf-8")
-        except UnicodeDecodeError as error:
-            findings.append(Finding("error", path, "is not valid UTF-8 (%s)" % error))
-            continue
-        except (IOError, OSError):
-            findings.append(Finding("error", path, "cannot be read"))
-            continue
-        try:
-            engine.parse_rule(relative, text)
-        except engine.RuleError as error:
-            findings.append(Finding("error", path, "is not a valid hooked rule: %s" % error))
-    return findings
+    return findings, candidates
 
 
-def check_pointer_block(root):
-    """Check the root AGENTS.md pointer block against the engine's rendering of the rules.
+def _has_marker(text):
+    """Whether either pointer-block marker is a line of ``text``."""
+    return any(
+        line.strip() in (POINTER_BEGIN, POINTER_END)
+        for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    )
 
-    Silent when there are no hooked rules and no block, when the engine cannot be imported or a
-    rule does not parse (`check_hooked_rules` reports both) and when AGENTS.md is missing.
+
+def _hooked_files_on_disk(root):
+    directory = os.path.join(root, *HOOKED_RULES_DIR.split("/"))
+    for _, _, names in os.walk(directory):
+        if names:
+            return True
+    return False
+
+
+def _check_hooked(root, files):
+    """``(rule findings, pointer findings)`` for the hooked rules and the root pointer block.
+
+    The engine is needed when the root AGENTS.md has a pointer marker or `.agents/hooked-rules/`
+    holds any file (listed or on disk); then a missing or unimportable engine is one finding.
+    Errors the runtime loader reports for paths the per-file checks did not already report are
+    added once per path. The pointer block is compared only when every rule loads.
     """
-    raw = None
+    rule_findings, candidates = _hooked_name_findings(files)
     try:
         with open(os.path.join(root, ROOT_AGENTS), "r", encoding="utf-8", newline="") as handle:
             raw = handle.read()
     except (IOError, OSError, UnicodeDecodeError):
-        return []
-    directory = os.path.join(root, *HOOKED_RULES_DIR.split("/"))
-    has_rules = os.path.isdir(directory) and any(
-        name.endswith(".md") for name in os.listdir(directory)
+        raw = None
+    needed = bool(_hooked_paths(files)) or _hooked_files_on_disk(root) or (
+        raw is not None and _has_marker(raw)
     )
-    if not has_rules and "hooked-rules:" not in raw:
-        return []
+    if not needed:
+        return rule_findings, []
     try:
         engine = _load_engine(root)
-    except _EngineError:
-        return []
+    except _EngineError as error:
+        return rule_findings + [_engine_finding(error)], []
+    for path, relative in candidates:
+        full = os.path.join(root, path)
+        if os.path.islink(full) or not os.path.isfile(full):
+            rule_findings.append(
+                Finding("error", path, "is a symlink or not a regular file; hooked rules are plain files")
+            )
+            continue
+        try:
+            with open(full, "rb") as handle:
+                text = handle.read().decode("utf-8")
+        except UnicodeDecodeError as error:
+            rule_findings.append(Finding("error", path, "is not valid UTF-8 (%s)" % error))
+            continue
+        except (IOError, OSError):
+            rule_findings.append(Finding("error", path, "cannot be read"))
+            continue
+        try:
+            engine.parse_rule(relative, text)
+        except engine.RuleError as error:
+            rule_findings.append(Finding("error", path, "is not a valid hooked rule: %s" % error))
     rules, errors = engine.load_rules(root)
-    if errors:
-        return []
+    reported = set(finding.path for finding in rule_findings)
+    for path, message in errors:
+        if path not in reported:
+            reported.add(path)
+            rule_findings.append(
+                Finding("error", path, "is rejected by the hooked-rule loader: %s" % message)
+            )
+    if errors or raw is None:
+        return rule_findings, []
+    return rule_findings, _pointer_findings(engine, raw, rules)
+
+
+def _pointer_findings(engine, raw, rules):
     fix = "run `%s`" % POINTERS_COMMAND
     try:
         location = engine._locate_block(raw)
@@ -851,6 +871,25 @@ def check_pointer_block(root):
     if engine._normalise(raw[location.begin:location.end]) != block:
         return [Finding("error", ROOT_AGENTS, "has a stale hooked-rules pointer block; %s" % fix)]
     return []
+
+
+def check_hooked_rules(root, files):
+    """Check `.agents/hooked-rules/`: flat `<scope>-<topic>.md` regular files the engine parses.
+
+    The format, the 4,096-byte body cap and regex validity are the engine's own `parse_rule`
+    errors, plus any file the runtime loader rejects. The `.agents/rules/` frontmatter, size and
+    listing checks do not apply here. A missing or unimportable engine is reported here.
+    """
+    return _check_hooked(root, files)[0]
+
+
+def check_pointer_block(root, files=None):
+    """Check the root AGENTS.md pointer block against the engine's rendering of the rules.
+
+    Silent when there are no hooked rules and no block; engine and rule failures belong to
+    `check_hooked_rules`, which is why this check is silent when a rule does not load.
+    """
+    return _check_hooked(root, list_files(root) if files is None else files)[1]
 
 
 def parse_documented_skills(text):
@@ -1581,8 +1620,9 @@ def check_repo(root, platform=sys.platform):
     findings.extend(_check_overrides(root, tracked_nested))
     findings.extend(check_rules(root, files))
     findings.extend(check_moved_rules(root, files))
-    findings.extend(check_hooked_rules(root, files))
-    findings.extend(check_pointer_block(root))
+    hooked_findings, pointer_findings = _check_hooked(root, files)
+    findings.extend(hooked_findings)
+    findings.extend(pointer_findings)
     findings.extend(check_links(root, files, platform))
     findings.extend(check_opencode(root))
     findings.extend(check_codeowners(root))

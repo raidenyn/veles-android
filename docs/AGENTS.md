@@ -148,8 +148,10 @@ discoverable if the plugin is not active.
   agent in an untrusted PR checkout. Once an agent starts in the checkout, the repository's Claude
   Code hooks and the local OpenCode plugin run a script on every shell command and prompt, so also
   read `scripts/agent_rules.py` and `scripts/opencode-hooked-rules/` first. To review such a
-  checkout safely, start OpenCode from outside it, or remove/disable the plugin entry in your local
-  uncommitted copy (and disable the project's Claude Code configuration). `opencode debug config` lists the configuration sources being loaded.
+  checkout safely, start OpenCode from outside it so the project configuration is not loaded, or
+  disable both checkout-controlled entries in your local uncommitted `opencode.json` (the
+  `opencode-rules` entry and the local `./scripts/opencode-hooked-rules` plugin path); for Claude
+  Code, likewise disable the project's configuration, including the `.claude/settings.json` hooks. `opencode debug config` lists the configuration sources being loaded.
 - **Plugin unavailable**: with an offline cache miss, an install failure or the plugin disabled,
   OpenCode still starts; scoped rules are simply not delivered, and the root `AGENTS.md` pointer plus
   each node's listed rule files keep them discoverable. This degraded state is supported, not a
@@ -202,12 +204,18 @@ OpenCode from the local plugin `scripts/opencode-hooked-rules/`.
 - **Degraded modes** (the hooks never block a call because of their own failure):
   - *No Python*: Claude Code shows the user a non-blocking hook error and the agent has only the
     pointer; the OpenCode plugin sends the read-by-hand notice itself.
-  - *Engine failure, timeout (5 s) or malformed event*: the call passes, and the read-by-hand notice
-    ("Rule hooks failed: read the hooked rules listed in AGENTS.md by hand …") goes where a
-    model-visible channel exists: the `PostToolUse` and `UserPromptSubmit` context on Claude Code,
-    the tool output or prompt on OpenCode. Claude Code `PreToolUse` (gates) and a malformed Claude
-    Code event have no model-visible channel, so the notice goes to stderr only; a failing OpenCode
-    gate simply passes.
+  - *Recoverable engine error* (malformed event, unreadable rule, corrupt state, lock timeout): the
+    call passes with the read-by-hand notice ("Rule hooks failed: read the hooked rules listed in
+    AGENTS.md by hand …") where the format has a channel: the plain format (OpenCode appends it to
+    the `execute.after` output or sends it as a synthetic prompt message) and Claude Code
+    `PostToolUse` and `UserPromptSubmit` events whose JSON still names the event. Claude Code
+    `PreToolUse` (gates) and `PreCompact` have no model-visible channel, nor has an undecodable or
+    unidentifiable Claude Code event, so there the notice goes to stderr only.
+  - *Claude Code timeout (5 s, enforced by the host) or hard crash*: nothing is left to emit a
+    notice; the host shows a non-blocking hook error and the agent has the pointer only.
+  - *OpenCode plugin spawn failure, timeout, nonzero exit or undecodable output*: the plugin sends
+    the notice itself where it has a channel (`execute.after`, prompt); `execute.before` (gates)
+    passes silently.
   - *Hooks disabled* (`disableAllHooks`) or *plugin disabled*: the pointer block only.
   - *Antigravity and other tools*: the pointer block only. Whether Antigravity reads the root
     `AGENTS.md` natively is unverified (see `spike.md` of the `hook-delivered-rules` change).

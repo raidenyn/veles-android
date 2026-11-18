@@ -1237,6 +1237,47 @@ class AgentFileCheckTest(unittest.TestCase):
                 files[ENGINE_FILE] = text
                 self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "cannot be imported")
 
+    def test_retained_block_with_missing_engine_is_one_finding(self):
+        files = clean_files()
+        del files[HOOKED_PATH]
+        del files[ENGINE_FILE]
+        self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "cannot be imported")
+
+    def test_lone_marker_with_missing_engine_is_one_finding(self):
+        files = clean_files()
+        del files[HOOKED_PATH]
+        del files[ENGINE_FILE]
+        files["AGENTS.md"] = root_text(block=False) + "\n<!-- hooked-rules:end -->\n"
+        self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "cannot be imported")
+
+    def test_on_disk_hooked_file_with_missing_engine_is_one_finding(self):
+        files = clean_files()
+        del files[ENGINE_FILE]
+        files["AGENTS.md"] = root_text(block=False)
+        del files[HOOKED_PATH]
+        files[".gitignore"] = ".agents/hooked-rules/\n"
+        root = self.repo(files)
+        write_text(root, HOOKED_PATH, hooked_rule_text())
+        self.assert_single(check_repo(root), ENGINE_FILE, "cannot be imported")
+
+    def test_retained_block_with_zero_rules_is_stale(self):
+        files = clean_files()
+        del files[HOOKED_PATH]
+        self.assert_single(check_repo(self.repo(files)), "AGENTS.md", "stale")
+
+    def test_ignored_hooked_file_rejected_by_loader_is_one_finding(self):
+        files = clean_files()
+        files[".gitignore"] = ".agents/hooked-rules/junk.md\n"
+        root = self.repo(files)
+        write_text(root, HOOKED_DIR + "junk.md", "not a rule\n")
+        self.assertNotIn(HOOKED_DIR + "junk.md", list_files(root))
+        self.assert_single(check_repo(root), HOOKED_DIR + "junk.md", "frontmatter")
+
+    def test_loader_error_not_duplicated_for_a_listed_file(self):
+        # The per-file check already reports the tracked bad rule; the loader's error is not repeated.
+        findings = self.hooked_findings(hooked_rule_text(lines=['gates: ["("]']))
+        self.assert_single(findings, HOOKED_PATH, "invalid regex")
+
     def test_no_hooked_rules_and_no_block_passes(self):
         files = clean_files()
         del files[HOOKED_PATH]
