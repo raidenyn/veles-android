@@ -15,27 +15,58 @@ export const TIMEOUT_MS = 5000
 export const FAIL_INJECTION_VARIABLE = "VELES_AGENT_RULES_FAIL_INJECTION"
 
 const PASS = Object.freeze({ decision: "pass", text: "", entries: Object.freeze([]) })
-const MAX_PARENT_DEPTH = 32
+const MAX_PARENT_DEPTH = 16
+const BACKOFF_START_MS = 1000
+const BACKOFF_CAP_MS = 30000
 
 function isString(value) {
   return typeof value === "string"
 }
 
-/** The decoded engine response when it has the plain contract's shape, otherwise null. */
-function decode(stdout) {
-  if (stdout.trim() === "") return PASS // exit 0 and nothing printed: a normal pass
-  let value
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function hasExactKeys(value, keys) {
+  const own = Object.keys(value).sort()
+  return own.length === keys.length && own.every((key, index) => key === keys[index])
+}
+
+function validEntry(item) {
+  return (
+    isPlainObject(item) &&
+    hasExactKeys(item, ["rule", "write_id"]) &&
+    Array.isArray(item.rule) &&
+    item.rule.length === 2 &&
+    item.rule.every(isString) &&
+    Number.isSafeInteger(item.write_id) &&
+    item.write_id >= 0
+  )
+}
+
+/**
+ * The decoded engine response, or null when the bytes are not exactly the plain contract:
+ * `{decision: "context"|"deny", text: string, entries: [{rule: [string, string], write_id: uint}]}`.
+ * Zero bytes of stdout is the normal empty pass; whitespace-only output is not.
+ */
+function decode(bytes) {
+  if (bytes.length === 0) return PASS
+  let text
   try {
-    value = JSON.parse(stdout)
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes)
   } catch {
     return null
   }
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return null
+  let value
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (!isPlainObject(value) || !hasExactKeys(value, ["decision", "entries", "text"])) return null
   if (value.decision !== "context" && value.decision !== "deny") return null
   if (!isString(value.text) || !Array.isArray(value.entries)) return null
-  for (const item of value.entries) {
-    if (item === null || typeof item !== "object" || !Number.isInteger(item.write_id)) return null
-  }
+  if (!value.entries.every(validEntry)) return null
   return { decision: value.decision, text: value.text, entries: value.entries }
 }
 
@@ -60,11 +91,23 @@ export function runEngine(
     let settled = false
     let timer
     let child
+    const hardKill = () => {
+      try {
+        child.kill("SIGKILL")
+      } catch {
+        // already gone
+      }
+    }
     const finish = (value) => {
       if (settled) return
       settled = true
       if (timer !== undefined) clearTimer(timer)
       resolve(value)
+    }
+    // Any transport failure: the call passes (null), and the child is killed so nothing lingers.
+    const fail = () => {
+      if (child) hardKill()
+      finish(null)
     }
     try {
       child = spawn("python3", ["-I", engine, "hook", "--format", "plain"], {
@@ -76,28 +119,22 @@ export function runEngine(
       finish(null)
       return
     }
-    timer = setTimer(() => {
-      try {
-        child.kill()
-      } catch {
-        // already gone
-      }
-      finish(null)
-    }, timeoutMs)
+    timer = setTimer(fail, timeoutMs)
     const chunks = []
     if (child.stdout) child.stdout.on("data", (chunk) => chunks.push(Buffer.from(chunk)))
-    child.on("error", () => finish(null))
+    child.on("error", fail)
     child.on("close", (code) => {
+      if (settled) return
       if (code !== 0) return finish(null)
-      finish(decode(Buffer.concat(chunks).toString("utf8")))
+      finish(decode(Buffer.concat(chunks)))
     })
     try {
-      if (child.stdin) {
-        child.stdin.on("error", () => {}) // an early exit closes the pipe; the close event decides
-        child.stdin.end(JSON.stringify(event))
-      }
+      if (!child.stdin) return fail()
+      // A failed write means the engine never saw the event: not a pass, whatever the exit code says.
+      child.stdin.on("error", fail)
+      child.stdin.end(JSON.stringify(event))
     } catch {
-      finish(null)
+      fail()
     }
   })
 }
@@ -111,31 +148,43 @@ function messageId() {
 
 /**
  * The hook handlers for one host context. `engine(event)` runs one engine event; `env` is read for the
- * test-only injection switch.
+ * test-only injection switch; `sleep(ms, signal)` paces the event-stream re-subscription.
  */
-export function createHandlers(ctx, { engine = runEngine, env = process.env } = {}) {
+export function createHandlers(
+  ctx,
+  { engine = runEngine, env = process.env, sleep = abortableSleep } = {},
+) {
   const directory = ctx.location.directory
   const keys = new Map()
 
-  /** `{session}` for a root session; `{session: root, agent: child}` for a subagent's child session. */
+  /**
+   * `{session}` for a root session; `{session: root, agent: child}` for a subagent's child session; `null`
+   * when the parent chain cannot be verified (a malformed result, a cycle, the depth cap or a rejected
+   * lookup). Only a chain that reached a verified root is cached, and a cached key is never replaced.
+   */
   async function keyOf(sessionID) {
+    if (!isString(sessionID) || sessionID === "") return null
     if (keys.has(sessionID)) return keys.get(sessionID)
-    let key = { session: sessionID }
     try {
+      const visited = new Set([sessionID])
       let current = sessionID
-      let parent = null
       for (let depth = 0; depth < MAX_PARENT_DEPTH; depth += 1) {
         const info = await ctx.session.get({ sessionID: current })
-        if (!info || !isString(info.parentID) || info.parentID === "") break
-        parent = info.parentID
+        if (!isPlainObject(info)) return null
+        const parent = info.parentID
+        if (parent === undefined || parent === null) {
+          const key = current === sessionID ? { session: sessionID } : { session: current, agent: sessionID }
+          if (!keys.has(sessionID)) keys.set(sessionID, key)
+          return keys.get(sessionID)
+        }
+        if (!isString(parent) || parent === "" || visited.has(parent)) return null
+        visited.add(parent)
         current = parent
       }
-      if (parent !== null) key = { session: current, agent: sessionID }
     } catch {
-      return key // not cached: the lookup may work next time
+      return null
     }
-    keys.set(sessionID, key)
-    return key
+    return null // the depth cap was reached without a root
   }
 
   async function send(event) {
@@ -155,20 +204,25 @@ export function createHandlers(ctx, { engine = runEngine, env = process.env } = 
 
   /** Run `inject(text)`; if the host injection throws, void what the engine recorded. */
   async function deliver(key, response, inject) {
-    if (response === null) {
-      try {
-        await inject(NOTICE)
-      } catch {
-        // no channel left: the call already passes
-      }
-      return
-    }
-    if (response.decision !== "context" || response.text === "") return
+    if (response === null) return notify(inject)
+    if (response.decision !== "context") return
+    if (response.text === "" && response.entries.length === 0) return
     try {
+      // Every context response with entries goes through the injection step, even with empty text, so
+      // a recorded credit is voided when the injection fails.
       if (env[FAIL_INJECTION_VARIABLE] === "1") throw new Error(`${FAIL_INJECTION_VARIABLE}=1`)
-      await inject(response.text)
+      if (response.text !== "") await inject(response.text)
     } catch {
       await voidEntries(key, response.entries)
+    }
+  }
+
+  /** The read-by-hand notice through a channel; no channel left means the call simply passes. */
+  async function notify(inject) {
+    try {
+      await inject(NOTICE)
+    } catch {
+      // nothing more to do
     }
   }
 
@@ -177,6 +231,7 @@ export function createHandlers(ctx, { engine = runEngine, env = process.env } = 
     const command = input.input && input.input.command
     if (!isString(command)) return
     const key = await keyOf(input.sessionID)
+    if (key === null) return // an unverified key is never recorded under; execute.before has no channel
     const response = await send({ event: "tool-before", ...key, cwd: directory, command })
     // Only a decision of exactly "deny" stops the call; the message is what the model sees.
     if (response !== null && response.decision === "deny") throw new Error(response.text)
@@ -206,25 +261,28 @@ export function createHandlers(ctx, { engine = runEngine, env = process.env } = 
     if (!input) return
     const partial = afterEvent(input)
     if (partial === null) return
-    const key = await keyOf(input.sessionID)
-    const response = await send({ ...partial, ...key, cwd: directory })
-    await deliver(key, response, async (text) => {
+    const append = async (text) => {
       // Mutate the result in place: OpenCode keeps the appended text in the transcript.
       const content = input.result && input.result.content
       if (!Array.isArray(content)) throw new Error("the tool result has no content array to append to")
       content.push({ type: "text", text })
-    })
+    }
+    const key = await keyOf(input.sessionID)
+    if (key === null) return notify(append)
+    const response = await send({ ...partial, ...key, cwd: directory })
+    await deliver(key, response, append)
   }
 
   async function prompt(input) {
     const text = input && input.prompt && input.prompt.text
     if (!isString(text)) return
-    const key = await keyOf(input.sessionID)
-    const response = await send({ event: "prompt", ...key, cwd: directory, prompt: text })
-    await deliver(key, response, (body) =>
+    const inject = (body) =>
       // resume:false: the synthetic message alone must not start a run.
-      ctx.session.synthetic({ sessionID: input.sessionID, id: messageId(), text: body, resume: false }),
-    )
+      ctx.session.synthetic({ sessionID: input.sessionID, id: messageId(), text: body, resume: false })
+    const key = await keyOf(input.sessionID)
+    if (key === null) return notify(inject)
+    const response = await send({ event: "prompt", ...key, cwd: directory, prompt: text })
+    await deliver(key, response, inject)
   }
 
   async function onEvent(event) {
@@ -232,29 +290,64 @@ export function createHandlers(ctx, { engine = runEngine, env = process.env } = 
     const sessionID = event.data && event.data.sessionID
     if (!isString(sessionID)) return
     const key = await keyOf(sessionID)
+    if (key === null) return // no channel, and no verified key to re-arm
     await send({ event: "compacted", ...key, cwd: directory })
   }
 
-  /** Consume the host event stream until it ends; never rejects. */
+  /**
+   * Consume the host event stream until `signal` aborts; never rejects. A stream that fails or ends is
+   * subscribed again after `sleep(delay, signal)`, the delay doubling from 1 s up to 30 s and starting over
+   * once an event arrives. One failing event never ends the stream.
+   */
   async function watch(signal) {
-    try {
-      for await (const event of ctx.event.subscribe({ signal })) {
-        try {
-          await onEvent(event)
-        } catch {
-          // one bad event must not end the stream
+    let delay = BACKOFF_START_MS
+    while (!signal.aborted) {
+      try {
+        for await (const event of ctx.event.subscribe({ signal })) {
+          if (signal.aborted) return
+          delay = BACKOFF_START_MS
+          try {
+            await onEvent(event)
+          } catch {
+            // one bad event must not end the stream
+          }
         }
+      } catch {
+        // a rejected subscription or iterator: subscribe again below
       }
-    } catch {
-      // no event stream: compaction re-arm is lost, the pointer block still names the rules
+      if (signal.aborted) return
+      try {
+        await sleep(delay, signal)
+      } catch {
+        // a failing sleep still backs off through the loop
+      }
+      delay = Math.min(delay * 2, BACKOFF_CAP_MS)
     }
   }
 
   return { keyOf, before, after, prompt, onEvent, watch }
 }
 
-/** The plugin object; `options` are the injectable seams (`spawn`, timers, `env`) used by the tests. */
-export function createPlugin({ spawn, setTimer, clearTimer, env = process.env } = {}) {
+/** Resolves after `ms`, or as soon as `signal` aborts. The only real timer in this file. */
+function abortableSleep(ms, signal) {
+  return new Promise((resolve) => {
+    if (signal && signal.aborted) return resolve()
+    const done = () => {
+      clearTimeout(timer)
+      if (signal) signal.removeEventListener("abort", done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    if (signal) signal.addEventListener("abort", done, { once: true })
+  })
+}
+
+/**
+ * The plugin object; the options are the injectable seams (`spawn`, timers, `env`, `sleep`) the tests use.
+ * `setup` returns an async disposer, like `opencode-rules`: it aborts the event stream, waits for the
+ * watcher to stop and disposes the hook registrations.
+ */
+export function createPlugin({ spawn, setTimer, clearTimer, env = process.env, sleep } = {}) {
   const runtime = {}
   if (spawn) runtime.spawn = spawn
   if (setTimer) runtime.setTimer = setTimer
@@ -262,11 +355,28 @@ export function createPlugin({ spawn, setTimer, clearTimer, env = process.env } 
   return {
     id: "veles-hooked-rules",
     async setup(ctx) {
-      const handlers = createHandlers(ctx, { engine: (event) => runEngine(event, runtime), env })
-      await ctx.tool.hook("execute.before", handlers.before)
-      await ctx.tool.hook("execute.after", handlers.after)
-      await ctx.session.hook("prompt", handlers.prompt)
-      void handlers.watch(new AbortController().signal)
+      const handlers = createHandlers(ctx, {
+        engine: (event) => runEngine(event, runtime),
+        env,
+        sleep,
+      })
+      const registrations = []
+      registrations.push(await ctx.tool.hook("execute.before", handlers.before))
+      registrations.push(await ctx.tool.hook("execute.after", handlers.after))
+      registrations.push(await ctx.session.hook("prompt", handlers.prompt))
+      const controller = new AbortController()
+      const watcher = handlers.watch(controller.signal)
+      return async () => {
+        controller.abort()
+        await watcher
+        for (const registration of registrations.reverse()) {
+          try {
+            if (registration && typeof registration.dispose === "function") await registration.dispose()
+          } catch {
+            // a registration that cannot be disposed is already gone
+          }
+        }
+      }
     },
   }
 }

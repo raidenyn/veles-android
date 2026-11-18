@@ -51,6 +51,9 @@ function fakeTimers() {
  *   {error}          the child emits an "error" event (python missing)
  *   {throws}         spawn itself throws
  *   {hang: true}     the child never finishes (only the timer ends it)
+ *   {stdinError}     stdin emits an "error" event, then the rest of the response plays
+ *   {endThrows}      stdin.end throws synchronously
+ *   {noStdin}        the child has no stdin
  */
 function fakeSpawn(script) {
   const calls = []
@@ -63,8 +66,10 @@ function fakeSpawn(script) {
     if (response && response.throws) throw response.throws
     const child = new EventEmitter()
     child.killed = false
-    child.kill = () => {
+    child.signals = []
+    child.kill = (signal) => {
       child.killed = true
+      child.signals.push(signal)
     }
     child.stdout = new EventEmitter()
     child.stderr = new EventEmitter()
@@ -74,19 +79,24 @@ function fakeSpawn(script) {
     }
     child.stdin.end = (data) => {
       if (data !== undefined) call.input += data
+      if (response && response.endThrows) throw new Error("write EPIPE")
       try {
         call.event = JSON.parse(call.input)
       } catch {
         call.event = null
       }
       queueMicrotask(() => {
+        if (response && response.stdinError) child.stdin.emit("error", new Error("write EPIPE"))
         if (!response || response.hang) return
         if (response.error) return child.emit("error", response.error)
-        if (response.stdout) child.stdout.emit("data", Buffer.from(response.stdout))
+        if (response.stdout && response.stdout.length > 0) {
+          child.stdout.emit("data", Buffer.from(response.stdout))
+        }
         child.emit("close", response.code ?? 0, null)
       })
     }
     call.child = child
+    if (response && response.noStdin) child.stdin = null
     return child
   }
   spawn.calls = calls
@@ -105,54 +115,89 @@ const answer = (decision, text, entries = []) => ({
 })
 const entry = (name, writeId) => ({ rule: [name, "f".repeat(64)], write_id: writeId })
 
-/** A fake host context; `sessions` maps session id -> info (with an optional parentID). */
-function fakeCtx({ sessions = {}, events = [], syntheticError = null } = {}) {
+/** An event stream that yields nothing and ends only when the host aborts it. */
+async function* quietStream(signal) {
+  if (signal && !signal.aborted) {
+    await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }))
+  }
+}
+
+/**
+ * A fake host context; `sessions` maps session id -> info (with an optional parentID). `streams` is a list
+ * of stream factories `(signal) => asyncIterable`, one per `event.subscribe` call (later calls get a quiet
+ * stream); `events` is shorthand for one stream that yields them and then waits for the abort.
+ */
+function fakeCtx({ sessions = {}, events = [], streams = null, syntheticError = null } = {}) {
   const hooks = {}
+  const queue = streams
+    ? streams.slice()
+    : [
+        async function* (signal) {
+          yield* events
+          yield* quietStream(signal)
+        },
+      ]
   const ctx = {
     location: { directory: DIR },
     synthetics: [],
     hooks,
+    disposed: [],
+    subscribeCalls: 0,
+    signals: [],
     tool: {
       hook: async (name, handler) => {
         hooks[name] = handler
+        return { dispose: async () => ctx.disposed.push(name) }
       },
     },
     session: {
       hook: async (name, handler) => {
         hooks[`session.${name}`] = handler
+        return { dispose: async () => ctx.disposed.push(`session.${name}`) }
       },
-      get: async ({ sessionID }) => sessions[sessionID] ?? { id: sessionID },
+      get: async ({ sessionID }) => (sessionID in sessions ? sessions[sessionID] : { id: sessionID }),
       synthetic: async (message) => {
         if (syntheticError) throw syntheticError
         ctx.synthetics.push(message)
       },
     },
     event: {
-      subscribe: ({ signal } = {}) =>
-        (async function* () {
-          for (const event of events) {
-            if (signal && signal.aborted) return
-            yield event
-          }
-        })(),
+      subscribe: ({ signal } = {}) => {
+        ctx.subscribeCalls += 1
+        ctx.signals.push(signal)
+        const factory = queue.length > 0 ? queue.shift() : quietStream
+        return factory(signal)
+      },
     },
   }
   return ctx
 }
 
+/** A fake `sleep`: records each delay and returns at once; no real time passes. */
+function fakeSleep() {
+  const delays = []
+  const sleep = async (ms) => {
+    delays.push(ms)
+  }
+  sleep.delays = delays
+  return sleep
+}
+
 /** Boot the real plugin against the fakes; returns everything a test needs. */
-async function boot({ script, sessions, events, env = {}, syntheticError } = {}) {
+async function boot({ script, sessions, events, streams, env = {}, syntheticError } = {}) {
   const timers = fakeTimers()
   const spawn = fakeSpawn(script ?? { code: 0, stdout: "" })
-  const ctx = fakeCtx({ sessions, events, syntheticError })
+  const sleep = fakeSleep()
+  const ctx = fakeCtx({ sessions, events, streams, syntheticError })
   const instance = createPlugin({
     spawn,
     setTimer: timers.setTimer,
     clearTimer: timers.clearTimer,
     env,
+    sleep,
   })
-  await instance.setup(ctx)
-  return { ctx, spawn, timers, hooks: ctx.hooks }
+  const dispose = await instance.setup(ctx)
+  return { ctx, spawn, timers, sleep, dispose, hooks: ctx.hooks }
 }
 
 const shellBefore = (command, sessionID = "ses_a") => ({
@@ -242,7 +287,7 @@ test("runEngine: a child that never finishes is killed by the fake timer and giv
   assert.equal(timers.live().length, 1)
   timers.fire()
   assert.equal(await pending, null)
-  assert.equal(spawn.calls[0].child.killed, true)
+  assert.deepEqual(spawn.calls[0].child.signals, ["SIGKILL"])
 })
 
 test("runEngine: a nonzero exit is null even when stdout holds a decision", async () => {
@@ -262,6 +307,23 @@ test("runEngine: undecodable or misshapen output is null", async () => {
     '{"decision":"deny","text":5,"entries":[]}',
     '{"decision":"deny","text":"x","entries":"no"}',
     '{"decision":"context","text":"x","entries":[{"rule":["a","b"],"write_id":"1"}]}',
+    // whitespace-only output is not the empty pass
+    " ",
+    "\n",
+    // entries must carry the exact tuple and a non-negative safe integer id
+    '{"decision":"deny","text":"x","entries":[{"write_id":1}]}',
+    '{"decision":"deny","text":"x","entries":[{"rule":"ab","write_id":1}]}',
+    '{"decision":"deny","text":"x","entries":[{"rule":["a"],"write_id":1}]}',
+    '{"decision":"deny","text":"x","entries":[{"rule":["a",2],"write_id":1}]}',
+    '{"decision":"deny","text":"x","entries":[{"rule":["a","b"],"write_id":-1}]}',
+    '{"decision":"deny","text":"x","entries":[{"rule":["a","b"],"write_id":1.5}]}',
+    '{"decision":"deny","text":"x","entries":[{"rule":["a","b"],"write_id":9007199254740993}]}',
+    '{"decision":"deny","text":"x","entries":[{"rule":["a","b"],"write_id":1,"extra":true}]}',
+    '{"decision":"deny","text":"x","entries":[null]}',
+    '{"decision":"deny","text":"x"}',
+    '{"decision":"deny","entries":[]}',
+    '{"decision":"deny","text":"x","entries":[],"extra":1}',
+    '{"decision":"pass","text":"","entries":[]}',
   ]) {
     const timers = fakeTimers()
     const result = await runEngine(
@@ -270,6 +332,87 @@ test("runEngine: undecodable or misshapen output is null", async () => {
     )
     assert.equal(result, null, stdout)
   }
+})
+
+test("runEngine: invalid UTF-8 and a byte order mark are null", async () => {
+  for (const stdout of [
+    Buffer.from([0x7b, 0xff, 0x7d]),
+    Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('{"decision":"deny","text":"x","entries":[]}')]),
+  ]) {
+    const timers = fakeTimers()
+    const result = await runEngine(
+      { event: "prompt", session: "s", cwd: DIR },
+      { spawn: fakeSpawn({ code: 0, stdout }), setTimer: timers.setTimer, clearTimer: timers.clearTimer },
+    )
+    assert.equal(result, null)
+  }
+})
+
+test("runEngine: a valid multi-byte response decodes", async () => {
+  const timers = fakeTimers()
+  const text = "caf\u00e9 \u2014 \u{1f4a1}"
+  const stdout = Buffer.from(JSON.stringify({ decision: "context", text, entries: [entry("a.md", 0)] }))
+  const result = await runEngine(
+    { event: "prompt", session: "s", cwd: DIR },
+    { spawn: fakeSpawn({ code: 0, stdout }), setTimer: timers.setTimer, clearTimer: timers.clearTimer },
+  )
+  assert.equal(result.text, text)
+})
+
+test("runEngine: a stdin error event is null and the child is killed", async () => {
+  const timers = fakeTimers()
+  const spawn = fakeSpawn({ stdinError: true, hang: true })
+  const result = await runEngine(
+    { event: "prompt", session: "s", cwd: DIR },
+    { spawn, setTimer: timers.setTimer, clearTimer: timers.clearTimer },
+  )
+  assert.equal(result, null)
+  assert.deepEqual(spawn.calls[0].child.signals, ["SIGKILL"])
+  assert.equal(timers.live().length, 0)
+})
+
+test("runEngine: an early exit 0 with no output after a stdin error is still null", async () => {
+  const timers = fakeTimers()
+  const spawn = fakeSpawn({ stdinError: true, code: 0, stdout: "" })
+  const result = await runEngine(
+    { event: "prompt", session: "s", cwd: DIR },
+    { spawn, setTimer: timers.setTimer, clearTimer: timers.clearTimer },
+  )
+  assert.equal(result, null)
+  assert.equal(spawn.calls[0].child.killed, true)
+})
+
+test("runEngine: stdin.end throwing is null, the child is killed and no timer is left", async () => {
+  const timers = fakeTimers()
+  const spawn = fakeSpawn({ endThrows: true, hang: true })
+  const result = await runEngine(
+    { event: "prompt", session: "s", cwd: DIR },
+    { spawn, setTimer: timers.setTimer, clearTimer: timers.clearTimer },
+  )
+  assert.equal(result, null)
+  assert.deepEqual(spawn.calls[0].child.signals, ["SIGKILL"])
+  assert.equal(timers.live().length, 0)
+})
+
+test("runEngine: a child without stdin is null and killed", async () => {
+  const timers = fakeTimers()
+  const spawn = fakeSpawn({ noStdin: true, hang: true })
+  const result = await runEngine(
+    { event: "prompt", session: "s", cwd: DIR },
+    { spawn, setTimer: timers.setTimer, clearTimer: timers.clearTimer },
+  )
+  assert.equal(result, null)
+  assert.deepEqual(spawn.calls[0].child.signals, ["SIGKILL"])
+})
+
+test("runEngine: a spawn error event also kills the child", async () => {
+  const timers = fakeTimers()
+  const spawn = fakeSpawn({ error: new Error("ENOENT") })
+  assert.equal(
+    await runEngine({ event: "prompt", session: "s", cwd: DIR }, { spawn, setTimer: timers.setTimer, clearTimer: timers.clearTimer }),
+    null,
+  )
+  assert.deepEqual(spawn.calls[0].child.signals, ["SIGKILL"])
 })
 
 // ---- execute.before ---------------------------------------------------------------------------------------
@@ -296,6 +439,27 @@ test("execute.before: a pass, a failure and a stray context all let the call thr
   ]) {
     const { hooks } = await boot({ script })
     assert.equal(await hooks["execute.before"](shellBefore("git status")), undefined)
+  }
+})
+
+test("execute.before: a malformed deny does not stop the call", async () => {
+  for (const stdout of [
+    '{"decision":"deny","text":"x","entries":[{"write_id":1}]}',
+    '{"decision":"deny","text":"x"}',
+    " ",
+    Buffer.from([0xff]),
+  ]) {
+    const { hooks } = await boot({ script: { code: 0, stdout } })
+    assert.equal(await hooks["execute.before"](shellBefore("git commit")), undefined)
+  }
+})
+
+test("execute.after: whitespace-only or invalid UTF-8 output appends the notice", async () => {
+  for (const stdout of ["\n", Buffer.from([0xc3, 0x28])]) {
+    const { hooks } = await boot({ script: { code: 0, stdout } })
+    const input = shellAfter("ls")
+    await hooks["execute.after"](input)
+    assert.deepEqual(input.result.content, [{ type: "text", text: FAIL_NOTICE_TEXT }])
   }
 })
 
@@ -474,6 +638,44 @@ test("the injection switch is read from the injected env and is off by default",
   assert.equal(input.result.content.length, 1)
 })
 
+test("an empty-text context with entries still goes through the injection step and voids on failure", async () => {
+  const { hooks, spawn } = await boot({
+    script: (call) =>
+      call.event && call.event.event === "void"
+        ? { code: 0, stdout: "" }
+        : answer("context", "", [entry("a.md", 31), entry("b.md", 32)]),
+    env: { VELES_AGENT_RULES_FAIL_INJECTION: "1" },
+  })
+  const input = shellAfter("x")
+  await hooks["execute.after"](input)
+  assert.deepEqual(input.result.content, [])
+  assert.deepEqual(spawn.events().slice(1), [
+    { event: "void", session: "ses_a", cwd: DIR, write_ids: [31] },
+    { event: "void", session: "ses_a", cwd: DIR, write_ids: [32] },
+  ])
+})
+
+test("an empty-text context with entries and a working injection appends nothing and voids nothing", async () => {
+  const { hooks, spawn } = await boot({ script: answer("context", "", [entry("a.md", 33)]) })
+  const input = shellAfter("x")
+  await hooks["execute.after"](input)
+  assert.deepEqual(input.result.content, [])
+  assert.equal(spawn.calls.length, 1)
+})
+
+test("an empty-text context with no entries injects and voids nothing, even with the switch", async () => {
+  const { hooks, spawn, ctx } = await boot({
+    script: answer("context", "", []),
+    env: { VELES_AGENT_RULES_FAIL_INJECTION: "1" },
+  })
+  const input = shellAfter("x")
+  await hooks["execute.after"](input)
+  await hooks["session.prompt"]({ sessionID: "ses_a", prompt: { text: "/x", files: [] } })
+  assert.deepEqual(input.result.content, [])
+  assert.deepEqual(ctx.synthetics, [])
+  assert.equal(spawn.calls.length, 2)
+})
+
 // ---- session keys -----------------------------------------------------------------------------------------
 
 test("a child session maps to its root parent as the session and itself as the agent", async () => {
@@ -492,14 +694,138 @@ test("a child session maps to its root parent as the session and itself as the a
   assert.equal("agent" in root, false)
 })
 
-test("a session lookup that fails falls back to the session itself", async () => {
-  const { hooks, spawn, ctx } = await boot()
-  ctx.session.get = async () => {
-    throw new Error("gone")
+/** Sessions for a chain `s0 -> s1 -> ... -> s<length>` (the last is the root). */
+function chain(length) {
+  const sessions = {}
+  for (let index = 0; index <= length; index += 1) {
+    sessions[`s${index}`] = index === length ? { id: `s${index}` } : { id: `s${index}`, parentID: `s${index + 1}` }
   }
-  await hooks["execute.before"](shellBefore("git commit", "ses_x"))
-  assert.equal(spawn.events()[0].session, "ses_x")
-  assert.equal("agent" in spawn.events()[0], false)
+  return sessions
+}
+
+const UNVERIFIED = {
+  "a null lookup result": { ses_a: null },
+  "a string lookup result": { ses_a: "oops" },
+  "an array lookup result": { ses_a: [] },
+  "a numeric parentID": { ses_a: { id: "ses_a", parentID: 5 } },
+  "an empty parentID": { ses_a: { id: "ses_a", parentID: "" } },
+  "a parent that is itself": { ses_a: { id: "ses_a", parentID: "ses_a" } },
+  "a parent cycle": {
+    ses_a: { id: "ses_a", parentID: "ses_b" },
+    ses_b: { id: "ses_b", parentID: "ses_c" },
+    ses_c: { id: "ses_c", parentID: "ses_a" },
+  },
+  "a malformed ancestor": { ses_a: { id: "ses_a", parentID: "ses_b" }, ses_b: 7 },
+  "a chain past the depth cap": { ...chain(15), ses_a: { id: "ses_a", parentID: "s0" } },
+}
+
+for (const [name, sessions] of Object.entries(UNVERIFIED)) {
+  test(`an unverifiable chain (${name}) skips the engine: before passes silently`, async () => {
+    const { hooks, spawn } = await boot({ sessions })
+    assert.equal(await hooks["execute.before"](shellBefore("git commit")), undefined)
+    assert.equal(spawn.calls.length, 0)
+  })
+
+  test(`an unverifiable chain (${name}) skips the engine: after and prompt carry the notice`, async () => {
+    const { hooks, spawn, ctx } = await boot({ sessions })
+    const input = shellAfter("openspec archive x")
+    await hooks["execute.after"](input)
+    assert.deepEqual(input.result.content, [{ type: "text", text: FAIL_NOTICE_TEXT }])
+    await hooks["session.prompt"]({ sessionID: "ses_a", prompt: { text: "/opsx:apply", files: [] } })
+    assert.equal(ctx.synthetics.length, 1)
+    assert.equal(ctx.synthetics[0].text, FAIL_NOTICE_TEXT)
+    assert.equal(spawn.calls.length, 0)
+  })
+}
+
+test("an unverifiable chain skips the compaction event", async () => {
+  const { spawn, ctx } = await boot({
+    sessions: { ses_a: { id: "ses_a", parentID: 5 } },
+    events: [
+      { type: "session.compaction.started", data: { sessionID: "ses_a" } },
+      { type: "session.compaction.started", data: { sessionID: "ses_ok" } },
+    ],
+  })
+  await spawn.called(1)
+  assert.deepEqual(spawn.events(), [{ event: "compacted", session: "ses_ok", cwd: DIR }])
+  assert.ok(ctx.subscribeCalls >= 1)
+})
+
+test("a chain of exactly the depth cap (16 lookups) resolves to its root", async () => {
+  const sessions = { ...chain(14), ses_a: { id: "ses_a", parentID: "s0" } }
+  const { hooks, spawn } = await boot({ sessions })
+  await hooks["execute.before"](shellBefore("git commit"))
+  assert.deepEqual(spawn.events()[0].session, "s14")
+  assert.equal(spawn.events()[0].agent, "ses_a")
+})
+
+test("a rejected session lookup skips the engine and is retried next time", async () => {
+  const { hooks, spawn, ctx } = await boot()
+  let fail = true
+  ctx.session.get = async ({ sessionID }) => {
+    if (fail) throw new Error("gone")
+    return { id: sessionID }
+  }
+  const input = shellAfter("x")
+  await hooks["execute.after"](input)
+  assert.equal(spawn.calls.length, 0)
+  assert.deepEqual(input.result.content, [{ type: "text", text: FAIL_NOTICE_TEXT }])
+  fail = false
+  await hooks["execute.before"](shellBefore("git status"))
+  assert.equal(spawn.events()[0].session, "ses_a")
+})
+
+test("a verified key is cached and the host is asked once", async () => {
+  const { hooks, ctx } = await boot({ sessions: { ses_c: { id: "ses_c", parentID: "ses_r" } } })
+  const real = ctx.session.get
+  let gets = 0
+  ctx.session.get = async (arg) => {
+    gets += 1
+    return real(arg)
+  }
+  await hooks["execute.before"](shellBefore("git status", "ses_c"))
+  await hooks["execute.before"](shellBefore("git status", "ses_c"))
+  await hooks["execute.before"](shellBefore("git status", "ses_c"))
+  assert.equal(gets, 2, "one lookup per hop, then the cache")
+})
+
+/** Let pending promise callbacks run (microtasks only; no timer). */
+async function flush() {
+  for (let index = 0; index < 20; index += 1) await Promise.resolve()
+}
+
+test("racing cold lookups cache only a verified result and never overwrite it", async () => {
+  const ctx = fakeCtx()
+  const gates = []
+  ctx.session.get = () => new Promise((resolve) => gates.push(resolve))
+  const race = createHandlers(ctx, { engine: async () => null })
+  const first = race.keyOf("ses_x")
+  const second = race.keyOf("ses_x") // a concurrent cold lookup
+  await flush()
+  assert.equal(gates.length, 2)
+  gates[1]("not an object") // the later lookup is malformed
+  assert.equal(await second, null)
+  gates[0]({ id: "ses_x" }) // the earlier lookup verifies a root
+  assert.deepEqual(await first, { session: "ses_x" })
+  assert.deepEqual(await race.keyOf("ses_x"), { session: "ses_x" }, "the verified key is cached")
+  assert.equal(gates.length, 2, "and served without another lookup")
+})
+
+test("racing cold lookups that both verify keep the first cached value", async () => {
+  const ctx = fakeCtx()
+  const gates = []
+  ctx.session.get = () => new Promise((resolve) => gates.push(resolve))
+  const race = createHandlers(ctx, { engine: async () => null })
+  const first = race.keyOf("ses_x")
+  const second = race.keyOf("ses_x")
+  await flush()
+  gates[1]({ id: "ses_x" }) // the second lookup verifies a root first
+  assert.deepEqual(await second, { session: "ses_x" })
+  gates[0]({ id: "ses_x", parentID: "ses_p" }) // the first now sees a parent: a different answer
+  await flush()
+  gates[2]({ id: "ses_p" }) // the hop to the parent verifies a different root
+  assert.deepEqual(await first, { session: "ses_x" }, "the cached value wins over the later, different one")
+  assert.deepEqual(await race.keyOf("ses_x"), { session: "ses_x" })
 })
 
 // ---- compaction -------------------------------------------------------------------------------------------
@@ -526,14 +852,141 @@ test("compaction of a root session sends the session key only", async () => {
   assert.deepEqual(spawn.events(), [{ event: "compacted", session: "ses_root", cwd: DIR }])
 })
 
-test("a failing event stream does not break setup", async () => {
-  const ctx = fakeCtx()
-  ctx.event.subscribe = () => {
-    throw new Error("no stream")
+test("a compaction event after a stream failure is processed (rejected iterator, then a good stream)", async () => {
+  const { spawn, sleep, ctx } = await boot({
+    streams: [
+      async function* () {
+        throw new Error("stream broke")
+      },
+      async function* (signal) {
+        yield { type: "session.compaction.started", data: { sessionID: "ses_root" } }
+        yield* quietStream(signal)
+      },
+    ],
+  })
+  await spawn.called(1)
+  assert.deepEqual(spawn.events(), [{ event: "compacted", session: "ses_root", cwd: DIR }])
+  assert.deepEqual(sleep.delays, [1000])
+  assert.equal(ctx.subscribeCalls, 2)
+})
+
+test("a subscription that throws synchronously is retried", async () => {
+  const { spawn, sleep } = await boot({
+    streams: [
+      () => {
+        throw new Error("no stream")
+      },
+      async function* (signal) {
+        yield { type: "session.compaction.started", data: { sessionID: "ses_root" } }
+        yield* quietStream(signal)
+      },
+    ],
+  })
+  await spawn.called(1)
+  assert.deepEqual(sleep.delays, [1000])
+})
+
+test("a stream that ends on its own is subscribed again", async () => {
+  const { spawn, sleep } = await boot({
+    streams: [
+      async function* () {},
+      async function* (signal) {
+        yield { type: "session.compaction.started", data: { sessionID: "ses_root" } }
+        yield* quietStream(signal)
+      },
+    ],
+  })
+  await spawn.called(1)
+  assert.deepEqual(sleep.delays, [1000])
+})
+
+test("the watcher backs off 1s, 2s, 4s ... capped at 30s, and stops on abort", async () => {
+  const controller = new AbortController()
+  const delays = []
+  const ctx = fakeCtx({
+    streams: Array.from({ length: 20 }, () => () => {
+      throw new Error("down")
+    }),
+  })
+  const sleep = async (ms) => {
+    delays.push(ms)
+    if (delays.length === 8) controller.abort()
   }
-  const instance = createPlugin({ spawn: fakeSpawn({ code: 0, stdout: "" }), ...fakeTimers() })
-  await instance.setup(ctx)
-  assert.ok(ctx.hooks["execute.before"])
+  const handlers = createHandlers(ctx, { engine: async () => null, sleep })
+  await handlers.watch(controller.signal)
+  assert.deepEqual(delays, [1000, 2000, 4000, 8000, 16000, 30000, 30000, 30000])
+  assert.equal(ctx.subscribeCalls, 8)
+})
+
+test("the backoff starts over once an event arrives", async () => {
+  const controller = new AbortController()
+  const delays = []
+  const failing = () => {
+    throw new Error("down")
+  }
+  const ctx = fakeCtx({
+    streams: [
+      failing,
+      failing,
+      async function* () {
+        yield { type: "other", data: {} }
+        throw new Error("broke after an event")
+      },
+      failing,
+    ],
+  })
+  const sleep = async (ms) => {
+    delays.push(ms)
+    if (delays.length === 4) controller.abort()
+  }
+  await createHandlers(ctx, { engine: async () => null, sleep }).watch(controller.signal)
+  assert.deepEqual(delays, [1000, 2000, 1000, 2000])
+})
+
+test("a failing event handler does not end the stream", async () => {
+  const bad = { type: "session.compaction.started" }
+  Object.defineProperty(bad, "data", {
+    get() {
+      throw new Error("bad event")
+    },
+  })
+  const { spawn } = await boot({
+    events: [bad, { type: "session.compaction.started", data: { sessionID: "ses_root" } }],
+  })
+  await spawn.called(1)
+  assert.equal(spawn.events()[0].event, "compacted")
+})
+
+test("setup returns an async disposer that aborts the stream, ends the watcher and disposes the hooks", async () => {
+  const { ctx, dispose, spawn } = await boot({
+    events: [{ type: "session.compaction.started", data: { sessionID: "ses_root" } }],
+  })
+  assert.equal(typeof dispose, "function")
+  await spawn.called(1)
+  const [signal] = ctx.signals
+  assert.equal(signal.aborted, false)
+  await dispose()
+  assert.equal(signal.aborted, true)
+  assert.deepEqual(ctx.disposed, ["session.prompt", "execute.after", "execute.before"])
+  const calls = ctx.subscribeCalls
+  await flush()
+  assert.equal(ctx.subscribeCalls, calls, "no re-subscription after the disposer")
+})
+
+test("the disposer ends a watcher that has already re-subscribed after a failure", async () => {
+  const { ctx, dispose, sleep } = await boot({
+    streams: [
+      () => {
+        throw new Error("down")
+      },
+    ],
+  })
+  await flush()
+  assert.deepEqual(sleep.delays, [1000])
+  assert.equal(ctx.subscribeCalls, 2) // the second subscription is parked on its quiet stream
+  await dispose()
+  assert.equal(ctx.signals[1].aborted, true)
+  assert.equal(ctx.subscribeCalls, 2)
 })
 
 // ---- prompt -----------------------------------------------------------------------------------------------
