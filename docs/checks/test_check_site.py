@@ -17,7 +17,14 @@ sys.path.insert(0, CHECKS)
 
 import json  # noqa: E402
 
-from check_site import check_repo, main, nav_pages, published_files  # noqa: E402
+from check_site import (  # noqa: E402
+    check_repo,
+    main,
+    mask_code,
+    nav_pages,
+    published_files,
+    scan_hazards,
+)
 
 
 def _write(root, files):
@@ -287,6 +294,98 @@ class StructureTests(unittest.TestCase):
             ]
         }
         self.assertEqual(nav_pages(navigation), ["p/one", "g/two", "g/three"])
+
+
+class HazardTests(unittest.TestCase):
+    def scan(self, text, mdx=False, path="a.md"):
+        return ["%s %s: %s" % f for f in scan_hazards(path, text, mdx)]
+
+    def test_mask_keeps_length_and_lines(self):
+        text = "a `b`\n\n```\nx\n```\nc\n"
+        masked = mask_code(text)
+        self.assertEqual(len(masked), len(text))
+        self.assertEqual(masked.count("\n"), text.count("\n"))
+        self.assertNotIn("b", masked)
+        self.assertNotIn("x", masked)
+
+    def test_html_comment_in_md(self):
+        lines = self.scan("ok\n<!-- x -->\n")
+        self.assertEqual(lines, ["error a.md:2: HTML comment breaks the MDX build"])
+
+    def test_html_comment_in_code_fence(self):
+        self.assertEqual(self.scan("```\n<!-- x -->\n```\n"), [])
+
+    def test_bare_tag_in_md(self):
+        lines = self.scan("Read <dir>/AGENTS.md\n")
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith("error a.md:1: "), lines)
+        self.assertIn('"<" followed by "d"', lines[0])
+
+    def test_less_than_space_ok(self):
+        self.assertEqual(self.scan("a < b\n"), [])
+
+    def test_autolink_flagged(self):
+        lines = self.scan("see <https://x.y>\n")
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith("error "), lines)
+
+    def test_tag_in_inline_code(self):
+        self.assertEqual(self.scan("Read `<dir>` now\n"), [])
+
+    def test_code_span_across_lines(self):
+        self.assertEqual(self.scan("see `a\n<node>` end\n"), [])
+
+    def test_double_backtick_span(self):
+        self.assertEqual(self.scan("x `` a ` <b> `` y\n"), [])
+
+    def test_indented_fence_in_list(self):
+        self.assertEqual(self.scan("- item\n\n  ```\n  <x>\n  ```\n"), [])
+
+    def test_unmatched_backtick_does_not_hide_later_hazard(self):
+        lines = self.scan("a ` b\n\nmid\n\n`ok` <x>\n\nlast ` z\n")
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith("error a.md:5: "), lines)
+
+    def test_unmatched_backtick_in_other_paragraph(self):
+        lines = self.scan("a ` b\n\n<x>\n\nc ` d\n")
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith("error a.md:3: "), lines)
+
+    def test_tilde_fence(self):
+        self.assertEqual(self.scan("~~~\n<x> <!-- y -->\n~~~\n"), [])
+
+    def test_fence_needs_matching_closer(self):
+        self.assertEqual(self.scan("````\n```\n<x>\n````\n"), [])
+
+    def test_unclosed_fence_runs_to_end(self):
+        self.assertEqual(self.scan("```\n<x>\n"), [])
+
+    def test_mdx_allows_components(self):
+        self.assertEqual(self.scan("<Spec />\n", mdx=True, path="a.mdx"), [])
+
+    def test_mdx_comment_flagged(self):
+        lines = self.scan("<!-- x -->\n", mdx=True, path="a.mdx")
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith("error "), lines)
+
+    def test_brace_warning_in_md(self):
+        lines = self.scan("a {x} b {y}\n")
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith("warning a.md:1: "), lines)
+
+    def test_brace_in_code_ok(self):
+        self.assertEqual(self.scan("a `{x}` b\n"), [])
+
+    def test_imported_file_scanned(self):
+        files = base_site()
+        files["openspec/specs/x/spec.md"] = "spec\n<!-- x -->\n"
+        root = make_repo(files)
+        self.addCleanup(shutil.rmtree, root)
+        lines = ["%s %s: %s" % f for f in check_repo(root)]
+        self.assertEqual(
+            lines,
+            ["error openspec/specs/x/spec.md:2: HTML comment breaks the MDX build"],
+        )
 
 
 if __name__ == "__main__":

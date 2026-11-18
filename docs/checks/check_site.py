@@ -239,13 +239,128 @@ def check_structure(root, published):
     return findings
 
 
+FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+BACKTICK_RUN_RE = re.compile(r"`+")
+
+
+def _blank(text):
+    """``text`` with every character except line breaks replaced by a space."""
+    return re.sub(r"[^\n]", " ", text)
+
+
+def _mask_fences(lines):
+    out = []
+    fence = None
+    for line in lines:
+        body = line.rstrip("\n")
+        if fence is None:
+            match = FENCE_OPEN_RE.match(body)
+            if match and not (match.group(1)[0] == "`" and "`" in match.group(2)):
+                fence = (match.group(1)[0], len(match.group(1)))
+                out.append(_blank(line))
+            else:
+                out.append(line)
+        else:
+            closer = re.match(r"^ {0,3}(%s{%d,})\s*$" % (re.escape(fence[0]), fence[1]), body)
+            if closer:
+                fence = None
+            out.append(_blank(line))
+    return out
+
+
+def _mask_spans(paragraph):
+    runs = list(BACKTICK_RUN_RE.finditer(paragraph))
+    chars = list(paragraph)
+    index = 0
+    while index < len(runs):
+        size = len(runs[index].group())
+        for other in range(index + 1, len(runs)):
+            if len(runs[other].group()) == size:
+                for pos in range(runs[index].start(), runs[other].end()):
+                    if chars[pos] != "\n":
+                        chars[pos] = " "
+                index = other
+                break
+        index += 1
+    return "".join(chars)
+
+
+def mask_code(text):
+    """``text`` with fenced blocks and per-paragraph code spans replaced by spaces."""
+    lines = _mask_fences(text.splitlines(True))
+    result = []
+    paragraph = []
+    for line in lines + [None]:
+        if line is not None and line.strip():
+            paragraph.append(line)
+            continue
+        if paragraph:
+            result.append(_mask_spans("".join(paragraph)))
+            paragraph = []
+        if line is not None:
+            result.append(line)
+    return "".join(result)
+
+
+def scan_hazards(path, text, mdx):
+    """Findings for input the site's MDX build rejects, outside code."""
+    findings = []
+    for number, line in enumerate(mask_code(text).split("\n"), 1):
+        where = "%s:%d" % (path, number)
+        for _ in range(line.count("<!--")):
+            findings.append(Finding("error", where, "HTML comment breaks the MDX build"))
+        if mdx:
+            continue
+        for match in re.finditer(r"<(?!!--)(\S)", line):
+            findings.append(
+                Finding(
+                    "error",
+                    where,
+                    '"<" followed by "%s" breaks the MDX build' % match.group(1),
+                )
+            )
+        if "{" in line or "}" in line:
+            findings.append(
+                Finding("warning", where, "brace may be read as an MDX expression")
+            )
+    return findings
+
+
+def check_hazards(root, published):
+    """Hazard findings for every published page and every file a published .mdx imports."""
+    tracked = set(_split_z(_git(root, "ls-files", "-z")))
+    jobs = []
+    seen = set()
+
+    def add(path, mdx):
+        if path not in seen:
+            seen.add(path)
+            jobs.append((path, mdx))
+
+    for path in published:
+        if path.endswith(".md"):
+            add(path, False)
+        elif path.endswith(".mdx"):
+            add(path, True)
+    for path in published:
+        if path.endswith(".mdx"):
+            for target in imports(_read(root, path)):
+                name = target[1:] if target.startswith("/") else target
+                if name in tracked and os.path.isfile(os.path.join(root, *name.split("/"))):
+                    add(name, False)
+    findings = []
+    for path, mdx in jobs:
+        findings.extend(scan_hazards(path, _read(root, path), mdx))
+    return findings
+
+
 def check_repo(root):
     """All findings for the repository at ``root``."""
     findings = check_mintignore(root)
     if findings and findings[0].message == "is missing":
         return findings
     published = published_files(root)
-    return findings + check_structure(root, published)
+    return findings + check_structure(root, published) + check_hazards(root, published)
 
 
 def main(argv=None):
