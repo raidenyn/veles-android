@@ -127,7 +127,8 @@
                   "docs/dev/specs/superspec-closeout",
                   "docs/dev/specs/superspec-tracker-intake",
                   "docs/dev/specs/github-project-automation",
-                  "docs/dev/specs/real-device-testing"
+                  "docs/dev/specs/real-device-testing",
+                  "docs/dev/specs/hooked-rule-delivery"
                 ]
               }
             ]
