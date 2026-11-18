@@ -1127,7 +1127,8 @@ def decide(rules, state, key, event):
     Moments (``tool-after``, ``prompt``) add the matched rules as context and mark them delivered. Gates
     (``tool-before`` with a command) deny a call matching a rule not delivered in this context, record
     the denied rules as pending with the matched patterns, and confirm a pending rule when a call matches
-    one of its pending patterns. Only rules included under the cap are recorded.
+    one of its pending patterns. Only rules included under the cap are recorded. ``compacted`` re-arms
+    and ``void`` removes entries by write id; both pass.
     """
     if event.kind in ("prompt", "tool-after"):
         included, text = _capped(_moment_rules(rules, event))
@@ -1138,7 +1139,24 @@ def decide(rules, state, key, event):
         return Decision("context", text, _recorded(state, key, included))
     if event.kind == "tool-before":
         return _gate(rules, state, key, event)
+    if event.kind == "compacted":
+        # An identified subagent re-arms only its own key; otherwise the whole session errs toward an
+        # extra delivery (a main-context compaction never carries an agent id on either host).
+        if event.agent:
+            state.bump(key)
+        else:
+            state.bump_all()
+    elif event.kind == "void":
+        _void(state, key, event.write_ids or [])
     return Decision("pass", "", [])
+
+
+def _void(state, key, write_ids):
+    """Remove ``key``'s entries that still carry exactly one of ``write_ids``; a newer id survives."""
+    wanted = set(write_ids)
+    for entry_key, identity in list(state.entries):
+        if entry_key == key and state.entries[(entry_key, identity)]["write_id"] in wanted:
+            del state.entries[(entry_key, identity)]
 
 
 def _gate(rules, state, key, event):

@@ -1650,3 +1650,115 @@ class CapTest(EngineTest):
         self.assertEqual(self.entry(self.rules[1])["state"], "delivered")
         self.assertEqual(self.entry(self.rules[2])["state"], "pending")
         self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "pass")
+
+
+class RearmTest(EngineTest):
+    def deliver(self, agent=None):
+        decision = self.run_event(event("prompt", agent=agent, prompt="/opsx:apply"))
+        self.assertEqual(decision.kind, "context")
+        return decision
+
+    def test_rearm_main(self):
+        self.deliver()
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "pass")
+        decision = self.run_event(event("compacted"))
+        self.assertEqual(decision, Decision("pass", "", []))
+        self.assertIsNone(self.entry())
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "deny")
+
+    def test_rearm_voids_pending(self):
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "deny")
+        self.run_event(event("compacted"))
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "deny")
+
+    def test_rearm_child_keeps_parent(self):
+        self.deliver()
+        self.deliver(agent="a1")
+        self.run_event(event("compacted", agent="a1"))
+        self.assertIsNone(self.entry(key="s1/a1"))
+        self.assertEqual(self.entry()["state"], "delivered")
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "pass")
+        self.assertEqual(self.run_event(bash_before("git commit -m x", agent="a1")).kind, "deny")
+
+    def test_rearm_child_keeps_sibling_child(self):
+        self.deliver(agent="a1")
+        self.deliver(agent="a2")
+        self.run_event(event("compacted", agent="a1"))
+        self.assertEqual(self.entry(key="s1/a2")["state"], "delivered")
+
+    def test_rearm_unidentified_all(self):
+        self.deliver()
+        self.deliver(agent="a1")
+        self.deliver(agent="a2")
+        self.run_event(event("compacted"))
+        for key in ("s1", "s1/a1", "s1/a2"):
+            self.assertIsNone(self.entry(key=key), key)
+            agent = key.split("/")[1] if "/" in key else None
+            self.assertEqual(self.run_event(bash_before("git commit -m x", agent=agent)).kind, "deny")
+
+    def test_rearm_leaves_other_sessions(self):
+        self.deliver()
+        self.run_event(event("prompt", session="s2", prompt="/opsx:apply"))
+        self.run_event(event("compacted"))
+        self.assertEqual(self.entry(key="s2")["state"], "delivered")
+
+    def test_rearm_credits_nothing(self):
+        self.run_event(event("compacted"))
+        self.run_event(event("compacted", agent="a1"))
+        self.assertEqual(self.entries(), {})
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "deny")
+
+    def test_moment_after_rearm_delivers_again(self):
+        self.deliver()
+        self.run_event(event("compacted"))
+        self.deliver()
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "pass")
+
+
+class VoidTest(EngineTest):
+    def void(self, write_ids, **fields):
+        decision = self.run_event(event("void", write_ids=write_ids, **fields))
+        self.assertEqual(decision, Decision("pass", "", []))
+
+    def test_void_exact(self):
+        delivered = self.run_event(event("prompt", prompt="/opsx:apply"))
+        self.void([delivered.entries[0][1]])
+        self.assertIsNone(self.entry())
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "deny")
+
+    def test_void_stale_id_is_a_no_op(self):
+        denied = self.run_event(bash_before("git commit -m x"))
+        self.run_event(bash_before("git commit -m y"))  # a sibling confirmed it with a newer id
+        current = self.entry()
+        self.void([denied.entries[0][1]])
+        self.assertEqual(self.entry(), current)
+        self.assertEqual(self.run_event(bash_before("git commit -m z")).kind, "pass")
+
+    def test_void_other_key_is_a_no_op(self):
+        delivered = self.run_event(event("prompt", prompt="/opsx:apply"))
+        self.void([delivered.entries[0][1]], agent="a1")
+        self.assertEqual(self.entry()["state"], "delivered")
+
+    def test_void_pruned_session_is_a_no_op(self):
+        self.void([1, 2, 3], session="gone")
+        self.assertFalse(os.path.exists(self.store.session_path("gone")))
+        self.assertEqual(self.entries("gone"), {})
+
+    def test_void_removes_only_the_named_entries(self):
+        rules = [make_rule("repo-a.md", body="A\n"), make_rule("repo-b.md", body="B\n")]
+        self.rules = rules
+        decision = self.run_event(event("prompt", prompt="/opsx:apply"))
+        self.void([decision.entries[1][1], 999999])
+        self.assertEqual(self.entry(rules[0])["state"], "delivered")
+        self.assertIsNone(self.entry(rules[1]))
+
+    def test_void_of_a_pending_entry(self):
+        denied = self.run_event(bash_before("git commit -m x"))
+        self.void([denied.entries[0][1]])
+        self.assertIsNone(self.entry())
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "deny")
+
+    def test_void_empty_list(self):
+        self.run_event(event("prompt", prompt="/opsx:apply"))
+        self.void([])
+        self.assertEqual(self.entry()["state"], "delivered")
