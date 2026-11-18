@@ -61,10 +61,11 @@ Install the local `commit-msg` hook to validate commit messages before committin
 
 ## AI agent tooling
 
-Agent guidance is tool-neutral: the root `AGENTS.md` and one `AGENTS.md` per node describe that
-node's architecture, commands and rules, and `.agents/rules/` holds the scoped rule files. The
-agent-file check (`docs/checks/check_agent_files.py`) enforces the layout; `docs/AGENTS.md` explains
-how to add a rule or a node.
+Agent guidance is tool-neutral: the root `AGENTS.md` and one `AGENTS.md` per node give that folder's
+purpose, commands, constraints and rules, and link the `docs/` pages that hold the architecture and
+procedures; `.agents/rules/` holds the scoped rule files. The agent-file check
+(`docs/checks/check_agent_files.py`) enforces the layout, including the 40-line cap on every
+`AGENTS.md`; `docs/agent-guidance.md` explains the policy and how to add a rule or a node.
 
 - **Start at the repository root.** Scoped rules are delivered only when the agent is started at the
   root; started inside a node folder you get that folder's `AGENTS.md` (Claude Code also loads the
@@ -74,7 +75,7 @@ how to add a rule or a node.
   `/init`, which can.
 - **OpenCode** needs the `opencode-rules` plugin at the range pinned in `opencode.json`; without it
   scoped rules are not delivered automatically. Install and troubleshooting steps are in
-  `docs/AGENTS.md`. Never repeat the version range in another file.
+  `docs/opencode-rules.md`. Never repeat the version range in another file.
 - **Antigravity** reads `AGENTS.md`; it does not load nested node files on its own, so follow the
   node map in the root file and open each node's `AGENTS.md` yourself. Scoped `.agents/rules`
   delivery in the IDE is unverified, so read the node's listed rule files as well.
@@ -82,8 +83,8 @@ how to add a rule or a node.
   the skill links are checked out as plain text and Claude Code sees no rules or skills (the check
   warns explicitly). On Linux and macOS the committed symlinks resolve as-is.
 - **OpenSpec** CLI `>= 2.0.0, < 3` (2.0.0 last verified; 1.x is unsupported), run on Linux or macOS
-  only. Use the update procedure in `docs/AGENTS.md`; generated `openspec-*` skills must never be
-  hand-edited.
+  only. Use the update procedure in `docs/openspec-workflow.md`; generated `openspec-*` skills must
+  never be hand-edited.
 - **Reviewing an untrusted checkout:** read `opencode.json` and `.claude/settings.json` before
   launching an agent, or start outside the checkout / disable the project's plugin configuration,
   because repository configuration can install and run code.

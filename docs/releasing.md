@@ -33,7 +33,21 @@ and `docs/ci.md`). For each component, only commits that touch that component's 
 | `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `style`, `revert` | none |
 
 PRs are squash-merged, so the PR title and body become the commit that counts. A component that was
-never tagged starts at `0.1.0`.
+never tagged starts at `0.1.0`. Guidance-only changes are typed `docs` so they do not bump a release
+component.
+
+### Build-time version injection
+
+Versions are injected at build time, not read from a checked-in file:
+
+- the web extension reads `VELES_EXTENSION_VERSION`;
+- the installer reads `VELES_INSTALLER_VERSION`;
+- the native host reads `VELES_HOST_VERSION`;
+- the Android app's version name and code are computed by the `androidGitVersion` plugin
+  (`prefix = "android-v"`, `codeFormat = "MMNNPP"`).
+
+The combined release tag, recovery, rollback and one-time owner settings are in this file; the CI tree
+is in [`docs/ci.md`](ci.md).
 
 **Preview.** Every push to `master` runs the `preview` job of `release-build.yml`. Its job summary
 shows each component's current and next version, the bump reasons, and what would be carried. It

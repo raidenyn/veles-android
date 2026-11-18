@@ -30,7 +30,8 @@ The root `AGENTS.md` carries a generated `## Hook-delivered rules` block: the ma
 per rule (its `pointer`, then its path), nothing else. It is the always-on fallback, so each pointer
 says when to read its file and states anything that must never be missed (the commit-types pointer
 keeps the Conventional Commits format rule). `pointers --check` and the agent-file check fail on a
-stale block.
+stale block. Each rule adds one line to the root, which is capped at 40 lines; see the hook section in
+[`docs/AGENTS.md`](AGENTS.md#hook-delivered-rules) for the compression step.
 
 ## Delivery
 

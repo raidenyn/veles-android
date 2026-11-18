@@ -29,17 +29,17 @@ OpenSpec workflows SHALL be delivered only as skills. A single copy MUST exist i
 
 #### Scenario: No command spelling in live files
 - **WHEN** live documentation, workflows or the `superspec` instructions and templates are searched
-- **THEN** they refer to skills (`/openspec-propose`, `/openspec-apply-change`, …) and not to `/opsx:` commands, while archived and frozen evidence is left unchanged and the resulting fork of the third-party `superspec` schema is recorded in `docs/AGENTS.md`
+- **THEN** they refer to skills (`/openspec-propose`, `/openspec-apply-change`, …) and not to `/opsx:` commands, while archived and frozen evidence is left unchanged and the resulting fork of the third-party `superspec` schema is recorded in `docs/openspec-workflow.md`
 
 ### Requirement: The generated skill set is documented and checked
-The set of `openspec-*` skills in `.agents/skills/` depends on the user-wide OpenSpec workflow list, so `docs/AGENTS.md` SHALL document the required workflow list and the resulting skill names, and the agent-file check MUST fail when the `openspec-*` skills present differ from that documented list.
+The set of `openspec-*` skills in `.agents/skills/` depends on the user-wide OpenSpec workflow list, so `docs/openspec-skills.md` SHALL document the required workflow list and the resulting skill names, and the agent-file check MUST read that file and fail when the `openspec-*` skills present differ from the documented list. `docs/AGENTS.md` MUST link `docs/openspec-skills.md`.
 
 #### Scenario: Different workflow list
 - **WHEN** a contributor whose workflow list differs runs `openspec update` and commits a different set of skills
 - **THEN** the agent-file check fails and names the added or missing skills
 
 #### Scenario: Deliberate change
-- **WHEN** a newer 2.x CLI adds a skill and the pull request updates the documented list with it
+- **WHEN** a newer 2.x CLI adds a skill and the pull request updates the documented list in `docs/openspec-skills.md` with it
 - **THEN** the check passes
 
 ### Requirement: Update is idempotent after migration

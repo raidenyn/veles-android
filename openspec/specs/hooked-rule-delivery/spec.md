@@ -237,8 +237,11 @@ write id.
 
 - `docs/AGENTS.md` MUST gain a short hook-delivered rules section limited to what an agent needs on every
   checkout: how to add a rule (location, naming, the grammar pointer and the `pointers --write` step), the
-  supported configuration, and a link to `docs/hook-delivered-rules.md`.
-- Its untrusted-checkout guidance MUST warn that the repository's hooks run a script on every shell command.
+  supported configuration, the root 40-line cap and that each rule adds one pointer line, and a link to
+  `docs/hook-delivered-rules.md`.
+- `docs/opencode-rules.md` MUST warn that the repository configuration (`.claude/settings.json`,
+  `opencode.json`) can make an agent tool install and run code and that the hooks run a script on every
+  shell command; `CONTRIBUTING.md` MUST cross-link the warning, and `docs/AGENTS.md` MUST link that page.
 - `docs/hook-delivered-rules.md` MUST describe:
   - adding a rule, with the grammar;
   - delivery, gates, pending entries and re-arm;
