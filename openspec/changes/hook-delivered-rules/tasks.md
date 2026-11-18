@@ -138,10 +138,10 @@ Each step below that changes a file the agent-file check inspects lands together
 
 ## 7. Verification
 
-- [ ] 7.1 Commit the work as a candidate, then run `python3 -I scripts/components.py changed --base $(git merge-base origin/master HEAD)` against that committed diff. For every node it selects, run the checks listed in that node's `AGENTS.md`. For this change that is at least:
+- [x] 7.1 Commit the work as a candidate, then run `python3 -I scripts/components.py changed --base $(git merge-base origin/master HEAD)` against that committed diff. For every node it selects, run the checks listed in that node's `AGENTS.md`. For this change that is at least:
   - `docs`: the agent-file check and its tests, and the Gate B matrix validator;
   - `tooling`: `./gradlew scriptsTest`, `node --test scripts/check-mac-comparisons.test.mjs`, the offline `python3 -I scripts/project_flow.py check` and `python3 -I scripts/components.py check`.
-- [ ] 7.2 Repeat the spike setup of 1.1–1.2, without the stubs, against the finished implementation in a disposable clone of the candidate commit. The plugin's injection-failure switch is still used for behaviour 6. Re-run 1.5 and all outcomes of ship-gate behaviours 1–6 in Claude Code and OpenCode, then clean up as in 1.7.
+- [x] 7.2 Repeat the spike setup of 1.1–1.2, without the stubs, against the finished implementation in a disposable clone of the candidate commit. The plugin's injection-failure switch is still used for behaviour 6. Re-run 1.5 and all outcomes of ship-gate behaviours 1–6 in Claude Code and OpenCode, then clean up as in 1.7.
 
   Record each outcome, tool and version for both runs in `spike.md`, the completion report and the PR body. A failed outcome stops the work for the owner's decision, as in 1.7.
 - [ ] 7.3 Commit the sanitized `spike.md` evidence. Then re-run the selector and every selected node's checks of 7.1 on the actual final diff (`git merge-base origin/master HEAD` to `HEAD`), so the evidence commit is checked too.

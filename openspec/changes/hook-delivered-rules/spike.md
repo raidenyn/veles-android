@@ -34,6 +34,12 @@ behaviour. This matches the earlier agent-guidance verification, which also reco
 driver run. Whether Antigravity reads the root `AGENTS.md` natively stays unverified; it is recorded as a blocker
 for the owner to accept, and no later task depends on it.
 
+**Repeated on the finished implementation (final verification).** With the real pointer block in the root
+`AGENTS.md` and the real pilot rule, the same driver again reported the root `AGENTS.md`, the pointer line and the
+rule body all as not in context at the start. The rule body is absent, as required, but the missing pointer is not
+evidence about Antigravity: the driver does not load the root `AGENTS.md` at all. The result stays inconclusive and
+is recorded as a blocker for the owner to accept.
+
 
 ## Open item 1: Claude Code facts
 
@@ -246,3 +252,90 @@ residual batch cases were run and their outcomes recorded.
    re-run needs the same test trigger, or an interactive session, to compact.
 5. **Residual A differs by host** because of the different concurrency: on Claude Code the gate passes, on
    OpenCode it is denied. Both are within the accepted residual.
+
+## Final verification (candidate 7e164d3e)
+
+Plan Task 10 step 2 (task 7.2). The finished implementation was run in real headless sessions in a disposable
+clone of candidate `7e164d3e` with no remote. No stubs: the real `.claude/settings.json` hooks, the real
+`opencode.json` plugin entry, `scripts/agent_rules.py` and `.agents/hooked-rules/repo-commit-types.md`. `gh` was a
+`PATH` shim that only logged, and nothing was pushed. Each outcome was checked against the engine state under the
+clone's git directory (`agent-rules/`), not only against what the model said. The raw logs, the clones and the
+sessions were deleted afterwards.
+
+### Versions
+
+| Item | Version |
+|---|---|
+| Claude Code | 2.1.326 (`claude -p`, Sonnet model) |
+| OpenCode | 2.3.2 (`opencode run --standalone`, default OpenAI model), next to `opencode-rules` 2.0.0 |
+| Python | 3.14.4 (engine run with `-I` by the real hooks) |
+| Node | 26.13.1 (OpenCode loads the plugin itself) |
+| OpenSpec | 2.0.0 |
+
+### Ship-gate matrix (finished implementation)
+
+"Pass" means that a real headless session showed the outcome, and the engine state matched it.
+
+| # | Outcome | Claude Code 2.1.326 | OpenCode 2.3.2 |
+|---|---|---|---|
+| — | Fresh session: pointer block present, rule body absent | Pass | Pass |
+| 1 | Integration loads from its tracked location | Pass (`.claude/settings.json` hooks) | Pass (`"./scripts/opencode-hooked-rules"` next to `opencode-rules`) |
+| 1 | A command that normally asks still asks | Pass: no hook output, and the call was refused for lack of approval | Pass: under a project `ask` rule the plugin passed, and the host asked and then rejected headless |
+| 1 | …also after a recoverable engine failure (corrupt state) | Pass: a gated `git commit` that needs approval got the read-by-hand notice, no decision, and was refused for lack of approval | Pass: same probe under an `ask` rule; the plugin passed silently (no state written) and the host asked and rejected |
+| 2 | Gated command stopped once with the rule text; re-run proceeds | Pass (`git commit`, `gh pr edit`; `gh pr create` in the batch row) | Pass (`git commit`, `gh pr edit`; `gh pr create` in the batch row) |
+| 2 | Re-run whose title the model changed proceeds | Pass (`update stuff` denied, then `chore: …` passed; same for a `gh pr edit` title) | Conditional pass: pointer block removed from the clone's `AGENTS.md`; `update stuff` denied, then `chore: …` passed (same for `gh pr edit`). With the pointer intact the model read the rule first and never sent the bad title; in that run it still changed a denied `chore: …` to `chore(repo): …`, and the changed re-run passed |
+| 2 | Parallel sibling with a different gate pattern also stopped | Pass: `git commit` and `gh pr create` both denied, both retries passed (2 patterns pending) | Pass: same |
+| 2 | Residual A: moment and gate in one batch | Recorded: the gate **passed**, because Claude ran the moment first | Recorded: the gate (`gh pr edit`) was **denied**, because the hooks ran concurrently |
+| 2 | Residual B: two same-kind gates in one batch | Recorded: first denied, second **passed** as a re-run | Recorded: same, driven with two `gh pr edit` calls (the model refused to send two parallel commits) |
+| 3 | Model-invoked skill adds the rule; later gate passes | Pass (`openspec-apply-change`) | Pass (rule appended to the `skill` output) |
+| 3 | User `/<skill>` adds the rule; later gate passes | Pass (`UserPromptSubmit` context, recorded on the prompt) | Pass (synthetic message stored before the user message) |
+| 3 | `SKILL.md` read adds the rule; later gate passes | Pass (absolute path through the `.claude/skills` symlink) | Pass (relative `path`) |
+| 3 | Successful workflow command adds the rule; later gate passes | Pass | Pass |
+| 3 | Failing workflow command is not a moment | Pass (next gate denied) | Pass (next gate denied) |
+| 4 | After compaction with no moment, the next gate is blocked | Pass (`/compact`) | Pass (host compaction through the test trigger) |
+| 4 | Immediate gate right after an observed compaction (ordering) | Not applicable (OpenCode only) | Recorded: `compaction.started` and `.ended` were observed before the gate's hook, and the gate was denied, so the reset had been applied |
+| 4 | Parent delivery not credited to a subagent | Pass | Pass |
+| 4 | Subagent delivery not credited to the parent | Pass | Pass |
+| 4 | Subagent compacts: host identifies it, and the parent's delivery survives | Pass (forced autocompaction: only the subagent key's generation rose, to 2; child gate denied, parent gate passed) | Pass (child session compacted: only the child key rose; child gate denied, parent gate passed) |
+| 4 | Whole-session fallback | Not applicable: the host identifies the subagent | Not applicable: the host identifies the subagent |
+| 5 | Hooks or plugin disabled: pointer block visible | Pass (`disableAllHooks` through `--settings`; no state written, commit not blocked) | Pass (plugin entry removed; no state written) |
+| 6 | Forced engine failure after the write does not block | Pass (pending entry written, then exit 1; the call ran) | Pass (pending entry written; the plugin passed, and the after-hook added the notice) |
+| 6 | Stale credit on the first and second later gated call | Observed: the first later commit passed by confirming the stale pending entry; a second later call (`gh pr create`) passed as delivered | Observed: same as Claude Code |
+| 6 | Forced injection failure sends `void`; the next gate is denied again | Not applicable (OpenCode only) | Pass: the moment's entry was written, then removed by `void`, and the next gate was denied |
+| 7 | Claude: recoverable failure on `PreToolUse` puts the notice in the model's view with no permission decision | Pass: the model quoted the notice; the call went through the normal flow (ran when allowed, refused when not) | Not applicable |
+| 8 | OpenCode: `ctx.session.get` for a child session has `id`, `parentID` and `location` | Not applicable | Pass: test-driver log showed `id` matching, `parentID` = the parent and an absolute `location.directory`; behaviour matched (child gate denied, parent delivery kept) |
+| 9 | OpenCode: session directory, not plugin directory, picks the rules | Not applicable | Pass: plugin loaded from clone A (`OPENCODE_CONFIG`), session in clone B with a canary line in its rule body. The denial text carried clone B's canary, and the state was written to clone B's store |
+
+**Result:** every ship-gate outcome for behaviours 1–6 passes in both Claude Code and OpenCode. The changed-title
+re-run on OpenCode is a conditional pass with the pointer removed, as in the spike. Both residual batch cases were
+run and recorded, with the same outcomes as the spike. Extra checks 7–9 pass. **Status: DONE.**
+
+### How the hard cases were driven
+
+- **Corrupt state:** the clone's `agent-rules/index.json` was truncated for one run and restored afterwards. Only a
+  transaction that writes reads the index, so the probes used a gated command (`git commit`). A non-gated `touch`
+  took no store path and got no notice. On OpenCode the probe added `"git commit *": "ask"` to the clone's
+  `opencode.json` for that run only.
+- **Claude subagent compaction:** `CLAUDE_CODE_AUTO_COMPACT_WINDOW=120000` and
+  `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=60`. The subagent ran the workflow trigger and then read four large files. A
+  first attempt with a 100000 window also compacted the parent (whole-session bump), so it was discarded.
+- **OpenCode compaction:** a separate test-only plugin under the scratch directory, added as an extra entry to
+  the clone's `opencode.json` (the real plugin is unchanged). On a magic prompt it called
+  `ctx.session.compact({sessionID})`. It also logged compaction events, the order of `execute.before`, and the
+  shape of `ctx.session.get` for checks 4 and 8. The child was compacted by resuming it with `opencode run -s <child>`.
+- **OpenCode changed title:** a second clone with the pointer block removed from `AGENTS.md`.
+- **Forced failures:** `VELES_AGENT_RULES_FAIL_AFTER_WRITE=1` and `VELES_AGENT_RULES_FAIL_INJECTION=1`, set only
+  for the sessions concerned. The state file was read between the calls to show the write came first.
+- **Check 9:** clone B had the hooked plugin removed from its own `opencode.json`. `OPENCODE_CONFIG` pointed to a
+  scratch config naming clone A's plugin directory by absolute path.
+
+### Defects found
+
+None in the implementation. Observations:
+
+1. Spike concern 1 still holds on OpenCode. The model follows the pointer and reads the rule file before most
+   gated commands, which earns no credit, so it still takes one denial.
+2. On Claude, the denial reaches the model as `PreToolUse:Bash hook error: <rule text>`. Every model read it as
+   the rule and re-ran the command.
+3. A compaction between a denial and its retry voids the pending entry, so the retry is denied again. This was
+   seen in Claude subagent runs and is the designed re-arm.
