@@ -47,7 +47,7 @@
   - `pass` emitting nothing;
   - `deny` never emitting `allow`;
   - checkout resolution from `cwd`, with a silent pass outside a checkout.
-- [ ] 3.2 Implement the state store with failing tests first:
+- [x] 3.2 Implement the state store with failing tests first:
   - per-session files under the git common directory;
   - per-session locks (`fcntl` / `msvcrt`) and the index lock;
   - atomic writes;
@@ -56,7 +56,7 @@
   - one transaction wrapper in which the decision, the generation read and the update happen under the lock before any output.
 
   Tests cover lock contention (with the lock held in-process) and differing rule identities across worktrees.
-- [ ] 3.3 Implement pruning: 50 sessions, ordered by the index counter, never by the clock. It skips a busy victim and never prunes the current session. Tests cover both cases, and a pruned session returning at generation 0.
+- [x] 3.3 Implement pruning: 50 sessions, ordered by the index counter, never by the clock. It skips a busy victim and never prunes the current session. Tests cover both cases, and a pruned session returning at generation 0.
 - [ ] 3.4 Implement the moments, with failing tests first:
   - skill tool calls;
   - a leading `/<skill>` prompt;
