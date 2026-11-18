@@ -1,6 +1,6 @@
 ## 1. Spike: prove the host behaviours (ship gate, first)
 
-- [ ] 1.1 Create a disposable spike repository with its own git directory: `git clone --no-hardlinks` of this checkout into the session scratchpad, followed by `git remote remove origin`, so it has no writable remote and its hook state never touches the live git common directory. In it, put stub files **at the real tracked paths**, so the spike exercises the wiring that ships:
+- [x] 1.1 Create a disposable spike repository with its own git directory: `git clone --no-hardlinks` of this checkout into the session scratchpad, followed by `git remote remove origin`, so it has no writable remote and its hook state never touches the live git common directory. In it, put stub files **at the real tracked paths**, so the spike exercises the wiring that ships:
   - a stub engine at `scripts/agent_rules.py`, with JSON-file state, deny-once, pending, context, re-arm, `void`, and a test-only switch that fails after the write;
   - in the plugin, a test-only switch that makes the host injection fail after a successful engine response;
   - hooks in `.claude/settings.json`;
@@ -9,23 +9,23 @@
   - a stub pointer block in its root `AGENTS.md`.
 
   The stub logs raw hook inputs to the scratchpad only, never inside a checkout.
-- [ ] 1.2 Make the spike non-publishing:
+- [x] 1.2 Make the spike non-publishing:
   - commits land only in the disposable repository;
   - `gh` resolves to a PATH shim inside the scratchpad that records its arguments and exits 0, so `gh pr create` and `gh pr edit` never reach GitHub;
   - the workflow moment runs only the trigger command `openspec instructions finalize` against a dummy change. The agent is told never to carry out the returned workflow, which includes pushes.
-- [ ] 1.3 Claude Code: resolve design Open item 1. Record:
+- [x] 1.3 Claude Code: resolve design Open item 1. Record:
   - the `Skill` hook input field that names the skill;
   - whether a user `/<skill>` reaches `UserPromptSubmit`;
   - whether `PreCompact` carries `agent_id`;
   - how a nonzero exit shows in `PostToolUse`.
-- [ ] 1.4 OpenCode 2.x: resolve design Open item 2. Record:
+- [x] 1.4 OpenCode 2.x: resolve design Open item 2. Record:
   - the local plugin entry syntax next to `opencode-rules`;
   - whether `execute.before` can stop a call with text the model sees;
   - the `execute.after` completion and exit fields;
   - whether the output append persists in the transcript.
-- [ ] 1.5 In fresh sessions of Claude Code, OpenCode and Antigravity, observe that the full stub rule is **not** in context before any trigger, and that the pointer block is. Antigravity is pointer-only.
-- [ ] 1.6 Run all outcomes of ship-gate behaviours 1–6 (the `hooked-rule-delivery` "End-to-end verification and ship condition" requirement) in both Claude Code and OpenCode, including the two parallel-batch residual cases. Record **sanitized** outcomes (no raw inputs, paths or prompts) with tool versions in `openspec/changes/hook-delivered-rules/spike.md`.
-- [ ] 1.7 If any outcome cannot be made to work in a tool, stop and ask the owner (pointer-only for that tool, or hold the change) before any further task. In either case, delete the disposable repository and the scratchpad shim and logs, and confirm that `git status` of the main checkout shows only `spike.md`.
+- [x] 1.5 In fresh sessions of Claude Code, OpenCode and Antigravity, observe that the full stub rule is **not** in context before any trigger, and that the pointer block is. Antigravity is pointer-only.
+- [x] 1.6 Run all outcomes of ship-gate behaviours 1–6 (the `hooked-rule-delivery` "End-to-end verification and ship condition" requirement) in both Claude Code and OpenCode, including the two parallel-batch residual cases. Record **sanitized** outcomes (no raw inputs, paths or prompts) with tool versions in `openspec/changes/hook-delivered-rules/spike.md`.
+- [x] 1.7 If any outcome cannot be made to work in a tool, stop and ask the owner (pointer-only for that tool, or hold the change) before any further task. In either case, delete the disposable repository and the scratchpad shim and logs, and confirm that `git status` of the main checkout shows only `spike.md`.
 
 ## 2. Engine: rule parsing and pointers (tests first)
 
