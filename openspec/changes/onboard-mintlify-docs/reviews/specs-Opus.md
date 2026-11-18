@@ -74,7 +74,7 @@ Master capped every AGENTS.md at 40 lines while the change was in review, so the
 
 ### Round 1 — approve
 
-No critical or high finding. The old "Site guidance" requirement became "Site guidance in AGENTS.md" and "Site guidance document" (with a new scenario that the document stays unpublished); \`openspec validate --strict\` passes and the spec stays MDX-safe.
+No critical or high finding. The old "Site guidance" requirement became "Site guidance in AGENTS.md" and "Site guidance document" (with a new scenario that the document stays unpublished); `openspec validate --strict` passes and the spec stays MDX-safe.
 
 Approved content: specs/documentation-site/spec.md sha256 2fb46d9f585f826c87d5fc7f2268dc7000bd0092095c46c22caeb3ddc8c1f9bc (triggering normative edit re-reviewed)
 
