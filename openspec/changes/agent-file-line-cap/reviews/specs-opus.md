@@ -4,7 +4,7 @@ Preset: opus (first Opus).
 Upstream inputs:
 - brainstorm.md sha256 3ae02aea3c496d32cb8a03d1fc6764f326dc9fe3e85a26970ff7ae115f3eab4f
 - proposal.md sha256 79aa10cda5d78a94eff53ead15cfff5c267611e2846ef112a501367f309f9b48
-- design.md sha256 143bfc17f10a5ffb3c07e1766525cb50747c48f0386edcc4546405624ca06938 — re-pointed after three non-triggering spec-alignment edits made after this pass's round 1; the reviewed design content is otherwise unchanged.
+- design.md sha256 fbdb53fff2a005ae241fc7e05604009ae735acd8e913d59092c7a4ab3ca11f00 — re-pointed for the non-triggering move of the traceability table from the regenerated `verify.md` to `traceability.md`; the reviewed design content is otherwise unchanged.
 
 Cap: 5 rounds per reviewer per pass.
 
