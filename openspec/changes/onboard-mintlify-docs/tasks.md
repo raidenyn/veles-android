@@ -10,32 +10,32 @@
 
 ## 2. Allowlist and site configuration
 
-- [ ] 2.1 Copy `site/veles-icon.png` to `docs/assets/veles-icon.png`
-- [ ] 2.2 Write the root `.mintignore` exactly as design D1 lists it and `git add` it with the icon; confirm with `git ls-files` minus `git ls-files -c -i --exclude-from=.mintignore` that the published set equals the spec's *Published set* (except the files added or moved later into `docs/user/`, `docs/dev/` and `docs/assets/`, including the guide moved in 3.1)
-- [ ] 2.3 Write the root `docs.json`: `$schema`, `name` "Veles", `theme` "mint", colours `#1e6b47`/`#8fdbb0`/`#1e6b47`, logo and favicon `docs/assets/veles-icon.png`, `integrations.telemetry.enabled: false`, navbar links to the repository and its Releases page, and `navigation.products` Users and Developers with the groups of design D2 as an empty skeleton (product and group entries only; 4.5 and 5.5 add the pages) (spec: *Site configuration*, *Site branding*, *Two products*)
+- [x] 2.1 Copy `site/veles-icon.png` to `docs/assets/veles-icon.png`
+- [x] 2.2 Write the root `.mintignore` exactly as design D1 lists it and `git add` it with the icon; confirm with `git ls-files` minus `git ls-files -c -i --exclude-from=.mintignore` that the published set equals the spec's *Published set* (except the files added or moved later into `docs/user/`, `docs/dev/` and `docs/assets/`, including the guide moved in 3.1)
+- [x] 2.3 Write the root `docs.json`: `$schema`, `name` "Veles", `theme` "mint", colours `#1e6b47`/`#8fdbb0`/`#1e6b47`, logo and favicon `docs/assets/veles-icon.png`, `integrations.telemetry.enabled: false`, navbar links to the repository and its Releases page, and `navigation.products` Users and Developers with the groups of design D2 as an empty skeleton (product and group entries only; 4.5 and 5.5 add the pages) (spec: *Site configuration*, *Site branding*, *Two products*)
 
 ## 3. Existing content
 
-- [ ] 3.1 `git mv docs/sensitive-notifications.md docs/user/sensitive-notifications.md`, keep it plain Markdown, and update the links in `README.md` (lines 56, 66) and `BUILD.md` (line 84) (spec: *Sensitive-notifications guide*). In `BUILD.md` the link becomes absolute in 3.2, which the spec's *Absolute links to unpublished files* allows
-- [ ] 3.2 Turn every relative link in `BUILD.md` (lines 16, 63, 84, 112, 124) and `CONTRIBUTING.md` (lines 95-97) into an absolute `https://github.com/raidenyn/veles-android/blob/master/...` link; change nothing else in those files (spec: *Absolute links to unpublished files*)
-- [ ] 3.3 Escape the RFC's `<1 KiB` (`docs/rfcs/2026-08-21-otp-external-devices.md` line 2663) with the minimal edit that makes it parse
+- [x] 3.1 `git mv docs/sensitive-notifications.md docs/user/sensitive-notifications.md`, keep it plain Markdown, and update the links in `README.md` (lines 56, 66) and `BUILD.md` (line 84) (spec: *Sensitive-notifications guide*). In `BUILD.md` the link becomes absolute in 3.2, which the spec's *Absolute links to unpublished files* allows
+- [x] 3.2 Turn every relative link in `BUILD.md` (lines 16, 63, 84, 112, 124) and `CONTRIBUTING.md` (lines 95-97) into an absolute `https://github.com/raidenyn/veles-android/blob/master/...` link; change nothing else in those files (spec: *Absolute links to unpublished files*)
+- [x] 3.3 Escape the RFC's `<1 KiB` (`docs/rfcs/2026-08-21-otp-external-devices.md` line 2663) with the minimal edit that makes it parse
 
 ## 4. User pages
 
-- [ ] 4.1 Write `docs/user/index.mdx` (Welcome: what Veles does and for whom, from `README.md` About and the landing page's problem and free sections)
-- [ ] 4.2 Write `docs/user/install.mdx` (download from Releases, install with Android 13+, from `README.md` Quick Start and `BUILD.md` "Installing on a Device")
-- [ ] 4.3 Write `docs/user/notification-access.mdx` (granting notification access and what the app then shows), taking the screen names and button labels from the app's string resources and permissions screen in `android/app/src/main/`, with `README.md` Quick Start as the outline
-- [ ] 4.4 Write `docs/user/privacy.mdx` (no internet permission, no telemetry, OTPs parsed on the phone; that codes leave the phone only over Bluetooth to a computer the user has paired, when the user turns sharing on, in one sentence with no steps (a privacy fact the spec's *Privacy wording* requires for accuracy, beyond design D5's summary, and not a pairing guide); separately, the site is hosted by Mintlify with telemetry off and nothing more is claimed), confirming every claim against `android/app/src/main/AndroidManifest.xml` and the sharing code (spec: *Privacy wording*)
-- [ ] 4.5 List the five pages in the Users product; no pairing guide (spec: *User page set*)
+- [x] 4.1 Write `docs/user/index.mdx` (Welcome: what Veles does and for whom, from `README.md` About and the landing page's problem and free sections)
+- [x] 4.2 Write `docs/user/install.mdx` (download from Releases, install with Android 13+, from `README.md` Quick Start and `BUILD.md` "Installing on a Device")
+- [x] 4.3 Write `docs/user/notification-access.mdx` (granting notification access and what the app then shows), taking the screen names and button labels from the app's string resources and permissions screen in `android/app/src/main/`, with `README.md` Quick Start as the outline
+- [x] 4.4 Write `docs/user/privacy.mdx` (no internet permission, no telemetry, OTPs parsed on the phone; that codes leave the phone only over Bluetooth to a computer the user has paired, when the user turns sharing on, in one sentence with no steps (a privacy fact the spec's *Privacy wording* requires for accuracy, beyond design D5's summary, and not a pairing guide); separately, the site is hosted by Mintlify with telemetry off and nothing more is claimed), confirming every claim against `android/app/src/main/AndroidManifest.xml` and the sharing code (spec: *Privacy wording*)
+- [x] 4.5 List the five pages in the Users product; no pairing guide (spec: *User page set*)
 
 ## 5. Developer pages
 
-- [ ] 5.1 Write `docs/dev/index.mdx` (Overview: the components and where each lives, written for people from the root `AGENTS.md` node map)
-- [ ] 5.2 Write `docs/dev/architecture.mdx` from `CONTRIBUTING.md` "How Veles Works" and the node `AGENTS.md` files
-- [ ] 5.3 Write `docs/dev/build.mdx` and `docs/dev/contributing.mdx` importing `/BUILD.md` and `/CONTRIBUTING.md`; if an import does not resolve in `mint dev`, use the fallback page and drop the file from `.mintignore` (spec: *Single-source build and contributing pages*)
-- [ ] 5.4 Write the 28 wrappers `docs/dev/specs/CAPABILITY.mdx` per design D3 (title rule, description from the Purpose or by hand where it is `TBD`)
-- [ ] 5.5 Fill the Developers product: "Start here", "Engineering reference" (`docs/ci`, `docs/releasing`, `docs/reproducible-builds`, `docs/superspec-workflow`, both decision records, the RFC) and "Specifications" with the five sub-groups of design D2 (spec: *Developer page set*)
-- [ ] 5.6 `git add` every new page, wrapper and asset; run `npx mint@4.2.1199 broken-links` from the root; turn each reported link, and each link in any published page (old or new) to an unpublished file, into an absolute GitHub link (design D4). Files under `openspec/specs/` are never edited (none has a relative link today); if one is reported, stop and report it instead
+- [x] 5.1 Write `docs/dev/index.mdx` (Overview: the components and where each lives, written for people from the root `AGENTS.md` node map)
+- [x] 5.2 Write `docs/dev/architecture.mdx` from `CONTRIBUTING.md` "How Veles Works" and the node `AGENTS.md` files
+- [x] 5.3 Write `docs/dev/build.mdx` and `docs/dev/contributing.mdx` importing `/BUILD.md` and `/CONTRIBUTING.md`; if an import does not resolve in `mint dev`, use the fallback page and drop the file from `.mintignore` (spec: *Single-source build and contributing pages*)
+- [x] 5.4 Write the 28 wrappers `docs/dev/specs/CAPABILITY.mdx` per design D3 (title rule, description from the Purpose or by hand where it is `TBD`)
+- [x] 5.5 Fill the Developers product: "Start here", "Engineering reference" (`docs/ci`, `docs/releasing`, `docs/reproducible-builds`, `docs/superspec-workflow`, both decision records, the RFC) and "Specifications" with the five sub-groups of design D2 (spec: *Developer page set*)
+- [x] 5.6 `git add` every new page, wrapper and asset; run `npx mint@4.2.1199 broken-links` from the root; turn each reported link, and each link in any published page (old or new) to an unpublished file, into an absolute GitHub link (design D4). Files under `openspec/specs/` are never edited (none has a relative link today); if one is reported, stop and report it instead
 
 ## 6. CI, ownership and guidance
 
