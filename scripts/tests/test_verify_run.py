@@ -91,10 +91,15 @@ class FakeProcess:
     succeeds; `auto_exit=False` keeps it alive until a signal that is not in `ignore` arrives.
     `members` are the other processes of the group: they keep the group alive after the leader
     exits, and each has its own signals to ignore.
+
+    `zombie` models the reaping rule: with `zombie=True` (the default, a process this runner
+    started) a leader that has died but has not been `poll`ed or `wait`ed for is still a member of
+    its group, exactly as a real zombie is; `zombie=False` is a group this runner did not start
+    (an orphan of a dead run), whose parent reaps it, so a dead leader is gone at once.
     """
 
     def __init__(self, pid=4242, code=0, output=b"", stderr_output=b"", ignore=(),
-                 on_poll=None, auto_exit=True, members=()):
+                 on_poll=None, auto_exit=True, members=(), zombie=True):
         self.pid = pid
         self.code = code
         self.output = output
@@ -103,6 +108,7 @@ class FakeProcess:
         self.on_poll = on_poll
         self.auto_exit = auto_exit
         self.members = list(members)
+        self.zombie = zombie
         self.running = True
         self.reaped = False
         self.signals = []
@@ -112,7 +118,10 @@ class FakeProcess:
             self.on_poll()
         if self.running and self.auto_exit:
             self.running = False
-        return None if self.running else self.code
+        if self.running:
+            return None
+        self.reaped = True  # a poll that sees the exit reaps it, as Popen.poll does
+        return self.code
 
     def wait(self):
         self.reaped = True
@@ -121,7 +130,11 @@ class FakeProcess:
 
     def group_alive(self):
         """The leader or any member still exists: what `killpg(pgid, 0)` would say."""
-        return self.running or any(member.alive for member in self.members)
+        if self.running:
+            return True
+        if self.zombie and not self.reaped:
+            return True
+        return any(member.alive for member in self.members)
 
     def signal(self, sig):
         self.signals.append(sig)
@@ -268,6 +281,39 @@ class TerminateTest(RunFixture):
         self.assertTrue(process.reaped)
         self.assertEqual(outcome.code, -int(signal.SIGKILL))
 
+    def test_leader_that_honours_term_ends_promptly(self):
+        # A leader that dies on SIGTERM must be reaped before the group is judged alive: its
+        # zombie would otherwise keep the grace running for ten seconds and earn a SIGKILL.
+        process = FakeProcess(pid=809, auto_exit=False)
+        processes = FakeProcesses(spawn=[process], clock=self.clock, wait=self.wait)
+        outcome = self.runner(processes).run(["sleep", "30"], self.repo, {"PATH": ""},
+                                             self.log_path(), 1.0, False)
+        self.assertEqual(outcome.kind, "timeout")
+        self.assertEqual(outcome.code, -int(signal.SIGTERM))
+        self.assertEqual(processes.signals, [(809, signal.SIGTERM)])
+        self.assertEqual(processes.at, [1.0])
+        self.assertEqual(outcome.elapsed_s, 1.0)  # the cutoff, not cutoff + the grace
+        self.assertTrue(process.reaped)
+        self.assertIsNone(read_json(self.running_path))
+
+
+class GroupModelTest(unittest.TestCase):
+    def test_fake_distinguishes_running_zombie_and_empty(self):
+        # The model the runner tests rely on: a dead but unreaped leader is still a group member.
+        member = FakeMember(ignore={signal.SIGTERM})
+        process = FakeProcess(pid=1, auto_exit=False, members=[member])
+        self.assertTrue(process.group_alive())          # (a) a running leader
+        process.signal(signal.SIGTERM)
+        self.assertFalse(process.running)
+        self.assertTrue(process.group_alive())          # (b) a zombie, plus a live member
+        self.assertEqual(process.poll(), -int(signal.SIGTERM))
+        self.assertTrue(process.group_alive())          # the member still keeps the group alive
+        member.signal(signal.SIGKILL)
+        self.assertFalse(process.group_alive())         # (c) an empty group
+        orphan = FakeProcess(pid=2, zombie=False)
+        orphan.signal(signal.SIGTERM)
+        self.assertFalse(orphan.group_alive())          # a group we did not start: its parent reaps
+
 
 class GroupLifetimeTest(RunFixture):
     def test_leader_exit_keeps_the_group_until_the_kill(self):
@@ -386,8 +432,8 @@ class OrphanTest(RunFixture):
     def test_orphans_killed_and_confirmed(self):
         # D9: a group recorded under another run id gets SIGTERM, then SIGKILL after the grace,
         # and is confirmed gone with killpg(pgid, 0) before the entries are cleared.
-        orphan = FakeProcess(pid=5001, ignore={signal.SIGTERM}, auto_exit=False)
-        own = FakeProcess(pid=5002, auto_exit=False)
+        orphan = FakeProcess(pid=5001, ignore={signal.SIGTERM}, auto_exit=False, zombie=False)
+        own = FakeProcess(pid=5002, auto_exit=False, zombie=False)
         self.record((OTHER_RUN, 5001), (RUN, 5002))
         processes = FakeProcesses(known=[orphan, own], clock=self.clock, wait=self.wait)
         context = self.context(processes=processes)
@@ -402,7 +448,8 @@ class OrphanTest(RunFixture):
 
     def test_orphan_alive_after_15s_is_contention(self):
         # D9: a group still alive after 15 seconds makes this run contention; entries stay.
-        orphan = FakeProcess(pid=5003, ignore={signal.SIGTERM, signal.SIGKILL}, auto_exit=False)
+        orphan = FakeProcess(pid=5003, ignore={signal.SIGTERM, signal.SIGKILL},
+                             auto_exit=False, zombie=False)
         self.record((OTHER_RUN, 5003))
         processes = FakeProcesses(known=[orphan], clock=self.clock, wait=self.wait)
         context = self.context(processes=processes)

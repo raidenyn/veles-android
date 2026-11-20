@@ -531,19 +531,30 @@ class Runner:
 
         The grace and the SIGKILL decision belong to the whole process group, not to the leader:
         a leader that exits on SIGTERM must not cut the grace short while a member that ignored
-        it is still alive.
+        it is still alive. A dead leader that has not been reaped is a zombie and still counts as
+        a group member, so `poll` reaps it before every `group_alive` check — otherwise a leader
+        that honours SIGTERM would sit out the whole grace and be sent a pointless SIGKILL.
         """
         self.processes.signal_group(process.pid, signal.SIGTERM)
         grace_end = self.clock.now() + TERM_GRACE_SECONDS
-        while self.processes.group_alive(process.pid) and self.clock.now() < grace_end:
+        while True:
+            process.poll()
+            if not self.processes.group_alive(process.pid):
+                break
+            if self.clock.now() >= grace_end:
+                self.processes.signal_group(process.pid, signal.SIGKILL)
+                break
             self.wait.sleep(POLL_SECONDS)
-        if self.processes.group_alive(process.pid):
-            self.processes.signal_group(process.pid, signal.SIGKILL)
         code = process.wait()
         # SIGKILL is immediate for live members, but an orphaned grandchild can still be a
         # zombie for a moment; give the group a bounded moment to settle before it is forgotten.
         settle_end = self.clock.now() + KILL_SETTLE_SECONDS
-        while self.processes.group_alive(process.pid) and self.clock.now() < settle_end:
+        while True:
+            process.poll()
+            if not self.processes.group_alive(process.pid):
+                break
+            if self.clock.now() >= settle_end:
+                break
             self.wait.sleep(POLL_SECONDS)
         return code
 
