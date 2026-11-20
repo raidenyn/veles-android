@@ -65,10 +65,11 @@ stale block. Each rule adds one line to the root, which is capped at 40 lines; s
 - Read the text and re-run the command: a re-run matching a pending pattern confirms the rule and
   passes, even with a changed message or title.
 - A sibling that matches a different gate pattern of the same rule is denied as well.
-- Residuals: two same-kind gates in one parallel batch can let the second pass as a "re-run" before
-  the model saw the rule; a moment plus a gate in one parallel batch passed the gate on both hosts in
-  the final verification (the moment was processed first on Claude Code; OpenCode had denied it in an
-  earlier observation, so the order of the two hooks is not guaranteed).
+- Residuals: two same-kind gates in one parallel batch can let one of them pass, in either order,
+  before the model saw the rule (Claude Code let the second pass; OpenCode let the first pass and denied
+  the second); a moment plus a gate in one parallel batch passed the gate on both hosts in the final
+  verification (the moment was processed first on Claude Code; OpenCode had denied it in an earlier
+  observation, so the order of the two hooks is not guaranteed).
 
 ## Stop gate
 
@@ -170,14 +171,25 @@ The hooks never block a call because of their own failure.
 ## Verified tools
 
 - Spike evidence: Claude Code 2.1.328, OpenCode 2.3.2, next to `opencode-rules` 2.0.0.
-- Final live verification (2026-11-20, all outcomes of `hooked-rule-delivery`): Claude Code 2.1.328 and
-  OpenCode 2.3.2, every outcome PASS except the OpenCode interactive TUI Esc abort, which is
-  unverified: the client exits with no terminal event, so the plugin cannot see it. The runs, the
-  residual batch results and the per-outcome table are in `spike.md` of the `hook-workflow-rules`
-  change (§6).
-- OpenCode headless `run --standalone` exits at the end of its turn, before the plugin's detached stop
-  call can finish, so the stop gate is effective there only with a kept-alive server (`opencode serve`
-  plus `run --server`) or the TUI. The turn still ends normally; no stop is sent.
+- Final live verification of every `hooked-rule-delivery` outcome, by host and version (2026-11-20):
+  - **Claude Code 2.1.328**: outcomes 1, 2, 3, 5, 6 and 7 PASS. Outcome 4 PASS for re-arm and for
+    parent↔subagent isolation in both directions; its **subagent-compaction sub-case is UNVERIFIED** —
+    a subagent context could not be made to overflow on purpose (the host does carry `agent_id`). The
+    spike's **interactive Esc is UNVERIFIED** as well (a headless interrupt was used).
+  - **OpenCode 2.3.2**: outcomes 1, 2, 3, 4, 5, 6 and 7 PASS, including the second stop after a passing
+    verify, a retained stop record across a compaction, an apply-to-finalize run that went on without
+    asking, and a child-session compaction. Outcome 7's **interactive TUI Esc abort is UNVERIFIED** —
+    the client exits with no terminal event, so the plugin cannot see it; accepted as a residual.
+  - **Not exercised**: the two OpenCode plugins together. The disposable config loaded the tracked
+    local `./scripts/opencode-hooked-rules` but not the tracked `opencode-rules` package, so the local
+    hooked-rules plugin was exercised alone.
+  - The runs, the residual batch results and the per-outcome table are in `spike.md` of the
+    `hook-workflow-rules` change (§6).
+- The OpenCode stop gate requires a kept-alive session. `opencode run --standalone` exits at the end of
+  its turn, before the plugin's detached stop call can finish, so a one-shot run may end without the
+  stop reminder being delivered (no block, no message). The gate was verified against a persistent
+  `opencode serve` plus `run --server`; the TUI stop gate was **not exercised**. The owner accepted
+  this limitation on 2026-11-20, keeping the plugin's dispose behaviour as shipped.
 - The OpenCode plugin entry in `opencode.json` is a directory path string
   (`"./scripts/opencode-hooked-rules"`); a path to `index.js` or a `file:` package is rejected or not
   loaded.

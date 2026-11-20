@@ -328,11 +328,18 @@ The OpenCode config used in the disposable clone was:
 
 `./scripts/opencode-hooked-rules` is the tracked local entry (the same path and form as `opencode.json`).
 `./debug-events` is a throwaway diagnostic plugin in the clone that only appends every bus event and
-both tool hooks to `/tmp/opencode/t12-oc/events.log`; it changes no decision. The `opencode-rules`
-package entry was omitted from the disposable config (to avoid a network install of the package); the
-local hooked-rules plugin is the subject of this verification. The `permission` value was changed for
-the permission scenario and `allow` elsewhere. The plugin loads only for configured directories
-(`./plugin.js` is rejected: "configured plugin path must be a directory").
+both tool hooks to `/tmp/opencode/t12-oc/events.log`; it changes no decision. The tracked
+`opencode-rules` package entry was omitted from the disposable config (to avoid a network install of
+the package), so the two plugins were **not** exercised together; only the local hooked-rules plugin
+was. The `permission` value was changed for the permission scenario and `allow` elsewhere. The plugin
+loads only for configured directories (`./plugin.js` is rejected: "configured plugin path must be a
+directory").
+
+Both clones were created with `git clone` from the real worktree
+`/home/dev/.t3/worktrees/veles-android/t3-ae506063-4d3262f799702bb5`, and each clone's `origin` was
+retargeted before any push scenario to a local bare repository (`/tmp/opencode/t12-claude/remote.git`
+and `/tmp/opencode/t12-oc/remote.git`). No test commit was pushed to the worktree or to any other
+repository; every commit hash quoted below is in a disposable clone.
 
 Two headless facts that shaped the OpenCode runs:
 
@@ -516,7 +523,7 @@ in the session change set. Stop hook outputs are from `--include-hook-events`.
 | unrelated session | `demo` pending, session never named it, no tools | pass | PASS |
 | linked worktree | `apply.md` only in `/tmp/opencode/t12-claude/wt-demo`, main copy has none | block, pass | PASS |
 | compaction keeps the record | it1, block recorded; `/compact --resume` (generation 0→1); then a stop-only turn | pass | PASS |
-| push without delivery | `git push origin HEAD` twice | deny (443 bytes: the pre-push rule), then push ran (`* [new branch] HEAD -> chore/move-rules-to-hooks`) | PASS |
+| push without delivery | `git push origin HEAD` twice; the clone's `origin` was retargeted to the local bare `/tmp/opencode/t12-claude/remote.git` | deny (443 bytes: the pre-push rule), then push ran (`* [new branch] HEAD -> chore/move-rules-to-hooks`) | PASS |
 | push during finalize | `openspec instructions finalize --change demo2` (6,933 bytes appended), then `git push` | push ran (`Everything up-to-date`) | PASS |
 
 The block text is the engine line followed by the closeout rule; its first line, quoted from the
@@ -541,15 +548,18 @@ stop_hook_active= True last= 'Report: - **Status exit code:** 0. - **Stop blocks
 So the post-verify block really was `stop_hook_active: true`, and the agent continued.
 
 Apply-to-finalize run on the disposable `tiny` change (apply skill invoked, one trivial task, then
-verify): the agent went from apply to verify without asking, wrote the marker file, and did **not**
-reach finalize because verify failed on the missing review records. It did not report the closeout
-rule as conflicting with the apply skill's ending; it cited the review gate's "ask first" requirement
-as its reason to stop. The stop gate also caught the end of that run (one block, then pass;
-`stops [{'change': 'tiny', 'iteration': 1, 'verify_state': 'none'}]`). The final text:
+verify): the agent went from apply to verify without asking and did **not** write a `verify.md`; the
+stop gate record was therefore `{tiny, 1, none}` and the stop was blocked once (then passed). Its
+stated reason for stopping was that verify failed because the review-gate audit found no review
+records (`openspec/changes/tiny/reviews/` did not exist), and fixing that would have needed asking
+for a reviewer preset and spawning a reviewer, both forbidden by that disposable run's prompt. It did
+not report the closeout rule as conflicting with the apply skill's ending. The final text:
 
 ```text
 I'm stopping here without finalizing. Verify failed, and the closeout rule says to stop when verify
-fails. … Nothing was committed or pushed, and no PR was created.
+fails. … Fixing that means asking the user for a reviewer preset and running a read-only reviewer
+subagent. This session forbids both asking and spawning subagents … Nothing was committed or pushed,
+and no PR was created.
 ```
 
 The spike's Claude Code half (a canary block, the next stop reporting `stop_hook_active`, and a user
@@ -569,7 +579,9 @@ permission flow (the hook passed):
 permission, so the request was rejected. Continue without this action."},"content":[]}
 ```
 
-The file was not created; the plugin did not grant or deny the call.
+The file was not created; the plugin did not grant or deny the call. The disposable config loaded only
+the tracked local plugin; the tracked `opencode-rules` package was absent, so the two plugins were not
+exercised together (see 6.1).
 
 #### Outcome 2 — block once, parallel batch, residuals: PASS
 
@@ -672,8 +684,10 @@ retry's pending confirmation) and none of the four delivered rules. The next `gi
 
 The spike's OpenCode half (root `session.execution.succeeded` resumes with a synthetic prompt; a child
 session's success, an interrupted execution and a failed execution are told apart) is section 2, same
-version `2.3.2`. The final run used a kept-alive server; each stop-gate row is a fresh session, and
-the synthetic resume is interrupted immediately after it is observed so it cannot act.
+version `2.3.2`. The final run used a kept-alive server; each stop-gate row is a fresh session unless
+stated, and the synthetic resume is interrupted immediately after it is observed so it cannot act. The
+apply-to-finalize row was run with `opencode run --standalone` because its finalize attempt happens
+inside the turn, before any stop resume.
 
 Representative event sequence (observed in `events.log`):
 
@@ -693,6 +707,8 @@ session.execution.interrupted reason=user
 | stall after apply | `apply.md` it1 | synthetic block; stop record `{demo,1,none}` | PASS |
 | second stop, same phase | same session, second prompt | `succeeded`, no synthetic | PASS |
 | after a passing verify | `verify.md` it1 PASS | synthetic block; record `{demo,1,pass}` | PASS |
+| second stop after a passing verify | same session as the row above, second prompt | `succeeded`, **no** synthetic; record unchanged | PASS |
+| compaction does not reset a stop record | it1, block recorded; `POST /api/session/<id>/compact -d '{}'` raised generation 0→1; next prompt in the same session | `succeeded`, **no** synthetic; the stop record and change set survived the compaction | PASS |
 | new apply iteration | `apply.md` it2, verify it1 pass | synthetic block; record `{demo,2,none}` | PASS |
 | failing verify at newest | `apply.md` it2, verify it2 FAIL | no synthetic, no record | PASS |
 | earlier failing verify | `apply.md` it2, verify it1 FAIL | synthetic block; record `{demo,2,none}` | PASS |
@@ -700,8 +716,9 @@ session.execution.interrupted reason=user
 | archived | archive copy present | no synthetic | PASS |
 | unrelated session | `demo` pending, never named | no synthetic | PASS |
 | linked worktree | `apply.md` only in `/tmp/opencode/t12-oc/wt-demo` | synthetic block; record `{demo,1,none}` | PASS |
-| push without delivery | `git push origin HEAD` twice | denied (pre-push text), then `* [new branch]` | PASS |
+| push without delivery | `git push origin HEAD` twice; the clone's `origin` was retargeted to the local bare `/tmp/opencode/t12-oc/remote.git` | denied (pre-push text), then `* [new branch]` | PASS |
 | push during finalize | finalize instructions then `git push` | `Everything up-to-date`, not denied | PASS |
+| apply-to-finalize run | `demo` apply it1 + verify it1 PASS; the apply skill invoked, then finalize attempted | `gh pr view`/`gh pr create` failed (`none of the git remotes … point to a known GitHub host`); no `finalize.md`; no commit or push. The agent reported going on to finalize **without asking** and named the conflict with the apply skill's ending | PASS |
 | interactive Esc abort in the TUI | a pty TUI run, Esc at 12 s | `session.execution.started`, then `location.shutdown`; **no** `session.execution.interrupted` | **UNVERIFIED** — the TUI client exits without a terminal event, so the plugin cannot see it (accepted residual) |
 
 The interrupted-execution discrimination was observed in the five interrupted stop-gate runs:
@@ -711,12 +728,21 @@ show the child key and no child stop record).
 
 ### 6.7 Outcome summary
 
-| Outcome | Claude Code 2.1.328 | OpenCode 2.3.2 |
+The spike only exercised outcome 7's mechanics (the spec's "spike part of outcome 7"), so its row
+states those and marks the rest as not run. The final-run rows state every outcome.
+
+| Run | Claude Code 2.1.328 | OpenCode 2.3.2 |
 |---|---|---|
-| 1. Loading and permissions | PASS | PASS |
-| 2. Block once, changed-title re-run, parallel sibling, both residuals | PASS (residual: moment+gate passed; two gates: first denied, second passed) | PASS (residual: moment+gate passed; two gates: first passed, second denied) |
-| 3. Four moments, later gate, failing command, repeat, different trigger | PASS | PASS |
-| 4. Re-arm; parent↔subagent isolation; subagent compaction | PASS; subagent compaction UNVERIFIED (cannot force a subagent compaction); host carries `agent_id` | PASS, including a child-session compaction of the subagent |
-| 5. Pointer fallback | PASS | PASS |
-| 6. Failure after the write, stale credit, void | PASS | PASS |
-| 7. Stop gate, push gate, interactive abort | PASS; apply-to-finalize run recorded | PASS; interactive TUI Esc **UNVERIFIED** — the client exits with no terminal event |
+| Spike — outcome 7 mechanics | PASS: a canary block was obeyed, the next stop reported `stop_hook_active: true` and a second block was obeyed, and a SIGINT interrupt fired no `Stop` (§1). Interactive Esc was UNVERIFIED in the spike. | PASS: a root `session.execution.succeeded` resumed with a synthetic prompt, and a child session's success, an interrupted execution (`reason: "user"`) and a failed execution were told apart (§2). Interactive Esc in a TUI was UNVERIFIED in the spike. |
+| Final — 1. Loading and permissions | PASS | PASS |
+| Final — 2. Block once, changed-title re-run, parallel sibling, both residuals | PASS (residual: moment+gate passed; two gates: first denied, second passed) | PASS (residual: moment+gate passed; two gates: first passed, second denied) |
+| Final — 3. Four moments, later gate, failing command, repeat, different trigger | PASS | PASS |
+| Final — 4. Re-arm; parent↔subagent isolation; subagent compaction | PASS for re-arm and for both isolation directions; subagent compaction **UNVERIFIED** (a subagent context could not be made to overflow on purpose; the host does carry `agent_id`) | PASS, including a child-session compaction of the subagent through the API |
+| Final — 5. Pointer fallback | PASS | PASS |
+| Final — 6. Failure after the write, stale credit, void | PASS | PASS |
+| Final — 7. Stop gate, push gate, apply-to-finalize, interactive abort | PASS: every stop-gate row, both push rows, and the apply-to-finalize run (the stop gate caught it) | PASS: every stop-gate row (including the second stop after a passing verify and the retained record across compaction), both push rows, and the apply-to-finalize run (finalized without asking, then stopped when no PR could be created). Interactive TUI Esc **UNVERIFIED** — the client exits with no terminal event. |
+
+UNVERIFIED sub-cases, explicitly: Claude Code 2.1.328 — subagent compaction (outcome 4), interactive
+Esc (spike only). OpenCode 2.3.2 — interactive TUI Esc abort (outcome 7; accepted residual). The
+two-plugin OpenCode configuration (`opencode-rules` plus the local plugin) was not exercised.
+
