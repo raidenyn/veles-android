@@ -113,13 +113,11 @@ def _is_git_argv(node):
     )
 
 
-def _constant_strings(nodes, stop):
+def _constant_strings(nodes):
     values = []
     for node in nodes:
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             values.append(node.value)
-        elif stop:
-            break
     return values
 
 
@@ -231,7 +229,7 @@ class _Visitor(ast.NodeVisitor):
 
     def visit_List(self, node):
         if _starts_with_git(node):
-            self.check_git_tokens(node, _constant_strings(node.elts[1:], False))
+            self.check_git_tokens(node, _constant_strings(node.elts[1:]))
         self.generic_visit(node)
 
     def visit_Call(self, node):
@@ -248,7 +246,7 @@ class _Visitor(ast.NodeVisitor):
                 self.check_getattr(node)
             elif function.id in ("_git", "git"):
                 args = node.args[1:] if function.id == "_git" else node.args
-                self.check_git_tokens(node, _constant_strings(args, False))
+                self.check_git_tokens(node, _constant_strings(args))
         self.generic_visit(node)
 
     def check_subprocess_call(self, node, attr):
