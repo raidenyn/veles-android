@@ -172,6 +172,10 @@ EXPECTED_CODEOWNER_PATTERNS = (
     "/scripts/opencode-hooked-rules/",
 )
 HOOK_COMMAND = 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/agent_rules.py" hook --format claude'
+# The verify hook that `Stop` holds after the engine command: design D11 fixes both texts and
+# timeouts, so they are repeated here rather than imported from the module under test.
+VERIFY_COMMAND = 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/verify.py" --hook claude || true'
+VERIFY_TIMEOUT = 1800
 # (event, matcher) per hook; a matcher of None means the entry carries no `matcher` key.
 EXPECTED_HOOKS = (
     ("PreToolUse", "Bash"),
@@ -344,7 +348,8 @@ def hooks_block(drop=None, matchers=None, commands=None, timeouts=None):
     """The expected `hooks` block, with per-event overrides for the negative tests.
 
     ``drop`` names events to omit; ``matchers`` and ``commands`` replace a value; ``timeouts``
-    replaces the timeout, and a value of ``False`` omits the key.
+    replaces the timeout, and a value of ``False`` omits the key. The overrides apply to the
+    event's first command, so `Stop` keeps its verify command second.
     """
     block = {}
     for event, matcher in EXPECTED_HOOKS:
@@ -355,9 +360,14 @@ def hooks_block(drop=None, matchers=None, commands=None, timeouts=None):
         timeout = (timeouts or {}).get(event, 5)
         if timeout is not False:
             command["timeout"] = timeout
-        entry = {"hooks": [command]}
+        hooks = [command]
+        if event == "Stop":
+            hooks.append(
+                {"type": "command", "command": VERIFY_COMMAND, "timeout": VERIFY_TIMEOUT}
+            )
+        entry = {"hooks": hooks}
         if matcher is not None:
-            entry = {"matcher": matcher, "hooks": [command]}
+            entry = {"matcher": matcher, "hooks": hooks}
         block[event] = [entry]
     return block
 
@@ -678,6 +688,8 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assertEqual(getattr(check_module, "AGENTS_LINE_MAX", None), 40)
         self.assertEqual(tuple(check_module.ALWAYS_ON_REPO_RULES), EXPECTED_REPO_RULES)
         self.assertEqual(tuple(check_module.CLAUDE_HOOKS), EXPECTED_HOOKS)
+        self.assertEqual(getattr(check_module, "CLAUDE_VERIFY_COMMAND", None), VERIFY_COMMAND)
+        self.assertEqual(getattr(check_module, "CLAUDE_VERIFY_TIMEOUT", None), VERIFY_TIMEOUT)
         self.assertEqual(tuple(check_module.BUDGET_COMMANDS), EXPECTED_BUDGET_COMMANDS)
         self.assertEqual(
             dict(check_module.MOVED_RULES),
@@ -2079,6 +2091,89 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assert_finding(findings, "error", ".claude/settings.json", "hook Stop is missing")
         self.assertEqual(len(findings), 1, findings)
 
+    def test_stop_holds_verify_hook(self):
+        # The otherwise valid fixture passes, and the two Stop commands are the fixed pair.
+        files = clean_files()
+        stop = json.loads(files[".claude/settings.json"])["hooks"]["Stop"]
+        self.assertEqual(
+            [command["command"] for command in stop[0]["hooks"]], [HOOK_COMMAND, VERIFY_COMMAND]
+        )
+        self.assertEqual(
+            [command["timeout"] for command in stop[0]["hooks"]], [5, VERIFY_TIMEOUT]
+        )
+        self.assertEqual(check_claude_hooks(self.repo(files)), [])
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_stop_without_verify(self):
+        block = hooks_block()
+        block["Stop"][0]["hooks"].pop()
+        files = clean_files()
+        files[".claude/settings.json"] = settings_text(block)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings,
+            "error",
+            ".claude/settings.json",
+            "hook Stop must hold exactly two commands",
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_stop_verify_first(self):
+        block = hooks_block()
+        block["Stop"][0]["hooks"].reverse()
+        files = clean_files()
+        files[".claude/settings.json"] = settings_text(block)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".claude/settings.json", "hook Stop has command")
+        self.assert_finding(
+            findings, "error", ".claude/settings.json", "expected %r" % VERIFY_COMMAND
+        )
+        self.assertEqual(len(findings), 4, findings)
+
+    def test_stop_third_command(self):
+        block = hooks_block()
+        block["Stop"][0]["hooks"].append({"type": "command", "command": "true", "timeout": 5})
+        files = clean_files()
+        files[".claude/settings.json"] = settings_text(block)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings,
+            "error",
+            ".claude/settings.json",
+            "hook Stop must hold exactly two commands",
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_stop_wrong_timeout(self):
+        block = hooks_block()
+        block["Stop"][0]["hooks"][1]["timeout"] = 5
+        files = clean_files()
+        files[".claude/settings.json"] = settings_text(block)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".claude/settings.json", "hook Stop has verify command timeout")
+        self.assert_finding(findings, "error", ".claude/settings.json", "expected 1800")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_other_event_second_command(self):
+        for event, _ in EXPECTED_HOOKS:
+            if event == "Stop":
+                continue
+            with self.subTest(event=event):
+                block = hooks_block()
+                block[event][0]["hooks"].append(
+                    {"type": "command", "command": "true", "timeout": 5}
+                )
+                files = clean_files()
+                files[".claude/settings.json"] = settings_text(block)
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings,
+                    "error",
+                    ".claude/settings.json",
+                    "hook %s must hold exactly one command" % event,
+                )
+                self.assertEqual(len(findings), 1, findings)
+
     def test_subagent_stop_rejected(self):
         # A subagent stop is not a delivery moment; wiring it would run the stop gate twice.
         block = hooks_block()
@@ -2133,7 +2228,12 @@ class AgentFileCheckTest(unittest.TestCase):
                 files[".claude/settings.json"] = settings_text(block)
                 findings = check_repo(self.repo(files))
                 self.assert_finding(findings, "error", ".claude/settings.json", "hook %s " % event)
-                self.assert_finding(findings, "error", ".claude/settings.json", "exactly one")
+                self.assert_finding(
+                    findings,
+                    "error",
+                    ".claude/settings.json",
+                    "exactly two" if event == "Stop" else "exactly one",
+                )
                 self.assertEqual(len(findings), 1, findings)
 
     def test_hooks_malformed_entry_fails(self):
@@ -2262,6 +2362,10 @@ class AgentFileCheckTest(unittest.TestCase):
         block = hooks_block()
         for event, matcher in EXPECTED_HOOKS:
             self.assertEqual(sorted(block[event][0]["hooks"][0]), ["command", "timeout", "type"])
+            if event == "Stop":
+                self.assertEqual(
+                    sorted(block[event][0]["hooks"][1]), ["command", "timeout", "type"]
+                )
             expected = ["hooks", "matcher"] if matcher is not None else ["hooks"]
             self.assertEqual(sorted(block[event][0]), expected)
         self.assertEqual(check_claude_hooks(self.repo()), [])
