@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Agent-file layout check.
 
-Checks the legacy files, the AGENTS.md notices and line caps, node-map parity, rule files,
-the hook-delivered rules and their pointer block, the `.claude/` symlinks and skill set,
-`opencode.json`, `.github/CODEOWNERS`, the `opencode-rules` mentions and the component overrides.
+Checks the legacy files, the AGENTS.md notices and line caps, node-map parity, rule files, the
+three always-on `repo-*` rules, the hook-delivered rules and their pointer block, the stop-predicate
+registry, the delivery budget, the `.claude/` symlinks, skill set and hook wiring, `opencode.json`,
+`.github/CODEOWNERS`, the `opencode-rules` mentions and the component overrides.
 Stdlib only; Python 3.8 compatible; run from the `docs / agent-files` CI check.
 """
 import argparse
@@ -110,6 +111,7 @@ CLAUDE_HOOKS = (
     ("PostToolUse", "Bash|Skill|Read"),
     ("UserPromptSubmit", None),
     ("PreCompact", None),
+    ("Stop", None),
 )
 
 PLUGIN_MENTION_FILES = (ROOT_AGENTS, "CONTRIBUTING.md")
@@ -148,14 +150,52 @@ ENGINE_NAMES = (
     "render_pointer_block",
     "_locate_block",
     "_normalise",
+    "STOP_PREDICATES",
+    "Event",
+    "STOP_LINE",
+    "CONTEXT_CAP",
+    "RULE_SEPARATOR",
+    "rule_text",
+    "_moment_rules",
 )
 POINTER_BEGIN = "<!-- hooked-rules:begin -->"
 POINTER_END = "<!-- hooked-rules:end -->"
 POINTERS_COMMAND = "python3 -I scripts/agent_rules.py pointers --write"
-# The always-on Conventional Commits rule became the hook-delivered commit-type guide.
+# The rules the always-on context keeps: exactly these, listed by the root AGENTS.md. Every other
+# `repo-*` rule is hook-delivered from `HOOKED_RULES_DIR`.
+ALWAYS_ON_REPO_RULES = (
+    "repo-no-time-based-tests.md",
+    "repo-tracker-intake.md",
+    "repo-signing-keys.md",
+)
+# The rule moves that the hook delivery replaced: a left-behind file is an error, not a second rule.
 MOVED_RULES = {
     "repo-conventional-commits.md": HOOKED_RULES_DIR + "/repo-commit-types.md",
+    "repo-pre-push-checks.md": HOOKED_RULES_DIR + "/repo-pre-push-checks.md",
+    "repo-real-device-testing.md": HOOKED_RULES_DIR + "/repo-real-device-testing.md",
+    "repo-review-models.md": HOOKED_RULES_DIR + "/repo-review-models.md",
+    "repo-superspec-closeout.md": HOOKED_RULES_DIR + "/repo-superspec-closeout.md",
+    "repo-superspec-review-gate.md": HOOKED_RULES_DIR + "/repo-superspec-review-gate.md",
 }
+# The commands the delivery budget covers; every rule the engine matches for one of them, joined
+# with the runtime separator, must fit under `CONTEXT_CAP` bytes.
+BUDGET_COMMANDS = tuple(
+    "openspec instructions %s" % artifact
+    for artifact in (
+        "brainstorm",
+        "proposal",
+        "design",
+        "specs",
+        "tasks",
+        "plan",
+        "apply",
+        "verify",
+        "finalize",
+    )
+) + (
+    "openspec new change x",
+    "openspec instructions verify && openspec instructions finalize",
+)
 
 # Scope -> folder pattern. `repo` rules are always on and so have no pattern.
 SCOPES = {
@@ -723,6 +763,64 @@ def check_moved_rules(root, files):
     return findings
 
 
+def _repo_rule_files(files):
+    """The `repo-*` rule files in `.agents/rules/` whose names pass the naming check."""
+    names = []
+    for path in sorted(files):
+        if not path.startswith(RULES_DIR + "/"):
+            continue
+        relative = path[len(RULES_DIR) + 1:]
+        if "/" in relative or not relative.endswith(".md"):
+            continue
+        name = relative[:-len(".md")]
+        if _scope_for(name) != "repo" or not name[len("repo") + 1:]:
+            continue
+        names.append(relative)
+    return names
+
+
+def check_always_on_rules(root, files):
+    """Check `.agents/rules/` holds exactly the three always-on `repo-*` rules, listed in the root.
+
+    Every other `repo-*` rule is hook-delivered, so a fourth always-on rule would compete for the
+    context budget; a moved rule still present is `check_moved_rules`'s finding, not a second one
+    here. The root `AGENTS.md`, not a node file, lists all three.
+    """
+    findings = []
+    present = _repo_rule_files(files)
+    for name in present:
+        if name not in ALWAYS_ON_REPO_RULES and name not in MOVED_RULES:
+            findings.append(
+                Finding(
+                    "error",
+                    RULES_DIR + "/" + name,
+                    "is a `repo-*` rule other than the three always-on ones; hook-deliver it or "
+                    "scope it to a node",
+                )
+            )
+    for name in ALWAYS_ON_REPO_RULES:
+        if name not in present:
+            findings.append(
+                Finding(
+                    "error",
+                    RULES_DIR + "/" + name,
+                    "is missing; `.agents/rules/` must hold the three always-on `repo-*` rules",
+                )
+            )
+    listed = set(RULE_REFERENCE_RE.findall(_read_text(root, ROOT_AGENTS) or ""))
+    for name in ALWAYS_ON_REPO_RULES:
+        if name not in listed:
+            findings.append(
+                Finding(
+                    "error",
+                    ROOT_AGENTS,
+                    "does not list `%s/%s`; the three always-on rules must be listed"
+                    % (RULES_DIR, name),
+                )
+            )
+    return findings
+
+
 class _EngineError(Exception):
     """The engine at ``<root>/scripts/agent_rules.py`` is missing or cannot be imported."""
 
@@ -858,10 +956,14 @@ def _check_hooked(root, files):
         try:
             engine.parse_rule(relative, text)
         except engine.RuleError as error:
+            if _stop_predicate_error(str(error)):
+                continue  # `check_stop_predicates` reports it once, with the registry
             rule_findings.append(Finding("error", path, "is not a valid hooked rule: %s" % error))
     rules, errors = engine.load_rules(root)
     reported = set(finding.path for finding in rule_findings)
     for path, message in errors:
+        if _stop_predicate_error(message):
+            continue  # `check_stop_predicates` reports it once, with the registry
         if path not in reported:
             reported.add(path)
             rule_findings.append(
@@ -913,6 +1015,116 @@ def check_pointer_block(root, files=None):
     `check_hooked_rules`, which is why this check is silent when a rule does not load.
     """
     return _check_hooked(root, list_files(root) if files is None else files)[1]
+
+
+# The engine's `RuleError` for a `stops` name outside its registry; `check_stop_predicates` owns it.
+STOP_PREDICATE_ERROR = "unknown stop predicate"
+
+
+def _stop_predicate_error(message):
+    return message.startswith(STOP_PREDICATE_ERROR)
+
+
+def check_stop_predicates(root):
+    """Check that every hooked rule's `stops` name is in the engine's predicate registry.
+
+    The engine's `parse_rule` rejects a rule naming an unknown predicate, so the loader reports it
+    instead of returning it; this check reads those errors, names the registry and owns the finding
+    (`_check_hooked` does not repeat it). A missing engine is `check_hooked_rules`'s finding, so this
+    check is silent then.
+    """
+    try:
+        engine = _load_engine(root)
+    except _EngineError:
+        return []
+    _, errors = engine.load_rules(root)
+    known = ", ".join("`%s`" % name for name in engine.STOP_PREDICATES)
+    return [
+        Finding(
+            "error",
+            path,
+            "names a stop predicate outside the engine registry (%s): %s" % (known, message),
+        )
+        for path, message in errors
+        if _stop_predicate_error(message)
+    ]
+
+
+def _budget_event(engine, skill=None, command=None):
+    """A synthetic moment event: a Skill call, or a Bash call the host recorded as successful."""
+    if skill is not None:
+        return engine.Event(
+            "tool-after", "budget", None, "", "Skill", None, None, skill, None, None, None, None
+        )
+    return engine.Event(
+        "tool-after", "budget", None, "", "Bash", command, True, None, None, None, None, None
+    )
+
+
+def _budget_size(engine, prefix, rules):
+    """The UTF-8 bytes of ``prefix`` and every rule's text, joined with the runtime separator."""
+    parts = [engine.rule_text(rule.body) for rule in rules]
+    text = prefix
+    if parts:
+        text += (engine.RULE_SEPARATOR if prefix else "") + engine.RULE_SEPARATOR.join(parts)
+    return len(text.encode("utf-8", "surrogatepass"))
+
+
+def _budget_findings(engine, rules):
+    """One finding per listed trigger whose joined text is over `CONTEXT_CAP` bytes."""
+    triggers = []
+    skills = sorted(set(skill for rule in rules for skill in rule.skills))
+    for skill in skills:
+        event = _budget_event(engine, skill=skill)
+        matched = [rule for rule, _ in engine._moment_rules(rules, event)]
+        triggers.append(("skill:" + skill, "", matched))
+    for command in BUDGET_COMMANDS:
+        event = _budget_event(engine, command=command)
+        matched = [rule for rule, _ in engine._moment_rules(rules, event)]
+        triggers.append(("command:" + command, "", matched))
+    # The stop gate prefixes the engine line carrying the change name it names; the longest valid
+    # name is 64 characters, so the worst case is what the budget must count.
+    line = engine.STOP_LINE.format(name="x" * 64)
+    for predicate in engine.STOP_PREDICATES:
+        matched = [rule for rule in rules if predicate in rule.stops]
+        triggers.append(("stop:" + predicate, line, matched))
+    findings = []
+    budget = "{:,}".format(engine.CONTEXT_CAP)
+    for trigger, prefix, matched in triggers:
+        size = _budget_size(engine, prefix, matched)
+        if size <= engine.CONTEXT_CAP:
+            continue
+        names = ", ".join(
+            "`%s`" % rule.name for rule in sorted(matched, key=lambda rule: rule.name)
+        )
+        findings.append(
+            Finding(
+                "error",
+                HOOKED_RULES_DIR,
+                "trigger `%s` delivers %s bytes, over the %s-byte delivery budget, from %s"
+                % (trigger, "{:,}".format(size), budget, names),
+            )
+        )
+    return findings
+
+
+def check_budget(root):
+    """Check every listed trigger against the 9,000-byte delivery budget the runtime enforces.
+
+    Each trigger is the moment the runtime sees: a Skill call per listed skill, a successful Bash
+    call per listed command, and the stop line followed by the rules naming each predicate. The rules
+    the engine's own `_moment_rules` selects are joined with the runtime separator, so the check and
+    the runtime count the same bytes and a total of exactly `CONTEXT_CAP` passes. A rule that does not
+    load, like a missing engine, is `check_hooked_rules`'s finding, so this check is silent then.
+    """
+    try:
+        engine = _load_engine(root)
+    except _EngineError:
+        return []
+    rules, errors = engine.load_rules(root)
+    if errors:
+        return []
+    return _budget_findings(engine, rules)
 
 
 def parse_documented_skills(text):
@@ -1621,6 +1833,16 @@ def check_claude_hooks(root):
     hooks = data.get("hooks")
     if not isinstance(hooks, dict):
         return findings + [Finding("error", SETTINGS_JSON, "has no `hooks` block")]
+    # A subagent's stop is not a delivery moment: the engine's stop gate runs in the main context
+    # only, so wiring `SubagentStop` could only double-run it.
+    if "SubagentStop" in hooks:
+        findings.append(
+            Finding(
+                "error",
+                SETTINGS_JSON,
+                "hooks SubagentStop; a subagent stop is not a delivery moment and must not be wired",
+            )
+        )
     if any(event in hooks for event, _ in CLAUDE_HOOKS) and not os.path.isfile(
         os.path.join(root, *ENGINE_FILE.split("/"))
     ):
@@ -1681,10 +1903,13 @@ def check_repo(root, platform=sys.platform):
     findings.extend(_check_node_map(root_text, tracked_nested))
     findings.extend(_check_overrides(root, tracked_nested))
     findings.extend(check_rules(root, files))
+    findings.extend(check_always_on_rules(root, files))
     findings.extend(check_moved_rules(root, files))
+    findings.extend(check_stop_predicates(root))
     hooked_findings, pointer_findings = _check_hooked(root, files)
     findings.extend(hooked_findings)
     findings.extend(pointer_findings)
+    findings.extend(check_budget(root))
     findings.extend(check_links(root, files, platform))
     findings.extend(check_opencode(root))
     findings.extend(check_codeowners(root))
