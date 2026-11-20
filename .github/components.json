@@ -73,6 +73,10 @@
       "tooling",
       "docs"
     ],
+    "scripts/verify-commands.json": [
+      "tooling",
+      "docs"
+    ],
     "verify/AGENTS.md": [
       "docs"
     ],

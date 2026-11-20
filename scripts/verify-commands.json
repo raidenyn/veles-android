@@ -1,0 +1,1059 @@
+{
+  "version": 1,
+  "requirements": {
+    "java-home": {
+      "kind": "tool",
+      "resolver": "java-home",
+      "args": {},
+      "fix": "Install a JDK 21 (the version in .java-version) and put it on PATH, then run `python3 -I scripts/verify.py config set java_home <jdk>`, or set JAVA_HOME."
+    },
+    "android-sdk": {
+      "kind": "tool",
+      "resolver": "android-sdk",
+      "args": {},
+      "fix": "Set sdk.dir in android/local.properties or ANDROID_HOME/ANDROID_SDK_ROOT to the Android SDK, else run `python3 -I scripts/verify.py config set android_sdk <dir>`."
+    },
+    "android-ndk": {
+      "kind": "tool",
+      "resolver": "android-ndk",
+      "args": {},
+      "fix": "Install the NDK pinned in rust/ndk-version (`sdkmanager \"ndk;<version>\"`, the version from `./gradlew -q rustNdkVersion`), then set ANDROID_NDK_HOME or run `python3 -I scripts/verify.py config set android_ndk <dir>`."
+    },
+    "rustup": {
+      "kind": "tool",
+      "resolver": "rustup-toolchain",
+      "args": {"toolchain_file": "rust/rust-toolchain.toml"},
+      "fix": "Run `rustup show active-toolchain` in rust/ so the pinned channel is installed."
+    },
+    "rustup-host": {
+      "kind": "tool",
+      "resolver": "rustup-toolchain",
+      "args": {"toolchain_file": "native-bridge/host/rust-toolchain.toml"},
+      "fix": "Run `rustup show active-toolchain` in native-bridge/host/ so the pinned channel is installed."
+    },
+    "rustup-installer": {
+      "kind": "tool",
+      "resolver": "rustup-toolchain",
+      "args": {"toolchain_file": "native-bridge/installer/rust-toolchain.toml"},
+      "fix": "Run `rustup show active-toolchain` in native-bridge/installer/ so the pinned channel is installed."
+    },
+    "rustup-bridge": {
+      "kind": "tool",
+      "resolver": "rustup-toolchain",
+      "args": {"toolchain_file": "native-bridge/src-tauri/rust-toolchain.toml"},
+      "fix": "Run `rustup show active-toolchain` in native-bridge/src-tauri/ so the pinned 1.98.0 channel is installed."
+    },
+    "node": {
+      "kind": "tool",
+      "resolver": "path-tool",
+      "args": {"program": "node", "version_cmd": ["node", "--version"], "min": "22"},
+      "fix": "Install Node 22 or newer and put it on PATH, or run `python3 -I scripts/verify.py config set path_prepend <node bin>`."
+    },
+    "npm": {
+      "kind": "tool",
+      "resolver": "path-tool",
+      "args": {"program": "npm", "version_cmd": ["npm", "--version"]},
+      "fix": "Install npm with Node and put it on PATH (CI provisions npm 11.19.0), or run `python3 -I scripts/verify.py config set path_prepend <node bin>`."
+    },
+    "npx": {
+      "kind": "tool",
+      "resolver": "path-tool",
+      "args": {"program": "npx", "version_cmd": ["npx", "--version"]},
+      "fix": "Install npm, which ships npx, and put it on PATH, or run `python3 -I scripts/verify.py config set path_prepend <node bin>`."
+    },
+    "python": {
+      "kind": "tool",
+      "resolver": "path-tool",
+      "args": {"program": "python3", "version_cmd": ["python3", "--version"], "min": "3.8"},
+      "fix": "Install Python 3.8 or newer and put it on PATH, or run `python3 -I scripts/verify.py config set path_prepend <dir>`."
+    },
+    "cargo-deny": {
+      "kind": "tool",
+      "resolver": "path-tool",
+      "args": {"program": "cargo-deny", "version_cmd": ["cargo-deny", "--version"]},
+      "fix": "Run `./gradlew installCargoDeny`, which installs the pinned tool under build/verify-tools/, and put its bin directory on PATH."
+    },
+    "cargo-cyclonedx": {
+      "kind": "tool",
+      "resolver": "path-tool",
+      "args": {"program": "cargo-cyclonedx", "version_cmd": ["cargo-cyclonedx", "--version"]},
+      "fix": "Run `./gradlew verifyCargoCyclonedx`, which installs the pinned SBOM tool under build/verify-tools/, and put its bin directory on PATH."
+    },
+    "playwright-chromium": {
+      "kind": "tool",
+      "resolver": "playwright-chromium",
+      "args": {},
+      "fix": "Run `cd web-extension && npx playwright-core install --with-deps chromium` (CI ties the browser build to its pinned ubuntu-24.04 image), or set VELES_TEST_CHROMIUM to an existing Chromium executable."
+    },
+    "web-extension.node-modules": {
+      "kind": "path",
+      "path": "web-extension/node_modules",
+      "fix": "Run `cd web-extension && npm ci` (CI runs `npm ci --ignore-scripts`)."
+    },
+    "native-bridge.node-modules": {
+      "kind": "path",
+      "path": "native-bridge/node_modules",
+      "fix": "Run `cd native-bridge && npm ci --ignore-scripts` (or `./gradlew bridgeInstall`)."
+    },
+    "verify.node-modules": {
+      "kind": "path",
+      "path": "verify/node_modules",
+      "fix": "Run `npm ci --ignore-scripts --prefix verify`."
+    },
+    "rust.wasm": {
+      "kind": "generated",
+      "path": "web-extension/rust-wasm/pkg",
+      "producer": "rust.wasm",
+      "fix": "Run `./gradlew rustWasm` (the producer); it needs the Java and Rust toolchains."
+    },
+    "web-extension.build": {
+      "kind": "generated",
+      "path": "web-extension/dist",
+      "producer": "web-extension.build",
+      "fix": "Run `cd web-extension && npm run build` (the producer), after `./gradlew rustWasm`."
+    }
+  },
+  "producers": [
+    {
+      "id": "rust.wasm",
+      "cwd": ".",
+      "run": ["./gradlew", "rustWasm"],
+      "doc": "rust/AGENTS.md",
+      "requires": ["java-home", "rustup"],
+      "inputs": [
+        {"path": "{gradle_user_home}/gradle.properties"},
+        {"path": "{gradle_user_home}/init.d/"},
+        {"path": "rust/"},
+        {"path": "protocol/"}
+      ]
+    },
+    {
+      "id": "rust.hostJni",
+      "cwd": ".",
+      "run": ["./gradlew", "rustHostJni"],
+      "doc": "rust/AGENTS.md",
+      "requires": ["java-home", "rustup"],
+      "inputs": [
+        {"path": "{gradle_user_home}/gradle.properties"},
+        {"path": "{gradle_user_home}/init.d/"},
+        {"path": "rust/"},
+        {"path": "protocol/"}
+      ]
+    },
+    {
+      "id": "web-extension.build",
+      "cwd": "web-extension",
+      "run": ["npm", "run", "build"],
+      "doc": "web-extension/AGENTS.md",
+      "requires": ["node", "npm", "web-extension.node-modules", "rust.wasm"],
+      "inputs": [
+        {"path": "web-extension/node_modules", "mode": "stat"}
+      ]
+    }
+  ],
+  "nodes": {
+    "android": {
+      "commands": [
+        {
+          "id": "android.spotless",
+          "kind": "check",
+          "cwd": "android",
+          "run": ["./gradlew", "spotlessCheck"],
+          "doc": ".agents/rules/android-lint-before-push.md",
+          "requires": ["java-home"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "android / lint"
+        },
+        {
+          "id": "android.detekt",
+          "kind": "check",
+          "cwd": "android",
+          "run": ["./gradlew", "detekt"],
+          "doc": ".agents/rules/android-lint-before-push.md",
+          "requires": ["java-home"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "android / lint"
+        },
+        {
+          "id": "android.lint",
+          "kind": "check",
+          "cwd": "android",
+          "run": ["./gradlew", "lintDebug"],
+          "doc": ".agents/rules/android-lint-before-push.md",
+          "requires": ["java-home", "android-sdk"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "android / lint"
+        },
+        {
+          "id": "android.raw-log",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["android/scripts/check-raw-log.sh"],
+          "doc": ".agents/rules/android-lint-before-push.md",
+          "requires": [],
+          "inputs": [],
+          "ci": "android / lint"
+        },
+        {
+          "id": "android.pairing-code",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["android/scripts/check-pairing-code.sh"],
+          "doc": ".agents/rules/android-lint-before-push.md",
+          "requires": [],
+          "inputs": [],
+          "ci": "android / lint"
+        },
+        {
+          "id": "android.mac-comparisons",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["node", "scripts/check-mac-comparisons.mjs", "--scan", "android/app/src/main"],
+          "doc": ".agents/rules/android-lint-before-push.md",
+          "requires": ["node"],
+          "inputs": [{"path": "scripts/check-mac-comparisons.mjs"}],
+          "ci": "android / lint"
+        },
+        {
+          "id": "android.release-hook-guard",
+          "kind": "check",
+          "cwd": "android",
+          "run": ["./gradlew", ":app:releaseHookGuard"],
+          "doc": "android/AGENTS.md",
+          "requires": ["java-home", "android-sdk", "android-ndk", "rustup"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "android / release-hook-guard"
+        },
+        {
+          "id": "android.unit-tests",
+          "kind": "test",
+          "cwd": "android",
+          "run": ["./gradlew", "testDebugUnitTest"],
+          "doc": "android/AGENTS.md",
+          "requires": ["java-home", "android-sdk", "rustup"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "android / unit-tests",
+          "related": {
+            "strategy": "name-map",
+            "sources": "android/app/src/main/**/*.kt",
+            "tests": "android/app/src/test/**/<stem>Test.kt",
+            "run": ["./gradlew", "testDebugUnitTest", "--tests", "{targets}"]
+          }
+        },
+        {
+          "id": "android.connected-tests",
+          "kind": "device",
+          "cwd": "android",
+          "run": ["./gradlew", "connectedDebugAndroidTest"],
+          "doc": "android/AGENTS.md",
+          "requires": ["java-home", "android-sdk", "android-ndk", "rustup"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "android / instrumented-tests"
+        }
+      ],
+      "excluded": [
+        {
+          "doc": "android/AGENTS.md",
+          "cwd": "android",
+          "line": "./gradlew assembleDebug",
+          "why": "Build artifact, not a gate; its only CI use is the jni-integration sequence that runs ./gradlew clean, which would delete build/verify/."
+        },
+        {
+          "doc": "android/AGENTS.md",
+          "cwd": "android",
+          "line": "./gradlew assembleRelease",
+          "why": "Release build (R8-minified and signed only with VELES_KEYSTORE_*): release and signing, not a gate."
+        },
+        {
+          "doc": "android/AGENTS.md",
+          "cwd": "android",
+          "line": "./gradlew testDebugUnitTest --tests \"me.nagaev.veles.otp.handlers.RegexMessageHandlerTest\"",
+          "why": "Example of a focused run; the android.unit-tests related strategy generates this argv from the changed sources."
+        },
+        {
+          "doc": "android/AGENTS.md",
+          "cwd": "android",
+          "line": "./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.nagaev.permissions.ui.VelesPermissionsAppTests",
+          "why": "Example of a focused device run; android.connected-tests covers the suite and neither gate runs it."
+        }
+      ]
+    },
+    "web-extension": {
+      "commands": [
+        {
+          "id": "web-extension.format",
+          "kind": "check",
+          "cwd": "web-extension",
+          "run": ["npm", "run", "format:check"],
+          "doc": "web-extension/AGENTS.md",
+          "requires": ["node", "npm", "web-extension.node-modules"],
+          "inputs": [{"path": "web-extension/node_modules", "mode": "stat"}],
+          "ci": "web-extension / lint"
+        },
+        {
+          "id": "web-extension.lint",
+          "kind": "check",
+          "cwd": "web-extension",
+          "run": ["npm", "run", "lint"],
+          "doc": "web-extension/AGENTS.md",
+          "requires": ["node", "npm", "web-extension.node-modules"],
+          "inputs": [{"path": "web-extension/node_modules", "mode": "stat"}],
+          "ci": "web-extension / lint"
+        },
+        {
+          "id": "web-extension.typecheck",
+          "kind": "check",
+          "cwd": "web-extension",
+          "run": ["npm", "run", "typecheck"],
+          "doc": "web-extension/AGENTS.md",
+          "requires": ["node", "npm", "web-extension.node-modules", "rust.wasm"],
+          "inputs": [{"path": "web-extension/node_modules", "mode": "stat"}],
+          "ci": "web-extension / lint"
+        },
+        {
+          "id": "web-extension.mac-comparisons",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["node", "scripts/check-mac-comparisons.mjs", "--scan", "web-extension/src"],
+          "doc": "web-extension/AGENTS.md",
+          "requires": ["node"],
+          "inputs": [{"path": "scripts/check-mac-comparisons.mjs"}],
+          "ci": "web-extension / lint"
+        },
+        {
+          "id": "web-extension.pairing-code",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["web-extension/scripts/check-pairing-code.sh"],
+          "doc": "web-extension/AGENTS.md",
+          "requires": [],
+          "inputs": [],
+          "ci": "web-extension / lint"
+        },
+        {
+          "id": "web-extension.unit",
+          "kind": "test",
+          "cwd": "web-extension",
+          "run": ["npm", "test"],
+          "doc": "web-extension/AGENTS.md",
+          "requires": ["node", "npm", "npx", "web-extension.node-modules", "rust.wasm"],
+          "inputs": [{"path": "web-extension/node_modules", "mode": "stat"}],
+          "ci": "web-extension / unit-tests",
+          "related": {
+            "strategy": "name-map",
+            "sources": "web-extension/src/**/*.ts",
+            "tests": "web-extension/test/**/<stem>.test.ts",
+            "within": "package.json:scripts.test",
+            "run": ["npx", "vitest", "run", "{targets}"]
+          }
+        },
+        {
+          "id": "web-extension.bundle",
+          "kind": "test",
+          "cwd": "web-extension",
+          "run": ["npm", "run", "test:bundle"],
+          "doc": "web-extension/AGENTS.md",
+          "requires": ["node", "npm", "web-extension.node-modules", "rust.wasm", "web-extension.build"],
+          "inputs": [{"path": "web-extension/node_modules", "mode": "stat"}],
+          "ci": "web-extension / unit-tests"
+        },
+        {
+          "id": "web-extension.browser",
+          "kind": "test",
+          "cwd": "web-extension",
+          "run": ["npm", "run", "test:browser"],
+          "doc": "web-extension/AGENTS.md",
+          "requires": ["node", "npm", "web-extension.node-modules", "rust.wasm", "web-extension.build", "playwright-chromium"],
+          "inputs": [{"path": "web-extension/node_modules", "mode": "stat"}],
+          "ci": "web-extension / browser-tests"
+        }
+      ],
+      "excluded": [
+        {
+          "doc": "web-extension/AGENTS.md",
+          "cwd": "web-extension",
+          "line": "npm ci",
+          "why": "Setup, not a gate: the web-extension.node-modules requirement and its stat input stand for it (CI runs npm ci --ignore-scripts)."
+        },
+        {
+          "doc": "web-extension/AGENTS.md",
+          "cwd": "web-extension",
+          "line": "npm run package",
+          "why": "Release packaging (deterministic zip and SHA256SUMS into build/web-extension/): release, not a gate."
+        }
+      ]
+    },
+    "rust": {
+      "commands": [
+        {
+          "id": "rust.format",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["./gradlew", "rustFormat"],
+          "doc": "rust/AGENTS.md",
+          "requires": ["java-home", "rustup"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "rust / lint"
+        },
+        {
+          "id": "rust.lint",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["./gradlew", "rustLint"],
+          "doc": "rust/AGENTS.md",
+          "requires": ["java-home", "rustup", "android-ndk"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "rust / lint"
+        },
+        {
+          "id": "rust.test",
+          "kind": "test",
+          "cwd": ".",
+          "run": ["./gradlew", "rustTest"],
+          "doc": "rust/AGENTS.md",
+          "requires": ["java-home", "rustup", "android-ndk", "node"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "rust / unit-tests",
+          "related": {
+            "strategy": "crate",
+            "crates": {"rust/veles-crypto/": ["./gradlew", "rustTest"]}
+          }
+        }
+      ],
+      "excluded": [
+        {
+          "doc": "rust/AGENTS.md",
+          "cwd": ".",
+          "line": "./gradlew rustInstall",
+          "why": "Setup, not a gate: installs the exact auxiliary CLIs under build/rust-tools/; CI refills that cache after the checks."
+        },
+        {
+          "doc": "rust/AGENTS.md",
+          "cwd": ".",
+          "line": "./gradlew rustJni",
+          "why": "Product input build (three Android JNI ABIs), not a gate; the release pipeline builds it."
+        },
+        {
+          "doc": "rust/AGENTS.md",
+          "cwd": ".",
+          "line": "rust/scripts/assert-clean.sh",
+          "why": "CI-only build/-cleaning sequence: it only makes sense after ./gradlew clean, which would delete build/verify/."
+        }
+      ]
+    },
+    "protocol": {
+      "commands": [
+        {
+          "id": "protocol.contract",
+          "kind": "test",
+          "cwd": ".",
+          "run": ["./gradlew", "protocolCheck"],
+          "doc": "protocol/AGENTS.md",
+          "requires": ["java-home", "android-sdk", "rustup", "node", "python"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "protocol / contract-tests"
+        }
+      ],
+      "excluded": []
+    },
+    "bridge-scaffold": {
+      "commands": [
+        {
+          "id": "bridge.install",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeInstall"],
+          "doc": "native-bridge/AGENTS.md",
+          "requires": ["java-home", "node", "npm"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"},
+            {"path": "native-bridge/package.json"},
+            {"path": "native-bridge/package-lock.json"}
+          ],
+          "ci": "bridge-scaffold / lint"
+        },
+        {
+          "id": "bridge.format",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeFormat"],
+          "doc": "native-bridge/AGENTS.md",
+          "requires": ["java-home", "node", "npm", "native-bridge.node-modules"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"},
+            {"path": "native-bridge/node_modules", "mode": "stat"}
+          ],
+          "ci": "bridge-scaffold / lint"
+        },
+        {
+          "id": "bridge.lint",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeLint"],
+          "doc": "native-bridge/AGENTS.md",
+          "requires": ["java-home", "node", "npm", "native-bridge.node-modules"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"},
+            {"path": "native-bridge/node_modules", "mode": "stat"}
+          ],
+          "ci": "bridge-scaffold / lint"
+        },
+        {
+          "id": "bridge.typecheck",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeTypecheck"],
+          "doc": "native-bridge/AGENTS.md",
+          "requires": ["java-home", "node", "npm", "native-bridge.node-modules"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"},
+            {"path": "native-bridge/node_modules", "mode": "stat"}
+          ],
+          "ci": "bridge-scaffold / lint"
+        },
+        {
+          "id": "bridge.rust-format",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeRustFormat"],
+          "doc": "native-bridge/AGENTS.md",
+          "requires": ["java-home", "rustup-bridge"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "bridge-scaffold / lint"
+        },
+        {
+          "id": "bridge.rust-lint",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeRustLint"],
+          "doc": "native-bridge/AGENTS.md",
+          "requires": ["java-home", "rustup-bridge"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "bridge-scaffold / lint"
+        },
+        {
+          "id": "bridge.test",
+          "kind": "test",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeTest"],
+          "doc": "native-bridge/AGENTS.md",
+          "requires": ["java-home", "node", "npm", "rustup-bridge", "native-bridge.node-modules"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"},
+            {"path": "native-bridge/node_modules", "mode": "stat"}
+          ],
+          "ci": "bridge-scaffold / unit-tests"
+        }
+      ],
+      "excluded": [
+        {
+          "doc": "native-bridge/AGENTS.md",
+          "cwd": ".",
+          "line": "./gradlew bridgeBuild",
+          "why": "Unsigned product build (cargo tauri build --no-bundle): a build artifact, not a gate; the release pipeline runs it."
+        },
+        {
+          "doc": "native-bridge/AGENTS.md",
+          "cwd": ".",
+          "line": "./gradlew bridgeManifests",
+          "why": "Generates Chrome native-messaging manifests: a packaging artifact, not a gate."
+        },
+        {
+          "doc": "native-bridge/AGENTS.md",
+          "cwd": ".",
+          "line": "./gradlew bridgePackage",
+          "why": "Deterministic packaging into build/native-bridge/: a release artifact, not a gate."
+        },
+        {
+          "doc": ".agents/rules/native-bridge-test-app-tcc.md",
+          "cwd": ".",
+          "line": "codesign --verify --strict path/to/App.app",
+          "why": "macOS-only manual signing-identity verification with a placeholder path: not a gate."
+        },
+        {
+          "doc": ".agents/rules/native-bridge-test-app-tcc.md",
+          "cwd": ".",
+          "line": "codesign -dvvv path/to/App.app",
+          "why": "macOS-only signing-identity inspection with a placeholder path: not a gate."
+        },
+        {
+          "doc": ".agents/rules/native-bridge-test-app-tcc.md",
+          "cwd": ".",
+          "line": "codesign -d -r- path/to/App.app",
+          "why": "macOS-only designated-requirement inspection with a placeholder path: not a gate."
+        },
+        {
+          "doc": ".agents/rules/native-bridge-test-app-tcc.md",
+          "cwd": ".",
+          "line": "log show --start \"<before>\" --end \"<after>\" --style ndjson --info --predicate 'process == \"tccd\" AND (eventMessage CONTAINS \"<bundle id>\" OR eventMessage CONTAINS \"<executable path>\" OR eventMessage CONTAINS \"kTCCServiceBluetoothAlways\")'",
+          "why": "macOS-only TCC log capture with placeholder times and identifiers: not a gate."
+        }
+      ]
+    },
+    "native-host": {
+      "commands": [
+        {
+          "id": "native-host.toolchain-check",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeHostToolchainCheck"],
+          "doc": "native-bridge/host/AGENTS.md",
+          "requires": ["java-home", "rustup-host"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "native-host / lint"
+        },
+        {
+          "id": "native-host.format",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeHostFormat"],
+          "doc": "native-bridge/host/AGENTS.md",
+          "requires": ["java-home", "rustup-host"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "native-host / lint"
+        },
+        {
+          "id": "native-host.lint",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeHostLint"],
+          "doc": "native-bridge/host/AGENTS.md",
+          "requires": ["java-home", "rustup-host"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "native-host / lint"
+        },
+        {
+          "id": "native-host.test",
+          "kind": "test",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeHostTest"],
+          "doc": "native-bridge/host/AGENTS.md",
+          "requires": ["java-home", "rustup-host"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "native-host / unit-tests (linux)",
+          "related": {
+            "strategy": "crate",
+            "crates": {"native-bridge/host/": ["./gradlew", "bridgeHostTest"]}
+          }
+        },
+        {
+          "id": "native-host.build-contract",
+          "kind": "test",
+          "cwd": ".",
+          "run": ["python3", "-m", "unittest", "discover", "-s", "native-bridge/host/scripts", "-p", "test_build_contract.py", "-v"],
+          "doc": "native-bridge/host/AGENTS.md",
+          "requires": ["python"],
+          "inputs": [],
+          "ci": "native-host / build-contract"
+        }
+      ],
+      "excluded": [
+        {
+          "doc": "native-bridge/host/AGENTS.md",
+          "cwd": ".",
+          "line": "./gradlew bridgeHostBuild",
+          "why": "Product build (locked release veles-native-host and SHA256SUMS): a build artifact, not a gate; CI compiles it only on Windows and macOS."
+        }
+      ]
+    },
+    "installer": {
+      "commands": [
+        {
+          "id": "installer.format",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeInstallerFormat"],
+          "doc": "native-bridge/installer/AGENTS.md",
+          "requires": ["java-home", "rustup-installer"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "installer / lint"
+        },
+        {
+          "id": "installer.lint",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeInstallerLint"],
+          "doc": "native-bridge/installer/AGENTS.md",
+          "requires": ["java-home", "rustup-installer"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "installer / lint"
+        },
+        {
+          "id": "installer.test",
+          "kind": "test",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeInstallerTest"],
+          "doc": "native-bridge/installer/AGENTS.md",
+          "requires": ["java-home", "rustup-installer"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "installer / unit-tests (linux)",
+          "related": {
+            "strategy": "crate",
+            "crates": {"native-bridge/installer/": ["./gradlew", "bridgeInstallerTest"]}
+          }
+        },
+        {
+          "id": "installer.scripts-test",
+          "kind": "test",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeInstallerScriptsTest"],
+          "doc": "native-bridge/installer/AGENTS.md",
+          "requires": ["java-home", "rustup-installer", "python"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "installer / scripts-tests"
+        },
+        {
+          "id": "installer.unsigned",
+          "kind": "platform",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeInstallerUnsigned"],
+          "doc": "native-bridge/installer/AGENTS.md",
+          "requires": ["java-home", "rustup-installer"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "platforms": ["macos", "windows"],
+          "ci": "publish-release / build-windows, build-macos"
+        },
+        {
+          "id": "installer.fixture",
+          "kind": "platform",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeInstallerPackageFixture"],
+          "doc": "native-bridge/installer/AGENTS.md",
+          "requires": ["java-home", "rustup-installer"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "platforms": ["macos", "windows"],
+          "ci": "none (no CI job; a local fixture producer)"
+        },
+        {
+          "id": "installer.debug",
+          "kind": "platform",
+          "cwd": ".",
+          "run": ["./gradlew", "bridgeInstallerDebug"],
+          "doc": "native-bridge/installer/AGENTS.md",
+          "requires": ["java-home", "rustup-installer"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "platforms": ["macos", "windows"],
+          "ci": "publish-release / build-windows, build-macos"
+        }
+      ],
+      "excluded": [
+        {
+          "doc": "native-bridge/installer/AGENTS.md",
+          "cwd": ".",
+          "line": "./gradlew bridgeInstallerSupplyChain",
+          "why": "Runs the same verify/verify-supply-chain.sh as the canonical supply-chain.supply-chain entry, which is the one entry so no plan runs the script twice."
+        }
+      ]
+    },
+    "supply-chain": {
+      "commands": [
+        {
+          "id": "supply-chain.supply-chain",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["verify/verify-supply-chain.sh"],
+          "doc": "verify/AGENTS.md",
+          "requires": ["node", "npm", "verify.node-modules", "cargo-deny", "cargo-cyclonedx"],
+          "inputs": [],
+          "env_exit": [
+            {
+              "code": 2,
+              "fix": "The supply-chain verifier exits 2 when a tool, input or version pin is missing: install Node 26.8.1 and npm 11.19.0 first on PATH, run `npm ci --ignore-scripts --prefix verify` and `./gradlew installCargoDeny verifyCargoCyclonedx`; see docs/reproducible-builds.md."
+            }
+          ],
+          "ci": "supply-chain / build"
+        }
+      ],
+      "excluded": [
+        {
+          "doc": "verify/AGENTS.md",
+          "cwd": ".",
+          "line": "npm ci --ignore-scripts --prefix verify",
+          "why": "Setup, not a gate: the verify.node-modules requirement stands for it."
+        },
+        {
+          "doc": "verify/AGENTS.md",
+          "cwd": ".",
+          "line": "./gradlew installCargoDeny",
+          "why": "Setup, not a gate: the cargo-deny and cargo-cyclonedx requirements stand for it."
+        },
+        {
+          "doc": "verify/AGENTS.md",
+          "cwd": ".",
+          "line": "node --test verify/test/*.test.mjs",
+          "why": "Runs as the tooling node's aggregate tooling.verify-tests: verify/test/ is a tooling path and CI runs it in tooling / unit-tests."
+        }
+      ]
+    },
+    "tooling": {
+      "commands": [
+        {
+          "id": "tooling.scripts-test",
+          "kind": "test",
+          "cwd": ".",
+          "run": ["./gradlew", "scriptsTest"],
+          "doc": "scripts/AGENTS.md",
+          "requires": ["java-home", "python"],
+          "inputs": [
+            {"path": "{gradle_user_home}/gradle.properties"},
+            {"path": "{gradle_user_home}/init.d/"}
+          ],
+          "ci": "tooling / unit-tests",
+          "related": {
+            "strategy": "name-map",
+            "sources": "scripts/*.py",
+            "tests": "scripts/tests/test_<stem>*.py",
+            "run": ["python3", "-I", "{targets}"]
+          }
+        },
+        {
+          "id": "tooling.mac-comparisons-test",
+          "kind": "test",
+          "cwd": ".",
+          "run": ["node", "--test", "scripts/check-mac-comparisons.test.mjs"],
+          "doc": "scripts/AGENTS.md",
+          "requires": ["node"],
+          "inputs": [
+            {"path": "scripts/check-mac-comparisons.mjs"},
+            {"path": "scripts/check-mac-comparisons.test.mjs"}
+          ],
+          "ci": "tooling / unit-tests"
+        },
+        {
+          "id": "tooling.hooked-rules-test",
+          "kind": "test",
+          "cwd": ".",
+          "run": ["node", "--test", "scripts/opencode-hooked-rules/index.test.mjs"],
+          "doc": "scripts/AGENTS.md",
+          "requires": ["node"],
+          "inputs": [{"path": "scripts/opencode-hooked-rules"}],
+          "ci": "tooling / unit-tests"
+        },
+        {
+          "id": "tooling.verify-tests",
+          "kind": "test",
+          "cwd": ".",
+          "run": [
+            "node",
+            "--test",
+            "verify/test/check-npm-licenses.test.mjs",
+            "verify/test/checksum-manifest.test.mjs",
+            "verify/test/install-scripts.test.mjs",
+            "verify/test/license-policy.test.mjs",
+            "verify/test/remote-code.test.mjs",
+            "verify/test/sbom.test.mjs",
+            "verify/test/vendored-patches.test.mjs",
+            "verify/test/workflow-contracts.test.mjs"
+          ],
+          "doc": "scripts/AGENTS.md",
+          "requires": ["node"],
+          "inputs": [{"path": "verify/test"}],
+          "ci": "tooling / unit-tests"
+        },
+        {
+          "id": "tooling.root-aliases",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["sh", "verify/check-root-aliases.sh"],
+          "doc": "scripts/AGENTS.md",
+          "requires": [],
+          "inputs": [{"path": "verify/check-root-aliases.sh"}],
+          "ci": "tooling / unit-tests"
+        },
+        {
+          "id": "tooling.root-aliases-self-test",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["sh", "verify/check-root-aliases.sh", "--self-test"],
+          "doc": "scripts/AGENTS.md",
+          "requires": [],
+          "inputs": [{"path": "verify/check-root-aliases.sh"}],
+          "ci": "tooling / unit-tests"
+        },
+        {
+          "id": "tooling.components-check",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["python3", "-I", "scripts/components.py", "check"],
+          "doc": "scripts/AGENTS.md",
+          "requires": ["python"],
+          "inputs": [],
+          "ci": "changes"
+        }
+      ],
+      "excluded": [
+        {
+          "doc": "scripts/AGENTS.md",
+          "cwd": ".",
+          "line": "./gradlew installGitCliff",
+          "why": "Setup, not a gate: installs the pinned, SHA-256-verified git-cliff; scriptsTest depends on it."
+        },
+        {
+          "doc": "scripts/AGENTS.md",
+          "cwd": ".",
+          "line": "python3 -I scripts/commitlint.py --message \"feat(app): add thing\"",
+          "why": "Example invocation of the commit validator (the args are supplied by the caller); pr-title.yml and ci.yml's commit-guard own it, and it validates a message, not the tree."
+        },
+        {
+          "doc": "scripts/AGENTS.md",
+          "cwd": ".",
+          "line": "python3 -I scripts/components.py changed --base <sha>",
+          "why": "The CI selector, whose placeholders the workflow supplies; verify.py implements its own selection and must not gate on this."
+        },
+        {
+          "doc": "scripts/AGENTS.md",
+          "cwd": ".",
+          "line": "python3 -I scripts/last_green.py --pr <n> --head <sha> --head-repo <owner/name> --head-ref <ref>",
+          "why": "GitHub-API last-green evidence with workflow placeholders: selection support over the network, not a tree check."
+        },
+        {
+          "doc": "scripts/AGENTS.md",
+          "cwd": ".",
+          "line": "python3 -I scripts/project_flow.py --help",
+          "why": "Usage/help demo; the real project-flow commands need GitHub and are event-driven, not a gate."
+        }
+      ]
+    },
+    "docs": {
+      "commands": [
+        {
+          "id": "docs.offline-check",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["python3", "docs/checks/check_offline.py", "--root", "."],
+          "doc": "docs/AGENTS.md",
+          "requires": ["python"],
+          "inputs": [],
+          "ci": "docs / agent-files"
+        },
+        {
+          "id": "docs.agent-files-check",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["python3", "docs/checks/check_agent_files.py", "--root", "."],
+          "doc": "docs/AGENTS.md",
+          "requires": ["python"],
+          "inputs": [],
+          "ci": "docs / agent-files"
+        },
+        {
+          "id": "docs.gate-b-matrix",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["python3", "docs/checks/check_gate_b_matrix.py"],
+          "doc": "docs/AGENTS.md",
+          "requires": ["python"],
+          "inputs": []
+        },
+        {
+          "id": "docs.site-check",
+          "kind": "check",
+          "cwd": ".",
+          "run": ["python3", "docs/checks/check_site.py", "--root", "."],
+          "doc": "docs/AGENTS.md",
+          "requires": ["python"],
+          "inputs": [],
+          "ci": "docs / agent-files"
+        },
+        {
+          "id": "docs.tests",
+          "kind": "test",
+          "cwd": ".",
+          "run": ["python3", "-m", "unittest", "discover", "-s", "docs/checks", "-p", "test_*.py", "-v"],
+          "doc": "docs/AGENTS.md",
+          "requires": ["python"],
+          "inputs": [],
+          "ci": "docs / unit-tests",
+          "related": {
+            "strategy": "name-map",
+            "sources": "docs/checks/*.py",
+            "tests": "docs/checks/test_<stem>.py",
+            "run": ["python3", "{targets}"]
+          }
+        }
+      ],
+      "excluded": [
+        {
+          "doc": "docs/AGENTS.md",
+          "cwd": ".",
+          "line": "python3 -I scripts/agent_rules.py pointers --write",
+          "why": "Hook-delivered-rule maintenance under the prose section: it regenerates the pointer block, not a gate."
+        }
+      ]
+    }
+  }
+}
