@@ -150,9 +150,10 @@ through its `paths`.
 file or a `/init` output selects the docs check on its pull request even when no override exists yet.
 
 `docs/checks/` is guarded by the docs node's offline guard, not the remote-code scan: the guard allows
-only standard-library imports and `git` subprocesses. `supply-chain` owns `verify/lib/` and the listed
-top-level `verify/` files, while `verify/test/` belongs to `tooling` alone; both lists are exact, so a
-new top-level `verify/` file is unaccounted until the map names it.
+only standard-library imports and `git` subprocesses. `supply-chain` lists `verify/lib/` and the tracked
+top-level `verify/` files in its `paths`, while `verify/test/` belongs to `tooling` alone; other nodes
+read some of those files through their own `paths` or `ci-paths`. The file lists are exact, so a new
+top-level `verify/` file is unaccounted until the map names it.
 
 A path that a gate reads from a `docs`-owned file is added to the reading node's `ci-paths`, so a
 documentation-only edit cannot pass pull request CI and fail on `master`: `docs/reproducible-builds.md`
