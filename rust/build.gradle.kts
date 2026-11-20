@@ -951,6 +951,12 @@ val rustWasm = tasks.register<CargoBuildTask>("rustWasm") {
             build.workingDir.get().asFile,
         ) != null
     }
+    // wasm-pack emits pkg/.gitignore, Gradle excludes .gitignore from cached directory outputs,
+    // and a cache load then restores the package without it. rustPackage copies that file as part
+    // of the package contract, so the cached output is not the fresh output (cache experiment 7.3).
+    outputs.doNotCacheIf(
+        "wasm-pack emits pkg/.gitignore, which Gradle excludes from cached directory outputs",
+    ) { true }
 }
 
 val rustNativeTest = tasks.register<CargoExecTask>("rustNativeTest") {
