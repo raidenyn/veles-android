@@ -698,7 +698,7 @@ Run in the checkout at `V`, in this order:
 | 3 | `python3 docs/checks/check_agent_files.py --root .` | 0 | no output |
 | 4 | `python3 -m unittest discover -s docs/checks -p 'test_*.py'` | 0 | `Ran 329 tests in 55.514s` / `OK` |
 | 5 | `node --test verify/test/*.test.mjs` | 0 | `tests 116`, `pass 116`, `fail 0` |
-| 6 | `python3 -I scripts/verify.py --branch` | 0 | 11 nodes `PASS` in 14 m 17.4 s (`elapsed_s` 856.49); only the expected `NOT RUN`s |
+| 6 | `python3 -I scripts/verify.py --branch` | 0 | 10 nodes `PASS` in 14 m 17.4 s (`elapsed_s` 856.49); only the expected `NOT RUN`s (the component map has ten nodes; there is no `root` node) |
 
 Gate 6 output (every node line; the wrapped `NOT RUN` notes are the expected skips):
 
@@ -810,8 +810,65 @@ docs: NOT RUN (docs.offline-check: path-tool: python3 is required (3.8 or newer)
 exit=2
 ```
 
-The Node half of the acceptance (`config set path_prepend` juggling, restore confirmed) is Step 3c
-below, because the hook's effective environment needs the same manoeuvre.
+**2d — the Node variant: Node 22 absent gives `NOT RUN` with the Node fix and exit 2.** A branch
+worktree at `V` (a detached worktree cannot configure Gradle) with one committed line in
+`web-extension/src/background.ts` selects `web-extension`, `protocol` and `supply-chain`. `config show`
+first showed `path_prepend: /home/dev/.local/veles-verify/bin` — it supplies Node 26.8.1 — so for this
+run the prepend was replaced by a directory holding only `cargo-deny` and `cargo-cyclonedx`, and `PATH`
+was narrowed to a symlink farm without `node`/`npm`/`npx`:
+
+```text
+$ python3 -I scripts/verify.py config show
+path_prepend: /home/dev/.local/veles-verify/bin (directory)
+$ python3 -I scripts/verify.py config set path_prepend /tmp/opencode/veles-verify-no-node
+path_prepend: /tmp/opencode/veles-verify-no-node (directory)
+$ env PATH=/tmp/opencode/no-node-bin python3 -I scripts/verify.py config show
+path_prepend: /tmp/opencode/veles-verify-no-node (directory)
+$ env PATH=/tmp/opencode/no-node-bin bash -c 'command -v node || echo "node absent from PATH"'
+node absent from PATH
+$ env PATH=/tmp/opencode/no-node-bin python3 -I scripts/verify.py --base 1bf36ac4ddb2349105386d4323173d686a1252ee
+protocol: NOT RUN (nothing planned: no check and no related test for the changed files)
+  NOT RUN (branch gate only: protocol.contract)
+supply-chain: NOT RUN (supply-chain.supply-chain: path-tool: node is required (22 or newer))
+web-extension: NOT RUN (web-extension.format: path-tool: node is required (22 or newer))
+  tests: none related (web-extension/src/background.ts)
+  NOT RUN (branch gate only: web-extension.bundle)
+  NOT RUN (branch gate only: web-extension.browser)
+  supply-chain.supply-chain: NOT RUN
+    path-tool: node is required (22 or newer)
+    node is not on the effective PATH
+    candidates: none found under $HOME/.cargo/bin, $HOME/.nvm/versions/node/*/bin
+    fix: Install Node 22 or newer and put it on PATH, or run `python3 -I scripts/verify.py config set path_prepend <node bin>`.
+    rerun: cd . && verify/verify-supply-chain.sh
+  web-extension.format: NOT RUN
+    … (the same NOT RUN and fix; rerun: cd web-extension && npm run format:check)
+  web-extension.lint: NOT RUN
+    … (the same NOT RUN and fix; rerun: cd web-extension && npm run lint)
+  web-extension.mac-comparisons: NOT RUN
+    … (the same NOT RUN and fix)
+  web-extension.typecheck: NOT RUN
+    … (the same NOT RUN and fix; rerun: cd web-extension && npm run typecheck)
+real  3m35.780s
+exit=2
+```
+
+`last-run.json` shows what the time was: `elapsed_s` 215.53, the extension's `rust.wasm` producer ran
+(`ok`, 215.0 s) and the three selected commands were `not_run` (0.0 s each) with the Node fix above;
+the node statuses are `supply-chain: NOT RUN`, `web-extension: NOT RUN`, `protocol: NOT RUN (nothing
+planned)`. The config was restored and confirmed:
+
+```text
+$ python3 -I scripts/verify.py config set path_prepend /home/dev/.local/veles-verify/bin
+$ python3 -I scripts/verify.py config show
+path_prepend: /home/dev/.local/veles-verify/bin (directory)
+$ bash -c 'command -v node; node --version'
+/usr/bin/node
+v26.13.1
+```
+
+The worktree and its branch were removed afterwards. (Step 3c repeats the same environment with the
+hook. The Python case above stays because it is the cheapest node: `docs` has no producer, so that
+case isolates the probe and the exit code without a Gradle build.)
 
 ### Step 3 — the real Stop hook (task 15.3)
 
@@ -873,8 +930,9 @@ real  3m23.381s
 ```
 
 Session settlement: `blocks 3`, `repeat {id: [web-extension, web-extension.lint, fail], n: 4}`,
-`spent_s 181.9` for the four hook runs (≈45 s each, the other nodes remembered; the first run also
-re-ran `supply-chain` at 95.6 s).
+`spent_s` 181.9 s for the four hook runs **in total**; the first run is ≥95.6 s (it also re-ran
+`supply-chain` at 95.6 s), which leaves ≈28.8 s per run for the other three — every other node was
+remembered.
 
 The error was removed, and the next stop:
 
@@ -942,7 +1000,7 @@ $ bash -c 'command -v node; node --version'
 v26.13.1
 ```
 
-**3d — a stop moved into a linked worktree runs that worktree's verifier.** A `claude -p` turn cannot
+**3d — a stop moved into a linked worktree runs that worktree's own verifier.** A `claude -p` turn cannot
 express the move: the Stop event's `cwd` is the session's project directory (a Bash `cd` does not move
 it), and in this machine the launcher's checkout must be the session checkout at `V` because the
 primary checkout is on `master` (`165b2e0f`) at a revision that carries neither `scripts/verify.py` nor
@@ -956,10 +1014,48 @@ $ cd /home/dev/repos/veles-android && (time claude -p 'Run exactly this Bash com
  directory." — result, exit 0, 11 s
 ```
 
-So the move was exercised the way the brief allows, by invoking the configured command directly with
-a synthetic event whose `cwd` is the linked acceptance worktree, from the launcher's checkout at `V`
-(both share `/home/dev/repos/veles-android/.git`, so the launcher dispatches to the target worktree's
-`scripts/verify.py` with the target as the child's `cwd`):
+The move was then exercised the way the brief allows, by invoking the configured command directly with
+a synthetic event whose `cwd` is a linked worktree. Two runs together prove the case, because in the
+full run both sides were at `V`, and that alone cannot tell the two copies of `scripts/verify.py`
+apart.
+
+*Which script ran.* One scratch commit in the target worktree adds a marker that only that copy can
+print, and records it inside the target's own tree:
+
+```text
+# target worktree /tmp/opencode/verify-marker (branch verify-marker-target, one commit on V)
+$ git log --oneline -1
+acbb2df7 chore(scratch): mark this checkout's verifier
+$ grep -n "linked-worktree marker" scripts/verify.py
+4586:        marker = "verify: linked-worktree marker 7c9e1f2a5b3d4c60 (this checkout's verifier ran)"
+# the launcher checkout at V cannot produce it
+$ grep -c "linked-worktree marker" scripts/verify.py
+0
+$ cat event-marker.json
+{"session_id":"…","cwd":"/tmp/opencode/verify-marker","hook_event_name":"Stop","stop_hook_active":false}
+$ CLAUDE_PROJECT_DIR=/home/dev/.t3/…/t3-a6c1e51b-… bash -c 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/verify.py" --hook claude || true' < event-marker.json
+real  0m0.592s
+exit=0
+# stdout: 0 bytes
+# stderr:
+verify: linked-worktree marker 7c9e1f2a5b3d4c60 (this checkout's verifier ran)
+$ cat /tmp/opencode/verify-marker/build/verify/acceptance-marker.txt
+verify: linked-worktree marker 7c9e1f2a5b3d4c60 (this checkout's verifier ran)
+/tmp/opencode/verify-marker
+# the launcher checkout was not touched: its last-run.json kept this mtime and md5 across the call
+$ ls -l --time-style=full-iso build/verify/last-run.json; md5sum build/verify/last-run.json
+-rw------- 1 dev dev 18464 2026-11-20 21:47:25.119552938 +0000 build/verify/last-run.json
+955372635b3cbe1aa837fb1282026291  build/verify/last-run.json
+```
+
+The marker string exists only in the target's `scripts/verify.py`, so the launcher's relay of it on
+stderr proves that the dispatched child is that worktree's own script; the marker file records the
+target as the child's `cwd`. The scratch commit makes that verifier exit before the gate, so this run
+proves dispatch and only dispatch. The worktree was removed afterwards.
+
+*Where the state goes.* The full task-gate run below (target and launcher both at `V`, so this half
+alone does not identify the script) shows the child's state landing in the target's tree and not the
+launcher's:
 
 ```text
 $ cd /home/dev/.t3/worktrees/veles-android/t3-… && cat event-stop-moved.json
@@ -999,8 +1095,9 @@ $ ls -l --time-style=full-iso /tmp/opencode/verify-hook-acc/build/verify/last-ru
  "tooling": "PASS (remembered)", "web-extension": "PASS (remembered)"}}
 ```
 
-The launcher's `last-run.json` kept its 20:29:44 mtime and md5; the target's was rewritten by its own
-verifier.
+Within that call the launcher's `last-run.json` kept its 20:29:44 mtime and md5 (read immediately
+before and after it), while the target's was rewritten in the target's tree. (That launcher file was
+rewritten later by unrelated work in this checkout, so it is not compared again here.)
 
 ### Measured hook times
 
@@ -1010,10 +1107,11 @@ Wall clock per hook invocation (`real` of the invocation), and the gate's own `e
 |---|---|---|---|
 | 3a baseline, no remembered passes | `claude -p` turn (one Stop) | 557.5 s (turn 9 m 17.5 s) | 547.19 |
 | 3b lint error | configured command + synthetic event | 146.4 s (2 m 26.4 s) | 145.5 (`spent_s`) |
-| 3b lint error | `claude -p`, 4 Stops (3 blocks + notice) | 203.4 s (turn 3 m 23.4 s) | 181.9 total (`spent_s`, ≈45 s each) |
+| 3b lint error | `claude -p`, 4 Stops (3 blocks + notice) | 203.4 s (turn 3 m 23.4 s) | 181.9 total (`spent_s`; first ≥95.6 s) |
 | 3b fixed | `claude -p` turn (one Stop) | 156.0 s (turn 2 m 36.0 s) | 146.03 |
 | 3c Node absent | configured command + synthetic event | 248.9 s (4 m 08.9 s) | 248.1 (`spent_s`) |
-| 3c Node absent | `claude -p`, 4 Stops (3 blocks + notice) | 245.0 s (turn 4 m 05.0 s) | 224.9 total (`spent_s`, ≈56 s each) |
+| 3c Node absent | `claude -p`, 4 Stops (3 blocks + notice) | 245.0 s (turn 4 m 05.0 s) | 224.9 total (`spent_s`) |
+| 3d dispatch marker (target's own script) | configured command + synthetic event | 0.6 s | — (the target exits before the gate) |
 | 3d worktree move (stale daemon) | configured command + synthetic event | 281.3 s (4 m 41.3 s) | 280.55 (`bridge.format` FAIL) |
 | 3d worktree move (clean) | configured command + synthetic event | 53.7 s | 53.09 |
 
@@ -1021,7 +1119,9 @@ A clean settlement resets the session counters (`spent_s 0`), so clean runs are 
 `build/verify/last-run.json`; blocked sessions keep their `spent_s` in
 `<git-common-dir>/veles-verify/hook-state.json`. The slowest single hook run measured here is the
 cold first-run baseline at 547 s, well inside the 1740-s budget; a warm stop that only re-runs one
-node is ~45–150 s.
+node is ~45–150 s. The budget has little room for a cold first stop in a fresh worktree, though: the
+cold full-selection task gate took 1614.41 s, about 80 s under the 1695 s cap (1740 s less the 45 s
+reserve), so a cold first stop in a fresh worktree is near the budget.
 
 ### Limits recorded by these runs
 
