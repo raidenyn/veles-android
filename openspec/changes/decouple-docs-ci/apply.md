@@ -21,7 +21,7 @@
 ## Commits
 
 - **Range**: `165b2e0f..HEAD`
-- **Count**: 14 (this receipt's own commit follows)
+- **Count**: 16 (this receipt's own commit follows)
 
 ---
 
@@ -122,6 +122,10 @@ them:
 - the environment-variable gap (`GIT_EXEC_PATH`, `GIT_CONFIG_PARAMETERS`, `GIT_SSH_COMMAND`) is
   named in the guard's own docstring as a stated limit covered by review;
 - the duplicated check-docs reasons in `docs/ci.md` are collapsed to a back-reference.
+
+The re-review of that wave found the same Important issue still reachable through `shutil.posix`
+(`posix.system` is `os.system`), so `563957bc` adds `posix` and `nt` to the module-name rule and a
+`shutil.posix.system` rejected case.
 
 After the fix: guard suite 41 tests, full docs suite 286 tests, both on the default Python and 3.8;
 `check_offline.py --root .` exits 0; `check_agent_files.py` and `check_site.py` exit 0.
