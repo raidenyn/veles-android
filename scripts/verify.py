@@ -9,6 +9,7 @@ table, owns the injected clock/wait/runner/git/filesystem seams, and wires the C
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -231,6 +232,11 @@ class Git:
 
     def merge_base(self, ref):
         return self._read("merge-base", ref, "HEAD").decode("utf-8", "replace").strip()
+
+    def commit(self, ref):
+        """The full sha `ref` names, when it names a commit (design D3's base check)."""
+        return self._read("rev-parse", "--verify", "--quiet",
+                          ref + "^{commit}").decode("utf-8", "replace").strip()
 
 
 class Runner:
@@ -661,6 +667,97 @@ def load_table(path, cmap):
             _fail("requirement %r" % req_id, "names unknown producer %r" % producer)
     nodes = _load_nodes(data.get("nodes"), requirements, repo, cmap, seen)
     return Table(requirements=requirements, producers=producers, nodes=nodes)
+
+
+# --- selection (design D3) ------------------------------------------------------------------
+
+
+BASE_FIX = "run `git fetch origin master`, or pass `--base <sha>` with a commit that exists"
+GIT_READ_FIX = "check that git can read this checkout (`git status`), then run verify again"
+UNACCOUNTED_FIX = "add them to .github/components.json as paths, global or unowned"
+
+
+class SelectionError(Exception):
+    """Selection cannot proceed; the CLI exits 2 and the hook blocks with `.fix` (design D3/D12)."""
+
+    def __init__(self, kind, paths=None, fix="", base=None, detail=None):
+        self.kind = kind
+        self.paths = list(paths or [])
+        self.fix = fix
+        self.base = base
+        self.detail = detail
+        if kind == "unaccounted":
+            message = "not owned, global or unowned: %s" % ", ".join(self.paths)
+        elif kind == "base":
+            message = "cannot resolve the base: %s" % (detail or self.base or "origin/master")
+        elif kind == "git":
+            message = "git read failed: %s" % (detail or "unknown error")
+        else:
+            message = detail or kind
+        super().__init__(message)
+
+    @property
+    def identity(self):
+        """The repeat key's last element: the base itself, else a digest of the sorted paths."""
+        if self.kind == "base":
+            key = self.base or "origin/master"
+        else:
+            joined = "\n".join(sorted(self.paths))
+            key = hashlib.sha256(joined.encode("utf-8")).hexdigest()
+        return ("selection", self.kind, key)
+
+
+@dataclass(frozen=True)
+class Selection:
+    """Changed files and the selected nodes, each with the first file that selected it."""
+
+    base: str
+    files: List[str]
+    reasons: Dict[str, str]
+    only_unowned: bool = False
+
+
+def _resolve_base(git: Git, base: Optional[str]) -> str:
+    """The base commit: `--base` resolved to a commit, else `origin/master`'s merge base."""
+    label = base or "origin/master"
+    try:
+        if base:
+            resolved = git.commit(base).strip()
+        else:
+            resolved = git.merge_base("origin/master").strip()
+    except GitError as error:
+        raise SelectionError("base", fix=BASE_FIX, base=label, detail=str(error))
+    if not resolved:
+        raise SelectionError("base", fix=BASE_FIX, base=label,
+                             detail="%s is not a commit" % label)
+    return resolved
+
+
+def select(git: Git, cmap: dict, base: Optional[str] = None) -> Selection:
+    """Changed files -> selected nodes with a reason each (design D3)."""
+    resolved = _resolve_base(git, base)
+    try:
+        files = set(git.diff_names(resolved))
+        files.update(git.staged())
+        files.update(git.unstaged())
+        files.update(git.untracked())
+    except GitError as error:
+        raise SelectionError("git", fix=GIT_READ_FIX, detail=str(error))
+    files = sorted(files)
+    bad = components.unaccounted(files, cmap)
+    if bad:
+        raise SelectionError("unaccounted", paths=bad, fix=UNACCOUNTED_FIX)
+    reasons = {}
+    all_nodes = list(cmap["nodes"])
+    for path in files:
+        owners = components.owner_nodes(path, cmap)
+        if owners is None:  # global or unaccounted (unaccounted was ruled out above)
+            owners = all_nodes
+        for node in owners:
+            if node not in reasons:
+                reasons[node] = path
+    return Selection(base=resolved, files=files, reasons=reasons,
+                     only_unowned=bool(files) and not reasons)
 
 
 # --- the CLI ------------------------------------------------------------------------------

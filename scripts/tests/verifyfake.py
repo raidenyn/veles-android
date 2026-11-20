@@ -51,12 +51,13 @@ class FakeGit:
     """Injected git reads (design D3). `errors` maps a method name to an exception to raise."""
 
     def __init__(self, diff=None, staged=None, unstaged=None, untracked=None, base=None,
-                 errors=None):
+                 errors=None, commit=None):
         self.diff = list(diff or [])
         self.staged_paths = list(staged or [])
         self.unstaged_paths = list(unstaged or [])
         self.untracked_paths = list(untracked or [])
         self.base = base or ZERO_SHA
+        self.commit_sha = commit
         self.errors = dict(errors or {})
         self.calls = []
 
@@ -89,6 +90,11 @@ class FakeGit:
         self.calls.append(("merge_base", ref))
         self._maybe_raise("merge_base")
         return self.base
+
+    def commit(self, ref):
+        self.calls.append(("commit", ref))
+        self._maybe_raise("commit")
+        return self.commit_sha or ref
 
 
 class FakeRunner:
