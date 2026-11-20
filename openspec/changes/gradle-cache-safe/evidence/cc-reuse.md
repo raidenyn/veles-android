@@ -332,3 +332,126 @@ Gradle user home directory has changed.` — the previous entry was stored under
 `GRADLE_USER_HOME` path; it is an invalidation reason, not a problem. The `@InputDirectory` change is
 exercised by both `releaseHookGuard` runs, which still execute and pass with no configuration-cache
 problem. The device run was not repeated, as instructed.
+
+## Task 8 — Full coverage and cross-platform probes
+
+Tasks 8.1–8.3, 2026-11-20, at commit `28745ebf`. Every invocation below ran twice with the
+configuration cache on. The runs pass `--configuration-cache` explicitly and the three builds also set
+`org.gradle.configuration-cache.problems=fail`, so an exit-0 build is a build with no configuration-cache
+problem; the problem count in every captured log is 0. `-q` is omitted in both runs (several workflow call
+sites use it) so the reuse line stays visible. Logs are in `/tmp/opencode/t8/` as `<label>-run{1,2}.log`;
+the lines quoted below are verbatim.
+
+Hosts:
+
+| Host | OS / architecture | JVM | Rust | Gradle |
+| --- | --- | --- | --- | --- |
+| Linux container | Linux x86_64 | Zulu 21.0.12.1 (`.java-version` 21.0.12) | rustup 1.98.0 | 9.5.0 |
+| Windows PC | Windows 11 10.0 amd64 | Zulu 21.0.7 | rustup default stable 1.99.1; 1.98.0 activated by the pinned `rust-toolchain.toml` in the checked crates | 9.5.0 |
+| MacBook ("Sirius") | macOS 26.5.2 (25F84) arm64 | Zulu 21.0.6 | 1.98.0-aarch64-apple-darwin; Xcode 26.6 (17F113) | 9.5.0 |
+
+### 8.1 Linux: every unguarded inventory invocation
+
+Repository root unless the command says otherwise. Run 1 stores (or, where an entry already existed,
+reuses); run 2 must reuse and must not print a problem. `Calculating task graph as …` on run 1 is an
+invalidation reason, never a problem: `JVM has changed` / `Gradle user home directory has changed` come
+from another session's daemon switching the shared Gradle user home, and `file 'rust/build.gradle.kts'
+has changed` is a stale entry stored before Task 7's commit.
+
+| Command | Run 1 | Run 2 |
+| --- | --- | --- |
+| `./gradlew rustFormat rustLint rustTest` | `Calculating task graph as no cached configuration is available for tasks: rustFormat rustLint rustTest` · `Configuration cache entry stored.` (1m 16s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (3s) |
+| `./gradlew scriptsTest` | `… Gradle user home directory has changed.` · `Configuration cache entry stored.` (33s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (32s) |
+| `./gradlew protocolCheck` | `… JVM has changed.` · `Configuration cache entry stored.` (3m 15s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (35s) |
+| `./gradlew rustInstall` | `Calculating task graph as no cached configuration is available for tasks: rustInstall` · `Configuration cache entry stored.` (7s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (1s) |
+| `./gradlew rustHostJni` | `Calculating task graph as no cached configuration is available for tasks: rustHostJni` · `Configuration cache entry stored.` (2s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (1s) |
+| `./gradlew rustWasm` | `Calculating task graph as no cached configuration is available for tasks: rustWasm` · `Configuration cache entry stored.` (3s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (1s) |
+| `./gradlew assembleDebug` | `Calculating task graph as no cached configuration is available for tasks: assembleDebug` · `Configuration cache entry stored.` (38s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (5s) |
+| `./gradlew clean` | `Calculating task graph as no cached configuration is available for tasks: clean` · `Configuration cache entry stored.` (5s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (1s) |
+| `./gradlew rustNdkVersion` | `Calculating task graph as no cached configuration is available for tasks: rustNdkVersion` · `Configuration cache entry stored.` (3s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (1s) |
+| `./gradlew assembleDebug testDebugUnitTest rustHostJni rustJni` | `Calculating task graph as no cached configuration is available for tasks: …` · `Configuration cache entry stored.` (4m 35s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (7s) |
+| `./gradlew bridgeFormat bridgeLint bridgeTypecheck bridgeRustFormat bridgeRustLint` | `… JVM has changed.` · `Configuration cache entry stored.` (1m 10s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (5s) |
+| `./gradlew bridgeNpmTest bridgeRustTest` | `… JVM has changed.` · `Configuration cache entry stored.` (23s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (9s) |
+| `./gradlew bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint bridgeHostTest` | `… JVM has changed.` · `Configuration cache entry stored.` (2m 22s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (2m 4s) |
+| `./gradlew bridgeHostBuild` | `… file 'rust/build.gradle.kts' has changed.` · `Configuration cache entry stored.` (19s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (1s) |
+| `./gradlew bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest` | `… file 'rust/build.gradle.kts' has changed.` · `Configuration cache entry stored.` (1m 29s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (36s) |
+| `./gradlew bridgeInstallerScriptsTest` | `… JVM has changed.` · `Configuration cache entry stored.` (2m 19s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (59s) |
+| `./gradlew clean` (before `assert-clean.sh`) | `Reusing configuration cache.` · `Configuration cache entry reused.` (9s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (1s) |
+
+The scripts, run twice each:
+
+- `rust/scripts/test-jni-conformance.sh 864a3db0` — both embedded invocations
+  (`./gradlew rustJniConformance assembleDebug` from the root and `:app:assembleDebugAndroidTest` from
+  `android/`) stored their entries on the first script run and printed `Reusing configuration cache.` +
+  `Configuration cache entry reused.` on the second, followed by `OK (6 tests)`. The script has no
+  `--configuration-cache` of its own; the builds' `org.gradle.configuration-cache=true` supplies it. Its
+  first attempt on serial `2be02e41` stopped at install with `INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing
+  package me.nagaev.veles.debug signatures do not match newer version` (that phone carries the
+  repository-fixture-signed package); the same script ran cleanly on `864a3db0`, which had no Veles
+  package installed. No app was uninstalled and no key was generated.
+- `./gradlew clean` then `rust/scripts/assert-clean.sh` — exit 0 twice (storing run above). The script
+  itself has no Gradle invocation; the clean's reuse is quoted in the last row of the table.
+- `verify/check-root-aliases.sh` — `PASS: every root alias resolves with --dry-run (…)` twice. Its
+  `--dry-run` invocation was captured separately (`E1b`, and `E4` with `spotlessApply`/`clean`): both pairs
+  printed `Reusing configuration cache.` and `Configuration cache entry reused.` with no problem. Its
+  scratch self-test build is exempt (no `--configuration-cache`, no root `gradle.properties`).
+- `verify/check-android-layout.sh` — check 2 is the fresh-copy build at line 128: `ok 2 - android builds
+  with the root build.gradle.kts, settings.gradle.kts and gradle.properties removed` on both passing
+  runs. The copy keeps `android/gradle.properties`, which sets `problems=fail`, so the build succeeding
+  is a "no problem only" observation. The other Gradle invocations were captured separately and all
+  reused twice:
+
+  | Command | Captured runs |
+  | --- | --- |
+  | `cd rust && ../gradlew help` | `Reusing configuration cache.` / `Configuration cache entry reused.` twice |
+  | `./gradlew --dry-run assembleDebug assembleRelease testDebugUnitTest lintDebug spotlessCheck spotlessApply detekt clean connectedDebugAndroidTest protocolCheck` | `Reusing configuration cache.` twice (8s, 3s) |
+  | `cd android && ./gradlew testDebugUnitTest --dry-run --tests me.nagaev.veles.otp.handlers.RegexMessageHandlerTest` | `Reusing configuration cache.` twice |
+  | `./gradlew --no-parallel --rerun-tasks assembleDebug testDebugUnitTest rustHostJni rustJni` | `Reusing configuration cache.` twice (3m, 2m 25s) |
+
+  The first script run failed check 4 (`the root invocation executed shared Rust tasks more than once:
+  :rust:installCargoNdk`) while another session was building `rustWasm` from `/tmp/opencode/verify-hook-acc`
+  and held the Cargo package-cache lock. The reproduced log shows the build succeeded and
+  `:rust:installCargoNdk` printed its header twice, the second time after
+  `Blocking waiting for file lock on package cache` while `:android:` tasks printed between the two
+  headers — a plain-console header re-print caused by the slowed task, not a second execution (the
+  `--dry-run` graph contains the task once). Runs 2 and 3 of the script passed all seven checks on an idle
+  machine. No source change was needed.
+
+### 8.2 Guarded graphs (CI runs these with the configuration cache off)
+
+| Command | Run 1 | Run 2 |
+| --- | --- | --- |
+| `./gradlew assembleRelease` | `Calculating task graph as no cached configuration is available for tasks: assembleRelease` · `Configuration cache entry stored.` (5m 46s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (6s) |
+| `./gradlew rustPackage` | `Calculating task graph as no cached configuration is available for tasks: rustPackage` · `Configuration cache entry stored.` (4m 53s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (2s) |
+| `./gradlew rustWasm` | see 8.1 (`Configuration cache entry stored.`) | `Reusing configuration cache.` (1s) |
+| `./gradlew installCargoDeny` | `Calculating task graph as no cached configuration is available for tasks: installCargoDeny` · `Configuration cache entry stored.` (3m 55s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (2s) |
+| `./gradlew installGitCliff` | `… JVM has changed.` · `Configuration cache entry stored.` (4s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (1s) |
+
+### 8.3 Windows PC and MacBook: `check-native-host.yml` and `check-installer.yml`
+
+The branch was copied without a push: `git bundle create` of `HEAD` (11 MiB, all history reachable from
+it, no tags), `scp` to the PC and `git clone` there into `C:\Users\yuriy\homepc\work\t8-veles`; for the Mac,
+a local `git clone` of the same bundle into `/tmp/opencode/t8/mac-tree`, then
+`homepc --host mac sync /tmp/opencode/t8/mac-tree t8-veles` (its rsync excludes `.git/`). Both copies are at
+`28745ebf`; `git tag -l 'android-v9*'` printed nothing in the worktree, the local clone (0) and the PC
+clone (empty). Windows used `.\gradlew.bat` and PowerShell; the Mac used `./gradlew` over ssh.
+
+Windows PC (Windows 11, Gradle 9.5.0, Zulu 21.0.7):
+
+| `check-…` job | Command | Run 1 | Run 2 |
+| --- | --- | --- | --- |
+| native-host (windows) | `.\gradlew.bat bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint bridgeHostTest` | `Calculating task graph as no cached configuration is available for tasks: …` · `Configuration cache entry stored.` (2m 1s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (1m 8s) |
+| native-host compile (windows) | `.\gradlew.bat bridgeHostBuild` | `Calculating task graph as no cached configuration is available for tasks: bridgeHostBuild` · `Configuration cache entry stored.` (18s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (3s) |
+| installer (windows) | `.\gradlew.bat bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest` | `Calculating task graph as no cached configuration is available for tasks: …` · `Configuration cache entry stored.` (1m 55s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (1m 1s) |
+
+MacBook (macOS 26.5.2 arm64, Gradle 9.5.0, Zulu 21.0.6, Xcode 26.6):
+
+| `check-…` job | Command | Run 1 | Run 2 |
+| --- | --- | --- | --- |
+| native-host (macos) | `./gradlew bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint bridgeHostTest` | `Calculating task graph as no cached configuration is available for tasks: …` · `Configuration cache entry stored.` (2m 31s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (1m 12s) |
+| native-host compile (macos) | `./gradlew bridgeHostBuild` | `Calculating task graph as no cached configuration is available for tasks: bridgeHostBuild` · `Configuration cache entry stored.` (14s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (450ms) |
+| installer (macos) | `./gradlew bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest` | `Calculating task graph as no cached configuration is available for tasks: …` · `Configuration cache entry stored.` (4m 38s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (4m 6s) |
+
+The Linux jobs of both workflows run the same invocations as the 8.1 rows and are covered there;
+`scripts-tests` is Linux-only. No configuration-cache problem appeared on any platform, no fix or opt-out
+was needed, and no source file changed for this task (`cc-optouts.md` is unchanged).
