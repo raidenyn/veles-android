@@ -2143,6 +2143,19 @@ class PredicateTest(unittest.TestCase):
             self.pending(main, common), [PendingChange("demo", 1, "none")]
         )
 
+    def test_stray_file_under_worktrees_skipped(self):
+        # A stray non-directory entry such as `.DS_Store` is not a worktree: it is skipped quietly,
+        # and a valid sibling worktree is still found.
+        main = self.checkout("main")
+        common = self.common(main)
+        self.write(os.path.join(common, "worktrees", ".DS_Store"), "junk\n")
+        linked = self.link_worktree(common, "wt", self.path("linked"))
+        self.make_change(linked, "demo", apply_iter=1)
+        self.assertEqual(change_roots(main, common), [main, linked])
+        self.assertEqual(
+            self.pending(main, common), [PendingChange("demo", 1, "none")]
+        )
+
     def test_verify_from_other_change_counts(self):
         # Accepted residual: the predicate reads only the iteration and the decision, not `**Change**`,
         # so a verify receipt copied from another change still decides this one.

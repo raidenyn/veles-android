@@ -1557,9 +1557,10 @@ def _linked_worktree_roots(common_dir):
     """The linked worktrees of ``common_dir``, in ``gitdir`` file-name order, at most 32.
 
     Git links a worktree by writing ``<common-dir>/worktrees/<name>/gitdir`` with the path of the
-    worktree's own ``.git`` file; the worktree root is the parent of that path. An entry without a
-    ``gitdir`` file is not a worktree and is skipped. A directory or link that cannot be read raises
-    ``StoreError``: the predicate cannot then answer, and the stop fails open with the notice.
+    worktree's own ``.git`` file; the worktree root is the parent of that path. An entry that is not a
+    directory, or that has no ``gitdir`` file, is not a worktree and is skipped: a stray file such as
+    a ``.DS_Store`` under ``worktrees/`` costs no error. A directory or link that cannot be read
+    raises ``StoreError``: the predicate cannot then answer, and the stop fails open with the notice.
     """
     directory = os.path.join(common_dir, "worktrees")
     try:
@@ -1570,11 +1571,14 @@ def _linked_worktree_roots(common_dir):
         raise StoreError("cannot read the worktree directory %s: %s" % (directory, error))
     roots = []
     for name in names[:WORKTREE_LIMIT]:
-        link = os.path.join(directory, name, "gitdir")
+        entry = os.path.join(directory, name)
+        link = os.path.join(entry, "gitdir")
+        if not os.path.isdir(entry):
+            continue  # a stray file is not a worktree
         try:
             with open(link, "r", encoding="utf-8") as handle:
                 target = handle.read().strip()
-        except FileNotFoundError:
+        except (FileNotFoundError, NotADirectoryError):
             continue
         except (OSError, UnicodeDecodeError) as error:
             raise StoreError("cannot read the worktree link %s: %s" % (link, error))
