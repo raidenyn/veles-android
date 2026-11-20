@@ -962,6 +962,12 @@
         {
           "doc": "scripts/AGENTS.md",
           "cwd": ".",
+          "line": "./gradlew installGitleaks",
+          "why": "Setup, not a gate: installs the pinned, SHA-256-verified gitleaks; scriptsTest depends on it and the pre-commit hook runs it."
+        },
+        {
+          "doc": "scripts/AGENTS.md",
+          "cwd": ".",
           "line": "python3 -I scripts/commitlint.py --message \"feat(app): add thing\"",
           "why": "Example invocation of the commit validator (the args are supplied by the caller); pr-title.yml and ci.yml's commit-guard own it, and it validates a message, not the tree."
         },
