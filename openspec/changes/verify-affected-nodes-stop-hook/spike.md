@@ -637,3 +637,400 @@ linked worktree cannot configure Gradle at all: `AndroidGitVersionExtension.scan
 `org.eclipse.jgit.errors.NoWorkTreeException: Bare Repository has neither a working tree, nor an
 index`, so each worktree was created detached as specified and then put on a throwaway local branch at
 `V` before the timed run (the branch was deleted with the worktree).
+
+## Phase C acceptance (task 15)
+
+`V` = `1bf36ac4ddb2349105386d4323173d686a1252ee` (`docs(openspec): tick the Phase C wiring tasks`) on
+`chore/verify-affected-nodes-stop-hook`; `git merge-base origin/master HEAD` =
+`597ee2c691f2d4c2dec1c4450072eca86a76054e`. Machine: Linux dev container, Node `v26.13.1` on the system
+`PATH` and Node `26.8.1` with npm `11.19.0` supplied by `path_prepend`
+(`/home/dev/.local/veles-verify/bin`, which also carries the pinned `cargo-deny` 0.20.2 and
+`cargo-cyclonedx` 0.5.9), Zulu JDK 21.0.12.1 (`java_home`), Android SDK with NDK 29.0.14206865
+(`android_sdk`), Python 3.14.4. Every scratch worktree and branch used below was removed afterwards
+(`git worktree remove --force`, `git branch -D`); the checkout used for the CLI runs is clean
+(`git status --porcelain` prints nothing) and the machine config is back to the Phase A values
+(`config show` below).
+
+### Environment debt: Playwright Chromium (restored before the branch gate)
+
+The browser cache had not been restored after Phase B (`~/.cache/ms-playwright` was absent), so the
+table's documented fix was tried first:
+
+```text
+$ cd web-extension && ./node_modules/.bin/playwright-core install --with-deps chromium
+BEWARE: your OS is not officially supported by Playwright; installing dependencies for ubuntu26.04-x64 as a fallback.
+Cannot install dependencies for ubuntu26.04-x64 with Playwright 1.58.2!
+Error: ERROR: Playwright does not support chromium on ubuntu26.04-x64
+exit=1
+```
+
+This is the host limitation Phase A recorded. The pinned browser (playwright-core 1.58.2 pins
+Chromium revision 1208, `145.0.7632.6`, `channel: 'chromium'` in `web-extension/scripts/test-browser.mjs`)
+was installed the way Phase A did it: the download was fetched with a platform override, and — the
+`oopDownloadBrowserMain.js` child stalled again after the archive reached 100% (16 m 28 s, killed) —
+the archive was unpacked by hand:
+
+```text
+$ PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64 ./node_modules/.bin/playwright-core install chromium
+Downloading Chrome for Testing 145.0.7632.6 (playwright chromium v1208) ... 100% of 167.3 MiB
+# oopDownloadBrowserMain.js then stalled; killed after 16 m 28 s (exit=143)
+$ unzip -q /tmp/playwright-download-zvUJUw/playwright-download-chromium-ubuntu24.04-x64-1208.zip -d ~/.cache/ms-playwright/chromium-1208
+$ touch ~/.cache/ms-playwright/chromium-1208/{INSTALLATION_COMPLETE,DEPENDENCIES_VALIDATED}
+$ ldd ~/.cache/ms-playwright/chromium-1208/chrome-linux64/chrome | grep -c "not found"   # 16
+$ sudo apt-get update && sudo apt-get install -y --no-install-recommends libatk1.0-0t64 libatk-bridge2.0-0t64 \
+    libcups2t64 libxcb1 libxkbcommon0 libatspi2.0-0t64 libx11-6 libxcomposite1 libxdamage1 libxext6 \
+    libxfixes3 libxrandr2 libgbm1 libcairo2 libpango-1.0-0 libasound2t64
+$ node -e "require('playwright-core').chromium.launch({channel:'chromium',headless:true}).then(async b=>console.log(await b.version()))"
+145.0.7632.6
+```
+
+The requirement probe then resolved the executable and the branch gate ran `web-extension.browser`
+(`ok`, 5.9 s).
+
+### Step 1 — all gates (task 15.1)
+
+Run in the checkout at `V`, in this order:
+
+| # | Command | Exit | Result |
+|---|---|---|---|
+| 1 | `./gradlew scriptsTest` | 0 | `Ran 1130 tests in 35.079s` / `OK`; `BUILD SUCCESSFUL in 46s` (46.35 s wall) |
+| 2 | `python3 -I scripts/components.py check` | 0 | no output |
+| 3 | `python3 docs/checks/check_agent_files.py --root .` | 0 | no output |
+| 4 | `python3 -m unittest discover -s docs/checks -p 'test_*.py'` | 0 | `Ran 329 tests in 55.514s` / `OK` |
+| 5 | `node --test verify/test/*.test.mjs` | 0 | `tests 116`, `pass 116`, `fail 0` |
+| 6 | `python3 -I scripts/verify.py --branch` | 0 | 11 nodes `PASS` in 14 m 17.4 s (`elapsed_s` 856.49); only the expected `NOT RUN`s |
+
+Gate 6 output (every node line; the wrapped `NOT RUN` notes are the expected skips):
+
+```text
+android: PASS
+  NOT RUN (device test; real-device rule)
+bridge-scaffold: PASS
+docs: PASS
+installer: PASS
+  NOT RUN (macOS and Windows only; CI job publish-release / build-windows, build-macos)
+  NOT RUN (macOS and Windows only; CI job none (no CI job; a local fixture producer))
+  NOT RUN (macOS and Windows only; CI job publish-release / build-windows, build-macos)
+native-host: PASS
+protocol: PASS
+rust: PASS
+supply-chain: PASS
+tooling: PASS
+web-extension: PASS
+real  14m17.355s
+exit=0
+```
+
+`web-extension.browser ok 5.9` in `last-run.json` is the Playwright run; `android.release-hook-guard`,
+`rust.wasm`, `web-extension.bundle` and the other steps are `ok` too. No gate was weakened or skipped.
+
+### Step 2 — CLI acceptance in a disposable worktree (task 15.2)
+
+Scratch worktree: `git worktree add --detach /tmp/opencode/verify-scratch 1bf36ac4…`; each case reset
+with `git reset --hard 1bf36ac4…` and the worktree was removed at the end. `config show` (run in the
+scratch worktree first) was:
+
+```text
+$ python3 -I scripts/verify.py config show
+config: /home/dev/repos/veles-android/.git/veles-verify/tools.json (version 1)
+java_home: /home/dev/.jdk/zulu21 (version 21.0.12.1)
+android_sdk: /home/dev/.android-sdk (valid SDK)
+android_ndk: (not set)
+path_prepend: /home/dev/.local/veles-verify/bin (directory)
+```
+
+**2a — only `web-extension/src/` changed.** One committed line appended to
+`web-extension/src/background.ts`, then:
+
+```text
+$ python3 -I scripts/verify.py --list --base 1bf36ac4ddb2349105386d4323173d686a1252ee
+protocol: selected by web-extension/src/background.ts
+  NOT RUN (branch gate only: protocol.contract)
+supply-chain: selected by web-extension/src/background.ts
+  supply-chain.supply-chain: cd . && verify/verify-supply-chain.sh
+web-extension: selected by web-extension/src/background.ts
+  web-extension.format: cd web-extension && npm run format:check
+  web-extension.lint: cd web-extension && npm run lint
+  web-extension.mac-comparisons: cd . && node scripts/check-mac-comparisons.mjs --scan web-extension/src
+  web-extension.pairing-code: cd . && web-extension/scripts/check-pairing-code.sh
+  rust.wasm: cd . && ./gradlew rustWasm
+  web-extension.typecheck: cd web-extension && npm run typecheck
+  tests: none related (web-extension/src/background.ts)
+  NOT RUN (branch gate only: web-extension.bundle)
+  NOT RUN (branch gate only: web-extension.browser)
+exit=0
+```
+
+Exactly three nodes: `web-extension`, `protocol`, `supply-chain`.
+
+**2b — a `rust/` change also selects `android`, with the reason.** One committed line appended to
+`rust/veles-crypto/src/lib.rs`:
+
+```text
+$ python3 -I scripts/verify.py --list --base 1bf36ac4ddb2349105386d4323173d686a1252ee
+android: selected by rust/veles-crypto/src/lib.rs
+  android.spotless: cd android && ./gradlew spotlessCheck
+  android.detekt: cd android && ./gradlew detekt
+  android.lint: cd android && ./gradlew lintDebug
+  android.raw-log: cd . && android/scripts/check-raw-log.sh
+  android.pairing-code: cd . && android/scripts/check-pairing-code.sh
+  android.mac-comparisons: cd . && node scripts/check-mac-comparisons.mjs --scan android/app/src/main
+  android.release-hook-guard: cd android && ./gradlew :app:releaseHookGuard
+  tests: none related (rust/veles-crypto/src/lib.rs)
+  NOT RUN (device test; real-device rule)
+protocol: selected by rust/veles-crypto/src/lib.rs
+  NOT RUN (branch gate only: protocol.contract)
+rust: selected by rust/veles-crypto/src/lib.rs
+  rust.format: cd . && ./gradlew rustFormat
+  rust.lint: cd . && ./gradlew rustLint
+  rust.test: cd . && ./gradlew rustTest
+web-extension: selected by rust/veles-crypto/src/lib.rs
+  … (the same extension steps as 2a)
+exit=0
+```
+
+**2c — an absent tool gives `NOT RUN` with its fix and exit 2.** A docs-only scratch commit
+(`docs/ci.md`) selects only `docs`, whose five steps all require `python`; `path_prepend` supplies
+Node and the cargo tools but **not** Python, so no `config set` was needed for this case and only
+`PATH` was narrowed (a directory of symlinks to `/usr/bin` etc. without `python*`):
+
+```text
+$ env PATH=/tmp/opencode/no-python-bin bash -c 'command -v python3 || echo "python3 absent from PATH"'
+python3 absent from PATH
+$ env PATH=/tmp/opencode/no-python-bin /usr/bin/python3 -I scripts/verify.py --base 1bf36ac4ddb2349105386d4323173d686a1252ee
+docs: NOT RUN (docs.offline-check: path-tool: python3 is required (3.8 or newer))
+  tests: none related (docs/ci.md)
+  docs.offline-check: NOT RUN
+    path-tool: python3 is required (3.8 or newer)
+    python3 is not on the effective PATH
+    candidates: none found under $HOME/.cargo/bin, $HOME/.nvm/versions/node/*/bin
+    fix: Install Python 3.8 or newer and put it on PATH, or run `python3 -I scripts/verify.py config set path_prepend <dir>`.
+    rerun: cd . && python3 docs/checks/check_offline.py --root .
+  … (the other four docs steps report the same NOT RUN and fix)
+exit=2
+```
+
+The Node half of the acceptance (`config set path_prepend` juggling, restore confirmed) is Step 3c
+below, because the hook's effective environment needs the same manoeuvre.
+
+### Step 3 — the real Stop hook (task 15.3)
+
+Disposable worktree on a branch at `V` (a detached worktree cannot configure Gradle, see Phase B):
+`git worktree add -b verify-hook-acceptance /tmp/opencode/verify-hook-acc 1bf36ac4…`, provisioned with
+`npm ci --ignore-scripts` in `web-extension/`, `npm ci --ignore-scripts` in `native-bridge/`,
+`npm ci --ignore-scripts --prefix verify`, `./gradlew installCargoDeny verifyCargoCyclonedx`, then a
+manual task gate (`python3 -I scripts/verify.py`) to warm the Gradle/dist/SBOM outputs: exit 0,
+`elapsed_s` 1614.41 (26 m 55 s cold; every node `PASS`, `protocol: NOT RUN (nothing planned …)`).
+`build/verify/passes.json` was deleted before the baseline stop so that the first hook run really ran
+the tasks instead of reading remembered passes. Claude Code turns are real `claude -p` turns (native
+`2.1.329`); the worktree carries `.claude/settings.json` with both `Stop` commands
+(`agent_rules.py hook` and `verify.py --hook claude`, timeout 1800).
+
+**3a — baseline: a stop with no further edit is a clean, silent pass.**
+
+```text
+$ (time timeout 1700 claude -p 'Reply with exactly: DONE and do nothing else.') > hook-run1.log 2>&1
+exit=0
+Plugin "kotlin-lsp" is enabled in project settings but isn't installed — …
+DONE
+real  9m17.513s
+```
+
+No `Stop hook feedback` line, no `systemMessage`: the hook wrote nothing to stdout, as a pass must.
+`build/verify/last-run.json`: `elapsed_s` 547.19, every node `PASS`/`NOT RUN` as expected; the session
+settled `blocks 0`, `repeat {id: null, n: 0}` and `spent_s 0.0` (a clean settlement resets the
+session), so the run time is taken from `last-run.json`.
+
+**3b — a lint error blocks, naming the extension lint step with its tail; fixing it makes the next
+stop silent.** A real ESLint error was introduced in the worktree
+(`const unusedScratchValue = 1;` before `export {}` in `web-extension/src/background.ts`;
+`npm run lint` → `389:7 error 'unusedScratchValue' is assigned a value but never used
+@typescript-eslint/no-unused-vars`, exit 1). The configured command was then invoked directly with a
+synthetic Stop event (`cwd` = the worktree) to capture its stdout exactly:
+
+```text
+$ CLAUDE_PROJECT_DIR=/tmp/opencode/verify-hook-acc bash -c 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/verify.py" --hook claude || true' < event-stop.json
+real  2m26.355s
+exit=0
+{"decision": "block", "reason": "verify: the task gate found problems; fix them and stop again (attempt 1 of 3)\n\nandroid: PASS (remembered)\n  tests: none related (…)\n  NOT RUN (device test; real-device rule)\nbridge-scaffold: PASS\n  NOT RUN (branch gate only: bridge.test)\ndocs: PASS (remembered)\ninstaller: PASS (remembered)\n  …\nnative-host: PASS (remembered)\n  …\nprotocol: NOT RUN (nothing planned: no check and no related test for the changed files)\n  NOT RUN (branch gate only: protocol.contract)\nrust: PASS (remembered)\nsupply-chain: PASS\ntooling: PASS (remembered)\n  …\nweb-extension: FAIL\n  NOT RUN (branch gate only: web-extension.bundle)\n  NOT RUN (branch gate only: web-extension.browser)\n  web-extension.lint: FAIL (exit 1)\n    rerun: cd web-extension && npm run lint\n    log: …/web-extension.lint.1.log\n    tail:\n      > @veles/web-extension@0.1.0 lint\n      > eslint .\n      /tmp/opencode/verify-hook-acc/web-extension/src/background.ts\n        389:7  error  'unusedScratchValue' is assigned a value but never used  @typescript-eslint/no-unused-vars\n      ✖ 1 problem (1 error, 0 warnings)\nsteps: bridge.format OK; …; web-extension.lint FAIL; … skipped"}
+```
+
+stderr was empty. The synthetic session settled `spent_s 145.5`, `blocks 1`,
+`repeat {id: [web-extension, web-extension.lint, fail], n: 1}`.
+
+The same error was then left in place for a real Claude Code turn (the prompt forbade edits so the
+turn could not repair it):
+
+```text
+$ (time env … claude -p 'Do not modify any files, do not run any commands, and do not use any tools. Reply with exactly: DONE' --output-format stream-json --verbose) > hook-run2-lint.log
+exit=0
+real  3m23.381s
+# the stream carries four Stop invocations: three "Stop hook feedback:" user messages
+#   "verify: the task gate found problems; fix them and stop again (attempt 1|2|3 of 3)" each naming
+#   "web-extension.lint: FAIL (exit 1)" with the eslint tail, then
+#   "Stop says: verify: the task gate still has problems; not blocking again (attempt 4 of 3)"
+#   as a systemMessage pass; result: num_turns 4, is_error false
+```
+
+Session settlement: `blocks 3`, `repeat {id: [web-extension, web-extension.lint, fail], n: 4}`,
+`spent_s 181.9` for the four hook runs (≈45 s each, the other nodes remembered; the first run also
+re-ran `supply-chain` at 95.6 s).
+
+The error was removed, and the next stop:
+
+```text
+$ (time env … claude -p 'Do not modify any files, … Reply with exactly: DONE' --output-format stream-json --verbose) > hook-run3-fixed.log
+exit=0
+real  2m36.0s
+grep -c "Stop hook feedback" hook-run3-fixed.log   # 0
+```
+
+`last-run.json`: `elapsed_s` 146.03, `web-extension: PASS` (format 9.9 s, lint 11.3 s, typecheck
+11.8 s, `rust.wasm` 4.4 s), every other node `PASS (remembered)`; the new session settled clean
+(`spent_s 0.0`, `blocks 0`). Silent pass.
+
+**3c — Node absent from the verifier's effective environment blocks with the Node fix.** `config show`
+first (the same output as Step 2; `path_prepend` = `/home/dev/.local/veles-verify/bin`, which *does*
+supply Node 26.8.1), then the prepend directory was replaced for the run by one holding only the two
+cargo tools, and `PATH` was narrowed to a symlink farm without `node`/`npm`/`npx`:
+
+```text
+$ python3 -I scripts/verify.py config set path_prepend /tmp/opencode/veles-verify-no-node
+path_prepend: /tmp/opencode/veles-verify-no-node (directory)
+$ env PATH=/tmp/opencode/no-node-bin bash -c 'command -v node || echo "node absent"; command -v python3'
+node absent
+/tmp/opencode/no-node-bin/python3
+$ env PATH=/tmp/opencode/no-node-bin python3 -I scripts/verify.py config show
+path_prepend: /tmp/opencode/veles-verify-no-node (directory)
+$ env PATH=/tmp/opencode/no-node-bin bash -c 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/verify.py" --hook claude || true' < event-stop-nonode.json
+real  4m08.894s
+exit=0
+{"decision": "block", "reason": "verify: the task gate found problems; fix them and stop again (attempt 1 of 3)\n\nandroid: NOT RUN (android.mac-comparisons: path-tool: node is required (22 or newer))\n  NOT RUN (device test; real-device rule)\nbridge-scaffold: NOT RUN (bridge.format: path-tool: node is required (22 or newer))\n  NOT RUN (branch gate only: bridge.test)\ndocs: PASS\ninstaller: FAIL\n  …\nnative-host: PASS\nprotocol: NOT RUN (nothing planned: no check and no related test for the changed files)\n  NOT RUN (branch gate only: protocol.contract)\nrust: PASS\nsupply-chain: NOT RUN (supply-chain.supply-chain: path-tool: node is required (22 or newer))\ntooling: PASS\n  …\nweb-extension: NOT RUN (web-extension.format: path-tool: node is required (22 or newer))\n  …\n  web-extension.format: NOT RUN\n    path-tool: node is required (22 or newer)\n    node is not on the effective PATH\n    candidates: none found under $HOME/.cargo/bin, $HOME/.nvm/versions/node/*/bin\n    fix: Install Node 22 or newer and put it on PATH, or run `python3 -I scripts/verify.py config set path_prepend <node bin>`.\n    rerun: cd web-extension && npm run format:check\n  …"}
+```
+
+Every Node-dependent step reports the same `NOT RUN` and the Node fix. One unrelated failure also
+appeared in this run: `installer.test: FAIL (exit 1)`, the pre-existing
+`native-bridge/installer/tests/cli.rs:565` `the_launcher_mode_refuses_a_missing_or_malformed_frame`
+panicking on `write: … BrokenPipe` — a one-off pipe race (the child exits before the parent writes its
+frame). The test passed five times immediately afterwards when run directly, and
+`./gradlew bridgeInstallerTest --rerun-tasks` passed three times with the same node-less `PATH`; it did
+not recur in the later runs (the next run recorded `installer: PASS (remembered)`). It is master code,
+not part of this change.
+
+A real Claude Code turn with the same node-less `PATH` and config:
+
+```text
+$ (time env PATH=/tmp/opencode/no-node-bin claude -p 'Do not modify any files, … Reply with exactly: DONE' --output-format stream-json --verbose) > hook-run4-nonode.log
+exit=0
+real  4m05.0s
+# three "Stop hook feedback:" messages, attempt 1..3 of 3, each starting
+#   "verify: the task gate found problems; …\n\nandroid: NOT RUN (… node is required (22 or newer))"
+# and showing `fix: Install Node 22 or newer and put it on PATH, … config set path_prepend <node bin>`;
+# then "Stop says: verify: the task gate still has problems; not blocking again (attempt 4 of 3)"
+# systemMessage pass; result: num_turns 4, is_error false
+```
+
+Session settlement: `blocks 3`, `spent_s 224.9`, `repeat {id: [android, android.mac-comparisons,
+not_run], n: 4}`. The config was then restored and confirmed:
+
+```text
+$ python3 -I scripts/verify.py config set path_prepend /home/dev/.local/veles-verify/bin
+$ python3 -I scripts/verify.py config show
+path_prepend: /home/dev/.local/veles-verify/bin (directory)
+$ bash -c 'command -v node; node --version'
+/usr/bin/node
+v26.13.1
+```
+
+**3d — a stop moved into a linked worktree runs that worktree's verifier.** A `claude -p` turn cannot
+express the move: the Stop event's `cwd` is the session's project directory (a Bash `cd` does not move
+it), and in this machine the launcher's checkout must be the session checkout at `V` because the
+primary checkout is on `master` (`165b2e0f`) at a revision that carries neither `scripts/verify.py` nor
+the hook. The turn was tried from the primary checkout anyway and Claude Code's permission check
+refused the `cd`:
+
+```text
+$ cd /home/dev/repos/veles-android && (time claude -p 'Run exactly this Bash command: cd /tmp/opencode/verify-hook-acc && pwd && git rev-parse --short HEAD. Then reply with exactly: DONE' …)
+"The command did not run: the permission check blocked it because it changes into
+ `/tmp/opencode/verify-hook-acc` before running git, which could pick up hooks or config from that
+ directory." — result, exit 0, 11 s
+```
+
+So the move was exercised the way the brief allows, by invoking the configured command directly with
+a synthetic event whose `cwd` is the linked acceptance worktree, from the launcher's checkout at `V`
+(both share `/home/dev/repos/veles-android/.git`, so the launcher dispatches to the target worktree's
+`scripts/verify.py` with the target as the child's `cwd`):
+
+```text
+$ cd /home/dev/.t3/worktrees/veles-android/t3-… && cat event-stop-moved.json
+{"session_id":"398d4757-…","transcript_path":"/tmp/opencode/transcript.jsonl","cwd":"/tmp/opencode/verify-hook-acc","hook_event_name":"Stop","stop_hook_active":false}
+$ CLAUDE_PROJECT_DIR=/home/dev/.t3/…/t3-a6c1e51b-… bash -c 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/verify.py" --hook claude || true' < event-stop-moved.json
+real  4m41.270s
+exit=0
+```
+
+That first attempt blocked on `bridge-scaffold: FAIL`, because Gradle reused the daemon that the
+node-less run had started (`A problem occurred starting process 'command 'node''` in
+`:bridgeNodeCheck`); `./gradlew --stop` in both roots fixed the daemon environment, and the same
+invocation then gave the clean pass the case needs:
+
+```text
+$ ./gradlew --stop; (cd android && ./gradlew --stop)
+$ CLAUDE_PROJECT_DIR=… bash -c 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/verify.py" --hook claude || true' < event-stop-moved2.json
+real  0m53.657s
+exit=0
+# stdout: empty (silent pass); stderr: empty
+```
+
+File evidence around the clean run:
+
+```text
+# the launcher checkout (must not change)
+$ ls -l --time-style=full-iso build/verify/last-run.json
+-rw------- 1 dev dev 18925 2026-11-20 20:29:44.558126249 +0000 build/verify/last-run.json
+$ md5sum build/verify/last-run.json
+733c5762a70306f019a9d1dd2cb1eca1  build/verify/last-run.json
+# the linked worktree (must change)
+$ ls -l --time-style=full-iso /tmp/opencode/verify-hook-acc/build/verify/last-run.json
+-rw------- 1 dev dev 14663 2026-11-20 21:41:25.035325195 +0000 /tmp/opencode/verify-hook-acc/build/verify/last-run.json
+{"elapsed_s": 53.09, "nodes": {"android": "PASS (remembered)", "bridge-scaffold": "PASS",
+ "docs": "PASS (remembered)", "installer": "PASS (remembered)", "native-host": "PASS (remembered)",
+ "protocol": "NOT RUN", "rust": "PASS (remembered)", "supply-chain": "PASS (remembered)",
+ "tooling": "PASS (remembered)", "web-extension": "PASS (remembered)"}}
+```
+
+The launcher's `last-run.json` kept its 20:29:44 mtime and md5; the target's was rewritten by its own
+verifier.
+
+### Measured hook times
+
+Wall clock per hook invocation (`real` of the invocation), and the gate's own `elapsed_s`:
+
+| Case | Method | Hook wall clock | Gate `elapsed_s` |
+|---|---|---|---|
+| 3a baseline, no remembered passes | `claude -p` turn (one Stop) | 557.5 s (turn 9 m 17.5 s) | 547.19 |
+| 3b lint error | configured command + synthetic event | 146.4 s (2 m 26.4 s) | 145.5 (`spent_s`) |
+| 3b lint error | `claude -p`, 4 Stops (3 blocks + notice) | 203.4 s (turn 3 m 23.4 s) | 181.9 total (`spent_s`, ≈45 s each) |
+| 3b fixed | `claude -p` turn (one Stop) | 156.0 s (turn 2 m 36.0 s) | 146.03 |
+| 3c Node absent | configured command + synthetic event | 248.9 s (4 m 08.9 s) | 248.1 (`spent_s`) |
+| 3c Node absent | `claude -p`, 4 Stops (3 blocks + notice) | 245.0 s (turn 4 m 05.0 s) | 224.9 total (`spent_s`, ≈56 s each) |
+| 3d worktree move (stale daemon) | configured command + synthetic event | 281.3 s (4 m 41.3 s) | 280.55 (`bridge.format` FAIL) |
+| 3d worktree move (clean) | configured command + synthetic event | 53.7 s | 53.09 |
+
+A clean settlement resets the session counters (`spent_s 0`), so clean runs are read from
+`build/verify/last-run.json`; blocked sessions keep their `spent_s` in
+`<git-common-dir>/veles-verify/hook-state.json`. The slowest single hook run measured here is the
+cold first-run baseline at 547 s, well inside the 1740-s budget; a warm stop that only re-runs one
+node is ~45–150 s.
+
+### Limits recorded by these runs
+
+- Playwright Chromium cannot be installed with the documented command on this Ubuntu 26.04 host;
+  the cached ubuntu-24.04 build (the CI image's platform) is used, as in Phase A.
+- The Stop event's `cwd` cannot be moved by a `claude -p` turn (and the permission check refuses a
+  `cd` out of the project), so the "moved into a linked worktree" case is exercised through the
+  configured hook command with a synthetic event — the real launcher path.
+- A Gradle daemon started under a node-less `PATH` keeps that environment; `./gradlew --stop` after
+  any environment change, or the next `bridge.format` fails with `starting process 'command 'node''`.
+- `native-bridge/installer/tests/cli.rs:565` has a one-off pipe-race flake (not reproduced; master
+  code, not this change).
