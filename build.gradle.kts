@@ -9,6 +9,7 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.file.ArchiveOperations
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.Internal
@@ -164,7 +165,7 @@ fun cargoRegistryRemapRustFlags(): String {
 // so `installGitHooks` has identical behaviour from both entry points.
 apply(from = file(".githooks/install-hooks.gradle.kts"))
 
-// ---- Release tooling: pinned git-cliff (scripts/release-tools.toml) and the scripts/ test suite ----
+// ---- Release tooling: pinned git-cliff and gitleaks (scripts/release-tools.toml) and the scripts/ test suite ----
 val releaseToolsFile = layout.projectDirectory.file("scripts/release-tools.toml")
 val releaseToolsDir = layout.buildDirectory.dir("release-tools")
 
@@ -175,37 +176,79 @@ fun pinnedReleaseTool(name: String): String {
     }.groupValues[1]
 }
 
-val gitCliffTarget: String? = run {
-    val os = System.getProperty("os.name").lowercase()
+// Resolves the JVM's OS/architecture to the pair both pinned tools publish archives for: `os` is
+// one of linux|mac|windows and `arch` one of x86_64|aarch64. Null means unsupported.
+fun hostPlatform(): Pair<String, String>? {
+    val osName = System.getProperty("os.name").lowercase()
+    val os = when {
+        osName.startsWith("linux") -> "linux"
+        osName.startsWith("mac") -> "mac"
+        osName.startsWith("windows") -> "windows"
+        else -> return null
+    }
     val arch = when (System.getProperty("os.arch").lowercase()) {
         "amd64", "x86_64" -> "x86_64"
         "aarch64", "arm64" -> "aarch64"
-        else -> null
+        else -> return null
     }
-    when {
-        arch == null -> null
-        os.startsWith("linux") -> "$arch-unknown-linux-gnu"
-        os.startsWith("mac") -> "$arch-apple-darwin"
-        os.startsWith("windows") && arch == "x86_64" -> "x86_64-pc-windows-msvc"
-        else -> null
-    }
+    return os to arch
 }
 
-// Downloads the pinned git-cliff archive, verifies its SHA-256 BEFORE extracting anything, then
-// extracts only the executable to build/release-tools/git-cliff/ and checks `--version`.
-abstract class InstallGitCliffTask @Inject constructor(
+// Each tool maps the host pair to its own platform key: git-cliff keeps its Rust triples and
+// gitleaks uses its release asset names.
+val gitCliffTarget: String? = hostPlatform()?.let { platform ->
+    mapOf(
+        ("linux" to "x86_64") to "x86_64-unknown-linux-gnu",
+        ("linux" to "aarch64") to "aarch64-unknown-linux-gnu",
+        ("mac" to "aarch64") to "aarch64-apple-darwin",
+        ("mac" to "x86_64") to "x86_64-apple-darwin",
+        ("windows" to "x86_64") to "x86_64-pc-windows-msvc",
+    )[platform]
+}
+
+val gitleaksTarget: String? = hostPlatform()?.let { platform ->
+    mapOf(
+        ("linux" to "x86_64") to "linux_x64",
+        ("linux" to "aarch64") to "linux_arm64",
+        ("mac" to "aarch64") to "darwin_arm64",
+        ("mac" to "x86_64") to "darwin_x64",
+        ("windows" to "x86_64") to "windows_x64",
+    )[platform]
+}
+
+// Downloads a pinned release tool, verifies its SHA-256 BEFORE extracting anything, then extracts
+// only the executable to build/release-tools/<tool>/ and checks its version command.
+abstract class InstallPinnedToolTask @Inject constructor(
     private val execOps: ExecOperations,
     private val archiveOps: ArchiveOperations,
     private val fsOps: FileSystemOperations,
 ) : DefaultTask() {
     @get:Input
+    abstract val toolName: Property<String>
+
+    @get:Input
     abstract val version: Property<String>
 
     @get:Input
-    abstract val target: Property<String>
+    abstract val downloadUrl: Property<String>
+
+    @get:Input
+    abstract val archiveName: Property<String>
+
+    @get:Input
+    abstract val archiveEntry: Property<String>
+
+    @get:Input
+    abstract val binaryName: Property<String>
 
     @get:Input
     abstract val sha256: Property<String>
+
+    @get:Input
+    abstract val versionArgs: ListProperty<String>
+
+    @get:Input
+    abstract val expectedVersionOutput: Property<String>
 
     @get:OutputDirectory
     abstract val installDir: DirectoryProperty
@@ -215,77 +258,120 @@ abstract class InstallGitCliffTask @Inject constructor(
 
     @TaskAction
     fun install() {
-        val windows = target.get().contains("windows")
-        val extension = if (windows) "zip" else "tar.gz"
-        val archiveName = "git-cliff-${version.get()}-${target.get()}.$extension"
-        val url = "https://github.com/orhun/git-cliff/releases/download/v${version.get()}/$archiveName"
+        val archiveName = archiveName.get()
         val download = downloadDir.get().asFile.apply { mkdirs() }.resolve(archiveName)
         val client = java.net.http.HttpClient.newBuilder()
             .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
             .build()
         val response = client.send(
-            java.net.http.HttpRequest.newBuilder(java.net.URI(url)).GET().build(),
+            java.net.http.HttpRequest.newBuilder(java.net.URI(downloadUrl.get())).GET().build(),
             java.net.http.HttpResponse.BodyHandlers.ofFile(download.toPath()),
         )
-        check(response.statusCode() == 200) { "Downloading $url failed with HTTP ${response.statusCode()}" }
+        check(response.statusCode() == 200) {
+            "Downloading ${downloadUrl.get()} failed with HTTP ${response.statusCode()}"
+        }
         val actual = MessageDigest.getInstance("SHA-256").digest(download.readBytes())
             .joinToString("") { "%02x".format(it) }
         if (actual != sha256.get()) {
             download.delete()
             error("SHA-256 mismatch for $archiveName: expected ${sha256.get()}, got $actual")
         }
-        val binaryName = if (windows) "git-cliff.exe" else "git-cliff"
         val out = installDir.get().asFile
         fsOps.delete { delete(out) }
         fsOps.copy {
-            from(if (windows) archiveOps.zipTree(download) else archiveOps.tarTree(download)) {
-                include("git-cliff-${version.get()}/$binaryName")
+            from(if (archiveName.endsWith(".zip")) archiveOps.zipTree(download) else archiveOps.tarTree(download)) {
+                include(archiveEntry.get())
                 eachFile { path = name }
             }
             includeEmptyDirs = false
             into(out)
         }
-        val binary = out.resolve(binaryName)
-        check(binary.isFile) { "$archiveName does not contain git-cliff-${version.get()}/$binaryName" }
+        val binary = out.resolve(binaryName.get())
+        check(binary.isFile) { "$archiveName does not contain ${archiveEntry.get()}" }
         binary.setExecutable(true)
         val stdout = ByteArrayOutputStream()
         execOps.exec {
-            commandLine(binary.absolutePath, "--version")
+            commandLine(binary.absolutePath, *versionArgs.get().toTypedArray())
             standardOutput = stdout
         }
         val reported = stdout.toString(Charsets.UTF_8).trim()
-        check(reported == "git-cliff ${version.get()}") {
-            "Expected git-cliff ${version.get()} at $binary, got: $reported"
+        check(reported == expectedVersionOutput.get()) {
+            "Expected '${expectedVersionOutput.get()}' from ${toolName.get()} at $binary, got: '$reported'"
         }
     }
 }
 
-val installGitCliff = tasks.register<InstallGitCliffTask>("installGitCliff") {
+val installGitCliff = tasks.register<InstallPinnedToolTask>("installGitCliff") {
     group = "build setup"
     description = "Installs the pinned, SHA-256-verified git-cliff into build/release-tools/git-cliff."
     val pinnedVersion = pinnedReleaseTool("git-cliff")
+    val target = providers.provider {
+        requireNotNull(gitCliffTarget) {
+            "No pinned git-cliff archive for ${System.getProperty("os.name")}/${System.getProperty("os.arch")}"
+        }
+    }
+    val archiveName = target.map {
+        "git-cliff-$pinnedVersion-$it.${if (it.contains("windows")) "zip" else "tar.gz"}"
+    }
+    toolName.set("git-cliff")
     version.set(pinnedVersion)
-    target.set(
-        providers.provider {
-            requireNotNull(gitCliffTarget) {
-                "No pinned git-cliff archive for ${System.getProperty("os.name")}/${System.getProperty("os.arch")}"
-            }
-        },
+    this.downloadUrl.set(
+        archiveName.map { "https://github.com/orhun/git-cliff/releases/download/v$pinnedVersion/$it" },
     )
+    this.archiveName.set(archiveName)
+    archiveEntry.set(target.map {
+        "git-cliff-$pinnedVersion/git-cliff${if (it.contains("windows")) ".exe" else ""}"
+    })
+    binaryName.set(target.map { "git-cliff${if (it.contains("windows")) ".exe" else ""}" })
     sha256.set(target.map { pinnedReleaseTool("git-cliff-$it") })
+    versionArgs.set(listOf("--version"))
+    expectedVersionOutput.set("git-cliff $pinnedVersion")
     installDir.set(releaseToolsDir.map { it.dir("git-cliff") })
+    downloadDir.set(releaseToolsDir.map { it.dir("downloads") })
+}
+
+val installGitleaks = tasks.register<InstallPinnedToolTask>("installGitleaks") {
+    group = "build setup"
+    description = "Installs the pinned, SHA-256-verified gitleaks into build/release-tools/gitleaks."
+    val pinnedVersion = pinnedReleaseTool("gitleaks")
+    val target = providers.provider {
+        requireNotNull(gitleaksTarget) {
+            "No pinned gitleaks archive for ${System.getProperty("os.name")}/${System.getProperty("os.arch")}"
+        }
+    }
+    val archiveName = target.map {
+        "gitleaks_${pinnedVersion}_$it.${if (it.contains("windows")) "zip" else "tar.gz"}"
+    }
+    toolName.set("gitleaks")
+    version.set(pinnedVersion)
+    this.downloadUrl.set(
+        archiveName.map { "https://github.com/gitleaks/gitleaks/releases/download/v$pinnedVersion/$it" },
+    )
+    this.archiveName.set(archiveName)
+    // Verified against the pinned v8.30.1 release at apply: both archives hold the executable at
+    // their root and `gitleaks version` prints the bare version.
+    archiveEntry.set(target.map { "gitleaks${if (it.contains("windows")) ".exe" else ""}" })
+    binaryName.set(target.map { "gitleaks${if (it.contains("windows")) ".exe" else ""}" })
+    sha256.set(target.map { pinnedReleaseTool("gitleaks-$it") })
+    versionArgs.set(listOf("version"))
+    expectedVersionOutput.set(pinnedVersion)
+    installDir.set(releaseToolsDir.map { it.dir("gitleaks") })
     downloadDir.set(releaseToolsDir.map { it.dir("downloads") })
 }
 
 // Python tooling tests (scripts/tests: commitlint, component map, release planner/assets/readiness).
 val scriptsTest = tasks.register<Exec>("scriptsTest") {
     group = "verification"
-    description = "Runs the scripts/ unit tests (stdlib Python) against the pinned git-cliff."
-    dependsOn(installGitCliff)
+    description = "Runs the scripts/ unit tests (stdlib Python) against the pinned git-cliff and gitleaks."
+    dependsOn(installGitCliff, installGitleaks)
     workingDir(layout.projectDirectory)
     environment(
         "VELES_GIT_CLIFF",
         releaseToolsDir.get().file("git-cliff/git-cliff$windowsExecutableSuffix").asFile.absolutePath,
+    )
+    environment(
+        "VELES_GITLEAKS",
+        releaseToolsDir.get().file("gitleaks/gitleaks$windowsExecutableSuffix").asFile.absolutePath,
     )
     commandLine(
         if (windowsExecutableSuffix.isNotEmpty()) "python" else "python3",
