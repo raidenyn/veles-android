@@ -116,13 +116,14 @@ class RejectedFormTests(GuardTestCase):
         self.assertRejected('_git("/r", "clone")\n', "clone")
 
     def test_rejects_os_through_an_allowed_module(self):
-        for source in (
-            'shutil.os.system("curl x")\n',
-            'os.path.os.system("curl x")\n',
-            'tempfile._os.popen("x")\n',
+        for source, needle in (
+            ('shutil.os.system("curl x")\n', "re-exports the os module"),
+            ('os.path.os.system("curl x")\n', "re-exports the os module"),
+            ('tempfile._os.popen("x")\n', "re-exports the _os module"),
+            ('shutil.posix.system("curl x")\n', "re-exports the posix module"),
         ):
             with self.subTest(source=source):
-                self.assertRejected(source, "os")
+                self.assertRejected(source, needle)
 
     def test_rejects_git_dir_equals(self):
         self.assertRejected(

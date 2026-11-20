@@ -91,8 +91,9 @@ GIT_FORBIDDEN_SUBCOMMANDS = frozenset(
 )
 
 # Module names that must be imported directly, never reached through another module's attribute
-# (`shutil.os.system`, `tempfile._os.popen`). The direct name is handled by the rules below.
-MODULE_NAMES = ("os", "_os", "sys", "subprocess", "builtins")
+# (`shutil.os.system`, `tempfile._os.popen`, `shutil.posix.system`). The direct names are handled by
+# the rules below; `posix` and `nt` are the platform modules `os` re-exports.
+MODULE_NAMES = ("os", "_os", "posix", "nt", "sys", "subprocess", "builtins")
 
 # (file basename, enclosing top-level function) pairs that may use `importlib`.
 IMPORTLIB_EXEMPT = (
@@ -234,9 +235,7 @@ class _Visitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Attribute(self, node):
-        if node.attr in MODULE_NAMES and not (
-            isinstance(node.value, ast.Name) and node.value.id == node.attr
-        ):
+        if node.attr in MODULE_NAMES:
             self.add(
                 node,
                 "re-exports the %s module through another module; import it directly" % node.attr,
