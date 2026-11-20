@@ -683,14 +683,33 @@ class ParseEventTest(unittest.TestCase):
 
 
 class RenderTest(unittest.TestCase):
-    KINDS = ("tool-before", "tool-after", "prompt", "compacted", "void")
+    KINDS = ("tool-before", "tool-after", "prompt", "compacted", "stop", "void")
     NAMES = {
         "tool-before": "PreToolUse", "tool-after": "PostToolUse",
-        "prompt": "UserPromptSubmit", "compacted": "PreCompact", "void": "void",
+        "prompt": "UserPromptSubmit", "compacted": "PreCompact", "stop": "Stop", "void": "void",
     }
 
     def event(self, kind):
         return Event(kind, "s", None, "/c", None, None, None, None, None, None, None)
+
+    def test_claude_block(self):
+        out = render("claude", self.event("stop"), Decision("block", "why", []))
+        self.assertEqual(json.loads(out), {"decision": "block", "reason": "why"})
+
+    def test_plain_block_entry(self):
+        entries = [(("stop", "demo"), 4)]
+        out = json.loads(render("plain", self.event("stop"), Decision("block", "why", entries)))
+        self.assertEqual(
+            out,
+            {"decision": "block", "text": "why",
+             "entries": [{"rule": ["stop", "demo"], "write_id": 4}]},
+        )
+
+    def test_block_rejected_for_tool_after(self):
+        for kind in ("tool-before", "tool-after", "prompt", "compacted", "void"):
+            for fmt in ("claude", "plain"):
+                with self.assertRaises(ValueError, msg=(fmt, kind)):
+                    render(fmt, self.event(kind), Decision("block", "why", []))
 
     def test_render_pass_is_empty(self):
         for kind in self.KINDS:
@@ -726,7 +745,7 @@ class RenderTest(unittest.TestCase):
         entries = [(("r.md", "ab" * 32), 7)]
         for kind in self.KINDS:
             for fmt in ("claude", "plain"):
-                for decision in ("pass", "context", "deny"):
+                for decision in ("pass", "context", "deny", "block"):
                     try:
                         out = render(fmt, self.event(kind), Decision(decision, "text", entries))
                     except ValueError:
@@ -1649,7 +1668,8 @@ def flow(values):
 
 
 def make_rule(name, body="Commit types guide.\n", skills=("openspec-apply-change", "opsx:apply"),
-              commands=(FINALIZE_COMMAND,), gates=(GIT_COMMIT_GATE, PR_CREATE_GATE, PR_EDIT_GATE)):
+              commands=(FINALIZE_COMMAND,), gates=(GIT_COMMIT_GATE, PR_CREATE_GATE, PR_EDIT_GATE),
+              stops=()):
     lines = ['pointer: "Read %s."' % name]
     if skills:
         lines.append("skills: " + flow(skills))
@@ -1657,12 +1677,15 @@ def make_rule(name, body="Commit types guide.\n", skills=("openspec-apply-change
         lines.append("commands: " + flow(commands))
     if gates:
         lines.append("gates: " + flow(gates))
+    if stops:
+        lines.append("stops: " + flow(stops))
     return parse_rule(name, "---\n" + "\n".join(lines) + "\n---\n" + body)
 
 
 def event(kind, session="s1", agent=None, cwd="/work/repo", tool=None, command=None, ok=None,
-          skill=None, path=None, prompt=None, write_ids=None):
-    return Event(kind, session, agent, cwd, tool, command, ok, skill, path, prompt, write_ids)
+          skill=None, path=None, prompt=None, write_ids=None, stop_hook_active=None):
+    return Event(kind, session, agent, cwd, tool, command, ok, skill, path, prompt, write_ids,
+                 stop_hook_active)
 
 
 def bash_before(command, **fields):
@@ -2086,6 +2109,223 @@ class PredicateTest(unittest.TestCase):
         self.write_bytes(os.path.join(directory, "verify.md"), b"\xff\xfe not utf-8\n")
         with self.assertRaises(StoreError):
             self.pending(root, self.common(root))
+
+
+STOP_TEXT = (
+    "Change `%s` has an apply receipt and no finalize receipt. Run verify if it has not run, then "
+    "finalize now: it pushes and creates the PR without asking. If a rule requires you to ask the "
+    "user, or the user told you to stop, say which and end your turn; the next stop is not blocked."
+)
+CLOSEOUT_TEXT = "Run verify, then finalize."
+
+
+class StopGateTest(EngineTest):
+    """The stop gate: one block per pending change phase, its record, and what leaves it alone."""
+
+    def setUp(self):
+        super(StopGateTest, self).setUp()
+        self.root = os.path.join(self.tmp, "repo")
+        os.makedirs(self.root)
+        self.roots = [self.root]
+        self.closeout = make_rule(
+            "repo-superspec-closeout.md", body=CLOSEOUT_TEXT + "\n",
+            skills=(), commands=(), gates=(), stops=("superspec-finalize-pending",),
+        )
+        self.rules = [self.closeout]
+
+    def write(self, path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+
+    def make_change(self, name, apply_iter=None, verify=None):
+        """Write a change's receipts under the fixture root; ``verify`` is ``(iteration, passed)``."""
+        directory = os.path.join(self.root, "openspec", "changes", name)
+        os.makedirs(directory, exist_ok=True)
+        if apply_iter is not None:
+            self.write(os.path.join(directory, "apply.md"), "**Iteration**: `%d`\n" % apply_iter)
+        if verify is not None:
+            self.write(os.path.join(directory, "verify.md"), "\n".join([
+                "**Iteration**: `%d`" % verify[0],
+                "",
+                "- [%s] ✅ PASS — ready to proceed" % ("x" if verify[1] else " "),
+                "",
+            ]))
+        return directory
+
+    def name_change(self, name):
+        """Record ``name`` in the session change set the way a successful openspec call does."""
+        self.run_event(bash_after("openspec status --change %s" % name))
+
+    def run_stop(self, roots=None, **fields):
+        ev = event("stop", **fields)
+        with self.store.transaction(ev.session) as state:
+            return decide(self.rules, state, context_key(ev), ev,
+                          list(self.roots) if roots is None else roots)
+
+    def stops(self, session="s1"):
+        with self.store.transaction(session) as state:
+            return [dict(record) for record in state.stops]
+
+    def assert_blocked(self, decision, name):
+        self.assertEqual(decision.kind, "block", decision)
+        self.assertEqual(decision.text, (STOP_TEXT % name) + "\n\n" + CLOSEOUT_TEXT)
+        records = self.stops()
+        self.assertEqual(records[-1]["change"], name)
+        self.assertEqual(decision.entries, [(("stop", name), records[-1]["write_id"])])
+        self.assertIsNone(self.entry(self.closeout))
+        return records[-1]
+
+    def test_stall_after_apply_blocks(self):
+        self.name_change("demo")
+        self.make_change("demo", apply_iter=1)
+        record = self.assert_blocked(self.run_stop(), "demo")
+        self.assertEqual(len(self.stops()), 1)
+        self.assertEqual((record["change"], record["iteration"], record["verify_state"]),
+                         ("demo", 1, "none"))
+
+    def test_second_stop_passes(self):
+        self.name_change("demo")
+        self.make_change("demo", apply_iter=1)
+        self.assert_blocked(self.run_stop(), "demo")
+        self.assertEqual(self.run_stop(), Decision("pass", "", []))
+        self.assertEqual(len(self.stops()), 1)
+
+    def test_pass_phase_blocks_again(self):
+        self.name_change("demo")
+        self.make_change("demo", apply_iter=1)
+        self.assert_blocked(self.run_stop(), "demo")
+        self.make_change("demo", apply_iter=1, verify=(1, True))
+        record = self.assert_blocked(self.run_stop(), "demo")
+        self.assertEqual(record["verify_state"], "pass")
+        self.assertEqual(len(self.stops()), 2)
+        self.assertEqual(self.run_stop(), Decision("pass", "", []))
+
+    def test_new_iteration_blocks_again(self):
+        self.name_change("demo")
+        self.make_change("demo", apply_iter=1)
+        self.assert_blocked(self.run_stop(), "demo")
+        self.make_change("demo", apply_iter=2)
+        record = self.assert_blocked(self.run_stop(), "demo")
+        self.assertEqual((record["iteration"], record["verify_state"]), (2, "none"))
+
+    def test_stop_hook_active_same_phase_passes(self):
+        self.name_change("demo")
+        self.make_change("demo", apply_iter=1)
+        self.assert_blocked(self.run_stop(), "demo")
+        self.assertEqual(self.run_stop(stop_hook_active=True), Decision("pass", "", []))
+        self.assertEqual(len(self.stops()), 1)
+
+    def test_stop_hook_active_new_phase_blocks(self):
+        self.name_change("demo")
+        self.make_change("demo", apply_iter=1)
+        self.assert_blocked(self.run_stop(), "demo")
+        self.make_change("demo", apply_iter=1, verify=(1, True))
+        record = self.assert_blocked(self.run_stop(stop_hook_active=True), "demo")
+        self.assertEqual(record["verify_state"], "pass")
+
+    def test_compaction_keeps_record(self):
+        self.name_change("demo")
+        self.make_change("demo", apply_iter=1)
+        self.assert_blocked(self.run_stop(), "demo")
+        self.assertEqual(self.run_event(event("compacted")), Decision("pass", "", []))
+        self.assertEqual(self.run_stop(), Decision("pass", "", []))
+        self.assertEqual(len(self.stops()), 1)
+
+    def test_no_block_without_change_set(self):
+        self.make_change("demo", apply_iter=1)
+        self.assertEqual(self.run_stop(), Decision("pass", "", []))
+        self.assertEqual(self.stops(), [])
+
+    def test_first_unrecorded_change_named(self):
+        with self.store.transaction("s1") as state:
+            state.changes.extend(["alpha", "beta"])
+            state.stops.append({"change": "alpha", "iteration": 1, "verify_state": "none",
+                                "write_id": state.store.next_write_id()})
+        self.make_change("alpha", apply_iter=1)
+        self.make_change("beta", apply_iter=1)
+        self.assert_blocked(self.run_stop(), "beta")
+        self.assertEqual([record["change"] for record in self.stops()], ["alpha", "beta"])
+
+    def test_subagent_stop_event_not_gated(self):
+        self.name_change("demo")
+        self.make_change("demo", apply_iter=1)
+        self.assertEqual(self.run_stop(agent="a1"), Decision("pass", "", []))
+        self.assertEqual(self.stops(), [])
+
+    def test_void_removes_stop_record(self):
+        self.name_change("demo")
+        self.make_change("demo", apply_iter=1)
+        record = self.assert_blocked(self.run_stop(), "demo")
+        self.run_event(event("void", write_ids=[record["write_id"]]))
+        self.assertEqual(self.stops(), [])
+        self.assert_blocked(self.run_stop(), "demo")
+
+    def test_late_void_keeps_newer_record(self):
+        self.name_change("demo")
+        self.make_change("demo", apply_iter=1)
+        first = self.assert_blocked(self.run_stop(), "demo")
+        self.make_change("demo", apply_iter=1, verify=(1, True))
+        second = self.assert_blocked(self.run_stop(), "demo")
+        self.run_event(event("void", write_ids=[first["write_id"]]))
+        self.assertEqual(self.stops(), [second])
+        self.assertEqual(self.run_stop(), Decision("pass", "", []))
+
+    def test_records_capped_at_40(self):
+        self.name_change("demo")
+        with self.store.transaction("s1") as state:
+            for iteration in range(40):
+                state.stops.append({"change": "demo", "iteration": iteration,
+                                    "verify_state": "none",
+                                    "write_id": state.store.next_write_id()})
+        self.make_change("demo", apply_iter=99)
+        record = self.assert_blocked(self.run_stop(), "demo")
+        self.assertEqual(record["iteration"], 99)
+        records = self.stops()
+        self.assertEqual(len(records), 40)
+        self.assertEqual(records[0]["iteration"], 1)
+        self.assertEqual(records[-1]["iteration"], 99)
+
+    def test_stop_text_capped(self):
+        # The runtime cap is the backstop: rules that do not fit whole are left out, and the change is
+        # still named.
+        self.rules = [
+            make_rule("repo-%s.md" % letter, body=letter * 4000 + "\n", skills=(), commands=(),
+                      gates=(), stops=("superspec-finalize-pending",))
+            for letter in "abc"
+        ]
+        self.name_change("demo")
+        self.make_change("demo", apply_iter=1)
+        decision = self.run_stop()
+        self.assertEqual(decision.kind, "block")
+        self.assertEqual(
+            decision.text,
+            (STOP_TEXT % "demo") + "\n\n" + "a" * 4000 + "\n\n" + "b" * 4000,
+        )
+        self.assertLessEqual(len(decision.text.encode("utf-8")), 9000)
+        self.assertEqual(len(self.stops()), 1)
+
+    def test_parse_stop_hook_active_in_both_formats(self):
+        stopped = parse_event("claude", claude("Stop", stop_hook_active=True))
+        self.assertEqual((stopped.kind, stopped.stop_hook_active), ("stop", True))
+        plain = parse_event(
+            "plain",
+            {"event": "stop", "session": "s", "cwd": "/c", "stop_hook_active": False},
+        )
+        self.assertEqual((plain.kind, plain.stop_hook_active), ("stop", False))
+        for fmt, payload in (
+            ("claude", claude("Stop", stop_hook_active="yes")),
+            ("claude", claude("Stop", stop_hook_active=1)),
+            ("claude", claude("Stop")),
+            ("plain", {"event": "stop", "session": "s", "cwd": "/c", "stop_hook_active": 1}),
+            ("plain", {"event": "stop", "session": "s", "cwd": "/c"}),
+        ):
+            self.assertIsNone(parse_event(fmt, payload).stop_hook_active, payload)
+
+    def test_event_stop_hook_active_defaults_to_none(self):
+        self.assertIsNone(event("prompt").stop_hook_active)
+        self.assertIsNone(Event("stop", "s", None, "/c", None, None, None, None, None, None,
+                                None).stop_hook_active)
 
 
 class MomentTest(EngineTest):
@@ -2977,6 +3217,49 @@ class MomentRepeatAfterWriteTest(CheckoutFixture):
             self.entries()[("s1", self.rule.identity)]["triggers"],
             {"command:" + FINALIZE_COMMAND, "skill:openspec-apply-change"},
         )
+
+
+class HandleStopTest(CheckoutFixture):
+    """The stop event end to end: ``handle`` computes the change roots and renders the block."""
+
+    def setUp(self):
+        super(HandleStopTest, self).setUp()
+        self.write_rule("repo-superspec-closeout.md", self.closeout_source())
+        self.make_change("demo", 1)
+
+    def closeout_source(self):
+        lines = ['pointer: "Close out after apply."',
+                 "stops: " + flow(("superspec-finalize-pending",))]
+        return "---\n" + "\n".join(lines) + "\n---\n" + CLOSEOUT_TEXT + "\n"
+
+    def make_change(self, name, iteration):
+        directory = os.path.join(self.root, "openspec", "changes", name)
+        os.makedirs(directory, exist_ok=True)
+        with open(os.path.join(directory, "apply.md"), "w", encoding="utf-8") as handle_:
+            handle_.write("**Iteration**: `%d`\n" % iteration)
+
+    def test_plain_stop_blocks_with_the_record(self):
+        self.call(self.plain("tool-after", tool="bash", command="openspec status --change demo",
+                             ok=True))
+        out, code = self.call(self.plain("stop"))
+        response = json.loads(out)
+        self.assertEqual((code, response["decision"]), (0, "block"))
+        self.assertEqual(response["text"], (STOP_TEXT % "demo") + "\n\n" + CLOSEOUT_TEXT)
+        with self.store.transaction("s1") as state:
+            record = state.stops[0]
+        self.assertEqual(
+            response["entries"],
+            [{"rule": ["stop", "demo"], "write_id": record["write_id"]}],
+        )
+
+    def test_claude_stop_blocks_then_passes_in_the_same_phase(self):
+        self.call(self.claude_bash("PostToolUse", "openspec status --change demo"), fmt="claude")
+        out, code = self.call(self.claude_event("Stop", stop_hook_active=False), fmt="claude")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), {
+            "decision": "block", "reason": (STOP_TEXT % "demo") + "\n\n" + CLOSEOUT_TEXT})
+        self.assertEqual(self.call(self.claude_event("Stop", stop_hook_active=True), fmt="claude"),
+                         ("", 0))
 
 
 class DiscoveryFailureTest(CheckoutFixture):

@@ -49,7 +49,8 @@ LIST_KEYS = ("skills", "commands", "gates", "stops")
 RULE_KEYS = SCALAR_KEYS + LIST_KEYS
 
 # The predicates a rule may name under `stops`; the stop gate implements each one.
-STOP_PREDICATES = ("superspec-finalize-pending",)
+FINALIZE_PENDING = "superspec-finalize-pending"
+STOP_PREDICATES = (FINALIZE_PENDING,)
 
 FRONTMATTER_KEY_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):(?: (.*))?$")
 FRONTMATTER_ITEM = r'"(?:[^"\\]|\\.)*"'
@@ -440,8 +441,8 @@ def _pointers(args):
     return 0
 
 
-EVENT_KINDS = ("tool-before", "tool-after", "prompt", "compacted", "void")
-DECISION_KINDS = ("pass", "context", "deny")
+EVENT_KINDS = ("tool-before", "tool-after", "prompt", "compacted", "stop", "void")
+DECISION_KINDS = ("pass", "context", "deny", "block")
 # Variables that select or relocate the repository; git honours them over ``-C``, so a host started from
 # a git hook could otherwise point the engine at an unrelated checkout. GIT_CEILING_DIRECTORIES is kept:
 # it can only make discovery fail, which passes silently.
@@ -462,6 +463,7 @@ CLAUDE_EVENTS = {
     "PostToolUse": "tool-after",
     "UserPromptSubmit": "prompt",
     "PreCompact": "compacted",
+    "Stop": "stop",
 }
 CLAUDE_NAMES = dict((kind, name) for name, kind in CLAUDE_EVENTS.items())
 
@@ -471,11 +473,14 @@ class EventError(Exception):
 
 
 # One normalized hook event. Only the fields the engine needs are kept: a tool response, which can be
-# megabytes, is never copied. ``write_ids`` is a list of ints on a ``void`` event and None otherwise.
+# megabytes, is never copied. ``write_ids`` is a list of ints on a ``void`` event and None otherwise;
+# ``stop_hook_active`` is Claude Code's flag on a ``Stop`` and None everywhere else.
 Event = collections.namedtuple(
     "Event",
-    ["kind", "session", "agent", "cwd", "tool", "command", "ok", "skill", "path", "prompt", "write_ids"],
+    ["kind", "session", "agent", "cwd", "tool", "command", "ok", "skill", "path", "prompt",
+     "write_ids", "stop_hook_active"],
 )
+Event.__new__.__defaults__ = (None,)  # a construction that predates stop_hook_active still works
 
 # kind is one of DECISION_KINDS; entries is a list of (rule identity, write id).
 Decision = collections.namedtuple("Decision", ["kind", "text", "entries"])
@@ -492,6 +497,12 @@ def _text(payload, key, required=False):
     if required and not value:
         raise EventError("`%s` must not be empty" % key)
     return value
+
+
+def _flag(payload, key):
+    """The boolean member ``key`` of ``payload``, or None; a non-boolean value is ignored."""
+    value = payload.get(key)
+    return value if isinstance(value, bool) else None
 
 
 def _parse_claude(payload):
@@ -521,6 +532,7 @@ def _parse_claude(payload):
         _text(payload, "agent_id"),
         _text(payload, "cwd", required=True),
         tool, command, ok, skill, path, prompt, None,
+        _flag(payload, "stop_hook_active") if kind == "stop" else None,
     )
 
 
@@ -550,6 +562,7 @@ def _parse_plain(payload):
         _text(payload, "path"),
         _text(payload, "prompt"),
         write_ids,
+        _flag(payload, "stop_hook_active") if kind == "stop" else None,
     )
 
 
@@ -568,13 +581,17 @@ def parse_event(fmt, payload):
 def render(fmt, event, decision):
     """The text the engine prints for ``decision``: ``""`` for a pass, JSON otherwise.
 
-    A decision is never a permission grant: Claude Code's ``allow`` is never written. Raises
-    ``ValueError`` for a decision or format that has no form.
+    A decision is never a permission grant: Claude Code's ``allow`` is never written. ``block`` is only
+    valid for a ``stop`` event, where Claude Code reads ``{"decision": "block", "reason": ...}`` and the
+    plain format carries the stop record's entry. Raises ``ValueError`` for a decision or format that
+    has no form.
     """
     if decision.kind not in DECISION_KINDS:
         raise ValueError("unknown decision %r" % (decision.kind,))
     if fmt not in ("claude", "plain"):
         raise ValueError("unknown output format %r" % (fmt,))
+    if decision.kind == "block" and event.kind != "stop":
+        raise ValueError("a block is only valid for a stop event, not %r" % (event.kind,))
     if decision.kind == "pass":
         return ""
     if fmt == "plain":
@@ -586,6 +603,8 @@ def render(fmt, event, decision):
                 for identity, write_id in decision.entries
             ],
         })
+    if decision.kind == "block":
+        return json.dumps({"decision": "block", "reason": decision.text})
     if decision.kind == "deny":
         if event.kind != "tool-before":
             raise ValueError("Claude Code can only deny a tool-before event, not %r" % event.kind)
@@ -1368,28 +1387,31 @@ def _utf8_size(text):
     return len(text.encode("utf-8", "surrogatepass"))
 
 
-def _capped(rules):
-    """``(included rules, joined text)``: rules in name order, each whole, the text at most CONTEXT_CAP bytes.
+def _capped(rules, prefix=""):
+    """``(included rules, text)``: rules in name order, each whole, the text at most CONTEXT_CAP bytes.
 
     Each rule contributes ``rule_text(rule.body)`` (never empty: ``parse_rule`` rejects a blank body),
-    and the texts are joined with one blank line (``RULE_SEPARATOR``). The cap counts the UTF-8 bytes
-    of exactly the text returned, separators included. A rule that does not fit is left out and the
+    and the texts are joined with one blank line (``RULE_SEPARATOR``). ``prefix`` (the stop gate's
+    engine line) comes first, counts against the cap, and is followed by the same separator. The cap
+    counts the UTF-8 bytes of exactly the text returned. A rule that does not fit is left out and the
     next one is still tried.
     """
     included = []
     parts = []
-    size = 0
+    size = _utf8_size(prefix)
     for rule in sorted(rules, key=lambda item: item.name):
         part = rule_text(rule.body)
         if not part:
             continue  # unreachable for a parsed rule; a rule with no text is never credited
-        added = _utf8_size(part) + (_utf8_size(RULE_SEPARATOR) if parts else 0)
+        separator = RULE_SEPARATOR if parts or prefix else ""
+        added = _utf8_size(separator) + _utf8_size(part)
         if size + added > CONTEXT_CAP:
             continue
         included.append(rule)
         parts.append(part)
         size += added
-    return included, RULE_SEPARATOR.join(parts)
+    joined = prefix + (RULE_SEPARATOR if prefix and parts else "") + RULE_SEPARATOR.join(parts)
+    return included, joined
 
 
 def _recorded(state, key, rules):
@@ -1681,7 +1703,51 @@ def finalize_pending(roots, changes):
     return sorted(pending, key=lambda change: change.name)
 
 
-def decide(rules, state, key, event):
+STOP_LINE = (
+    "Change `{name}` has an apply receipt and no finalize receipt. Run verify if it has not run, "
+    "then finalize now: it pushes and creates the PR without asking. If a rule requires you to ask "
+    "the user, or the user told you to stop, say which and end your turn; the next stop is not "
+    "blocked."
+)
+
+
+def _stop_gate(rules, state, event, roots):
+    """The stop gate: block once per pending change phase, with the rule text and a stop record.
+
+    A ``stop`` in the main context asks every rule naming the ``superspec-finalize-pending`` predicate
+    about the session change set over ``roots`` (the ``change_roots`` list; None reads as no checkout).
+    The first pending change by name whose phase (newest apply iteration and verify state) has no stop
+    record is named in ``STOP_LINE``, followed by the text of the rules that fit under the cap; the
+    phase's record is written in the same transaction, keeping the ``KEEP_STOPS`` newest, and the rules
+    are not marked delivered. A subagent stop, a rule without the predicate, or no unrecorded pending
+    change passes. ``stop_hook_active`` is not consulted: the per-phase records bound the blocks, and a
+    phase that changed may block again even when the earlier block continued the turn.
+    """
+    if event.agent:
+        return Decision("pass", "", [])
+    gated = [rule for rule in rules if FINALIZE_PENDING in rule.stops]
+    if not gated:
+        return Decision("pass", "", [])
+    recorded = set(
+        (record["change"], record["iteration"], record["verify_state"]) for record in state.stops
+    )
+    for change in finalize_pending(roots or [], state.changes):
+        if (change.name, change.iteration, change.verify_state) in recorded:
+            continue
+        _, text = _capped(gated, STOP_LINE.format(name=change.name))
+        write_id = state.store.next_write_id()
+        state.stops.append({
+            "change": change.name,
+            "iteration": change.iteration,
+            "verify_state": change.verify_state,
+            "write_id": write_id,
+        })
+        del state.stops[:max(0, len(state.stops) - KEEP_STOPS)]
+        return Decision("block", text, [(("stop", change.name), write_id)])
+    return Decision("pass", "", [])
+
+
+def decide(rules, state, key, event, roots=None):
     """The ``Decision`` for ``event`` in context ``key``; records it in ``state`` (one transaction).
 
     Moments (``tool-after``, ``prompt``) add the matched rules as context and mark them delivered. A
@@ -1691,8 +1757,12 @@ def decide(rules, state, key, event):
     this context, record the denied rules as pending with the matched patterns, and confirm a pending
     rule when a call matches one of its pending patterns. Only rules included under the cap are
     recorded. A successful ``openspec`` shell call records its ``--change`` names in the session change
-    set, on the pass path too. ``compacted`` re-arms and ``void`` removes entries by write id; both pass.
+    set, on the pass path too. ``stop`` runs the stop gate (``_stop_gate``) when ``roots`` holds the
+    ``change_roots`` list; ``compacted`` re-arms and ``void`` removes entries and stop records by write
+    id; both pass.
     """
+    if event.kind == "stop":
+        return _stop_gate(rules, state, event, roots)
     if event.kind == "tool-after":
         record_changes(state, event)
     if event.kind in ("prompt", "tool-after"):
@@ -1726,11 +1796,15 @@ def decide(rules, state, key, event):
 
 
 def _void(state, key, write_ids):
-    """Remove ``key``'s entries that still carry exactly one of ``write_ids``; a newer id survives."""
+    """Remove ``key``'s entries and the session's stop records that carry a ``write_ids`` id exactly.
+
+    A newer entry or record with its own id survives, so a late ``void`` cannot undo a later block.
+    """
     wanted = set(write_ids)
     for entry_key, identity in list(state.entries):
         if entry_key == key and state.entries[(entry_key, identity)]["write_id"] in wanted:
             del state.entries[(entry_key, identity)]
+    state.stops[:] = [record for record in state.stops if record["write_id"] not in wanted]
 
 
 def _gate(rules, state, key, event):
@@ -1853,9 +1927,12 @@ def handle(stdin_text, fmt, env, store_factory):
         if not rules:
             return "", 0
         store = store_factory(os.path.join(common_dir, "agent-rules"))
+        # The stop gate's receipts are searched across the checkout and its worktrees; every other
+        # event needs no git layout beyond the discovery above.
+        roots = change_roots(toplevel, common_dir) if event.kind == "stop" else None
         with store.transaction(event.session) as state:
             # Rendering inside the transaction: a decision that cannot be printed is never recorded.
-            output = render(fmt, event, decide(rules, state, context_key(event), event))
+            output = render(fmt, event, decide(rules, state, context_key(event), event, roots))
         if state.wrote:
             try:
                 store.prune(event.session)
