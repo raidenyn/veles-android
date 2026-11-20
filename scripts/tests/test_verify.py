@@ -167,7 +167,8 @@ class GateFixture(unittest.TestCase):
             (BIN + "/rustup", "show", "active-toolchain"): Outcome(
                 "ok", stdout=["1.98.0-x86_64-unknown-linux-gnu (default)"]),
             ("cargo-deny", "--version"): Outcome("ok", stdout=["cargo-deny 0.16.1"]),
-            ("cargo-cyclonedx", "--version"): Outcome("ok", stdout=["cargo-cyclonedx 0.5.7"]),
+            ("cargo-cyclonedx", "cyclonedx", "--version"): Outcome(
+                "ok", stdout=["cargo-cyclonedx-cyclonedx 0.5.7"]),
         }
         script.update(overrides)
         return script

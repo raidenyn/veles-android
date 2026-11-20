@@ -55,12 +55,6 @@
       "args": {"program": "npm", "version_cmd": ["npm", "--version"]},
       "fix": "Install npm with Node and put it on PATH (CI provisions npm 11.19.0), or run `python3 -I scripts/verify.py config set path_prepend <node bin>`."
     },
-    "npx": {
-      "kind": "tool",
-      "resolver": "path-tool",
-      "args": {"program": "npx", "version_cmd": ["npx", "--version"]},
-      "fix": "Install npm, which ships npx, and put it on PATH, or run `python3 -I scripts/verify.py config set path_prepend <node bin>`."
-    },
     "python": {
       "kind": "tool",
       "resolver": "path-tool",
@@ -76,14 +70,14 @@
     "cargo-cyclonedx": {
       "kind": "tool",
       "resolver": "path-tool",
-      "args": {"program": "cargo-cyclonedx", "version_cmd": ["cargo-cyclonedx", "--version"]},
+      "args": {"program": "cargo-cyclonedx", "version_cmd": ["cargo-cyclonedx", "cyclonedx", "--version"]},
       "fix": "Run `./gradlew verifyCargoCyclonedx`, which installs the pinned SBOM tool under build/verify-tools/, and put its bin directory on PATH."
     },
     "playwright-chromium": {
       "kind": "tool",
       "resolver": "playwright-chromium",
       "args": {},
-      "fix": "Run `cd web-extension && npx playwright-core install --with-deps chromium` (CI ties the browser build to its pinned ubuntu-24.04 image), or set VELES_TEST_CHROMIUM to an existing Chromium executable."
+      "fix": "Run `cd web-extension && node_modules/.bin/playwright-core install --with-deps chromium` (CI ties the browser build to its pinned ubuntu-24.04 image), or set VELES_TEST_CHROMIUM to an existing Chromium executable."
     },
     "web-extension.node-modules": {
       "kind": "path",
@@ -354,7 +348,7 @@
           "cwd": "web-extension",
           "run": ["npm", "test"],
           "doc": "web-extension/AGENTS.md",
-          "requires": ["node", "npm", "npx", "web-extension.node-modules", "rust.wasm"],
+          "requires": ["node", "npm", "web-extension.node-modules", "rust.wasm"],
           "inputs": [{"path": "web-extension/node_modules", "mode": "stat"}],
           "ci": "web-extension / unit-tests",
           "related": {
@@ -362,7 +356,7 @@
             "sources": "web-extension/src/**/*.ts",
             "tests": "web-extension/test/**/<stem>.test.ts",
             "within": "package.json:scripts.test",
-            "run": ["npx", "vitest", "run", "{targets}"]
+            "run": ["./node_modules/.bin/vitest", "run", "{targets}"]
           }
         },
         {
