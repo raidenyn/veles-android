@@ -154,7 +154,7 @@ OpenSpec CLI 2.x.
 - Test: `scripts/tests/test_agent_rules.py` (`ChangeSetTest`)
 
 **Interfaces:**
-- Produces: `record_changes(state: SessionState, event: Event) -> None`; `CHANGE_ARG_RE = re.compile(r"--change(?:=|\s+)[\"']?([a-z0-9][a-z0-9-]{0,63})(?![a-z0-9-])")`; only when `event.ok is True`, `event.command` matches `\bopenspec\b`. Also `SessionState.applied: bool` (session-wide, default `False`), set at an apply-skill moment (any of the three forms) — the stop gate passes when it is unset.
+- Produces: `record_changes(state: SessionState, event: Event) -> None`; `CHANGE_ARG_RE = re.compile(r"--change(?:=|\s+)[\"']?([a-z0-9][a-z0-9-]{0,63})(?![a-z0-9-])")`; only when `event.ok is True`, `event.command` matches `\bopenspec\b`. Also `SessionState.applied: bool` (session-wide, default `False`), set by a Skill call for `openspec-apply-change` or a `/opsx:apply` prompt, never by a `SKILL.md` read — the stop gate passes when it is unset.
 
 - [ ] **Step 1: Write failing tests** `test_change_forms` (each of `--change demo`, `--change=demo`,
   `--change "demo"`, `--change 'demo'` → `state.changes == ["demo"]`), `test_long_name_ignored` (65 chars),

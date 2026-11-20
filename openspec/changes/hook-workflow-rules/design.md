@@ -262,12 +262,15 @@ Unit tests per decision (no sleeps, injected state). Then a live re-run in both 
 ## Risks / Trade-offs
 
 - [The stop gate blocks a legitimate pause] → once per phase (at most twice per apply iteration), an engine line that permits the stop,
-  per-phase records bounding the blocks, armed only by the session's own `--change` calls.
+  per-phase records bounding the blocks, armed only in a session that invoked the apply skill.
 - [A session that resumes a change without invoking apply is not reminded] → accepted: the pointer carries the
   authorization, and the reminder belongs to the session that applied and will finalize.
 - [A delegated verify or review session is not reminded] → by design; it is not the session that finalizes.
 - [A delegated coder session that itself invokes the apply skill is armed] → delegated coder briefs must not invoke
-  the apply skill (they receive task text); if one does, the per-phase records bound the reminder to two.
+  the apply skill (they receive task text); if one does, the per-phase records bound the reminder to two per apply
+  iteration.
+- [An agent that applies only by reading `SKILL.md`, with no Skill call or slash prompt, is never armed] → accepted:
+  both wired hosts expose a skill tool, and the pointer carries the authorization.
 - [OpenCode turn-end continuation does not work] → the spike verified it (`session.execution.succeeded`,
   `resume: true`); the owner approved using that event when `session.idle` proved absent in 2.3.2.
 - [A command pattern matches text inside a heredoc or quoted string] → existing residual; with per-trigger
