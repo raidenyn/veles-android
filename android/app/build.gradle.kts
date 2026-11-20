@@ -3,7 +3,6 @@ import java.util.zip.ZipFile
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.androidgitversion)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.compose)
     alias(libs.plugins.ksp)
@@ -12,10 +11,11 @@ plugins {
     alias(libs.plugins.detekt)
 }
 
-androidGitVersion {
-    prefix = "android-v"
-    codeFormat = "MMNNPP"
-}
+// The version derives from git through a ValueSource (design D3): nothing starts `git` while the
+// build is configured, and Gradle re-obtains the value when it checks the configuration cache entry.
+apply(from = layout.settingsDirectory.file("git-version.gradle.kts").asFile)
+@Suppress("UNCHECKED_CAST")
+val gitVersion = extra["gitVersion"] as Provider<List<String>>
 
 detekt {
     buildUponDefaultConfig = true
@@ -41,8 +41,8 @@ android {
         applicationId = "me.nagaev.veles"
         minSdk = 33
         targetSdk = 35
-        versionCode = maxOf(androidGitVersion.code(), 1)
-        versionName = androidGitVersion.name()
+        versionCode = maxOf(gitVersion.get()[1].toInt(), 1)
+        versionName = gitVersion.get()[0]
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
