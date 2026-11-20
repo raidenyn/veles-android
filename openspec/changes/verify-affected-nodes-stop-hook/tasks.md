@@ -69,15 +69,15 @@ node's `AGENTS.md`).
 
 ## 11. Phase B: measure (design Migration Plan step 2)
 
-- [ ] 11.1 Run the task gate with the real verifier on real changes (an extension-only edit, a `rust/` edit, an Android edit, a docs edit), cold and warm; record the times in `spike.md`
-- [ ] 11.2 If the numbers call for a budget other than 1,740 seconds, stop and ask the owner before changing the design and specs; otherwise record that the budget stands
+- [x] 11.1 Run the task gate with the real verifier on real changes (an extension-only edit, a `rust/` edit, an Android edit, a docs edit), cold and warm; record the times in `spike.md`
+- [x] 11.2 If the numbers call for a budget other than 1,740 seconds, stop and ask the owner before changing the design and specs; otherwise record that the budget stands
 
 ## 12. Remembered passes (design D5, D6; "Remembered passes")
 
-- [ ] 12.1 Generated-output capture before each consumer; disagreeing snapshots and links make the node non-reusable; tests
-- [ ] 12.2 `Fingerprint`: canonical JSON with base, plan, entry, environment allowlist and resolved tools, `local.properties`, selecting paths via `owner_nodes` (index modes and blob ids, working-tree hashes, deletions), declared inputs (`content`; `stat` with device, inode, mode, size and `st_ctime_ns`; `{gradle_user_home}` and its non-reusable case), generated digests; source-side stability before and after; tests for each invalidation (edit, base change, config change, tool version change, removed output, replaced package, edited dependency, edit during the run)
-- [ ] 12.3 `passes.json`: write after a stable task-gate pass, delete on `FAIL`/`NOT RUN`, never for a `"reuse": false` command or producer or in `--branch`; manual runs never read; tests
-- [ ] 12.4 The hit path: re-probe, recompute against current outputs, skip the node's commands, record `PASS (remembered)` in `last-run.json`; tests for "Unchanged node is skipped" (silent when every node is remembered), for a mixed stop whose block reason lists a remembered node, and for a mixed stop at the repeat bound whose `systemMessage` lists it (one formatter for both)
+- [x] 12.1 Generated-output capture before each consumer; disagreeing snapshots and links make the node non-reusable; tests
+- [x] 12.2 `Fingerprint`: canonical JSON with base, plan, entry, environment allowlist and resolved tools, `local.properties`, selecting paths via `owner_nodes` (index modes and blob ids, working-tree hashes, deletions), declared inputs (`content`; `stat` with device, inode, mode, size and `st_ctime_ns`; `{gradle_user_home}` and its non-reusable case), generated digests; source-side stability before and after; tests for each invalidation (edit, base change, config change, tool version change, removed output, replaced package, edited dependency, edit during the run)
+- [x] 12.3 `passes.json`: write after a stable task-gate pass, delete on `FAIL`/`NOT RUN`, never for a `"reuse": false` command or producer or in `--branch`; manual runs never read; tests
+- [x] 12.4 The hit path: re-probe, recompute against current outputs, skip the node's commands, record `PASS (remembered)` in `last-run.json`; tests for "Unchanged node is skipped" (silent when every node is remembered), for a mixed stop whose block reason lists a remembered node, and for a mixed stop at the repeat bound whose `systemMessage` lists it (one formatter for both)
 
 ## 13. The Stop hook (design D11, D12; verification-stop-hook)
 
