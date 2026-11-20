@@ -32,15 +32,17 @@ If any items failed, list id + issues:
 
 ## 2. Task Completion (`tasks.md`)
 
-- [ ] All `- [ ]` have been changed to `- [x]`
+- [x] All `- [ ]` have been changed to `- [x]`
 
 **Incomplete tasks** (if any):
 
 | Task | Reason incomplete | Blocks archive? |
 |---|---|---|
-| 6.2 | Confirms the pushed PR's `changes` summary and that `docs / agent-files` ran the offline guard first. It cannot run before finalize creates the PR. | No — finalize pushes the branch and the closeout runs this check before archive. |
+| — | — | — |
 
-17 of 18 checkboxes are `- [x]`.
+18 of 18 checkboxes are `- [x]`. Task 6.2 was confirmed on PR #177: the `changes` job selected `docs`,
+`tooling`, `installer`, `protocol`, `native-host` and `supply-chain`, and `docs / agent-files` ran
+`check_offline.py` first, then `check_agent_files.py`, then `check_site.py`.
 
 ---
 

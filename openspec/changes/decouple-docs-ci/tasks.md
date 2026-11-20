@@ -71,4 +71,4 @@
   - native-host and protocol: their listed Linux checks.
 
   Report each check that cannot run here (Windows or macOS jobs) as NOT RUN, never as passed
-- [ ] 6.2 After the PR is pushed, confirm in the `changes` job summary that the map change selected every node (the expected one-time evidence reset), and that `docs / agent-files` ran the offline guard first. State in the PR note what ran and where; there is no Android or Chrome behaviour to test on a device
+- [x] 6.2 After the PR is pushed, confirm in the `changes` job summary that the map change selected every node (the expected one-time evidence reset), and that `docs / agent-files` ran the offline guard first. State in the PR note what ran and where; there is no Android or Chrome behaviour to test on a device

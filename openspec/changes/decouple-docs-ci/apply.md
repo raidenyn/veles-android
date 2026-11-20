@@ -27,8 +27,8 @@
 
 ## Tasks
 
-- **Completed**: `17 of 18` checkboxes in tasks.md flipped to `- [x]`
-- **Remaining**: `6.2` (the post-push CI confirmation, which runs in finalize/closeout)
+- **Completed**: `18 of 18` checkboxes in tasks.md flipped to `- [x]`
+- **Remaining**: none
 
 ---
 
