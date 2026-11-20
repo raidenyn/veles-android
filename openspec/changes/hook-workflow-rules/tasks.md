@@ -22,11 +22,11 @@ Every unit test injects its clock, `sleep` and timers: no real waits and no wall
 - [x] 3.3 The stop decision and records: the `stop` event in both formats, per-phase records written in the same transaction, the first unrecorded change by name, `stop_hook_active` read but never suppressing a new phase, and the block never marking the rule delivered; tests for "Second stop passes", "Stall after a passing verify", "New apply iteration", "Stop hook already active in the same phase", "Continued turn reaches a new phase", "Compaction does not reset the record" and "Unrelated session"
 - [x] 3.4 Rendering: the engine line, Claude Code `{"decision":"block","reason":…}`, the plain `block` with the `["stop", <change>]` entry and its write id, and `block` rejected for any other event; tests
 - [x] 3.5 `void` of stop records by write id (a late `void` changes nothing); tests
-- [ ] 3.6 Fail open at a stop: pass with the notice in `systemMessage` and stderr; tests for corrupt state, an unreadable receipt and a lock timeout with an injected `sleep`
+- [x] 3.6 Fail open at a stop: pass with the notice in `systemMessage` and stderr; tests for corrupt state, an unreadable receipt and a lock timeout with an injected `sleep`
 
 ## 4. Hosts (design §3 OpenCode, hooked-rule-delivery Host adapters)
 
-- [ ] 4.1 `.claude/settings.json`: add the `Stop` hook with the engine command and `timeout: 5`; no `SubagentStop`
+- [x] 4.1 `.claude/settings.json`: add the `Stop` hook with the engine command and `timeout: 5`; no `SubagentStop`
 - [ ] 4.2 OpenCode plugin: map a root session's `session.execution.succeeded` (`interrupted` and `failed` never map; a failed or timed-out `session.get` sends nothing) to `stop`; send a `block` as a resuming synthetic prompt (the form task 1.2 found); `void` the stop entry when it fails; accept `block` only for `stop` and ignore any other response at a stop moment; do nothing at a stop moment when the engine times out or Python is missing; tests in `index.test.mjs` with injected timers
 
 ## 5. Move the rules (design §1, §8)
