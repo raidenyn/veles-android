@@ -13,11 +13,12 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from dataclasses import dataclass, field, replace
+from typing import Callable, Dict, List, Optional, Tuple
 
 SCRIPTS = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(SCRIPTS)
@@ -31,6 +32,13 @@ TABLE_PATH = os.path.join(SCRIPTS, "verify-commands.json")
 COMPONENT_MAP_PATH = os.path.join(REPO, ".github", "components.json")
 GIT_TIMEOUT_SECONDS = 120
 GRADLE_HOME_PREFIX = "{gradle_user_home}/"
+# A list-only target resolver runs under its own short limit (design D1/D4/D9).
+RESOLVER_SECONDS = 60
+# The last 45 seconds of a run are reserved for termination, settlement and the report (D9).
+DEADLINE_RESERVE_SECONDS = 45
+DEVICE_NOTE = "NOT RUN (device test; real-device rule)"
+BRANCH_ONLY_NOTE = "NOT RUN (branch gate only: %s)"
+NONE_RELATED_NOTE = "tests: none related (%s)"
 STEP_KINDS = ("check", "test", "device", "platform")
 REQUIREMENT_KINDS = ("tool", "path", "generated")
 RESOLVERS = (
@@ -760,6 +768,518 @@ def select(git: Git, cmap: dict, base: Optional[str] = None) -> Selection:
                      only_unowned=bool(files) and not reasons)
 
 
+# --- plans, generated outputs and related tests (design D4/D5) ------------------------------
+
+
+@dataclass
+class PlannedStep:
+    """One argv the plan will run, with the consumer whose chain placed a producer here."""
+
+    step: Step
+    argv: List[str]
+    consumer_of: Optional[str] = None
+
+
+@dataclass
+class NodePlan:
+    steps: List[PlannedStep] = field(default_factory=list)
+    notes: List[str] = field(default_factory=list)
+    unresolved: List[Tuple[str, Outcome]] = field(default_factory=list)
+
+
+@dataclass
+class Plan:
+    nodes: Dict[str, NodePlan] = field(default_factory=dict)
+
+
+def _abs_path(ctx, relative):
+    return os.path.normpath(os.path.join(ctx.repo, relative))
+
+
+def _relative(ctx, full):
+    """`full` relative to the repository root, or "" when it lies outside it."""
+    relative = os.path.relpath(full, ctx.repo).replace(os.sep, "/")
+    if relative == ".." or relative.startswith("../"):
+        return ""
+    return relative
+
+
+def _norm_target(value):
+    """A target in the plan's canonical form: forward slashes, no `./`, no trailing `/`."""
+    value = value.strip().replace("\\", "/")
+    while value.startswith("./"):
+        value = value[2:]
+    value = value.rstrip("/")
+    return os.path.normpath(value).replace(os.sep, "/")
+
+
+def _exists(ctx, relative):
+    return bool(relative) and ctx.fs.exists(_abs_path(ctx, relative))
+
+
+def _isdir(ctx, relative):
+    return bool(relative) and ctx.fs.isdir(_abs_path(ctx, relative))
+
+
+def _under(path, prefix):
+    trimmed = prefix.rstrip("/")
+    return path == trimmed or path.startswith(trimmed + "/")
+
+
+def _past_cutoff(ctx):
+    """True once starting more work would eat the run's reserved termination time (D9)."""
+    return (ctx.deadline is not None
+            and ctx.clock.now() >= ctx.deadline - DEADLINE_RESERVE_SECONDS)
+
+
+def _resolver_cutoff(ctx):
+    cutoff = ctx.clock.now() + RESOLVER_SECONDS
+    if ctx.deadline is not None:
+        cutoff = min(cutoff, ctx.deadline - DEADLINE_RESERVE_SECONDS)
+    return cutoff
+
+
+def _stem(relative):
+    name = relative.rsplit("/", 1)[-1]
+    return name.rsplit(".", 1)[0] if "." in name else name
+
+
+def _glob_regex(pattern):
+    """A path glob; `**` crosses directories and `<stem>` matches inside a name (design D4)."""
+    out = []
+    index = 0
+    while index < len(pattern):
+        if pattern.startswith("**/", index):
+            out.append("(?:.*/)?")
+            index += 3
+        elif pattern.startswith("**", index):
+            out.append(".*")
+            index += 2
+        elif pattern[index] == "*":
+            out.append("[^/]*")
+            index += 1
+        elif pattern.startswith("<stem>", index):
+            out.append("[^/]*")
+            index += 6
+        else:
+            out.append(re.escape(pattern[index]))
+            index += 1
+    return re.compile("^" + "".join(out) + "$")
+
+
+def _walk(ctx, root):
+    """Every regular file under `root`, repository-relative; no hit once the reserve is reached."""
+    if not root:
+        return []
+    found = []
+    for dirpath, _dirnames, filenames in ctx.fs.walk(_abs_path(ctx, root)):
+        for name in filenames:
+            found.append(_relative(ctx, os.path.join(dirpath, name)))
+        if _past_cutoff(ctx):
+            return []
+    return sorted(name for name in found if name)
+
+
+def _expand_template(ctx, pattern):
+    """The existing files matching a test-file template (its `**` and `*` are wildcards)."""
+    if "*" not in pattern and "<stem>" not in pattern:
+        return [pattern] if _exists(ctx, pattern) else []
+    regex = _glob_regex(pattern)
+    fixed = []
+    for part in pattern.split("/"):
+        if "*" in part or "<stem>" in part:
+            break
+        fixed.append(part)
+    if not fixed:
+        return []
+    return [name for name in _walk(ctx, "/".join(fixed)) if regex.match(name)]
+
+
+def _kotlin_class(ctx, relative):
+    """`package` line plus the file name, the FQN Gradle `--tests` takes, or None."""
+    try:
+        text = ctx.fs.read_text(_abs_path(ctx, relative))
+    except (OSError, KeyError):
+        return None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("package "):
+            package = stripped[len("package "):].strip().rstrip(";").strip()
+            if package:
+                return package + "." + _stem(relative)
+            break
+    return None
+
+
+def _as_target(ctx, relative):
+    if not relative.endswith(".kt"):
+        return relative
+    return _kotlin_class(ctx, relative)
+
+
+def _dedupe(values):
+    seen = set()
+    unique = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        unique.append(value)
+    return unique
+
+
+def _self_targets(test, changed, ctx):
+    regex = _glob_regex(test.related["tests"])
+    return _dedupe([path for path in changed if _exists(ctx, path) and regex.match(path)])
+
+
+def _name_map_targets(test, changed, ctx):
+    related = test.related
+    sources = _glob_regex(related["sources"])
+    tests = _glob_regex(related["tests"])
+    targets = []
+    for path in changed:
+        if not _exists(ctx, path):
+            continue  # a deleted or moved-away path selects the node, never a target
+        if tests.match(path):
+            target = _as_target(ctx, path)
+            if target:
+                targets.append(target)
+        elif sources.match(path):
+            pattern = related["tests"].replace("<stem>", _stem(path))
+            for found in _expand_template(ctx, pattern):
+                target = _as_target(ctx, found)
+                if target:
+                    targets.append(target)
+    return _dedupe(targets)
+
+
+def _crate_targets(test, changed, ctx):
+    targets = []
+    for prefix in test.related["crates"]:
+        if not _isdir(ctx, prefix):
+            continue
+        if any(_under(path, prefix) for path in changed):
+            targets.append(prefix)
+    return targets
+
+
+def _expand_changed(template, changed):
+    argv = []
+    for item in template:
+        if "{changed}" not in item:
+            argv.append(item)
+        elif item == "{changed}":
+            argv.extend(changed)
+        else:
+            argv.extend(item.replace("{changed}", value) for value in changed)
+    return argv
+
+
+def _existing_target(ctx, test, value):
+    """A resolver's line as a repository-relative path that exists, else None."""
+    if os.path.isabs(value):
+        candidates = [_relative(ctx, os.path.normpath(value))]
+    else:
+        candidates = [_norm_target(value)]
+        if test.cwd not in (".", ""):
+            candidates.append(_norm_target(test.cwd + "/" + value))
+    for candidate in candidates:
+        if _exists(ctx, candidate):
+            return candidate
+    return None
+
+
+def _files_arg_targets(test, changed, ctx, resolve):
+    """Run the list-only resolver and read its targets from stdout only (design D4/D9)."""
+    related = test.related
+    files = [path for path in changed
+             if _exists(ctx, path) and any(_under(path, prefix) for prefix in related["match"])]
+    if not files:
+        return [], None
+    argv = _expand_changed(related["resolve"],
+                           [_relative_to_cwd(test, path) for path in files])
+    outcome = resolve(argv, _abs_path(ctx, test.cwd), dict(ctx.env),
+                      os.path.join(ctx.run_dir, test.id + ".resolve.log"),
+                      _resolver_cutoff(ctx), True)
+    if outcome.kind != "ok":
+        if outcome.kind == "timeout":
+            return [], outcome
+        return [], replace(outcome, kind="not_run",
+                           error=outcome.error or "the resolver did not complete")
+    targets = []
+    for line in outcome.stdout or []:
+        value = line.strip()
+        if not value:
+            continue
+        target = _existing_target(ctx, test, value)
+        if target is not None:
+            targets.append(target)
+    return _dedupe(targets), None
+
+
+def _within_allowlist(test, ctx):
+    """The files named by `<file>:<key>` (design D4's `within`), or None when absent.
+
+    An unreadable allowlist yields an empty set: no target may run without it, and the caller
+    turns that into a `tests: none related` note rather than guessing.
+    """
+    within = (test.related or {}).get("within")
+    if not within:
+        return None
+    file_part, _separator, key = within.partition(":")
+    candidates = []
+    if test.cwd not in (".", ""):
+        candidates.append(_norm_target(test.cwd + "/" + file_part))
+    candidates.append(_norm_target(file_part))
+    relative = None
+    for candidate in candidates:
+        if _exists(ctx, candidate):
+            relative = candidate
+            break
+    if relative is None:
+        return set()
+    try:
+        data = json.loads(ctx.fs.read_text(_abs_path(ctx, relative)))
+    except (OSError, KeyError, ValueError):
+        return set()
+    value = data
+    for name in key.split("."):
+        if not isinstance(value, dict) or name not in value:
+            return set()
+        value = value[name]
+    if isinstance(value, str):
+        try:
+            tokens = shlex.split(value)
+        except ValueError:
+            tokens = value.split()
+    elif isinstance(value, list):
+        tokens = [str(item) for item in value]
+    else:
+        return set()
+    base = relative.rsplit("/", 1)[0] if "/" in relative else ""
+    allowed = set()
+    for token in tokens:
+        allowed.add(_norm_target(token))
+        if base:
+            allowed.add(_norm_target(base + "/" + token))
+    return allowed
+
+
+def _relative_to_cwd(test, target):
+    """`{targets}` items are relative to the step's `cwd`; a FQN is passed through unchanged."""
+    cwd = test.cwd
+    if cwd in (".", ""):
+        return target
+    if target == cwd:
+        return "."
+    if target.startswith(cwd + "/"):
+        return target[len(cwd) + 1:]
+    return target
+
+
+def resolve_targets(test, changed, ctx, resolve):
+    """An explicit list of existing test targets (design D4), or the resolver's failure.
+
+    Returns `(targets, None)` on success and `([], outcome)` when a list-only resolver did not
+    complete: `timeout` when it was cut off, `not_run` for any other failure (design D4/D9).
+    A `crate` strategy returns the matched crate prefixes, which `plan` maps through
+    `related.crates` (it is the one strategy with no `run` template).
+    """
+    related = test.related or {}
+    strategy = related.get("strategy")
+    if strategy == "files-arg":
+        targets, failure = _files_arg_targets(test, changed, ctx, resolve)
+        if failure is not None:
+            return [], failure
+    elif strategy == "name-map":
+        targets = _name_map_targets(test, changed, ctx)
+    elif strategy == "self":
+        targets = _self_targets(test, changed, ctx)
+    elif strategy == "crate":
+        targets = _crate_targets(test, changed, ctx)
+    else:
+        raise ValueError("unknown related strategy %r" % (strategy,))
+    allow = _within_allowlist(test, ctx)
+    if allow is not None:
+        targets = [target for target in targets if _norm_target(target) in allow]
+    if strategy == "crate":
+        return targets, None
+    return [_relative_to_cwd(test, target) for target in targets], None
+
+
+def _expand_targets(template, targets):
+    """R8: `--tests={targets}` repeats once per target; a bare `{targets}` is one item each."""
+    argv = []
+    for item in template:
+        if "{targets}" not in item:
+            argv.append(item)
+        elif item == "{targets}":
+            argv.extend(targets)
+        else:
+            argv.extend(item.replace("{targets}", target) for target in targets)
+    return argv
+
+
+def _narrowed_argvs(test, targets):
+    related = test.related
+    if related.get("strategy") == "crate":
+        argvs = []
+        for target in targets:
+            argv = list(related["crates"][target])
+            if argv not in argvs:
+                argvs.append(argv)
+        return argvs
+    return [_expand_targets(related["run"], targets)]
+
+
+def _needs_generated(table, step):
+    return any(table.requirements[req_id].get("kind") == "generated"
+               for req_id in step.requires)
+
+
+def _producer_chain(table, step):
+    """Every producer `step` needs, dependencies first, deduplicated within this one chain."""
+    chain = []
+    seen = set()
+
+    def visit(current):
+        for req_id in current.requires:
+            requirement = table.requirements[req_id]
+            if requirement.get("kind") != "generated":
+                continue
+            build = table.producers[requirement["producer"]]
+            if build.id in seen:
+                continue
+            seen.add(build.id)
+            visit(build)
+            chain.append(build)
+
+    visit(step)
+    return chain
+
+
+def _platform_label(platforms):
+    known = set(platforms)
+    if known == {"macos"}:
+        return "macOS only"
+    if known == {"windows"}:
+        return "Windows only"
+    names = [name for name in ("macOS", "Windows")
+             if (name == "macOS" and "macos" in known) or (name == "Windows" and "windows" in known)]
+    return " and ".join(names or sorted(known)) + " only"
+
+
+def _platform_note(step):
+    return "NOT RUN (%s; CI job %s)" % (_platform_label(step.platforms), step.ci)
+
+
+def plan(table, sel, gate, ctx, resolve):
+    """Nodes × gate → ordered steps, expected-skip notes and unresolved target lists (design D4)."""
+    if gate not in ("task", "branch"):
+        raise ValueError("unknown gate %r" % (gate,))
+    result = Plan(nodes={})
+    for node in table.nodes:
+        if node not in sel.reasons:
+            continue
+        node_plan = NodePlan()
+        early = []
+        late = []
+        for step in table.nodes[node].commands:
+            if step.kind == "device":
+                node_plan.notes.append(DEVICE_NOTE)
+                continue
+            if step.kind == "platform":
+                node_plan.notes.append(_platform_note(step))
+                continue
+            if step.kind == "test":
+                if gate == "branch":
+                    argvs = [list(step.run)]
+                elif step.related is not None:
+                    targets, failure = resolve_targets(step, sel.files, ctx, resolve)
+                    if failure is not None:
+                        node_plan.unresolved.append((step.id, failure))
+                        continue
+                    if not targets:
+                        # The note names the run's changed files: what this test covered nothing of.
+                        node_plan.notes.append(NONE_RELATED_NOTE % ", ".join(sel.files))
+                        continue
+                    argvs = _narrowed_argvs(step, targets)
+                else:
+                    node_plan.notes.append(BRANCH_ONLY_NOTE % step.id)
+                    continue
+            else:
+                argvs = [list(step.run)]
+            (late if _needs_generated(table, step) else early).append((step, argvs))
+        # D4/D5: steps that need no generated output first, in table order; then each consumer
+        # with its whole producer chain immediately before it, every time it runs.
+        for step, argvs in early:
+            for argv in argvs:
+                node_plan.steps.append(PlannedStep(step=step, argv=argv))
+        for step, argvs in late:
+            for build in _producer_chain(table, step):
+                node_plan.steps.append(PlannedStep(step=build, argv=list(build.run),
+                                                   consumer_of=step.id))
+            for argv in argvs:
+                node_plan.steps.append(PlannedStep(step=step, argv=argv))
+        result.nodes[node] = node_plan
+    return result
+
+
+def _outcome_reason(outcome):
+    if outcome.error:
+        return outcome.error
+    if outcome.fix:
+        return outcome.fix
+    if outcome.tail:
+        return outcome.tail[-1].strip()
+    if outcome.kind == "timeout":
+        return "the resolver timed out"
+    return "the resolver did not complete (%s)" % outcome.kind
+
+
+def _argv_text(argv):
+    return " ".join(shlex.quote(item) for item in argv)
+
+
+def render_plan(sel, result):
+    """`--list`'s lines: each node, its reason, every step's argv and cwd, notes, unresolved."""
+    lines = []
+    for node, node_plan in result.nodes.items():
+        lines.append("%s: selected by %s" % (node, sel.reasons.get(node, "")))
+        for planned in node_plan.steps:
+            lines.append("  %s: cd %s && %s" % (
+                planned.step.id, planned.step.cwd, _argv_text(planned.argv)))
+        for step_id, outcome in node_plan.unresolved:
+            lines.append("  %s: targets unresolved: %s" % (step_id, _outcome_reason(outcome)))
+        for note in node_plan.notes:
+            lines.append("  %s" % note)
+    return lines
+
+
+def _list_mode(args, ctx, cmap, table):
+    """D1: selection and planning only; no probe, producer or command runs."""
+    gate = "branch" if args.branch else "task"
+    try:
+        selection_result = select(ctx.git, cmap, args.base)
+    except SelectionError as error:
+        ctx.log("verify: %s" % error)
+        if error.fix:
+            ctx.log("verify: fix: %s" % error.fix)
+        return 2
+    if not selection_result.files:
+        ctx.log("verify: nothing changed against %s" % selection_result.base)
+        return 0
+    if selection_result.only_unowned:
+        ctx.log("verify: only unowned paths changed (%s)"
+                % ", ".join(selection_result.files))
+        return 0
+    result = plan(table, selection_result, gate, ctx, ctx.runner.run)
+    for line in render_plan(selection_result, result):
+        ctx.log(line)
+    return 0
+
+
 # --- the CLI ------------------------------------------------------------------------------
 
 
@@ -848,13 +1368,15 @@ def main(argv, ctx):
         ctx.deadline = args.deadline
     try:
         cmap = components.load_map(os.path.join(ctx.repo, ".github", "components.json"))
-        load_table(os.path.join(ctx.repo, "scripts", "verify-commands.json"), cmap)
+        table = load_table(os.path.join(ctx.repo, "scripts", "verify-commands.json"), cmap)
     except TableError as error:
         ctx.log("verify: %s" % error)
         return 2
     except (OSError, ValueError) as error:
         ctx.log("verify: %s" % error)
         return 2
+    if args.list_only:
+        return _list_mode(args, ctx, cmap, table)
     return _unwired(args, ctx)
 
 
