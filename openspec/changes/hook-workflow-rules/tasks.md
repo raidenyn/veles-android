@@ -34,9 +34,9 @@ Every unit test injects its clock, `sleep` and timers: no real waits and no wall
 Sections 5 and 6 land together: between them the agent-file check fails on the real tree, so do not push in
 between.
 
-- [ ] 5.1 `git mv` the closeout, review-gate, roster, real-device and pre-push rules to `.agents/hooked-rules/`, replace their frontmatter with the hooked-rule frontmatter of design §1 (skills, commands, gates, stops, pointer)
-- [ ] 5.2 Add the closeout lead paragraph before its procedure instruction; confirm with `wc -c` that every body is at most 4,096 bytes
-- [ ] 5.3 Rewrite the root `AGENTS.md` `## Rules` to the three always-on paths, join the OpenCode paragraph, run `python3 -I scripts/agent_rules.py pointers --write`; confirm 40 lines or fewer
+- [x] 5.1 `git mv` the closeout, review-gate, roster, real-device and pre-push rules to `.agents/hooked-rules/`, replace their frontmatter with the hooked-rule frontmatter of design §1 (skills, commands, gates, stops, pointer)
+- [x] 5.2 Add the closeout lead paragraph before its procedure instruction; confirm with `wc -c` that every body is at most 4,096 bytes
+- [x] 5.3 Rewrite the root `AGENTS.md` `## Rules` to the three always-on paths, join the OpenCode paragraph, run `python3 -I scripts/agent_rules.py pointers --write`; confirm 40 lines or fewer
 
 ## 6. Agent-file check (design §6)
 
