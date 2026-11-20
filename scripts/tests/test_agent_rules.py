@@ -20,6 +20,7 @@ from agent_rules import (  # noqa: E402
     FAILURE_NOTICE,
     FAIL_AFTER_WRITE,
     FileLock,
+    LOCK_RETRY_SECONDS,
     LockTimeout,
     PendingChange,
     RuleError,
@@ -756,11 +757,26 @@ class RenderTest(unittest.TestCase):
 
     def test_failure_output_never_allows(self):
         import agent_rules
-        for name in ("PreToolUse", "PostToolUse", "UserPromptSubmit", "PreCompact", "SessionStart"):
+        for name in ("PreToolUse", "PostToolUse", "UserPromptSubmit", "PreCompact", "Stop",
+                     "SessionStart"):
             with contextlib.redirect_stderr(io.StringIO()):
                 out = agent_rules._failure_output("claude", {"hook_event_name": name})
             self.assertNotIn("allow", out, name)
             self.assertNotIn("permissionDecision", out, name)
+
+    def test_failure_output_at_a_stop_uses_system_message(self):
+        import agent_rules
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            out = agent_rules._failure_output("claude", {"hook_event_name": "Stop"})
+        self.assertEqual(json.loads(out), {"systemMessage": FAILURE_NOTICE})
+        self.assertEqual(stderr.getvalue(), FAILURE_NOTICE + "\n")
+
+    def test_render_claude_context_is_silent_at_a_compaction_and_a_stop(self):
+        # Claude Code has no `additionalContext` channel at either moment; `Stop` reads `systemMessage`.
+        for kind in ("compacted", "stop"):
+            with self.subTest(kind=kind):
+                self.assertEqual(render("claude", self.event(kind), Decision("context", "note", [])), "")
 
     def test_plain_entries(self):
         entries = [(("a.md", "11" * 32), 5), (("b.md", "22" * 32), 6)]
@@ -3260,6 +3276,78 @@ class HandleStopTest(CheckoutFixture):
             "decision": "block", "reason": (STOP_TEXT % "demo") + "\n\n" + CLOSEOUT_TEXT})
         self.assertEqual(self.call(self.claude_event("Stop", stop_hook_active=True), fmt="claude"),
                          ("", 0))
+
+
+class StopFailOpenTest(CheckoutFixture):
+    """A recoverable failure at a Claude Code `Stop` hook: `systemMessage` on stdout, notice on stderr, 0."""
+
+    def setUp(self):
+        super(StopFailOpenTest, self).setUp()
+        self.write_rule(
+            "repo-superspec-closeout.md",
+            "---\n" + 'pointer: "Close out after apply."\n' + STOPS_LINE + "\n---\n"
+            + CLOSEOUT_TEXT + "\n",
+        )
+
+    def make_change_directory(self, name):
+        directory = os.path.join(self.root, "openspec", "changes", name)
+        os.makedirs(directory, exist_ok=True)
+        return directory
+
+    def assert_stop_notice(self, out, code):
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), {"systemMessage": FAILURE_NOTICE})
+        self.assertIn(FAILURE_NOTICE, self.stderr)
+        self.assertNotIn("additionalContext", out)
+
+    def test_stop_corrupt_state_passes_with_system_message(self):
+        os.makedirs(self.state_dir, exist_ok=True)
+        path = self.store.session_path("s1")
+        with open(path, "w", encoding="utf-8") as handle_:
+            handle_.write("{not json")
+        self.assert_stop_notice(*self.call(self.claude_event("Stop"), fmt="claude"))
+        self.assertIn("StoreError", self.stderr)
+        with open(path, "r", encoding="utf-8") as handle_:
+            self.assertEqual(handle_.read(), "{not json")
+
+    def test_stop_unreadable_receipt_passes(self):
+        directory = self.make_change_directory("demo")
+        os.makedirs(os.path.join(directory, "apply.md"))
+        self.call(self.plain("tool-after", tool="bash", command="openspec status --change demo",
+                             ok=True))
+        with self.store.transaction("s1") as state:
+            self.assertEqual(state.changes, ["demo"])
+        self.assert_stop_notice(*self.call(self.claude_event("Stop"), fmt="claude"))
+        self.assertIn("cannot read the receipt", self.stderr)
+
+    def test_stop_lock_timeout_passes(self):
+        slept = []
+
+        def record(seconds):
+            slept.append(seconds)
+
+        store = Store(self.state_dir, sleep=record, lock_attempts=2)
+
+        def factory(state_dir):
+            return store
+
+        with FileLock(self.store.session_lock_path("s1"), no_sleep, 1):
+            self.assert_stop_notice(
+                *self.call(self.claude_event("Stop"), fmt="claude", store_factory=factory)
+            )
+        self.assertIn("LockTimeout", self.stderr)
+        self.assertEqual(slept, [LOCK_RETRY_SECONDS])  # between the two tries, never after the last
+
+    def test_plain_stop_failure_stays_a_context_notice(self):
+        os.makedirs(self.state_dir, exist_ok=True)
+        with open(self.store.session_path("s1"), "w", encoding="utf-8") as handle_:
+            handle_.write("{not json")
+        out, code = self.call(self.plain("stop"))
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            json.loads(out), {"decision": "context", "text": FAILURE_NOTICE, "entries": []}
+        )
+        self.assertIn("failed open", self.stderr)
 
 
 class DiscoveryFailureTest(CheckoutFixture):

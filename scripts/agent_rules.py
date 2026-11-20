@@ -583,8 +583,10 @@ def render(fmt, event, decision):
 
     A decision is never a permission grant: Claude Code's ``allow`` is never written. ``block`` is only
     valid for a ``stop`` event, where Claude Code reads ``{"decision": "block", "reason": ...}`` and the
-    plain format carries the stop record's entry. Raises ``ValueError`` for a decision or format that
-    has no form.
+    plain format carries the stop record's entry. Claude Code has no ``additionalContext`` channel at a
+    compaction or a stop, so a ``context`` decision there renders nothing (the stop hook's notice is a
+    ``systemMessage``, written only by ``_failure_output``). Raises ``ValueError`` for a decision or
+    format that has no form.
     """
     if decision.kind not in DECISION_KINDS:
         raise ValueError("unknown decision %r" % (decision.kind,))
@@ -614,8 +616,9 @@ def render(fmt, event, decision):
             "permissionDecisionReason": decision.text,
         }})
     name = CLAUDE_NAMES.get(event.kind)
-    if name is None or event.kind == "compacted":
-        return ""  # Claude Code has no context channel for a compaction, and no void event
+    if name is None or event.kind in ("compacted", "stop"):
+        # Claude Code has no context channel for a compaction or a stop, and no void event.
+        return ""
     return json.dumps({"hookSpecificOutput": {"hookEventName": name, "additionalContext": decision.text}})
 
 
@@ -1893,16 +1896,23 @@ def _diagnose(what, error):
 
 
 def _failure_output(fmt, payload):
-    """The read-by-hand notice where the host has a context channel; otherwise ``""`` and stderr."""
+    """The read-by-hand notice where the host can show it, else ``""``; the notice always goes to stderr.
+
+    ``plain`` keeps its ``context`` decision. On Claude Code the notice is ``additionalContext`` at a
+    moment that has that channel, and ``systemMessage`` at a ``Stop`` (which has no ``additionalContext``
+    channel); every other Claude Code event prints nothing. No form is ever a permission decision.
+    """
     if fmt == "plain":
         return render("plain", None, Decision("context", FAILURE_NOTICE, []))
-    if fmt == "claude" and isinstance(payload, dict):
-        name = payload.get("hook_event_name")
-        if isinstance(name, str) and CLAUDE_EVENTS.get(name) in CLAUDE_CONTEXT_EVENTS:
-            return json.dumps({"hookSpecificOutput": {
-                "hookEventName": name, "additionalContext": FAILURE_NOTICE,
-            }})
+    name = payload.get("hook_event_name") if isinstance(payload, dict) else None
+    kind = CLAUDE_EVENTS.get(name) if isinstance(name, str) else None
+    if kind in CLAUDE_CONTEXT_EVENTS:
+        return json.dumps({"hookSpecificOutput": {
+            "hookEventName": name, "additionalContext": FAILURE_NOTICE,
+        }})
     _stderr(FAILURE_NOTICE + "\n")
+    if kind == "stop":
+        return json.dumps({"systemMessage": FAILURE_NOTICE})
     return ""
 
 
