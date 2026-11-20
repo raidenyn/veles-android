@@ -180,12 +180,7 @@ fun pinnedReleaseTool(name: String): String {
 // one of linux|mac|windows and `arch` one of x86_64|aarch64. Null means unsupported.
 fun hostPlatform(): Pair<String, String>? {
     val osName = System.getProperty("os.name").lowercase()
-    val os = when {
-        osName.startsWith("linux") -> "linux"
-        osName.startsWith("mac") -> "mac"
-        osName.startsWith("windows") -> "windows"
-        else -> return null
-    }
+    val os = listOf("linux", "mac", "windows").firstOrNull { osName.startsWith(it) } ?: return null
     val arch = when (System.getProperty("os.arch").lowercase()) {
         "amd64", "x86_64" -> "x86_64"
         "aarch64", "arm64" -> "aarch64"
