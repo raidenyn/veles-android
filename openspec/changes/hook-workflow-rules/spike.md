@@ -300,3 +300,423 @@ bash /tmp/opencode/spike-oc-scripts/interrupt-test.sh intr1
 # OpenCode provider error
 bash /tmp/opencode/spike-oc-scripts/error-test.sh err1
 ```
+## 6. Task 12 — checks and live verification (2026-11-20)
+
+Everything below is from real runs on this machine, in disposable directories under `/tmp/opencode/`.
+No run touched this checkout's `.claude/`, `opencode.json`, `AGENTS.md` or git state.
+
+### 6.1 Versions and disposable setups
+
+| Tool | Version | Setup |
+|---|---|---|
+| Claude Code | `2.1.328` | a clone at `/tmp/opencode/t12-claude/repo` of branch `chore/move-rules-to-hooks` (HEAD `33b85f4d`), with `CLAUDE_CONFIG_DIR=/tmp/opencode/t12-claude/claude-config` holding only `.credentials.json`; the tracked `.claude/settings.json` ran unchanged. Model resolved by the host as `claude-sonnet-5-5` (seen in the `Co-Authored-By` trailers). |
+| OpenCode | `v2.3.2` | a clone at `/tmp/opencode/t12-oc/repo` (same branch and HEAD) with `OPENCODE_CONFIG_DIR`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME` isolated under `/tmp/opencode/t12-oc/`; model `ollama-cloud/deepseek-v4.1-flash:1017`. |
+| Node | `v26.13.1` | used by `node --test`. |
+| Python | `3.14.4` | used by the engine and the checks. |
+| openspec CLI | `2.1.0` | `openspec status`, `new change`, `instructions`, `validate`. |
+
+The OpenCode config used in the disposable clone was:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "ollama-cloud/deepseek-v4.1-flash:1017",
+  "plugins": ["./scripts/opencode-hooked-rules", "./debug-events"],
+  "permission": "allow"
+}
+```
+
+`./scripts/opencode-hooked-rules` is the tracked local entry (the same path and form as `opencode.json`).
+`./debug-events` is a throwaway diagnostic plugin in the clone that only appends every bus event and
+both tool hooks to `/tmp/opencode/t12-oc/events.log`; it changes no decision. The `opencode-rules`
+package entry was omitted from the disposable config (to avoid a network install of the package); the
+local hooked-rules plugin is the subject of this verification. The `permission` value was changed for
+the permission scenario and `allow` elsewhere. The plugin loads only for configured directories
+(`./plugin.js` is rejected: "configured plugin path must be a directory").
+
+Two headless facts that shaped the OpenCode runs:
+
+- `opencode run --standalone` exits at the end of its turn, and the plugin's detached stop call is
+  killed with the process: the session showed `session.execution.succeeded` followed immediately by
+  `location.shutdown` and no stop record. The stop-gate runs therefore used a kept-alive
+  `opencode serve --port 4137` with `opencode run --server …` (the same server the spike used), and
+  the final `opencode run --standalone` runs cover the outcomes that do not need a post-turn resume.
+- The resumed synthetic turn is stopped with `POST /api/session/<id>/interrupt` (returned
+  `{"interrupted":true}`) as soon as the synthetic message was observed, so the model could not act on
+  the block text and mutate the disposable receipts. The interrupt itself then produced
+  `session.execution.interrupted` with `reason: "user"` and no further `stop`.
+
+### 6.2 Step 1 — checks
+
+`python3 -I scripts/components.py changed --base $(git merge-base origin/master HEAD)` selected
+`supply-chain=true tooling=true docs=true` (the other nodes `false`); `supply-chain` is selected only
+through its `ci-paths: docs/checks/`, so its own `AGENTS.md` checks are the docs checks below. Every
+check ran from the repository root.
+
+| Command | Result |
+|---|---|
+| `./gradlew scriptsTest` | `Ran 871 tests in 29.609s` — `OK`; `BUILD SUCCESSFUL` |
+| `node --test scripts/opencode-hooked-rules/index.test.mjs` | `tests 148`, `pass 148`, `fail 0` |
+| `python3 docs/checks/check_agent_files.py --root .` | no output, exit 0 |
+| `python3 -m unittest discover -s docs/checks -p 'test_*.py' -v` | `Ran 259 tests in 50.995s` — `OK` |
+| `openspec validate --all --json` | `items 31`, `passed 31`, `failed 0`, exit 0 |
+| `python3 docs/checks/check_gate_b_matrix.py` | exit 0 (its standard "a validator pass is not Gate B acceptance" banner) |
+| `python3 docs/checks/check_site.py --root .` | exit 0 |
+| `python3 -I scripts/components.py check` | exit 0 |
+| `node --test scripts/check-mac-comparisons.test.mjs` | `pass 11`, `fail 0` |
+
+### 6.3 Claude Code 2.1.328 — outcomes 1–6
+
+#### Outcome 1 — loading and permissions: PASS
+
+The tracked `.claude/settings.json` was the only hook config (`CLAUDE_CONFIG_DIR` held credentials
+only), and the tracked `PreToolUse` command
+`python3 -I "$CLAUDE_PROJECT_DIR/scripts/agent_rules.py" hook --format claude` ran on every shell call
+(`hook_started`/`hook_response` for `PreToolUse` in the stream). With the engine passing and
+`--permission-prompts none`, a command that normally asks was still refused by the permission flow,
+not by the hook:
+
+```text
+TOOL_USE: Bash {"command": "touch permission-marker.txt", ...}
+HOOK PreToolUse       len=0
+TOOL_RESULT: Permission for this tool use was denied. It requires approval, and this session has no
+approval surface — nobody can answer a permission prompt here — so it was denied automatically.
+```
+
+`permission-marker.txt` was not created. The hook's output was empty, so it neither granted nor
+denied.
+
+#### Outcome 2 — block once, parallel batch, residuals: PASS
+
+Block once and a changed-title re-run, in one session:
+
+```text
+TOOL_USE: Bash {"command": "git commit -m 'test: first attempt'"}
+TOOL_RESULT: PreToolUse:Bash hook error: # Commit and PR types | Write every commit subject as a
+Conventional Commit: `type(scope): description`. …
+ASSISTANT: The first commit was blocked and the second ran and succeeded.
+TOOL_USE: Bash {"command": "git commit -m 'docs(notes): add notes file'"}
+TOOL_RESULT: [chore/move-rules-to-hooks 302ed996] docs(notes): add notes file | 1 file changed, 1 insertion(+)
+```
+
+Parallel batch: the model emitted two `Bash` blocks in one assistant message (same API message id
+`msg_011ChDd5K4cZaAKWtkwotvBb`, streamed as two records), and both were denied — `git commit` by the
+`commit` pattern and `gh pr create` by the `gh pr create` pattern (plus the real-device-testing rule):
+
+```text
+msg_id msg_011ChDd5K4cZaAKWtkwotvBb uses ['Bash']   (git commit …)
+msg_id msg_011ChDd5K4cZaAKWtkwotvBb uses ['Bash']   (gh pr create …)
+TOOL_RESULT (commit):  PreToolUse:Bash hook error: # Commit and PR types …
+TOOL_RESULT (gh pr):   PreToolUse:Bash hook error: # Commit and PR types … (and the real-device rule)
+```
+
+Residual cases (run and recorded, not pass/fail):
+
+- *A moment with a gate in one parallel batch*: a `Read` of `.agents/skills/openspec-apply-change/SKILL.md`
+  and `git commit -m 'docs: moment plus gate'` in one message. The read's `PostToolUse` delivered the
+  rules and the commit **ran** (`a4f9d39f`, "1 file changed"). The moment was processed first.
+- *Two same-kind gates in one parallel batch*: `git commit -m 'test: batch one'` and
+  `git commit -m 'docs: batch two'` in one message. The first was **denied**, the second **ran**
+  (`5e8dba0b`) as a "re-run" before the model had seen the rule — the documented residual.
+
+#### Outcome 3 — moments: PASS
+
+Each moment kind was a separate session, each followed by a gated command in the same context:
+
+| Moment | Hook output | Later gated command |
+|---|---|---|
+| model-invoked skill (`Skill` `openspec-apply-change`) | `PostToolUse` 8,442 bytes, starting `# Commit and PR types` | `git commit` ran — `0fbed217` |
+| user prompt `/openspec-apply-change` | `UserPromptSubmit` 8,447 bytes | `git commit` ran — `7c05bb25` |
+| read of `SKILL.md` | `PostToolUse` 8,442 bytes | `git commit` ran — `d3d94212` |
+| successful `openspec instructions finalize --change demo2` | `PostToolUse` 6,933 bytes | `git commit` ran — `4039eb7c` |
+
+A failing workflow command is not a moment: with the command exactly
+`openspec instructions finalize --change nope` (exit 1), Claude Code fired `PostToolUseFailure` (not
+wired) so there was no `PostToolUse`; the later `git commit` was **denied** (`PreToolUse` 1,892 bytes)
+and its retry ran (`59ed3cfb`). (A first attempt that appended `; echo EXIT_CODE=$?` made the shell
+call exit 0, and the engine correctly treated it as a successful command; that run is not used as
+evidence.)
+
+Repeat of the same trigger: the first `openspec instructions finalize --change demo2` appended 6,933
+bytes, the second identical call appended 0 bytes, and the later commit ran (`66e9f0a1`). A different
+trigger: the apply skill delivered 8,442 bytes, then `openspec instructions finalize` delivered the
+commit-types rule **again** (`PostToolUse` 6,933 bytes, starting `# Commit and PR types`), and the
+commit ran (`b3c23854`).
+
+#### Outcome 4 — re-arm and isolation: PASS (one UNVERIFIED sub-case)
+
+- *Re-arm:* a session delivered the rules with `openspec instructions finalize --change demo2`
+  (generation 0). A headless `/compact --resume <session>` raised the state's generation to 1
+  (`generations {'b34a18b7…': 1}`). The next `git commit` in that session was **denied**
+  (`PreToolUse` 1,892 bytes) and its retry ran (`16d49507`). Compaction with no moment in between
+  therefore re-blocked the gate.
+- *Parent → subagent:* the parent delivered the rules; a `Task`/`Agent` subagent's `git commit` was
+  denied (`PreToolUse` 1,892 bytes) and its retry ran (`6ce652f5`). The state held a separate child
+  key ending in the agent id (`…/a273493890d34ee28`), so the host identifies subagents.
+- *Subagent → parent:* the subagent ran `openspec instructions finalize --change demo2` (delivered
+  6,933 bytes in the child); the parent's `git commit` was denied (1,892 bytes) and its retry ran
+  (`465627fb`).
+- *Subagent compaction:* **UNVERIFIED** on Claude Code — a subagent's context cannot be made to
+  overflow on purpose in a bounded run. The host does carry an agent id in hook payloads (the child
+  key above), so the identified-subagent branch is the one wired; the whole-session fallback was not
+  observed. (OpenCode's subagent compaction was exercised; see 6.5.)
+
+#### Outcome 5 — pointer fallback: PASS
+
+With `--settings '{"disableAllHooks":true}'` (no hook events fired) and no tools, the model quoted the
+`## Hook-delivered rules` section from its context, including the closeout pointer ("finalize pushes
+and creates or readies the PR, owner-authorized"):
+
+```text
+## Hook-delivered rules
+- Every commit subject and PR title is a Conventional Commit `type(scope): description`; …
+- Before `git push`, run the checks of every node `scripts/components.py changed` selects; …
+- Behaviour changes need a real device, emulator or Chrome run before done, …
+```
+
+The HTML marker comments themselves were not present in the quoted copy (Claude Code appears to strip
+them from the injected file); the block's six pointer lines were. A first probe that asked for the
+text *between the markers* answered `ABSENT`; the section quote is the accurate probe.
+
+#### Outcome 6 — failure after the write: PASS
+
+With `VELES_AGENT_RULES_FAIL_AFTER_WRITE=1` in the host environment, `openspec instructions finalize
+--change demo2` **ran** (exit 0 recorded by the model) and the hook only emitted its stderr
+diagnostic; the rule text was never shown:
+
+```text
+HOOK UserPromptSubmit len=83    agent_rules.py hook: VELES_AGENT_RULES_FAIL_AFTER_WRITE=1: failing after the write
+HOOK PreToolUse       len=83    (the same line)
+HOOK PostToolUse      len=83    (the same line)
+RES   - Generating instructions... <artifact id="finalize" change="demo2" …>
+```
+
+The engine had recorded the delivery. In the same session with the switch unset:
+
+- the later `openspec instructions finalize` (same trigger) appended **0** bytes — stale delivery at a
+  later moment of the same trigger;
+- the first later gated call ran (`d2298f89`) and the second ran (`3aeff0d9`), both with empty
+  `PreToolUse` output — stale credit for the first and a second later gated call.
+
+### 6.4 Claude Code 2.1.328 — outcome 7 (stop gate)
+
+`demo` was created in the clone with `openspec new change demo` and a hand-written `apply.md`
+(iteration 1). Each row is a fresh session unless stated. `openspec status --change demo` put `demo`
+in the session change set. Stop hook outputs are from `--include-hook-events`.
+
+| Scenario | Disk state | Stop results | Result |
+|---|---|---|---|
+| stall after apply, then a second stop in the same phase | `apply.md` it1, no verify | block (4,283 bytes), pass | PASS — engine line names `demo`; the model continued and ended, the next stop passed |
+| continued turn, new phase | as above; the model copied a passing `verify.md` it1 after the first block | block, block, pass | PASS — the second block came in the same continued turn |
+| new apply iteration | `apply.md` it2, verify it1 pass | block, pass | PASS |
+| failing verify at newest | `apply.md` it2, `verify.md` it2 with `❌ FAIL` ticked | pass | PASS |
+| earlier failing verify | `apply.md` it2, `verify.md` it1 with `❌ FAIL` | block, pass | PASS |
+| finalized | `finalize.md` present | pass | PASS |
+| archived | `openspec/changes/archive/2026-11-20-demo/` present, no finalize | pass | PASS |
+| unrelated session | `demo` pending, session never named it, no tools | pass | PASS |
+| linked worktree | `apply.md` only in `/tmp/opencode/t12-claude/wt-demo`, main copy has none | block, pass | PASS |
+| compaction keeps the record | it1, block recorded; `/compact --resume` (generation 0→1); then a stop-only turn | pass | PASS |
+| push without delivery | `git push origin HEAD` twice | deny (443 bytes: the pre-push rule), then push ran (`* [new branch] HEAD -> chore/move-rules-to-hooks`) | PASS |
+| push during finalize | `openspec instructions finalize --change demo2` (6,933 bytes appended), then `git push` | push ran (`Everything up-to-date`) | PASS |
+
+The block text is the engine line followed by the closeout rule; its first line, quoted from the
+`Stop` hook output:
+
+```text
+Change `demo` has an apply receipt and no finalize receipt. Run verify if it has not run, then
+finalize now: it pushes and creates the PR without asking. If a rule requires you to ask the user,
+or the user told you to stop, say which and end your turn; the next stop is not blocked.
+```
+
+`stop_hook_active` was probed directly by temporarily wrapping the clone's `Stop` command with a
+stdin logger (the tracked command was restored afterwards). The three stops of the continued-turn run
+carried:
+
+```text
+stop_hook_active= False last= 'Status exit code: 0. The change `demo` shows 1/9 artifacts …'
+stop_hook_active= True last= 'I copied the verify report to `openspec/changes/demo/verify…'
+stop_hook_active= True last= 'Report: - **Status exit code:** 0. - **Stop blocks show…'
+```
+
+So the post-verify block really was `stop_hook_active: true`, and the agent continued.
+
+Apply-to-finalize run on the disposable `tiny` change (apply skill invoked, one trivial task, then
+verify): the agent went from apply to verify without asking, wrote the marker file, and did **not**
+reach finalize because verify failed on the missing review records. It did not report the closeout
+rule as conflicting with the apply skill's ending; it cited the review gate's "ask first" requirement
+as its reason to stop. The stop gate also caught the end of that run (one block, then pass;
+`stops [{'change': 'tiny', 'iteration': 1, 'verify_state': 'none'}]`). The final text:
+
+```text
+I'm stopping here without finalizing. Verify failed, and the closeout rule says to stop when verify
+fails. … Nothing was committed or pushed, and no PR was created.
+```
+
+The spike's Claude Code half (a canary block, the next stop reporting `stop_hook_active`, and a user
+interrupt firing no `Stop`) is recorded in section 1 (same version `2.1.328`); it was not repeated.
+
+### 6.5 OpenCode 2.3.2 — outcomes 1–6
+
+#### Outcome 1 — loading and permissions: PASS
+
+The local plugin loaded from the tracked `./scripts/opencode-hooked-rules` directory; a first run
+created the session's engine state, and the gate/ moment effects below prove it was active. With
+`"permission": {"bash": "ask"}` and no `--auto`, a non-gated `touch` was refused by OpenCode's
+permission flow (the hook passed):
+
+```text
+{"error":{"type":"permission.rejected","message":"This non-interactive run cannot ask the user for
+permission, so the request was rejected. Continue without this action."},"content":[]}
+```
+
+The file was not created; the plugin did not grant or deny the call.
+
+#### Outcome 2 — block once, parallel batch, residuals: PASS
+
+Block once and changed-title re-run:
+
+```text
+USE: shell   (git commit -m 'test: opencode first attempt')
+TEXT: The hook blocked the first attempt and delivered the commit-type rule. Now the retry …
+USE: shell   (a different subject)
+git log: 5dd38a71 chore: opencode second attempt
+```
+
+First attempt's tool error carried the rule text
+(`{"error":{"type":"unknown","message":"# Commit and PR types\n\nWrite every commit subject …`).
+
+Parallel batch: two `shell` tool calls with the same message id (`msg_1f776676d001EqvFtHSyRHtGrb`),
+both denied; the `gh pr create` sibling's denial carried the commit-types and real-device rules:
+
+```text
+USE: shell (git commit …)
+USE: shell (gh pr create …)
+TEXT: Both calls were issued in parallel in one message, and both were intercepted by the repo's hook
+gate before they could run — neither command executed.
+```
+
+Residual cases (recorded, not pass/fail):
+
+- *A moment with a gate in one parallel batch*: `read .agents/skills/openspec-apply-change/SKILL.md`
+  plus `shell git commit -m 'docs: opencode moment plus gate'` in one message. Both ran; the commit
+  was created (`971ff3fe`). **This differs from the earlier observation recorded in
+  `docs/hook-delivered-rules.md` (denied on OpenCode)**; the order of the two hooks is not guaranteed.
+- *Two same-kind gates in one batch*: `git commit -m 'test: opencode batch one'` and
+  `git commit -m 'docs: opencode batch two'`. The first **ran** (`75a9820f`), the second was
+  **denied** — the same residual with the opposite order to the Claude Code run.
+
+#### Outcome 3 — moments: PASS
+
+| Moment | Evidence | Later gated command |
+|---|---|---|
+| model-invoked skill (`skill` tool, `openspec-apply-change`) | skill loaded, rule text appended to its output | `git commit` ran — `2d7b2321` |
+| user prompt `/opsx:apply` | OpenCode did not expand it as a command (no `skill` tool call); the model quoted the delivered commit-types and closeout rules | `git commit` ran — `a4efdbca` |
+| read of `SKILL.md` | rule text appended to the read result | `git commit` ran — `129e7ab0` |
+| successful `openspec instructions finalize --change demo2` | rule text appended after `</artifact>` | `git commit` ran — `d85ddb63` |
+
+`/openspec-apply-change` also delivered, but OpenCode expanded it into the skill tool, so `/opsx:apply`
+(not expanded) is the isolating evidence for the user-prompt moment.
+
+A failing workflow command (`openspec instructions finalize --change nope`, exit 1) appended nothing;
+the later `git commit` was denied (its tool error carried the rule) and the retry ran (`8055e28f`).
+
+Repeat: the first `openspec instructions finalize --change demo2` appended the rule text after
+`</artifact>`, the identical second call appended nothing (the model verified the file's last bytes were
+`</success_criteria>\n\n</artifact>\n`), and the commit ran (`e8ea053f`). Different trigger: the skill
+appended rule text, then the finalize command appended the same commit-types rule again (its state
+entry held both `command:…finalize` and `skill:openspec-apply-change` triggers), and the commit ran
+(`145a3bbb`).
+
+#### Outcome 4 — re-arm and isolation: PASS
+
+- *Re-arm:* a session delivered the rules (`finalize`) at generation 0; `POST
+  /api/session/<id>/compact -d '{}'` returned a `compaction` inbox item and the state's generation rose
+  to 1; the next `git commit` was denied and its retry ran (`ef0e3641`).
+- *Parent → subagent:* the parent delivered; a `subagent` (`general`) child's commit was denied and
+  its retry ran (`b4e7c3e0`). The state held the child key
+  `…/ses_e0881ea02ffeMVMs1c9H4aM75N`.
+- *Subagent → parent:* the child ran `openspec instructions finalize --change demo2`; the parent's
+  commit was denied (rule text in the error) and its retry ran (`acc0e28c`).
+- *Subagent compaction:* compacting the child session through the API (`POST
+  /api/session/<child>/compact -d '{}'`) produced `generations {<child key>: 1}` while the parent key
+  stayed at generation 0 — the parent's delivery survived. PASS.
+
+#### Outcome 5 — pointer fallback: PASS
+
+With the plugin removed from the disposable `opencode.json` and no tools, the model quoted the whole
+section including the markers:
+
+```text
+## Hook-delivered rules
+<!-- hooked-rules:begin -->
+- Every commit subject and PR title is a Conventional Commit `type(scope): description`; …
+…
+<!-- hooked-rules:end -->
+```
+
+#### Outcome 6 — failure after the write: PASS
+
+With `VELES_AGENT_RULES_FAIL_AFTER_WRITE=1` on the server, `openspec instructions finalize --change
+demo2` ran and appended **nothing** (the plugin showed only the read-by-hand notice); the state
+recorded the delivery. With the switch off, in the same session:
+
+- the repeat finalize appended nothing (stale delivery at a later moment of the same trigger);
+- the first and second later commits both ran (`6e8f94ac`, `b368509f`) — stale credit.
+
+With `VELES_AGENT_RULES_FAIL_INJECTION=1`, a new session's finalize appended nothing and the plugin
+sent `void` for its entries: the state then held only the later gated rule entry (`triggers=[]`, the
+retry's pending confirmation) and none of the four delivered rules. The next `git commit` was
+**denied** again. PASS.
+
+### 6.6 OpenCode 2.3.2 — outcome 7 (stop gate)
+
+The spike's OpenCode half (root `session.execution.succeeded` resumes with a synthetic prompt; a child
+session's success, an interrupted execution and a failed execution are told apart) is section 2, same
+version `2.3.2`. The final run used a kept-alive server; each stop-gate row is a fresh session, and
+the synthetic resume is interrupted immediately after it is observed so it cannot act.
+
+Representative event sequence (observed in `events.log`):
+
+```text
+ENQUEUED user Run the shell command `openspec status --change demo` …
+session.execution.started
+session.execution.succeeded
+ENQUEUED synthetic Change `demo` has an apply receipt and no finalize receipt. Run verify if it has
+not run, then finalize now: it pushes and creates the PR without asking. …
+session.execution.started
+interrupt={"interrupted":true}
+session.execution.interrupted reason=user
+```
+
+| Scenario | Disk state | Event result | Result |
+|---|---|---|---|
+| stall after apply | `apply.md` it1 | synthetic block; stop record `{demo,1,none}` | PASS |
+| second stop, same phase | same session, second prompt | `succeeded`, no synthetic | PASS |
+| after a passing verify | `verify.md` it1 PASS | synthetic block; record `{demo,1,pass}` | PASS |
+| new apply iteration | `apply.md` it2, verify it1 pass | synthetic block; record `{demo,2,none}` | PASS |
+| failing verify at newest | `apply.md` it2, verify it2 FAIL | no synthetic, no record | PASS |
+| earlier failing verify | `apply.md` it2, verify it1 FAIL | synthetic block; record `{demo,2,none}` | PASS |
+| finalized | `finalize.md` present | no synthetic | PASS |
+| archived | archive copy present | no synthetic | PASS |
+| unrelated session | `demo` pending, never named | no synthetic | PASS |
+| linked worktree | `apply.md` only in `/tmp/opencode/t12-oc/wt-demo` | synthetic block; record `{demo,1,none}` | PASS |
+| push without delivery | `git push origin HEAD` twice | denied (pre-push text), then `* [new branch]` | PASS |
+| push during finalize | finalize instructions then `git push` | `Everything up-to-date`, not denied | PASS |
+| interactive Esc abort in the TUI | a pty TUI run, Esc at 12 s | `session.execution.started`, then `location.shutdown`; **no** `session.execution.interrupted` | **UNVERIFIED** — the TUI client exits without a terminal event, so the plugin cannot see it (accepted residual) |
+
+The interrupted-execution discrimination was observed in the five interrupted stop-gate runs:
+`session.execution.interrupted reason=user` and no further synthetic message. A child session's
+success produced no stop (the stop-gate rows above run in root sessions; the subagent runs in 6.5
+show the child key and no child stop record).
+
+### 6.7 Outcome summary
+
+| Outcome | Claude Code 2.1.328 | OpenCode 2.3.2 |
+|---|---|---|
+| 1. Loading and permissions | PASS | PASS |
+| 2. Block once, changed-title re-run, parallel sibling, both residuals | PASS (residual: moment+gate passed; two gates: first denied, second passed) | PASS (residual: moment+gate passed; two gates: first passed, second denied) |
+| 3. Four moments, later gate, failing command, repeat, different trigger | PASS | PASS |
+| 4. Re-arm; parent↔subagent isolation; subagent compaction | PASS; subagent compaction UNVERIFIED (cannot force a subagent compaction); host carries `agent_id` | PASS, including a child-session compaction of the subagent |
+| 5. Pointer fallback | PASS | PASS |
+| 6. Failure after the write, stale credit, void | PASS | PASS |
+| 7. Stop gate, push gate, interactive abort | PASS; apply-to-finalize run recorded | PASS; interactive TUI Esc **UNVERIFIED** — the client exits with no terminal event |

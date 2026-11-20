@@ -66,8 +66,9 @@ stale block. Each rule adds one line to the root, which is capped at 40 lines; s
   passes, even with a changed message or title.
 - A sibling that matches a different gate pattern of the same rule is denied as well.
 - Residuals: two same-kind gates in one parallel batch can let the second pass as a "re-run" before
-  the model saw the rule; a moment plus a gate in one parallel batch passed the gate on Claude Code
-  (it ran the moment first) and was denied on OpenCode.
+  the model saw the rule; a moment plus a gate in one parallel batch passed the gate on both hosts in
+  the final verification (the moment was processed first on Claude Code; OpenCode had denied it in an
+  earlier observation, so the order of the two hooks is not guaranteed).
 
 ## Stop gate
 
@@ -168,8 +169,15 @@ The hooks never block a call because of their own failure.
 
 ## Verified tools
 
-- Spike evidence (Claude Code 2.1.326, OpenCode 2.3.2, next to `opencode-rules` 2.0.0); the final live
-  verification is recorded in `spike.md` of the `hook-delivered-rules` change after plan Task 10.
+- Spike evidence: Claude Code 2.1.328, OpenCode 2.3.2, next to `opencode-rules` 2.0.0.
+- Final live verification (2026-11-20, all outcomes of `hooked-rule-delivery`): Claude Code 2.1.328 and
+  OpenCode 2.3.2, every outcome PASS except the OpenCode interactive TUI Esc abort, which is
+  unverified: the client exits with no terminal event, so the plugin cannot see it. The runs, the
+  residual batch results and the per-outcome table are in `spike.md` of the `hook-workflow-rules`
+  change (§6).
+- OpenCode headless `run --standalone` exits at the end of its turn, before the plugin's detached stop
+  call can finish, so the stop gate is effective there only with a kept-alive server (`opencode serve`
+  plus `run --server`) or the TUI. The turn still ends normally; no stop is sent.
 - The OpenCode plugin entry in `opencode.json` is a directory path string
   (`"./scripts/opencode-hooked-rules"`); a path to `index.js` or a `file:` package is rejected or not
   loaded.
