@@ -1702,6 +1702,49 @@ class ContextKeyTest(unittest.TestCase):
         self.assertEqual(context_key(event("prompt", agent="")), "s1")
 
 
+class ChangeSetTest(EngineTest):
+    """The session change set: change names from successful ``openspec`` shell calls, 20 newest."""
+
+    def changes(self, session="s1"):
+        with self.store.transaction(session) as state:
+            return list(state.changes)
+
+    def test_change_forms(self):
+        for form in ("--change demo", "--change=demo", '--change "demo"', "--change 'demo'"):
+            # `openspec status` matches no rule, so the recording happens on the pass path.
+            self.assertEqual(self.run_event(bash_after("openspec status %s" % form)).kind, "pass")
+            self.assertEqual(self.changes(), ["demo"], form)
+
+    def test_long_name_ignored(self):
+        # 65 characters: one past the longest change name, and the trailing character proves the
+        # parser does not silently take a 64-character prefix.
+        self.run_event(bash_after("openspec status --change %s" % ("a" * 65)))
+        self.assertEqual(self.changes(), [])
+
+    def test_non_openspec_command_ignored(self):
+        self.run_event(bash_after('grep -- "--change demo" notes.txt'))
+        self.assertEqual(self.changes(), [])
+
+    def test_failed_command_ignored(self):
+        self.run_event(bash_after("openspec status --change demo", ok=False))
+        self.assertEqual(self.changes(), [])
+
+    def test_subagent_call_counts(self):
+        self.run_event(bash_after("openspec status --change demo", agent="a7"))
+        self.assertEqual(self.changes(), ["demo"])
+        with self.store.transaction("s1") as state:
+            self.assertEqual(list(state.entries), [])  # no delivery was credited to either key
+
+    def test_keeps_20_newest(self):
+        names = ["c%02d" % index for index in range(21)]
+        for name in names:
+            self.run_event(bash_after("openspec status --change %s" % name))
+        self.assertEqual(self.changes(), names[1:])
+        # A name already in the set moves to the newest end, so the oldest one after it is dropped.
+        self.run_event(bash_after("openspec status --change %s" % names[0]))
+        self.assertEqual(self.changes(), names[2:] + [names[0]])
+
+
 class MomentTest(EngineTest):
     def assert_moment(self, decision, key="s1"):
         rule = self.rules[0]

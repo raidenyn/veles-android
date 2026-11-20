@@ -672,6 +672,11 @@ ENTRY_STATES = ("delivered", "pending")
 STOP_VERIFY_STATES = ("none", "pass")
 # A change name as openspec writes it: the bound keeps every name in a state file a plain token.
 CHANGE_NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+# The `--change` argument of an openspec command: `--change demo`, `--change=demo` and both quoted
+# forms. The lookahead refuses a longer name rather than taking a 64-character prefix of it.
+CHANGE_ARG_RE = re.compile(r"--change(?:=|\s+)[\"']?([a-z0-9][a-z0-9-]{0,63})(?![a-z0-9-])")
+# A command that runs openspec at all; only its successful calls record a change name.
+OPENSPEC_COMMAND_RE = re.compile(r"\bopenspec\b")
 INITIALIZED_MARKER = "initialized"
 STEM_RE = re.compile(r"[0-9a-f]{64}")
 SESSION_FILE_RE = re.compile(r"[0-9a-f]{64}\.json")
@@ -1398,6 +1403,25 @@ def _deliver_moment(state, key, rule, matched):
     state.put(key, rule.identity, "delivered", patterns, matched)
 
 
+def record_changes(state, event):
+    """Add the change names of a successful ``openspec`` shell call to the session change set.
+
+    The set is session-wide, not per context, so a subagent's call counts too. Each name moves to the
+    newest end (an already recorded name included) and only the ``KEEP_CHANGES`` newest are kept.
+    An event that is not a successful ``openspec`` command records nothing.
+    """
+    if event.kind != "tool-after" or event.ok is not True or not event.command:
+        return
+    if OPENSPEC_COMMAND_RE.search(event.command) is None:
+        return
+    for name in CHANGE_ARG_RE.findall(event.command):
+        if name in state.changes:
+            state.changes.remove(name)
+        state.changes.append(name)
+    if len(state.changes) > KEEP_CHANGES:
+        del state.changes[:len(state.changes) - KEEP_CHANGES]
+
+
 def decide(rules, state, key, event):
     """The ``Decision`` for ``event`` in context ``key``; records it in ``state`` (one transaction).
 
@@ -1407,8 +1431,11 @@ def decide(rules, state, key, event):
     suppresses. Gates (``tool-before`` with a command) deny a call matching a rule not delivered in
     this context, record the denied rules as pending with the matched patterns, and confirm a pending
     rule when a call matches one of its pending patterns. Only rules included under the cap are
-    recorded. ``compacted`` re-arms and ``void`` removes entries by write id; both pass.
+    recorded. A successful ``openspec`` shell call records its ``--change`` names in the session change
+    set, on the pass path too. ``compacted`` re-arms and ``void`` removes entries by write id; both pass.
     """
+    if event.kind == "tool-after":
+        record_changes(state, event)
     if event.kind in ("prompt", "tool-after"):
         fresh = []
         matched = {}
