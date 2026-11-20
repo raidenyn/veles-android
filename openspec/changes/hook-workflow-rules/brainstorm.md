@@ -24,7 +24,8 @@ reinforcement.
 **What this change does:**
 
 1. **A stop gate (a new trigger kind).** When the main agent tries to end its turn while a change it worked on in
-   this session has an apply receipt, no failing verify and no finalize receipt, the engine blocks the stop once per
+   this session has an apply receipt, no failing verify and no finalize receipt, and the session itself invoked the
+   apply skill (a Skill call or `/opsx:apply`, never a `SKILL.md` read), the engine blocks the stop once per
    phase and shows the closeout rule with a line naming the change. Claude Code: a `Stop` hook returning
    `decision: block`. OpenCode: the plugin uses the host's turn-end event, `session.execution.succeeded` (2.3.2
    does not emit `session.idle`), with a synthetic prompt carrying the text; this
@@ -149,6 +150,10 @@ otherwise the owner decides.
   event's checkout first) on a tie. The change set is session-wide: a subagent's `--change` call counts for the
   main context's stop. A session with no recorded change is never
   stop-gated, so an unrelated session in a checkout with a paused change is never blocked.
+- **My call — the gate is armed only by applying.** The change set alone never arms the gate. A session-wide flag is
+  set when the session invokes the apply skill (a Skill call or a `/opsx:apply` prompt; a `SKILL.md` read never arms it),
+  and the stop gate passes while it is unset. This keeps the reminder in the session that applied and will finalize,
+  never in a delegated verify or review session that merely names the change. The flag survives compaction.
 - **My call — once per phase, surviving compaction.** For each change the stop gate fires at most once per
   session and phase, whatever the compactions; the per-phase record, not Claude Code's `stop_hook_active`, bounds it, so a stall
   after a passing verify in the same continued turn is still caught. A phase is
@@ -173,10 +178,11 @@ otherwise the owner decides.
   scenario (the cap counts only rules the moment will send) and the Stale credit wording.
 - **My call — what a trigger is, and how entries grow.** A skill trigger is the canonical skill name (an `opsx:<x>`
   name maps to its `openspec-*` skill through a fixed table), so a skill call, a `/opsx:apply` prompt and a
-  `SKILL.md` read of the same skill are one trigger. A command trigger is the matched `commands` pattern. Triggers get
+  `SKILL.md` read of the same skill are one trigger for delivery; arming excludes the `SKILL.md` read. A command trigger is the matched `commands` pattern. Triggers get
   their own `triggers` field, separate from the gate `patterns`; a re-delivery adds to both sets and never
   replaces them.
-- **My call — state version 2.** The new fields (`triggers`, the stop records, the session change set) bump the
+- **My call — state version 2.** The new fields (`triggers`, the stop records, the session change set, the apply
+  flag) bump the
   state file to version 2. The new engine reads a version 1 file as version 2 with empty new fields; an old
   engine meeting a version 2 file fails open with the read-by-hand notice, as today for any unreadable state. The
   one-time upgrade window is accepted.

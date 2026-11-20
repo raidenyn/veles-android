@@ -11,7 +11,9 @@ move, and a stop gate can put the closeout rule in front of the agent at the mom
 - **Stop gate (new trigger kind).** A hooked rule may declare `stops`: named predicates from an engine registry.
   `superspec-finalize-pending` is true when a change this session named has an apply receipt, no finalize
   receipt, no archived copy and no failing verify at that iteration. Then the main agent's stop is blocked once
-  per phase (after apply; after a passing verify) with a line naming the change and the closeout rule. Claude
+  per phase (after apply; after a passing verify) with a line naming the change and the closeout rule — but only
+  in a session that itself invoked the apply skill (a Skill call or `/opsx:apply`, never a `SKILL.md` read), so a
+  delegated verify or review session is not reminded. Claude
   Code: a new `Stop` hook. OpenCode: the turn-end event (`session.execution.succeeded` in 2.3.2, where
   `session.idle` is not emitted) answered with a synthetic prompt. Both are spiked first; if
   either fails, the owner decides.
@@ -41,7 +43,7 @@ None.
 ### Modified Capabilities
 
 - `hooked-rule-delivery`: `stops` grammar and registry, the `stop` event and `block` decision, the session change
-  set and the `superspec-finalize-pending` predicate, per-trigger de-duplication (and the "cap at a moment" wording), the pointer-block requirement naming each
+  set, the apply flag that arms the gate, and the `superspec-finalize-pending` predicate, per-trigger de-duplication (and the "cap at a moment" wording), the pointer-block requirement naming each
   moved rule's always-on fact (the closeout pointer's authorization among them), state version 2, the fifth
   Claude Code hook, the OpenCode `session.execution.succeeded` mapping, the budget check, stop-gate fail-open, amended stale
   credit and end-to-end outcomes.
