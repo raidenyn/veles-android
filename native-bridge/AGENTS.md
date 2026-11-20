@@ -13,6 +13,7 @@ Run from the repository root (Node >= 22 and npm required):
 
 ```bash
 ./gradlew bridgeInstall bridgeFormat bridgeLint bridgeTypecheck bridgeTest
+./gradlew bridgeRustFormat bridgeRustLint   # cargo fmt --check and cargo clippy -D warnings of src-tauri
 ./gradlew bridgeBuild       # unsigned host via cargo tauri build --no-bundle -- --locked
 ./gradlew bridgeManifests   # Chrome native-messaging host manifests
 ./gradlew bridgePackage     # deterministic packaging into build/native-bridge/

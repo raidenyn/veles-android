@@ -5,10 +5,14 @@ Docs, decisions and the agent-file check; fork `(schema version v5)`. Rule/node:
 needs the `opencode-rules` plugin pinned in `opencode.json`: `docs/opencode-rules.md`.
 
 ## Commands
+
+Run from the repository root:
+
 ```bash
 python3 docs/checks/check_offline.py --root .
 python3 docs/checks/check_agent_files.py --root .
 python3 docs/checks/check_gate_b_matrix.py
+python3 docs/checks/check_site.py --root .
 python3 -m unittest discover -s docs/checks -p 'test_*.py' -v
 ```
 
@@ -25,8 +29,8 @@ adding. Grammar, delivery, degraded modes and versions: `docs/hook-delivered-rul
 ## Documentation site
 
 `docs.json` and the allowlist `.mintignore` at the root publish the Mintlify site from `docs/user/`, `docs/dev/`
-and `openspec/specs/`. A new capability needs `docs/dev/specs/<capability>.mdx`; run
-`python3 docs/checks/check_site.py --root .` after `git add`. Rules and layout: `docs/documentation-site.md`.
+and `openspec/specs/`. A new capability needs `docs/dev/specs/<capability>.mdx`; run the site check above after
+`git add`. Rules and layout: `docs/documentation-site.md`.
 
 ## Rules
 

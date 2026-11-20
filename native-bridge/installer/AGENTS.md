@@ -17,6 +17,7 @@ Run from the repository root:
 # UNSIGNED input producers (Windows/macOS only)
 ./gradlew bridgeInstallerUnsigned             # PRODUCTION channel; needs a tracked, approved release-<platform>.json
 ./gradlew bridgeInstallerPackageFixture       # FIXTURE channel from the tracked fixture-<platform>.json
+./gradlew bridgeInstallerDebug                # DEBUG fixture-channel installer (Windows/macOS)
 ./gradlew bridgeInstallerSupplyChain          # verify/verify-supply-chain.sh incl. native-installer.cdx.json
 ```
 

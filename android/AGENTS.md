@@ -25,6 +25,7 @@ Run from `android/`; root aliases cannot carry `--tests`.
 ./gradlew testDebugUnitTest --tests "me.nagaev.veles.otp.handlers.RegexMessageHandlerTest"
 ./gradlew connectedDebugAndroidTest
 ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.nagaev.permissions.ui.VelesPermissionsAppTests
+./gradlew :app:releaseHookGuard    # scan the assembled release APK for debug hooks
 ```
 
 Clean assembly needs rustup/cargo and NDK r29; Node >= 22 is not needed for the APK alone. The OTP-02
