@@ -1544,6 +1544,7 @@ class StateV2Test(unittest.TestCase):
             self.assertEqual(entry["triggers"], set())
             self.assertEqual(state.changes, [])
             self.assertEqual(state.stops, [])
+            self.assertIs(state.applied, False)  # a version 1 file has no apply flag
             self.assertEqual(json.loads(state.dump())["version"], 2)
         self.assertEqual(self.stored()["version"], 1)  # an unmodified load is not rewritten
         with self.store.transaction("s1") as state:
@@ -1552,7 +1553,24 @@ class StateV2Test(unittest.TestCase):
         self.assertEqual(stored["version"], 2)
         self.assertEqual(stored["changes"], [])
         self.assertEqual(stored["stops"], [])
+        self.assertIs(stored["applied"], False)
         self.assertEqual(stored["entries"][0]["triggers"], [])
+
+    def test_apply_flag_round_trips_and_a_v2_file_without_it_loads_unset(self):
+        # A version 2 file written before the flag existed loads with it unset rather than failing
+        # open: the gate is simply not armed until the session invokes apply.
+        base = {"version": 2, "session": "s1", "generations": {}, "changes": [], "stops": [],
+                "entries": []}
+        self.store.next_write_id()
+        self.write_state(base)
+        with self.store.transaction("s1") as state:
+            self.assertIs(state.applied, False)
+        self.assertNotIn("applied", self.stored())  # an unmodified load is not rewritten
+        with self.store.transaction("s1") as state:
+            state.applied = True
+        self.assertIs(self.stored()["applied"], True)
+        with self.store.transaction("s1") as state:
+            self.assertIs(state.applied, True)
 
     def test_unknown_version_fails_open(self):
         # `handle` turns this StoreError into the read-by-hand notice and lets the call pass; this pins
@@ -1605,6 +1623,8 @@ class StateV2Test(unittest.TestCase):
             dict(base, stops=[dict(record, iteration=-1)]),
             dict(base, stops=[dict(record, verify_state="maybe")]),
             dict(base, stops=[dict(record, write_id=None)]),
+            dict(base, applied="yes"),
+            dict(base, applied=1),
             dict(base, entries=[{key: value for key, value in entry.items() if key != "triggers"}]),
             dict(base, entries=[dict(entry, triggers="x")]),
             dict(base, entries=[dict(entry, triggers=[1])]),
@@ -1752,6 +1772,10 @@ class ChangeSetTest(EngineTest):
         with self.store.transaction(session) as state:
             return list(state.changes)
 
+    def applied(self, session="s1"):
+        with self.store.transaction(session) as state:
+            return state.applied
+
     def test_change_forms(self):
         forms = ("--change demo", "--change=demo", '--change "demo"', "--change 'demo'")
         # Each form gets its own session: a name recorded by an earlier form cannot mask a form that
@@ -1802,6 +1826,33 @@ class ChangeSetTest(EngineTest):
         # A name already in the set moves to the newest end, so the oldest one after it is dropped.
         self.run_event(bash_after("openspec status --change %s" % names[0]))
         self.assertEqual(self.changes(), names[2:] + [names[0]])
+
+    def test_apply_skill_arms_the_session(self):
+        # The three forms of the apply skill moment all arm the session, and each gets its own
+        # session so one form cannot mask another.
+        forms = (
+            event("tool-after", tool="Skill", skill="openspec-apply-change", session="f0"),
+            event("prompt", prompt="/opsx:apply hook-workflow-rules", session="f1"),
+            event("tool-after", tool="Read", session="f2",
+                  path="/work/repo/.agents/skills/openspec-apply-change/SKILL.md"),
+        )
+        for ev in forms:
+            self.run_event(ev)
+            self.assertTrue(self.applied(ev.session), ev)
+        # The namespaced Skill call is the same skill, so it arms the same session.
+        namespaced = event("tool-after", tool="Skill", skill="opsx:apply", session="f3")
+        self.run_event(namespaced)
+        self.assertTrue(self.applied("f3"))
+
+    def test_named_change_without_apply_is_not_armed(self):
+        # A delegated verify or review session may name the change; only the apply skill arms it.
+        for session, command in (
+            ("status", "openspec status --change demo"),
+            ("instructions", "openspec instructions apply --change demo"),
+        ):
+            self.assertEqual(self.run_event(bash_after(command, session=session)).kind, "pass")
+            self.assertEqual(self.changes(session), ["demo"])
+            self.assertFalse(self.applied(session), command)
 
 
 class PredicateTest(unittest.TestCase):
@@ -2174,6 +2225,11 @@ class StopGateTest(EngineTest):
         """Record ``name`` in the session change set the way a successful openspec call does."""
         self.run_event(bash_after("openspec status --change %s" % name))
 
+    def arm(self, session="s1"):
+        """Arm the stop gate the way the session's own apply-skill moment does."""
+        with self.store.transaction(session) as state:
+            state.applied = True
+
     def run_stop(self, roots=None, **fields):
         ev = event("stop", **fields)
         with self.store.transaction(ev.session) as state:
@@ -2195,6 +2251,7 @@ class StopGateTest(EngineTest):
 
     def test_stall_after_apply_blocks(self):
         self.name_change("demo")
+        self.arm()
         self.make_change("demo", apply_iter=1)
         record = self.assert_blocked(self.run_stop(), "demo")
         self.assertEqual(len(self.stops()), 1)
@@ -2203,6 +2260,7 @@ class StopGateTest(EngineTest):
 
     def test_second_stop_passes(self):
         self.name_change("demo")
+        self.arm()
         self.make_change("demo", apply_iter=1)
         self.assert_blocked(self.run_stop(), "demo")
         self.assertEqual(self.run_stop(), Decision("pass", "", []))
@@ -2210,6 +2268,7 @@ class StopGateTest(EngineTest):
 
     def test_pass_phase_blocks_again(self):
         self.name_change("demo")
+        self.arm()
         self.make_change("demo", apply_iter=1)
         self.assert_blocked(self.run_stop(), "demo")
         self.make_change("demo", apply_iter=1, verify=(1, True))
@@ -2220,6 +2279,7 @@ class StopGateTest(EngineTest):
 
     def test_new_iteration_blocks_again(self):
         self.name_change("demo")
+        self.arm()
         self.make_change("demo", apply_iter=1)
         self.assert_blocked(self.run_stop(), "demo")
         self.make_change("demo", apply_iter=2)
@@ -2228,6 +2288,7 @@ class StopGateTest(EngineTest):
 
     def test_stop_hook_active_same_phase_passes(self):
         self.name_change("demo")
+        self.arm()
         self.make_change("demo", apply_iter=1)
         self.assert_blocked(self.run_stop(), "demo")
         self.assertEqual(self.run_stop(stop_hook_active=True), Decision("pass", "", []))
@@ -2235,6 +2296,7 @@ class StopGateTest(EngineTest):
 
     def test_stop_hook_active_new_phase_blocks(self):
         self.name_change("demo")
+        self.arm()
         self.make_change("demo", apply_iter=1)
         self.assert_blocked(self.run_stop(), "demo")
         self.make_change("demo", apply_iter=1, verify=(1, True))
@@ -2243,6 +2305,7 @@ class StopGateTest(EngineTest):
 
     def test_compaction_keeps_record(self):
         self.name_change("demo")
+        self.arm()
         self.make_change("demo", apply_iter=1)
         self.assert_blocked(self.run_stop(), "demo")
         self.assertEqual(self.run_event(event("compacted")), Decision("pass", "", []))
@@ -2254,8 +2317,23 @@ class StopGateTest(EngineTest):
         self.assertEqual(self.run_stop(), Decision("pass", "", []))
         self.assertEqual(self.stops(), [])
 
+    def test_not_armed_without_apply_skill(self):
+        # A change with an apply receipt, named by a plain `openspec` call: the session never invoked
+        # the apply skill, so this stop passes and writes no record.
+        self.name_change("demo")
+        self.make_change("demo", apply_iter=1)
+        ev = event("stop")
+        with self.store.transaction(ev.session) as state:
+            self.assertEqual(
+                decide(self.rules, state, context_key(ev), ev, list(self.roots)),
+                Decision("pass", "", []),
+            )
+        self.assertFalse(state.wrote)  # an unarmed gate writes no record
+        self.assertEqual(self.stops(), [])
+
     def test_first_unrecorded_change_named(self):
         with self.store.transaction("s1") as state:
+            state.applied = True
             state.changes.extend(["alpha", "beta"])
             state.stops.append({"change": "alpha", "iteration": 1, "verify_state": "none",
                                 "write_id": state.store.next_write_id()})
@@ -2266,12 +2344,14 @@ class StopGateTest(EngineTest):
 
     def test_subagent_stop_event_not_gated(self):
         self.name_change("demo")
+        self.arm()
         self.make_change("demo", apply_iter=1)
         self.assertEqual(self.run_stop(agent="a1"), Decision("pass", "", []))
         self.assertEqual(self.stops(), [])
 
     def test_void_removes_stop_record(self):
         self.name_change("demo")
+        self.arm()
         self.make_change("demo", apply_iter=1)
         record = self.assert_blocked(self.run_stop(), "demo")
         self.run_event(event("void", write_ids=[record["write_id"]]))
@@ -2280,6 +2360,7 @@ class StopGateTest(EngineTest):
 
     def test_late_void_keeps_newer_record(self):
         self.name_change("demo")
+        self.arm()
         self.make_change("demo", apply_iter=1)
         first = self.assert_blocked(self.run_stop(), "demo")
         self.make_change("demo", apply_iter=1, verify=(1, True))
@@ -2290,6 +2371,7 @@ class StopGateTest(EngineTest):
 
     def test_records_capped_at_40(self):
         self.name_change("demo")
+        self.arm()
         with self.store.transaction("s1") as state:
             for iteration in range(40):
                 state.stops.append({"change": "demo", "iteration": iteration,
@@ -2312,6 +2394,7 @@ class StopGateTest(EngineTest):
             for letter in "abc"
         ]
         self.name_change("demo")
+        self.arm()
         self.make_change("demo", apply_iter=1)
         decision = self.run_stop()
         self.assertEqual(decision.kind, "block")
@@ -3256,6 +3339,7 @@ class HandleStopTest(CheckoutFixture):
             handle_.write("**Iteration**: `%d`\n" % iteration)
 
     def test_plain_stop_blocks_with_the_record(self):
+        self.call(self.plain("tool-after", tool="skill", skill="openspec-apply-change"))
         self.call(self.plain("tool-after", tool="bash", command="openspec status --change demo",
                              ok=True))
         out, code = self.call(self.plain("stop"))
@@ -3270,6 +3354,8 @@ class HandleStopTest(CheckoutFixture):
         )
 
     def test_claude_stop_blocks_then_passes_in_the_same_phase(self):
+        self.call(self.claude_event("PostToolUse", tool_name="Skill",
+                                    tool_input={"skill": "openspec-apply-change"}), fmt="claude")
         self.call(self.claude_bash("PostToolUse", "openspec status --change demo"), fmt="claude")
         out, code = self.call(self.claude_event("Stop", stop_hook_active=False), fmt="claude")
         self.assertEqual(code, 0)
@@ -3314,6 +3400,7 @@ class StopFailOpenTest(CheckoutFixture):
     def test_stop_unreadable_receipt_passes(self):
         directory = self.make_change_directory("demo")
         os.makedirs(os.path.join(directory, "apply.md"))
+        self.call(self.plain("tool-after", tool="skill", skill="openspec-apply-change"))
         self.call(self.plain("tool-after", tool="bash", command="openspec status --change demo",
                              ok=True))
         with self.store.transaction("s1") as state:

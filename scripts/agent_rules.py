@@ -867,29 +867,34 @@ class SessionState(object):
     ``entries`` maps ``(key, rule identity)`` to
     ``{"state", "patterns", "triggers", "generation", "write_id"}``. A key is ``session`` for the main
     context and ``"session/agent"`` for a subagent; each key has its own generation, 0 until bumped.
-    ``changes`` (newest last) and ``stops`` (oldest first) are session-wide, not per key.
+    ``changes`` (newest last), ``stops`` (oldest first) and ``applied`` are session-wide, not per key:
+    ``applied`` records that this session invoked the apply skill, which is what arms the stop gate.
     """
 
-    def __init__(self, store, session, generations, entries, changes=None, stops=None):
+    def __init__(self, store, session, generations, entries, changes=None, stops=None,
+                 applied=False):
         self.store = store
         self.session = session
         self.generations = generations
         self.entries = entries
         self.changes = [] if changes is None else changes
         self.stops = [] if stops is None else stops
+        self.applied = applied
         self.wrote = False  # set by ``Store.transaction`` once it published a changed state
 
     @classmethod
     def load(cls, store, session, data):
         """The state held in ``data`` (None for a session never written); StoreError when invalid.
 
-        A version 1 file is a version 2 file whose entries have no triggers and whose change set and
-        stop records are empty.
+        A version 1 file is a version 2 file whose entries have no triggers, whose change set and
+        stop records are empty and whose apply flag is unset. A version 2 file written before the
+        flag existed also loads it unset, so the gate stays closed rather than failing open.
         """
         generations = {}
         entries = {}
         changes = []
         stops = []
+        applied = False
         if data is not None:
             version = data.get("version")
             if type(version) is not int or version not in (1, STATE_VERSION):
@@ -911,7 +916,10 @@ class SessionState(object):
             if version > 1:
                 changes = _change_names(data.get("changes"))
                 stops = _stop_records(data.get("stops"))
-        return cls(store, session, generations, entries, changes, stops)
+                applied = data.get("applied", False)
+                if not isinstance(applied, bool):
+                    raise StoreError("session state has an invalid apply flag")
+        return cls(store, session, generations, entries, changes, stops, applied)
 
     @staticmethod
     def _entry(item, version):
@@ -959,6 +967,7 @@ class SessionState(object):
         return json.dumps({
             "version": STATE_VERSION,
             "session": self.session,
+            "applied": self.applied,
             "generations": self.generations,
             "changes": list(self.changes),
             "stops": [dict(record) for record in self.stops],
@@ -1386,6 +1395,33 @@ def _moment_rules(rules, event):
     return matched
 
 
+# The apply skill's canonical name and the trigger a moment for it records; the stop gate is armed
+# only by the session that invoked this skill, never by one that merely named a change.
+APPLY_SKILL = "openspec-apply-change"
+APPLY_TRIGGER = "skill:" + APPLY_SKILL
+
+
+def _skill_triggers(event):
+    """The ``skill:`` triggers ``event`` matches, whether or not any rule lists that skill.
+
+    The three forms of a skill moment — a Skill tool call, a ``/<skill>`` prompt and a ``SKILL.md``
+    read — normalise here exactly as ``_moment_rules`` normalises them for the rules it matches. The
+    event's own skill is counted even when no rule lists it, which is what lets ``decide`` arm the
+    session on the apply skill alone.
+    """
+    if event.kind == "prompt":
+        skill = _prompt_skill(event.prompt)
+        return set() if skill is None else set(["skill:" + canonical_skill(skill)])
+    if event.kind != "tool-after":
+        return set()
+    triggers = set()
+    if event.skill is not None:
+        triggers.add("skill:" + canonical_skill(event.skill))
+    if event.path:
+        triggers.update("skill:" + directory for directory in _read_skill_dirs(event))
+    return triggers
+
+
 def _utf8_size(text):
     return len(text.encode("utf-8", "surrogatepass"))
 
@@ -1718,15 +1754,21 @@ def _stop_gate(rules, state, event, roots):
     """The stop gate: block once per pending change phase, with the rule text and a stop record.
 
     A ``stop`` in the main context asks every rule naming the ``superspec-finalize-pending`` predicate
-    about the session change set over ``roots`` (the ``change_roots`` list; None reads as no checkout).
+    about the session change set over ``roots`` (the ``change_roots`` list; None reads as no checkout),
+    but only when the session invoked the apply skill (``state.applied``). A session that merely
+    named the change — a delegated verify or review session — passes without writing a record: the
+    reminder belongs to the session that will finalize, normally the parent that applied.
     The first pending change by name whose phase (newest apply iteration and verify state) has no stop
     record is named in ``STOP_LINE``, followed by the text of the rules that fit under the cap; the
     phase's record is written in the same transaction, keeping the ``KEEP_STOPS`` newest, and the rules
-    are not marked delivered. A subagent stop, a rule without the predicate, or no unrecorded pending
-    change passes. ``stop_hook_active`` is not consulted: the per-phase records bound the blocks, and a
-    phase that changed may block again even when the earlier block continued the turn.
+    are not marked delivered. A subagent stop, an unarmed session, a rule without the predicate, or no
+    unrecorded pending change passes. ``stop_hook_active`` is not consulted: the per-phase records
+    bound the blocks, and a phase that changed may block again even when the earlier block continued
+    the turn.
     """
     if event.agent:
+        return Decision("pass", "", [])
+    if not state.applied:
         return Decision("pass", "", [])
     gated = [rule for rule in rules if FINALIZE_PENDING in rule.stops]
     if not gated:
@@ -1753,7 +1795,8 @@ def _stop_gate(rules, state, event, roots):
 def decide(rules, state, key, event, roots=None):
     """The ``Decision`` for ``event`` in context ``key``; records it in ``state`` (one transaction).
 
-    Moments (``tool-after``, ``prompt``) add the matched rules as context and mark them delivered. A
+    Moments (``tool-after``, ``prompt``) add the matched rules as context and mark them delivered, and
+    an apply-skill moment also sets the session-wide apply flag that arms the stop gate. A
     rule is skipped when its entry is delivered in this context's current generation and already holds
     every trigger the event matched; a different trigger delivers it again, and a pending entry never
     suppresses. Gates (``tool-before`` with a command) deny a call matching a rule not delivered in
@@ -1769,6 +1812,8 @@ def decide(rules, state, key, event, roots=None):
     if event.kind == "tool-after":
         record_changes(state, event)
     if event.kind in ("prompt", "tool-after"):
+        if APPLY_TRIGGER in _skill_triggers(event):
+            state.applied = True
         fresh = []
         matched = {}
         for rule, triggers in _moment_rules(rules, event):
