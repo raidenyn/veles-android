@@ -575,8 +575,8 @@
         {
           "doc": "native-bridge/AGENTS.md",
           "cwd": ".",
-          "line": "./gradlew bridgeInstall bridgeFormat bridgeLint bridgeTypecheck bridgeTest",
-          "why": "Setup, not a gate: ./gradlew bridgeInstall installs native-bridge/node_modules (the native-bridge.node-modules requirement) with npm ci --ignore-scripts and rewrites the stat-mode inputs bridge.format, .lint, .typecheck and .test hash, so running it as a check would defeat their remembered passes; the requirement's fix installs it once."
+          "line": "./gradlew bridgeInstall",
+          "why": "Setup, not a gate: ./gradlew bridgeInstall installs native-bridge/node_modules (the native-bridge.node-modules requirement) with npm ci --ignore-scripts and rewrites the stat-mode inputs bridge.format, .lint, .typecheck and .test hash, so running it as a check would defeat their remembered passes; the requirement's fix installs it once. This exclusion names only the setup task; the documented line's other tasks (bridgeFormat, bridgeLint, bridgeTypecheck and bridgeTest) are covered by their own entries."
         },
         {
           "doc": "native-bridge/AGENTS.md",

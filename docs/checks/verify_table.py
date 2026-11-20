@@ -173,41 +173,72 @@ def _has_glob(token):
     return any(char in token for char in GLOB_CHARS)
 
 
-def _glob_match(pattern, text):
-    expression = "".join(
-        "[^/]*" if char == "*" else "[^/]" if char == "?" else re.escape(char)
-        for char in pattern
+def _glob_regex(pattern):
+    return re.compile(
+        "^"
+        + "".join(
+            "[^/]*" if char == "*" else "[^/]" if char == "?" else re.escape(char)
+            for char in pattern
+        )
+        + "$"
     )
-    return re.match("^" + expression + "$", text) is not None
 
 
-def _glob_tokens(document, entry):
-    """Match a documented argv whose glob token may absorb one or more entry tokens."""
+def _expand_glob(root, cwd, pattern):
+    """The repo-relative files a documented glob names, sorted; a directory read only."""
+    directory, _, name = pattern.rpartition("/")
+    if _has_glob(directory):
+        return []
+    location = os.path.normpath(os.path.join(cwd, directory)) if directory else cwd
+    full = root if location == "." else os.path.join(root, *location.split("/"))
+    # The entry's arguments are relative to its cwd, exactly like the documented ones.
+    prefix = directory + "/" if directory else ""
+    try:
+        names = os.listdir(full)
+    except OSError:
+        return []
+    expression = _glob_regex(name)
+    expanded = [
+        prefix + entry
+        for entry in names
+        if expression.match(entry) and os.path.isfile(os.path.join(full, entry))
+    ]
+    return sorted(expanded)
+
+
+def _glob_tokens(document, entry, root, cwd):
+    """Match a documented argv whose glob token stands for the files it names on disk.
+
+    The glob expands to exactly the files it matches in its directory; the entry's arguments
+    must equal that expansion (sorted), so a table that lists fewer or extra files drifts.
+    """
     if not document:
         return not entry
     token = document[0]
     if _has_glob(token):
-        for count in range(1, len(entry) + 1):
-            if all(_glob_match(token, item) for item in entry[:count]):
-                if _glob_tokens(document[1:], entry[count:]):
-                    return True
-        return False
+        expanded = _expand_glob(root, cwd, token)
+        if not expanded or len(entry) < len(expanded):
+            return False
+        head, rest = entry[: len(expanded)], entry[len(expanded):]
+        if sorted(head) != expanded:
+            return False
+        return _glob_tokens(document[1:], rest, root, cwd)
     if not entry or entry[0] != token:
         return False
-    return _glob_tokens(document[1:], entry[1:])
+    return _glob_tokens(document[1:], entry[1:], root, cwd)
 
 
-def _argv_match(document, argv):
+def _argv_match(document, argv, root, cwd="."):
     """A documented argv covers an entry's argv, allowing a documented shell glob."""
     if document == argv:
         return True
     if not any(_has_glob(token) for token in document):
         return False
-    return _glob_tokens(document, argv)
+    return _glob_tokens(document, argv, root, cwd)
 
 
-def _documented(doc_entry, argv):
-    if _argv_match(doc_entry.argv, argv):
+def _documented(doc_entry, argv, root):
+    if _argv_match(doc_entry.argv, argv, root, doc_entry.cwd):
         return True
     return _task_only(doc_entry.argv) and _task_only(argv) and set(argv[1:]) <= set(
         doc_entry.argv[1:]
@@ -570,7 +601,7 @@ def findings(root):
                     )
                 elif _read_text(root, doc) is None:
                     _check_doc_exists(root, doc, found, _entry_label(command))
-            _forward(command, entries_for, found)
+            _forward(command, entries_for, found, root)
         for exclusion in entry.get("excluded", []) or []:
             if not isinstance(exclusion, dict):
                 continue
@@ -612,7 +643,7 @@ def findings(root):
                 )
             else:
                 _check_doc_exists(root, doc, found, _entry_label(producer))
-        _forward(producer, entries_for, found)
+        _forward(producer, entries_for, found, root)
 
     for node, entry in sorted(nodes.items()):
         if not isinstance(entry, dict):
@@ -636,12 +667,12 @@ def findings(root):
     checked = set()
     for node, doc in sorted(node_docs.items()):
         if doc not in checked and _read_text(root, doc) is not None:
-            _reverse(doc, entries_for(doc), by_doc.get(doc, []), found)
+            _reverse(doc, entries_for(doc), by_doc.get(doc, []), found, root)
             checked.add(doc)
         for rule in node_rules.get(node, []):
             if rule in checked or _read_text(root, rule) is None:
                 continue
-            _reverse(rule, entries_for(rule), by_doc.get(rule, []), found)
+            _reverse(rule, entries_for(rule), by_doc.get(rule, []), found, root)
             checked.add(rule)
     return found
 
@@ -660,7 +691,7 @@ def _check_doc_exists(root, doc, found, label):
     return None
 
 
-def _forward(step, entries_for, found):
+def _forward(step, entries_for, found, root):
     doc = step.get("doc")
     if not isinstance(doc, str) or not doc:
         return  # reported by the structural pass
@@ -669,7 +700,7 @@ def _forward(step, entries_for, found):
     if not isinstance(argv, list):
         return
     documented = entries_for(doc)
-    if any(entry.cwd == cwd and _documented(entry, argv) for entry in documented):
+    if any(entry.cwd == cwd and _documented(entry, argv, root) for entry in documented):
         return
     message = "`%s` runs `%s` from `%s`, but %s documents no matching command; add it there or fix the entry" % (
         _entry_label(step),
@@ -677,17 +708,17 @@ def _forward(step, entries_for, found):
         cwd,
         doc,
     )
-    other = [entry.cwd for entry in documented if _documented(entry, argv) and entry.cwd != cwd]
+    other = [entry.cwd for entry in documented if _documented(entry, argv, root) and entry.cwd != cwd]
     if other:
         message += " (the doc has it under `%s`)" % other[0]
     found.append(Finding("error", TABLE_PATH, message))
 
 
-def _reverse(doc, entries, candidates, found):
+def _reverse(doc, entries, candidates, found, root):
     for entry in entries:
         if doc.endswith("AGENTS.md") and entry.section not in BUILD_SECTIONS:
             continue
-        if _reverse_covered(entry, candidates):
+        if _reverse_covered(entry, candidates, root):
             continue
         message = "documents `%s`; add it to scripts/verify-commands.json or exclude it" % entry.line
         other = None
@@ -709,7 +740,7 @@ def _reverse(doc, entries, candidates, found):
         found.append(Finding("error", doc, message))
 
 
-def _reverse_covered(entry, candidates):
+def _reverse_covered(entry, candidates, root):
     if any(
         candidate["excluded"] and candidate["argv"] == entry.argv and candidate["cwd"] == entry.cwd
         for candidate in candidates
@@ -728,6 +759,6 @@ def _reverse_covered(entry, candidates):
     return any(
         not candidate["excluded"]
         and candidate["cwd"] == entry.cwd
-        and _argv_match(entry.argv, candidate["argv"])
+        and _argv_match(entry.argv, candidate["argv"], root, entry.cwd)
         for candidate in candidates
     )

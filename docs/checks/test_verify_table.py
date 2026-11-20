@@ -344,7 +344,8 @@ class MatchingTest(Base):
 
     def test_excluded_compound_line_covers_its_tasks(self):
         # The bridge shape: one documented line installs dependencies and runs four gates. The
-        # exclusion names the whole line (D13 checks it first), and the gates are steps too.
+        # exclusion names only the setup task, so the line is covered by the union of that
+        # exclusion and the four gate steps — and a dropped gate task is drift.
         docs = {
             "android/AGENTS.md": (
                 "## Build & Test\n\nRun from `android/`:\n\n```bash\n"
@@ -362,11 +363,19 @@ class MatchingTest(Base):
             {
                 "doc": "android/AGENTS.md",
                 "cwd": "android",
-                "line": "./gradlew installDeps gateFormat gateLint gateTypecheck gateTest",
+                "line": "./gradlew installDeps",
                 "why": "setup, not a gate: the dependency install",
             }
         ]
         self.assertEqual(self.fixture(table=table, docs=docs).findings(), [])
+        # Dropping a gate step leaves its task uncovered, even though the setup is excluded.
+        table["nodes"]["android"]["commands"] = [
+            command
+            for command in table["nodes"]["android"]["commands"]
+            if command["id"] != "android.gateFormat"
+        ]
+        found = self.fixture(table=table, docs=docs).findings()
+        self.assert_finding(found, "android/AGENTS.md", "gateFormat")
 
     def test_gradle_union_per_directory(self):
         docs = {
@@ -427,21 +436,40 @@ class MatchingTest(Base):
 
     def test_documented_glob_covers_expanded_argv(self):
         # The table lists the files explicitly; the doc keeps the shell glob the verifier's argv
-        # cannot expand.
+        # cannot expand, and the listing must equal the glob's expansion.
         docs = {
             "android/AGENTS.md": (
                 "## Build & Test\n\n```bash\nnode --test verify/test/*.test.mjs\n```\n"
-            )
+            ),
+            "verify/test/a.test.mjs": "",
+            "verify/test/b.test.mjs": "",
+            "verify/test/notes.md": "",
         }
         table = _table(("android",))
-        table["nodes"]["android"]["commands"][0]["cwd"] = "."
-        table["nodes"]["android"]["commands"][0]["run"] = [
+        command = table["nodes"]["android"]["commands"][0]
+        command["cwd"] = "."
+        command["run"] = ["node", "--test", "verify/test/a.test.mjs", "verify/test/b.test.mjs"]
+        self.assertEqual(self.fixture(table=table, docs=docs).findings(), [])
+        # A file the glob names but the argv does not is a test that silently stops running.
+        command["run"] = ["node", "--test", "verify/test/a.test.mjs"]
+        found = self.fixture(table=table, docs=docs).findings()
+        self.assert_finding(found, "scripts/verify-commands.json", "no matching command")
+        self.assert_finding(found, "android/AGENTS.md", "verify/test/*.test.mjs")
+        # An argv item the glob does not name is equally drift.
+        command["run"] = [
             "node",
             "--test",
             "verify/test/a.test.mjs",
             "verify/test/b.test.mjs",
+            "verify/test/extra.test.mjs",
         ]
-        self.assertEqual(self.fixture(table=table, docs=docs).findings(), [])
+        found = self.fixture(table=table, docs=docs).findings()
+        self.assert_finding(found, "scripts/verify-commands.json", "no matching command")
+        # A new matching file on disk must be added to the table.
+        docs["verify/test/c.test.mjs"] = ""
+        command["run"] = ["node", "--test", "verify/test/a.test.mjs", "verify/test/b.test.mjs"]
+        found = self.fixture(table=table, docs=docs).findings()
+        self.assert_finding(found, "android/AGENTS.md", "verify/test/*.test.mjs")
 
     def test_producer_doc_ownership(self):
         nodes = ("android", "rust")
