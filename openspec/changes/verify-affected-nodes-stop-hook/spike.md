@@ -523,3 +523,74 @@ NSIS, Visual Studio, Python 3.12 on the release runners) is `platform`/`excluded
    entries; the sub-doc rows above are deduped.
 10. **Stale doc line.** `verify/aggregate-checksums.sh` does not exist (removed in #133); 2.1 removes the
     line rather than excluding it forever.
+
+## Phase A environment (task 10.2)
+
+The Phase A gates ran on the Linux dev container at `57f01790` plus the Phase A landing changes: Node
+`v26.13.1`, npm `11.20.0`, Python `3.14.4`, and a `/usr/lib/jvm` holding only a JRE
+(`openjdk-21-jre-headless`, no `javac`). Four environment gaps were fixed. The machine config
+(`<git-common-dir>/veles-verify/tools.json`, `git-common-dir` = `/home/dev/repos/veles-android/.git`,
+shared by every worktree) now holds:
+
+| key | value | why |
+| --- | --- | --- |
+| `java_home` | `/home/dev/.jdk/zulu21` (Zulu 21.0.12.1) | `java` on PATH is the JRE: `:app:compileDebugJavaWithJavac` fails with "Toolchain installation '/usr/lib/jvm/java-21-openjdk-amd64' does not provide the required capabilities: [JAVA_COMPILER]". Zulu 21.0.12.1 matches `.java-version` (21.0.12). |
+| `android_sdk` | `/home/dev/.android-sdk` | `ANDROID_HOME` was unset and there was no `android/local.properties`; `:app:lintReportDebug` fails with "SDK location not found". The SDK carries `ndk/29.0.14206865`, so `android-ndk` needs no separate key. |
+| `path_prepend` | `/home/dev/.local/veles-verify/bin` | Node 26.8.1 with npm 11.19.0, plus the pinned `cargo-deny` 0.20.2 and `cargo-cyclonedx` 0.5.9. |
+
+Provisioning behind those values:
+
+- `npm ci --ignore-scripts --prefix verify`. Without it `node --test verify/test/*.test.mjs` failed the
+  license-checker case: `spawnSync` on the missing `node_modules/.bin/license-checker-rseidelsohn`
+  returns status `null`, and `assert.equal(null, 0, undefined)` throws `ERR_INVALID_ARG_TYPE`.
+- `./gradlew verifyCargoDeny verifyCargoCyclonedx` installed the pinned tools under
+  `build/verify-tools/{cargo-deny,cargo-cyclonedx}/bin/`. The two binaries were copied into the
+  `path_prepend` directory because `path_prepend` carries one directory and `build/` is per-worktree
+  and disposable; re-run the Gradle tasks and re-copy after a pin bump.
+- Node **26.8.1** with npm 11.19.0, from the nodejs.org tarball into `~/.local/node-26.8.1`, with
+  `bin/node`, `bin/npm` and `bin/npx` symlinked into the `path_prepend` directory.
+  `verify/verify-supply-chain.sh` asserts those exact versions and the installed `v26.13.1` made the
+  step exit 2 (`docs/reproducible-builds.md`, "floor versus exact reference").
+- Playwright's Chromium: `playwright-core install chromium` rejects this host ("Playwright does not
+  support chromium on ubuntu26.04-x64"). The pinned `chromium-1208` ubuntu24.04 archive was fetched
+  with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64` and unpacked into
+  `~/.cache/ms-playwright/chromium-1208/` with `INSTALLATION_COMPLETE` and `DEPENDENCIES_VALIDATED`;
+  `apt-get install` added the shared libraries `ldd` reported missing (`libatk-1.0`,
+  `libatk-bridge`, `libatspi`, `libcairo`, `libcups`, `libgbm`, `libpango`, the `libx*` set,
+  `libasound`, `libxkbcommon`). `web-extension`'s `npm run test:browser` then passed. An earlier
+  install attempt stalled in `oopDownloadBrowserMain.js` after the archive download, so the cached
+  archive was unpacked by hand.
+- Everything else probed clean without a key: all four pinned Rust 1.98.0 toolchains, `python3`,
+  `playwright-chromium` (once unpacked) and the generated `rust.wasm` / `web-extension.build`
+  outputs. `android/local.properties` was deliberately not created: the verifier passes the SDK
+  through the step environment.
+
+## Phase A findings (task 10.2)
+
+The gates surfaced four defects that the earlier task-level checks could not see; all are fixed in
+the Phase A landing.
+
+1. **The 8 KiB summary dropped status lines and the missing-tool fix.** On a branch that changes ~60
+   paths, the `tests: none related (<paths>)` notes alone exceed 8 KiB, and `render()` truncated the
+   head mid-note: `web-extension`'s status line, the supply-chain fix and the `last-run.json` pointer
+   all disappeared, against D10 and the "Summary overflow" scenario. `render()` now keeps every
+   status line and the pointer, and drops notes and failure details that do not fit
+   (`scripts/tests/test_verify_run.py`, `test_summary_overflow_from_notes_keeps_status_lines_and_pointer`).
+2. **`npx` in the table is forbidden by the supply-chain policy.** `verify/check-remote-code.mjs`
+   scans `scripts/` and rejects any `npx` in `scripts/verify-commands.json`, so
+   `supply-chain.supply-chain` failed with `remote-code policy rejected scripts/verify-commands.json:
+   npx is forbidden`. The design's `npx vitest run {targets}` became
+   `./node_modules/.bin/vitest run {targets}` (the local binary npx would resolve; the same document
+   says `verify/node_modules/.bin/` — "no `npx` or global fallback"), the now-unused `npx`
+   requirement was removed, and the playwright fix text names `node_modules/.bin/playwright-core`.
+3. **`cargo-cyclonedx --version` is not a version command.** The probe ran it and the tool exits 2
+   (`error: unexpected argument '--version' found`); the Gradle `verifyCargoCyclonedx` task uses
+   `cargo-cyclonedx cyclonedx --version`, and the table now does too.
+4. **The installer's cargo output broke `bridgeFormat`.** `verify/generate-sboms.sh` runs
+   cargo-cyclonedx in `native-bridge/installer/`, which creates `installer/target/`; Prettier then
+   checked that directory's JSON and `bridgeFormat` failed on 75 files. `native-bridge/.prettierignore`
+   now ignores `installer/target/`, as it already ignored `src-tauri/target/` and `host/`.
+
+Phase A result: the task gate (`python3 -I scripts/verify.py`) exits 0 in 4 m 39 s and the branch gate
+(`--branch`) exits 0 in 10 m 3 s, with every node `PASS` and only the expected `NOT RUN`s (the device
+test, the macOS/Windows producers, and `protocol: NOT RUN (nothing planned: …)` in the task gate).
