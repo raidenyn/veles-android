@@ -1,5 +1,14 @@
 import java.io.File
 import java.util.zip.ZipFile
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
+import org.gradle.work.DisableCachingByDefault
 
 plugins {
     alias(libs.plugins.android.application)
@@ -123,6 +132,29 @@ android {
     }
 }
 
+/**
+ * OTP-09 Task 10, root `sessionLoopbackCheck`: writes the JVM unit-test classpath the
+ * cross-endpoint loopback reads. The classpath is a file collection, so it carries the
+ * compilation dependencies without the task holding `testDebugUnitTest` (an `AndroidUnitTest`)
+ * itself; the action reads only its own properties, which is what the configuration cache requires.
+ */
+@DisableCachingByDefault(because = "writes a generated classpath file")
+abstract class SessionLoopbackClasspathTask : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.ABSOLUTE)
+    abstract val unitTestClasspath: ConfigurableFileCollection
+
+    @get:OutputFile
+    abstract val outputFile: RegularFileProperty
+
+    @TaskAction
+    fun write() {
+        val file = outputFile.get().asFile
+        file.parentFile.mkdirs()
+        file.writeText(unitTestClasspath.asPath)
+    }
+}
+
 // OTP-02 Plan Task 6 — the JVM protocol fixture consumer reads the SAME
 // `protocol/v1/` fixture files the Node/Rust/TypeScript consumers read. The
 // unit-test source set maps that shared root as an extra test-resource
@@ -167,19 +199,13 @@ afterEvaluate {
 
     // OTP-09 Task 10: `sessionLoopbackCheck` runs the TypeScript client against the real
     // Kotlin phone engine in a child JVM. This task only publishes the unit-test JVM
-    // classpath; it compiles the same source sets `protocolJvmTest` depends on. `inputs.files`
-    // carries the classpath's task dependencies (see the comment above).
-    tasks.register("sessionLoopbackClasspath") {
+    // classpath; it compiles the same source sets `protocolJvmTest` depends on. The file
+    // collection carries the classpath's task dependencies (see the comment above).
+    tasks.register<SessionLoopbackClasspathTask>("sessionLoopbackClasspath") {
         group = "verification"
         description = "Writes the JVM unit-test classpath used by the cross-endpoint session loopback."
-        val output = layout.buildDirectory.file("session-loopback/classpath.txt")
-        inputs.files(unitTest.classpath).withPropertyName("unitTestClasspath")
-        outputs.file(output)
-        doLast {
-            val file = output.get().asFile
-            file.parentFile.mkdirs()
-            file.writeText(unitTest.classpath.asPath)
-        }
+        unitTestClasspath.from(unitTest.classpath)
+        outputFile.set(layout.buildDirectory.file("session-loopback/classpath.txt"))
     }
 }
 

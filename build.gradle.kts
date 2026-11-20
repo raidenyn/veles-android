@@ -7,15 +7,27 @@ import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.Sync
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ArchiveOperations
+import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
+import org.gradle.api.provider.Provider
+import org.gradle.api.provider.ProviderFactory
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.Internal
+import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
+import org.gradle.work.DisableCachingByDefault
 import javax.inject.Inject
 
 plugins {
@@ -71,6 +83,7 @@ listOf(
         group = "rust"
         description = "Runs :$rustTaskName of the included rust build."
         dependsOn(rustBuild.task(":$rustTaskName"))
+        outputs.doNotCacheIf("forwards to the included rust build") { true }
     }
 }
 
@@ -91,6 +104,7 @@ listOf(
         group = "android"
         description = "Runs :app:$androidTaskName of the included android build."
         dependsOn(androidBuild.task(":app:$androidTaskName"))
+        outputs.doNotCacheIf("forwards to the included android build") { true }
     }
 }
 
@@ -99,6 +113,7 @@ listOf("spotlessCheck", "spotlessApply").forEach { androidRootTaskName ->
         group = "android"
         description = "Runs :$androidRootTaskName of the included android build."
         dependsOn(androidBuild.task(":$androidRootTaskName"))
+        outputs.doNotCacheIf("forwards to the included android build") { true }
     }
 }
 
@@ -108,7 +123,13 @@ val rustDir = layout.projectDirectory.dir("rust")
 val verifyCargoToolsFile = layout.projectDirectory.file("verify/cargo-tools.toml")
 val verifyToolsDir = layout.buildDirectory.dir("verify-tools")
 val wasmPackageDir = layout.projectDirectory.dir("web-extension/rust-wasm/pkg")
-val windowsExecutableSuffix = if (System.getProperty("os.name").startsWith("Windows")) ".exe" else ""
+// The only configuration-time system-property reads: they select the executable suffix, the npm
+// launcher, the pinned git-cliff asset and the installer platform, all of which Gradle must know
+// while configuring. Everything else is resolved from providers lazily.
+val osName: String = providers.systemProperty("os.name").get()
+val osArch: String = providers.systemProperty("os.arch").get()
+val isWindows: Boolean = osName.startsWith("Windows")
+val windowsExecutableSuffix = if (isWindows) ".exe" else ""
 // On Windows, Gradle's Exec task process launcher cannot exec the `npm` shell
 // script directly — it needs `npm.cmd`. Node ships `node.exe` so plain `node`
 // works, but `npm` does not. Resolved once at configuration time and reused by
@@ -116,49 +137,287 @@ val windowsExecutableSuffix = if (System.getProperty("os.name").startsWith("Wind
 val npmCommand = if (windowsExecutableSuffix.isNotEmpty()) "npm.cmd" else "npm"
 val protocolDir = layout.projectDirectory.dir("protocol")
 
-fun pinnedVerificationToolVersion(name: String): String {
-    val pattern = Regex("(?m)^${Regex.escape(name)}\\s*=\\s*\"([^\"]+)\"\\s*$")
-    return requireNotNull(pattern.find(verifyCargoToolsFile.asFile.readText())) {
-        "Missing '$name' pin in ${verifyCargoToolsFile.asFile}"
-    }.groupValues[1]
+/**
+ * Helpers shared by the typed tasks below. Top-level functions in a `.kts` script are members of
+ * the script class, so calling one from a task action, a `map {}` lambda or a `doNotCacheIf`
+ * predicate captures the script and breaks the configuration cache. Every helper therefore lives
+ * in this object and takes plain values.
+ */
+object RootBuildHelpers {
+    /** The executable suffix for the host, used when probing for a command on PATH. */
+    fun executableSuffix(osName: String): String = if (osName.startsWith("Windows")) ".exe" else ""
+
+    /** Reads one `name = "version"` pin out of a TOML file's text. */
+    fun pinnedVersion(toml: String, name: String, file: String): String {
+        val pattern = Regex("(?m)^${Regex.escape(name)}\\s*=\\s*\"([^\"]+)\"\\s*$")
+        return requireNotNull(pattern.find(toml)) {
+            "Missing '$name' pin in $file"
+        }.groupValues[1]
+    }
+
+    /** Reads a pin through the file-contents provider, so nothing is read at configuration time. */
+    fun pinnedVersionProvider(
+        providers: ProviderFactory,
+        toolsFile: org.gradle.api.file.RegularFile,
+        name: String,
+    ): Provider<String> {
+        val file = toolsFile
+        return providers.fileContents(file).asText.map { pinnedVersion(it, name, file.asFile.toString()) }
+    }
+
+    /** Fails with the historical message when a required command is not executable on PATH. */
+    fun requireOnPath(
+        path: String,
+        name: String,
+        suffix: String,
+        versionHint: String,
+        installHint: String,
+        missingMessageFormat: String,
+    ) {
+        val found = path.split(File.pathSeparator).any { dir ->
+            File(dir, name + suffix).let { it.isFile && it.canExecute() }
+        }
+        check(found) {
+            missingMessageFormat
+                .replace("{name}", name)
+                .replace("{installHint}", installHint)
+                .replace("{versionHint}", versionHint)
+        }
+    }
+
+    /** Runs a command and returns its trimmed standard output. */
+    fun probe(exec: ExecOperations, directory: File, command: List<String>): String {
+        val output = ByteArrayOutputStream()
+        exec.exec {
+            workingDir(directory)
+            commandLine(command)
+            standardOutput = output
+        }
+        return output.toString(Charsets.UTF_8).trim()
+    }
+
+    /**
+     * Runs one host-toolchain probe: the required commands must be on PATH, the version output
+     * must start with `expectedPrefix` (Rust) or reach the minimum major/minor (Node, Python),
+     * and a mismatch fails with the probe's own message.
+     */
+    fun verifyToolchain(exec: ExecOperations, workingDir: File, pathEnv: String, spec: ToolchainProbe) {
+        val suffix = executableSuffix(System.getProperty("os.name"))
+        for (name in spec.requiredCommands) {
+            requireOnPath(
+                pathEnv,
+                name,
+                suffix,
+                spec.versionHint,
+                spec.installHint,
+                spec.missingCommandMessageFormat,
+            )
+        }
+        val detail = if (spec.describeCommand.isEmpty()) null else probe(exec, workingDir, spec.describeCommand)
+        val version = probe(exec, workingDir, spec.versionCommand)
+        val matches = when {
+            spec.expectedPrefix != null -> version.startsWith(spec.expectedPrefix)
+            spec.minimumMajorVersion != null -> {
+                val match = Regex("(\\d+)\\.(\\d+)").find(version)
+                if (match == null) {
+                    false
+                } else {
+                    val major = match.groupValues[1].toInt()
+                    val minor = match.groupValues[2].toInt()
+                    val minimumMajor = spec.minimumMajorVersion
+                    val minimumMinor = spec.minimumMinorVersion ?: 0
+                    major > minimumMajor || (major == minimumMajor && minor >= minimumMinor)
+                }
+            }
+            else -> false
+        }
+        check(matches) {
+            spec.mismatchMessageFormat
+                .replace("{actual}", version)
+                .replace("{detail}", detail ?: "")
+        }
+    }
+
+    /**
+     * The registry-path remap for a byte-reproducible build.
+     *
+     * rustc embeds the absolute source paths of panic locations (function, file, line) into release
+     * binaries whenever panic is not fully stripped (CARGO_PROFILE_RELEASE_PANIC=unwind keeps the
+     * panic machinery for JNI). Dependency crates come from
+     * ${CARGO_HOME}/registry/src/<registry-hash>/..., so two builds with different CARGO_HOME (CI
+     * runner /home/runner/.cargo vs the verification Docker image /opt/cargo) embed different byte
+     * strings, shifting every ELF section offset and producing a .so (and APK) that differs between
+     * builds of identical source. Remapping the registry prefix to a stable "/cargo-registry" path
+     * makes the embedded strings identical regardless of where cargo stores its registry (proven
+     * locally: two builds with different CARGO_HOME produce byte-identical .so with this flag). The
+     * workspace crate's own path is NOT embedded (no panic locations from the workspace crate carry
+     * an absolute path into the binary), so only the registry prefix needs remapping. RUSTFLAGS is
+     * set as a task environment (overriding any inherited RUSTFLAGS) so the remap is not optional: a
+     * verification-relevant build must not silently pick up an ambient RUSTFLAGS that omits it.
+     */
+    fun registryRemapRustFlags(cargoHome: String?, userHome: String): String {
+        val home: File = if (cargoHome.isNullOrBlank()) {
+            File(userHome, ".cargo")
+        } else {
+            File(cargoHome)
+        }
+        val registrySrc = File(home, "registry/src").absolutePath
+        return "--remap-path-prefix=$registrySrc=/cargo-registry/src"
+    }
+
+    /** Tauri bundle targets for a host OS; null on unsupported hosts. */
+    fun bundleTargetsFor(osName: String): String? = when {
+        osName.startsWith("Windows") -> "nsis,msi"
+        osName.startsWith("Mac") -> "app,dmg"
+        else -> null
+    }
 }
 
-fun requireOnPath(name: String, versionHint: String, installHint: String) {
-    val path = System.getenv("PATH") ?: ""
-    val found = path.split(File.pathSeparator).any { dir ->
-        File(dir, name + windowsExecutableSuffix).let { it.isFile && it.canExecute() }
-    }
-    check(found) {
-        "Could not find '$name' on PATH. $installHint. Version hint: $versionHint."
+/**
+ * One host-toolchain probe. Serializable so the configuration cache can store it; the task action
+ * resolves it and never touches the build script.
+ */
+data class ToolchainProbe(
+    val requiredCommands: List<String>,
+    val versionCommand: List<String>,
+    val expectedPrefix: String? = null,
+    val minimumMajorVersion: Int? = null,
+    val minimumMinorVersion: Int? = null,
+    val describeCommand: List<String> = emptyList(),
+    val mismatchMessageFormat: String,
+    val versionHint: String,
+    val installHint: String,
+    val missingCommandMessageFormat: String =
+        "Could not find '{name}' on PATH. {installHint}. Version hint: {versionHint}.",
+) : java.io.Serializable
+
+/**
+ * Checks that the host toolchain is installed and of the pinned version. One shape covers the
+ * Rust, Node, npm and Python checks; the probes run in list order, as the former single action did.
+ */
+@DisableCachingByDefault(because = "probes the host toolchain")
+abstract class ToolchainCheckTask : DefaultTask() {
+    @get:Input
+    abstract val probes: ListProperty<ToolchainProbe>
+
+    @get:Input
+    abstract val pathEnv: Property<String>
+
+    @get:Internal
+    abstract val workingDir: DirectoryProperty
+
+    @get:InputFile
+    @get:Optional
+    abstract val toolchainFile: RegularFileProperty
+
+    @get:Inject
+    abstract val execOps: ExecOperations
+
+    @TaskAction
+    fun checkToolchain() {
+        val directory = workingDir.get().asFile
+        val path = pathEnv.get()
+        for (probe in probes.get()) {
+            RootBuildHelpers.verifyToolchain(execOps, directory, path, probe)
+        }
     }
 }
 
-// rustc embeds the absolute source paths of panic locations (function, file,
-// line) into release binaries whenever panic is not fully stripped
-// (CARGO_PROFILE_RELEASE_PANIC=unwind keeps the panic machinery for JNI).
-// Dependency crates come from ${CARGO_HOME}/registry/src/<registry-hash>/..., so
-// two builds with different CARGO_HOME (CI runner /home/runner/.cargo vs the
-// verification Docker image /opt/cargo) embed different byte strings, shifting
-// every ELF section offset and producing a .so (and APK) that differs between
-// builds of identical source. Remapping the registry prefix to a stable
-// "/cargo-registry" path makes the embedded strings identical regardless of
-// where cargo stores its registry (proven locally: two builds with different
-// CARGO_HOME produce byte-identical .so with this flag). The workspace crate's
-// own path is NOT embedded (no panic locations from the workspace crate carry
-// an absolute path into the binary), so only the registry prefix needs
-// remapping. RUSTFLAGS is set as a task environment (overriding any inherited
-// RUSTFLAGS) so the remap is not optional: a verification-relevant build must
-// not silently pick up an ambient RUSTFLAGS that omits it.
-fun cargoRegistryRemapRustFlags(): String {
-    val cargoHomeEnv = System.getenv("CARGO_HOME")
-    val cargoHome: File = if (cargoHomeEnv.isNullOrBlank()) {
-        File(System.getProperty("user.home"), ".cargo")
-    } else {
-        File(cargoHomeEnv)
+/** Installs an exact-pinned cargo CLI into the repository build directory. */
+@DisableCachingByDefault(because = "downloads crates from the network")
+abstract class CargoInstallTask : DefaultTask() {
+    @get:Input
+    abstract val crateName: Property<String>
+
+    @get:Input
+    abstract val version: Property<String>
+
+    @get:InputFile
+    abstract val toolchainFile: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val installRoot: DirectoryProperty
+
+    @get:Internal
+    abstract val targetDir: DirectoryProperty
+
+    @get:Internal
+    abstract val workingDir: DirectoryProperty
+
+    @get:Inject
+    abstract val execOps: ExecOperations
+
+    @get:Inject
+    abstract val fsOps: FileSystemOperations
+
+    @TaskAction
+    fun install() {
+        val root = installRoot.get().asFile
+        fsOps.delete { delete(root) }
+        execOps.exec {
+            workingDir(this@CargoInstallTask.workingDir.get().asFile)
+            environment("CARGO_TARGET_DIR", targetDir.get().asFile.absolutePath)
+            commandLine(
+                "cargo", "install", "--locked", "--version", version.get(),
+                "--root", root.absolutePath, crateName.get(),
+            )
+        }
     }
-    val registrySrc = File(cargoHome, "registry/src").absolutePath
-    return "--remap-path-prefix=$registrySrc=/cargo-registry/src"
 }
+
+/** Probes an installed CLI's version and compares it as an exact semver. */
+@DisableCachingByDefault(because = "probes an installed tool")
+abstract class VerifyToolVersionTask : DefaultTask() {
+    @get:Input
+    abstract val crateName: Property<String>
+
+    @get:Input
+    abstract val version: Property<String>
+
+    @get:InputFile
+    abstract val binary: RegularFileProperty
+
+    @get:Input
+    abstract val versionArguments: ListProperty<String>
+
+    @get:Inject
+    abstract val execOps: ExecOperations
+
+    @TaskAction
+    fun verify() {
+        val output = ByteArrayOutputStream()
+        execOps.exec {
+            // cargo-cyclonedx and cargo-deny accept the CARGO variable harmlessly; keeping it
+            // unconditional matches the Rust build's verify shape.
+            environment("CARGO", "cargo")
+            setCommandLine(listOf(binary.get().asFile.absolutePath) + versionArguments.get())
+            standardOutput = output
+        }
+        val text = output.toString(Charsets.UTF_8).trim()
+        val actualVersion = text.split(Regex("\\s+"))
+            .firstOrNull { it.matches(Regex("\\d+\\.\\d+\\.\\d+(-\\S+)?")) }
+        check(actualVersion == version.get()) {
+            "Expected ${crateName.get()} ${version.get()} at ${binary.get().asFile}, got: $text"
+        }
+    }
+}
+
+/**
+ * An `Exec` whose extra environment is resolved inside the action from a provider, replacing the
+ * former `doFirst { environment(...) }` blocks. Never cacheable: these tasks only verify or test.
+ */
+@DisableCachingByDefault(because = "verification or test-only build")
+abstract class CargoExecTask : Exec() {
+    @get:Internal
+    abstract val extraEnv: MapProperty<String, String>
+
+    @TaskAction
+    override fun exec() {
+        environment(extraEnv.get())
+        super.exec()
+    }
+}
+
 
 // Enables the repo's Conventional Commits commit-msg hook (.githooks) for local clones.
 // One shared script, also applied by the independent Android build (android/build.gradle.kts),
@@ -169,50 +428,42 @@ apply(from = file(".githooks/install-hooks.gradle.kts"))
 val releaseToolsFile = layout.projectDirectory.file("scripts/release-tools.toml")
 val releaseToolsDir = layout.buildDirectory.dir("release-tools")
 
-fun pinnedReleaseTool(name: String): String {
-    val pattern = Regex("(?m)^${Regex.escape(name)}\\s*=\\s*\"([^\"]+)\"\\s*$")
-    return requireNotNull(pattern.find(releaseToolsFile.asFile.readText())) {
-        "Missing '$name' pin in ${releaseToolsFile.asFile}"
-    }.groupValues[1]
-}
-
-// Resolves the JVM's OS/architecture to the pair both pinned tools publish archives for: `os` is
-// one of linux|mac|windows and `arch` one of x86_64|aarch64. Null means unsupported.
-fun hostPlatform(): Pair<String, String>? {
-    val osName = System.getProperty("os.name").lowercase()
-    val os = listOf("linux", "mac", "windows").firstOrNull { osName.startsWith(it) } ?: return null
-    val arch = when (System.getProperty("os.arch").lowercase()) {
+// Each tool maps the host pair to its own platform key: git-cliff keeps its Rust triples and
+// gitleaks uses its release asset names. The host values come from the configuration-time
+// system properties, so no process or file is read here.
+val gitCliffTarget: String? = run {
+    val os = osName.lowercase()
+    val arch = when (osArch.lowercase()) {
         "amd64", "x86_64" -> "x86_64"
         "aarch64", "arm64" -> "aarch64"
-        else -> return null
+        else -> null
     }
-    return os to arch
+    when {
+        arch == null -> null
+        os.startsWith("linux") -> "$arch-unknown-linux-gnu"
+        os.startsWith("mac") -> "$arch-apple-darwin"
+        os.startsWith("windows") && arch == "x86_64" -> "x86_64-pc-windows-msvc"
+        else -> null
+    }
 }
 
-// Each tool maps the host pair to its own platform key: git-cliff keeps its Rust triples and
-// gitleaks uses its release asset names.
-val gitCliffTarget: String? = hostPlatform()?.let { platform ->
-    mapOf(
-        ("linux" to "x86_64") to "x86_64-unknown-linux-gnu",
-        ("linux" to "aarch64") to "aarch64-unknown-linux-gnu",
-        ("mac" to "aarch64") to "aarch64-apple-darwin",
-        ("mac" to "x86_64") to "x86_64-apple-darwin",
-        ("windows" to "x86_64") to "x86_64-pc-windows-msvc",
-    )[platform]
+val gitleaksTarget: String? = run {
+    val os = osName.lowercase()
+    val arch = when (osArch.lowercase()) {
+        "amd64", "x86_64" -> "x86_64"
+        "aarch64", "arm64" -> "aarch64"
+        else -> null
+    }
+    when {
+        arch == null -> null
+        os.startsWith("linux") -> "linux_$arch"
+        os.startsWith("mac") -> if (arch == "aarch64") "darwin_arm64" else "darwin_x64"
+        os.startsWith("windows") && arch == "x86_64" -> "windows_x64"
+        else -> null
+    }
 }
 
-val gitleaksTarget: String? = hostPlatform()?.let { platform ->
-    mapOf(
-        ("linux" to "x86_64") to "linux_x64",
-        ("linux" to "aarch64") to "linux_arm64",
-        ("mac" to "aarch64") to "darwin_arm64",
-        ("mac" to "x86_64") to "darwin_x64",
-        ("windows" to "x86_64") to "windows_x64",
-    )[platform]
-}
-
-// Downloads a pinned release tool, verifies its SHA-256 BEFORE extracting anything, then extracts
-// only the executable to build/release-tools/<tool>/ and checks its version command.
+@DisableCachingByDefault(because = "downloads a release archive")
 abstract class InstallPinnedToolTask @Inject constructor(
     private val execOps: ExecOperations,
     private val archiveOps: ArchiveOperations,
@@ -299,28 +550,36 @@ abstract class InstallPinnedToolTask @Inject constructor(
 val installGitCliff = tasks.register<InstallPinnedToolTask>("installGitCliff") {
     group = "build setup"
     description = "Installs the pinned, SHA-256-verified git-cliff into build/release-tools/git-cliff."
-    val pinnedVersion = pinnedReleaseTool("git-cliff")
+    // The pin is read lazily: only the task action resolves it.
+    val toolsFile = releaseToolsFile
+    val pinnedVersion = RootBuildHelpers.pinnedVersionProvider(providers, toolsFile, "git-cliff")
+    val hostTarget = gitCliffTarget
+    val hostDescription = "$osName/$osArch"
     val target = providers.provider {
-        requireNotNull(gitCliffTarget) {
-            "No pinned git-cliff archive for ${System.getProperty("os.name")}/${System.getProperty("os.arch")}"
-        }
+        requireNotNull(hostTarget) { "No pinned git-cliff archive for $hostDescription" }
     }
-    val archiveName = target.map {
-        "git-cliff-$pinnedVersion-$it.${if (it.contains("windows")) "zip" else "tar.gz"}"
+    val archiveName = target.zip(pinnedVersion) { asset, version ->
+        "git-cliff-$version-$asset.${if (asset.contains("windows")) "zip" else "tar.gz"}"
     }
     toolName.set("git-cliff")
     version.set(pinnedVersion)
-    this.downloadUrl.set(
-        archiveName.map { "https://github.com/orhun/git-cliff/releases/download/v$pinnedVersion/$it" },
+    downloadUrl.set(
+        archiveName.zip(pinnedVersion) { name, version ->
+            "https://github.com/orhun/git-cliff/releases/download/v$version/$name"
+        },
     )
     this.archiveName.set(archiveName)
-    archiveEntry.set(target.map {
-        "git-cliff-$pinnedVersion/git-cliff${if (it.contains("windows")) ".exe" else ""}"
+    archiveEntry.set(target.zip(pinnedVersion) { asset, version ->
+        "git-cliff-$version/git-cliff${if (asset.contains("windows")) ".exe" else ""}"
     })
     binaryName.set(target.map { "git-cliff${if (it.contains("windows")) ".exe" else ""}" })
-    sha256.set(target.map { pinnedReleaseTool("git-cliff-$it") })
+    sha256.set(
+        target.zip(providers.fileContents(toolsFile).asText) { asset, text ->
+            RootBuildHelpers.pinnedVersion(text, "git-cliff-$asset", toolsFile.asFile.toString())
+        },
+    )
     versionArgs.set(listOf("--version"))
-    expectedVersionOutput.set("git-cliff $pinnedVersion")
+    expectedVersionOutput.set(pinnedVersion.map { "git-cliff $it" })
     installDir.set(releaseToolsDir.map { it.dir("git-cliff") })
     downloadDir.set(releaseToolsDir.map { it.dir("downloads") })
 }
@@ -328,26 +587,32 @@ val installGitCliff = tasks.register<InstallPinnedToolTask>("installGitCliff") {
 val installGitleaks = tasks.register<InstallPinnedToolTask>("installGitleaks") {
     group = "build setup"
     description = "Installs the pinned, SHA-256-verified gitleaks into build/release-tools/gitleaks."
-    val pinnedVersion = pinnedReleaseTool("gitleaks")
+    val toolsFile = releaseToolsFile
+    val pinnedVersion = RootBuildHelpers.pinnedVersionProvider(providers, toolsFile, "gitleaks")
+    val hostTarget = gitleaksTarget
+    val hostDescription = "$osName/$osArch"
     val target = providers.provider {
-        requireNotNull(gitleaksTarget) {
-            "No pinned gitleaks archive for ${System.getProperty("os.name")}/${System.getProperty("os.arch")}"
-        }
+        requireNotNull(hostTarget) { "No pinned gitleaks archive for $hostDescription" }
     }
-    val archiveName = target.map {
-        "gitleaks_${pinnedVersion}_$it.${if (it.contains("windows")) "zip" else "tar.gz"}"
+    val archiveName = target.zip(pinnedVersion) { asset, version ->
+        "gitleaks_${version}_$asset.${if (asset.contains("windows")) "zip" else "tar.gz"}"
     }
     toolName.set("gitleaks")
     version.set(pinnedVersion)
-    this.downloadUrl.set(
-        archiveName.map { "https://github.com/gitleaks/gitleaks/releases/download/v$pinnedVersion/$it" },
+    downloadUrl.set(
+        archiveName.zip(pinnedVersion) { name, version ->
+            "https://github.com/gitleaks/gitleaks/releases/download/v$version/$name"
+        },
     )
     this.archiveName.set(archiveName)
-    // Verified against the pinned v8.30.1 release at apply: both archives hold the executable at
-    // their root and `gitleaks version` prints the bare version.
+    // Both archives hold the executable at their root, and `gitleaks version` prints the bare version.
     archiveEntry.set(target.map { "gitleaks${if (it.contains("windows")) ".exe" else ""}" })
     binaryName.set(target.map { "gitleaks${if (it.contains("windows")) ".exe" else ""}" })
-    sha256.set(target.map { pinnedReleaseTool("gitleaks-$it") })
+    sha256.set(
+        target.zip(providers.fileContents(toolsFile).asText) { asset, text ->
+            RootBuildHelpers.pinnedVersion(text, "gitleaks-$asset", toolsFile.asFile.toString())
+        },
+    )
     versionArgs.set(listOf("version"))
     expectedVersionOutput.set(pinnedVersion)
     installDir.set(releaseToolsDir.map { it.dir("gitleaks") })
@@ -372,6 +637,7 @@ val scriptsTest = tasks.register<Exec>("scriptsTest") {
         if (windowsExecutableSuffix.isNotEmpty()) "python" else "python3",
         "-I", "-m", "unittest", "discover", "-s", "scripts/tests", "-v",
     )
+    outputs.doNotCacheIf("runs the tooling test suite") { true }
 }
 
 fun registerVerificationCargoTool(
@@ -379,48 +645,37 @@ fun registerVerificationCargoTool(
     crateName: String,
     binaryName: String,
     versionArguments: List<String> = listOf("--version"),
-): Pair<TaskProvider<Exec>, TaskProvider<Task>> {
-    val version = pinnedVerificationToolVersion(crateName)
-    val installRoot = verifyToolsDir.map { it.dir(crateName) }
-    val binary = installRoot.map {
-        it.file("bin/$binaryName$windowsExecutableSuffix")
-    }
-    val install = tasks.register<Exec>("install$taskStem") {
+): Pair<TaskProvider<CargoInstallTask>, TaskProvider<VerifyToolVersionTask>> {
+    // Every execution-time lambda below reads these block-local values only; the script-level
+    // vals would capture the script.
+    val toolsFile = verifyCargoToolsFile
+    val toolsRoot = verifyToolsDir
+    val installTargetRoot = layout.buildDirectory
+    val rustProjectDir = rustDir
+    val rustToolchainFile = rustDir.file("rust-toolchain.toml")
+    val suffix = windowsExecutableSuffix
+    val pinnedVersion = RootBuildHelpers.pinnedVersionProvider(providers, toolsFile, crateName)
+    val installRootProvider = toolsRoot.map { it.dir(crateName) }
+    val binaryProvider = installRootProvider.map { it.file("bin/$binaryName$suffix") }
+    val install = tasks.register<CargoInstallTask>("install$taskStem") {
         group = "verification"
-        description = "Installs $crateName $version into the verification tool directory."
+        description = "Installs $crateName into the verification tool directory."
         dependsOn(rustBuild.task(":rustToolchainCheck"))
-        inputs.property("crateName", crateName)
-        inputs.property("version", version)
-        inputs.file(verifyCargoToolsFile)
-        inputs.file(rustDir.file("rust-toolchain.toml"))
-        outputs.dir(installRoot)
-        workingDir(rustDir)
-        environment(
-            "CARGO_TARGET_DIR",
-            layout.buildDirectory.dir("verify-tools/tool-install-target/$crateName").get().asFile,
-        )
-        doFirst { delete(installRoot) }
-        commandLine(
-            "cargo", "install", "--locked", "--version", version,
-            "--root", installRoot.get().asFile, crateName,
-        )
+        this.crateName.set(crateName)
+        this.version.set(pinnedVersion)
+        toolchainFile.set(rustToolchainFile)
+        this.installRoot.set(installRootProvider)
+        targetDir.set(installTargetRoot.map { it.dir("verify-tools/tool-install-target/$crateName") })
+        workingDir.set(rustProjectDir)
     }
-    val verify = tasks.register("verify$taskStem") {
+    val verify = tasks.register<VerifyToolVersionTask>("verify$taskStem") {
         group = "verification"
         description = "Verifies the isolated $crateName tool version."
         dependsOn(install)
-        inputs.property("version", version)
-        inputs.file(binary.map { it.asFile })
-        doLast {
-            val output = providers.exec {
-                commandLine(binary.get().asFile, *versionArguments.toTypedArray())
-            }.standardOutput.asText.get().trim()
-            val actualVersion = output.split(Regex("\\s+"))
-                .firstOrNull { it.matches(Regex("\\d+\\.\\d+\\.\\d+(-\\S+)?")) }
-            check(actualVersion == version) {
-                "Expected $crateName $version at ${binary.get().asFile}, got: $output"
-            }
-        }
+        this.crateName.set(crateName)
+        this.version.set(pinnedVersion)
+        this.binary.set(binaryProvider)
+        this.versionArguments.set(versionArguments)
     }
     return install to verify
 }
@@ -433,22 +688,33 @@ val (_, verifyCargoCyclonedx) = registerVerificationCargoTool(
 )
 val (_, verifyCargoDeny) = registerVerificationCargoTool("CargoDeny", "cargo-deny", "cargo-deny")
 
-val protocolNodeCheck = tasks.register("protocolNodeCheck") {
+val protocolNodeCheck = tasks.register<ToolchainCheckTask>("protocolNodeCheck") {
     group = "verification"
-    doLast {
-        requireNpm("Install Node.js >=22.0.0 to run the OTP-02 contract checks.")
-        requireOnPath("python3", "Python 3.8+", "Install Python 3.8 or newer")
-        val nodeVersion = providers.exec { commandLine("node", "--version") }.standardOutput.asText.get().trim()
-        val pythonVersion = providers.exec { commandLine("python3", "--version") }.standardOutput.asText.get().trim()
-        fun atLeast(version: String, major: Int, minor: Int): Boolean {
-            val match = Regex("(\\d+)\\.(\\d+)").find(version) ?: return false
-            val foundMajor = match.groupValues[1].toInt()
-            val foundMinor = match.groupValues[2].toInt()
-            return foundMajor > major || (foundMajor == major && foundMinor >= minor)
-        }
-        check(atLeast(nodeVersion, 22, 0)) { "Node >=22.0.0 is required; found '$nodeVersion'" }
-        check(atLeast(pythonVersion, 3, 8)) { "Python >=3.8 is required; found '$pythonVersion'" }
-    }
+    workingDir.set(layout.projectDirectory)
+    pathEnv.set(providers.environmentVariable("PATH").orElse(""))
+    probes.set(
+        listOf(
+            ToolchainProbe(
+                requiredCommands = listOf("npm"),
+                versionCommand = listOf("node", "--version"),
+                minimumMajorVersion = 22,
+                minimumMinorVersion = 0,
+                mismatchMessageFormat = "Node >=22.0.0 is required; found '{actual}'",
+                versionHint = "Node >=22.0.0",
+                installHint = "Install Node.js >=22.0.0 to run the OTP-02 contract checks.",
+                missingCommandMessageFormat = "Could not find '{name}' on PATH. {installHint}",
+            ),
+            ToolchainProbe(
+                requiredCommands = listOf("python3"),
+                versionCommand = listOf("python3", "--version"),
+                minimumMajorVersion = 3,
+                minimumMinorVersion = 8,
+                mismatchMessageFormat = "Python >=3.8 is required; found '{actual}'",
+                versionHint = "Python 3.8+",
+                installHint = "Install Python 3.8 or newer",
+            ),
+        ),
+    )
 }
 
 val protocolInstall = tasks.register<Exec>("protocolInstall") {
@@ -460,6 +726,7 @@ val protocolInstall = tasks.register<Exec>("protocolInstall") {
     outputs.dir(protocolDir.dir("node_modules"))
     workingDir(protocolDir)
     commandLine(npmCommand, "ci", "--ignore-scripts")
+    outputs.doNotCacheIf("installs npm dependencies from the network") { true }
 }
 
 val protocolContractCheck = tasks.register<Exec>("protocolContractCheck") {
@@ -476,6 +743,7 @@ val protocolContractCheck = tasks.register<Exec>("protocolContractCheck") {
     outputs.upToDateWhen { false }
     workingDir(layout.projectDirectory)
     commandLine("node", "protocol/checks/check.mjs")
+    outputs.doNotCacheIf("regenerates crypto evidence") { true }
 }
 
 val protocolRustTest = tasks.register<Exec>("protocolRustTest") {
@@ -485,6 +753,7 @@ val protocolRustTest = tasks.register<Exec>("protocolRustTest") {
     workingDir(rustDir)
     environment("CARGO_TARGET_DIR", layout.buildDirectory.dir("rust/target").get().asFile)
     commandLine("cargo", "test", "--locked", "--test", "protocol_fixtures")
+    outputs.doNotCacheIf("runs a test") { true }
 }
 
 val protocolWebInstall = tasks.register<Exec>("protocolWebInstall") {
@@ -493,6 +762,7 @@ val protocolWebInstall = tasks.register<Exec>("protocolWebInstall") {
     dependsOn(protocolNodeCheck)
     workingDir(layout.projectDirectory.dir("web-extension"))
     commandLine(npmCommand, "ci", "--ignore-scripts")
+    outputs.doNotCacheIf("installs npm dependencies from the network") { true }
 }
 
 val protocolWebTest = tasks.register<Exec>("protocolWebTest") {
@@ -501,6 +771,7 @@ val protocolWebTest = tasks.register<Exec>("protocolWebTest") {
     dependsOn(protocolWebInstall, rustBuild.task(":rustWasm"))
     workingDir(layout.projectDirectory.dir("web-extension"))
     commandLine(npmCommand, "exec", "vitest", "run", "test/protocol-fixtures.test.ts")
+    outputs.doNotCacheIf("runs a test") { true }
 }
 
 // OTP-09 Task 10 cross-endpoint loopback: the real Kotlin phone engine runs in a child
@@ -512,22 +783,28 @@ val sessionLoopbackClasspathFile = layout.projectDirectory.file("android/app/bui
 // outputs stay under the repository-root build/.
 val rustHostJniDir = layout.buildDirectory.dir("rust/host-jni")
 
-val sessionLoopbackCheck = tasks.register<Exec>("sessionLoopbackCheck") {
-    group = "verification"
-    description = "Runs the Kotlin phone / TypeScript client cross-endpoint session loopback."
-    dependsOn(
-        rustBuild.task(":rustHostJni"),
-        rustBuild.task(":rustWasm"),
-        androidBuild.task(":app:sessionLoopbackClasspath"),
-        protocolWebInstall,
-    )
-    workingDir(layout.projectDirectory.dir("web-extension"))
-    doFirst {
-        val classpathFile = sessionLoopbackClasspathFile.asFile
-        check(classpathFile.isFile) {
-            "sessionLoopbackCheck: missing ${classpathFile.path}; run ./gradlew :android:app:sessionLoopbackClasspath"
+/**
+ * The cross-endpoint loopback. The classpath the Android build writes is a declared input, read
+ * in the action; the child JVM's environment is resolved there too, so no `doFirst` captures the
+ * script. The file is optional at validation time so a missing classpath keeps the historical
+ * message instead of Gradle's "input file does not exist".
+ */
+@DisableCachingByDefault(because = "verification only, runs the cross-endpoint loopback")
+abstract class SessionLoopbackTask : Exec() {
+    @get:InputFile
+    @get:Optional
+    abstract val classpathFile: RegularFileProperty
+
+    @get:Internal
+    abstract val hostJniDir: DirectoryProperty
+
+    @TaskAction
+    override fun exec() {
+        val classpath = classpathFile.get().asFile
+        check(classpath.isFile) {
+            "sessionLoopbackCheck: missing ${classpath.path}; run ./gradlew :android:app:sessionLoopbackClasspath"
         }
-        environment("VELES_LOOPBACK_CLASSPATH", classpathFile.readText().trim())
+        environment("VELES_LOOPBACK_CLASSPATH", classpath.readText().trim())
         environment("VELES_LOOPBACK_REQUIRED", "1")
         // The child JVM is the Gradle toolchain JVM (Java 21 per .java-version), not whatever
         // `java` happens to be first on the PATH of the npm process.
@@ -538,8 +815,23 @@ val sessionLoopbackCheck = tasks.register<Exec>("sessionLoopbackCheck") {
         // OTP-10: the child JVM loads the real host-JVM Rust core through
         // System.loadLibrary("veles_crypto"); the spawn turns this into
         // -Djava.library.path so the test-only `rustHostJni` output resolves.
-        environment("VELES_HOST_JNI_DIR", rustHostJniDir.get().asFile.absolutePath)
+        environment("VELES_HOST_JNI_DIR", hostJniDir.get().asFile.absolutePath)
+        super.exec()
     }
+}
+
+val sessionLoopbackCheck = tasks.register<SessionLoopbackTask>("sessionLoopbackCheck") {
+    group = "verification"
+    description = "Runs the Kotlin phone / TypeScript client cross-endpoint session loopback."
+    dependsOn(
+        rustBuild.task(":rustHostJni"),
+        rustBuild.task(":rustWasm"),
+        androidBuild.task(":app:sessionLoopbackClasspath"),
+        protocolWebInstall,
+    )
+    classpathFile.set(sessionLoopbackClasspathFile)
+    hostJniDir.set(rustHostJniDir)
+    workingDir(layout.projectDirectory.dir("web-extension"))
     commandLine(
         npmCommand,
         "exec",
@@ -560,6 +852,7 @@ val protocolFreshEvidenceCheck = tasks.register<Exec>("protocolFreshEvidenceChec
     outputs.upToDateWhen { false }
     workingDir(layout.projectDirectory)
     commandLine("node", "protocol/checks/check.mjs", "--evidence-only")
+    outputs.doNotCacheIf("regenerates crypto evidence") { true }
 }
 
 // ---------------------------------------------------------------------------
@@ -577,28 +870,26 @@ val bridgeDir = layout.projectDirectory.dir("native-bridge")
 val bridgeSrcTauriDir = bridgeDir.dir("src-tauri")
 val bridgeBuildOutput = layout.buildDirectory.dir("native-bridge")
 
-fun requireNpm(installHint: String) {
-    val path = System.getenv("PATH") ?: ""
-    val found = path.split(File.pathSeparator).any { dir ->
-        File(dir, if (windowsExecutableSuffix.isNotEmpty()) "npm.cmd" else "npm").let { it.isFile && it.canExecute() }
-    }
-    check(found) {
-        "Could not find 'npm' on PATH. $installHint."
-    }
-}
-
-val bridgeNodeCheck = tasks.register("bridgeNodeCheck") {
+val bridgeNodeCheck = tasks.register<ToolchainCheckTask>("bridgeNodeCheck") {
     group = "native-bridge"
-    doLast {
-        requireNpm("Install Node.js >=22.0.0 (declared in native-bridge/package.json engines.node)")
-        val version = providers.exec {
-            commandLine("node", "--version")
-        }.standardOutput.asText.get().trim()
-        val major = version.removePrefix("v").substringBefore('.').toIntOrNull()
-        check(major != null && major >= 22) {
-            "Node >=22 is required by native-bridge/package.json; found '$version'"
-        }
-    }
+    workingDir.set(layout.projectDirectory)
+    pathEnv.set(providers.environmentVariable("PATH").orElse(""))
+    probes.set(
+        listOf(
+            ToolchainProbe(
+                requiredCommands = listOf("npm"),
+                versionCommand = listOf("node", "--version"),
+                minimumMajorVersion = 22,
+                minimumMinorVersion = 0,
+                mismatchMessageFormat =
+                    "Node >=22 is required by native-bridge/package.json; found '{actual}'",
+                versionHint = "Node >=22.0.0",
+                installHint =
+                    "Install Node.js >=22.0.0 (declared in native-bridge/package.json engines.node)",
+                missingCommandMessageFormat = "Could not find '{name}' on PATH. {installHint}",
+            ),
+        ),
+    )
 }
 
 val bridgeInstall = tasks.register<Exec>("bridgeInstall") {
@@ -610,6 +901,7 @@ val bridgeInstall = tasks.register<Exec>("bridgeInstall") {
     outputs.dir(bridgeDir.dir("node_modules"))
     workingDir(bridgeDir)
     commandLine(npmCommand, "ci", "--ignore-scripts")
+    outputs.doNotCacheIf("installs npm dependencies from the network") { true }
 }
 
 val protocolBridgeTest = tasks.register<Exec>("protocolBridgeTest") {
@@ -618,6 +910,7 @@ val protocolBridgeTest = tasks.register<Exec>("protocolBridgeTest") {
     dependsOn(bridgeInstall)
     workingDir(bridgeDir)
     commandLine(npmCommand, "exec", "vitest", "run", "test/protocol-fixtures.test.ts")
+    outputs.doNotCacheIf("runs a test") { true }
 }
 
 val bridgeFormat = tasks.register<Exec>("bridgeFormat") {
@@ -626,6 +919,7 @@ val bridgeFormat = tasks.register<Exec>("bridgeFormat") {
     dependsOn(bridgeInstall)
     workingDir(bridgeDir)
     commandLine(npmCommand, "run", "format:check")
+    outputs.doNotCacheIf("verification only") { true }
 }
 
 val bridgeLint = tasks.register<Exec>("bridgeLint") {
@@ -634,6 +928,7 @@ val bridgeLint = tasks.register<Exec>("bridgeLint") {
     dependsOn(bridgeInstall)
     workingDir(bridgeDir)
     commandLine(npmCommand, "run", "lint")
+    outputs.doNotCacheIf("verification only") { true }
 }
 
 val bridgeTypecheck = tasks.register<Exec>("bridgeTypecheck") {
@@ -642,6 +937,7 @@ val bridgeTypecheck = tasks.register<Exec>("bridgeTypecheck") {
     dependsOn(bridgeInstall)
     workingDir(bridgeDir)
     commandLine(npmCommand, "run", "typecheck")
+    outputs.doNotCacheIf("verification only") { true }
 }
 
 val bridgeNpmTest = tasks.register<Exec>("bridgeNpmTest") {
@@ -650,30 +946,30 @@ val bridgeNpmTest = tasks.register<Exec>("bridgeNpmTest") {
     dependsOn(bridgeInstall)
     workingDir(bridgeDir)
     commandLine(npmCommand, "test")
+    outputs.doNotCacheIf("runs a test") { true }
 }
 
-val bridgeRustToolchainCheck = tasks.register("bridgeRustToolchainCheck") {
+val bridgeRustToolchainCheck = tasks.register<ToolchainCheckTask>("bridgeRustToolchainCheck") {
     group = "native-bridge"
-    inputs.file(bridgeSrcTauriDir.file("rust-toolchain.toml"))
-    doLast {
-        requireOnPath(
-            "rustup",
-            "Rust 1.98.0",
-            "Install rustup and run `rustup show active-toolchain` in native-bridge/src-tauri/ to install the pinned toolchain",
-        )
-        requireOnPath(
-            "cargo",
-            "Rust 1.98.0",
-            "Install rustup and run `rustup show active-toolchain` in native-bridge/src-tauri/ to install the pinned toolchain",
-        )
-        val rustc = providers.exec {
-            workingDir(bridgeSrcTauriDir)
-            commandLine("rustc", "--version")
-        }.standardOutput.asText.get().trim()
-        check(rustc.startsWith("rustc 1.98.0 ")) {
-            "native-bridge/src-tauri/rust-toolchain.toml requires Rust 1.98.0; active toolchain is '$rustc'"
-        }
-    }
+    workingDir.set(bridgeSrcTauriDir)
+    pathEnv.set(providers.environmentVariable("PATH").orElse(""))
+    toolchainFile.set(bridgeSrcTauriDir.file("rust-toolchain.toml"))
+    probes.set(
+        listOf(
+            ToolchainProbe(
+                requiredCommands = listOf("rustup", "cargo"),
+                versionCommand = listOf("rustc", "--version"),
+                expectedPrefix = "rustc 1.98.0 ",
+                mismatchMessageFormat =
+                    "native-bridge/src-tauri/rust-toolchain.toml requires Rust 1.98.0; " +
+                        "active toolchain is '{actual}'",
+                versionHint = "Rust 1.98.0",
+                installHint =
+                    "Install rustup and run `rustup show active-toolchain` in native-bridge/src-tauri/ " +
+                        "to install the pinned toolchain",
+            ),
+        ),
+    )
 }
 
 val bridgeRustFormat = tasks.register<Exec>("bridgeRustFormat") {
@@ -684,6 +980,7 @@ val bridgeRustFormat = tasks.register<Exec>("bridgeRustFormat") {
     workingDir(bridgeSrcTauriDir)
     environment("CARGO_TARGET_DIR", layout.buildDirectory.dir("native-bridge/rust-target").get().asFile)
     commandLine("cargo", "fmt", "--all", "--", "--check")
+    outputs.doNotCacheIf("verification only") { true }
 }
 
 val bridgeRustLint = tasks.register<Exec>("bridgeRustLint") {
@@ -696,6 +993,7 @@ val bridgeRustLint = tasks.register<Exec>("bridgeRustLint") {
     workingDir(bridgeSrcTauriDir)
     environment("CARGO_TARGET_DIR", layout.buildDirectory.dir("native-bridge/rust-target").get().asFile)
     commandLine("cargo", "clippy", "--all-targets", "--locked", "--", "-D", "warnings")
+    outputs.doNotCacheIf("verification only") { true }
 }
 
 val bridgeRustTest = tasks.register<Exec>("bridgeRustTest") {
@@ -708,12 +1006,14 @@ val bridgeRustTest = tasks.register<Exec>("bridgeRustTest") {
     workingDir(bridgeSrcTauriDir)
     environment("CARGO_TARGET_DIR", layout.buildDirectory.dir("native-bridge/rust-target").get().asFile)
     commandLine("cargo", "test", "--locked")
+    outputs.doNotCacheIf("runs a test") { true }
 }
 
 val bridgeTest = tasks.register("bridgeTest") {
     group = "native-bridge"
     description = "Runs npm and cargo tests for native-bridge/."
     dependsOn(bridgeNpmTest, bridgeRustFormat, bridgeRustLint, bridgeRustTest)
+    outputs.doNotCacheIf("aggregates test tasks") { true }
 }
 
 // OTP-01 sub-project 1c — build-orchestration lifecycle (review findings 4 & 5).
@@ -772,6 +1072,10 @@ val bridgeBuild = tasks.register<Exec>("bridgeBuild") {
     group = "native-bridge"
     description = "Builds the unsigned native-bridge host (tauri build --no-bundle -- --locked --features tauri-runtime)."
     dependsOn(bridgeInstall, bridgeRustToolchainCheck)
+    notCompatibleWithConfigurationCache(
+        "release/PR packaging pipeline; always run with --no-configuration-cache, see docs/reproducible-builds.md",
+    )
+    outputs.doNotCacheIf("release packaging") { true }
     inputs.files(
         fileTree(bridgeSrcTauriDir) { include("Cargo.toml", "Cargo.lock", "src/**/*.rs", "build.rs") },
         bridgeSrcTauriDir.file("tauri.conf.json"),
@@ -811,17 +1115,12 @@ val bridgeBuild = tasks.register<Exec>("bridgeBuild") {
 // runs first, then the bundle build runs after. They are never sibling
 // producers of the same `src-tauri/target` tree.
 //
-// Platform-specific Tauri `--bundles` targets. Windows gets WiX (.msi) plus
-// NSIS (.exe) installer inputs; macOS gets the .app bundle plus a .dmg
-// installer. Returns null on unsupported hosts so the failure is raised at
-// *execution* time (in the task's doFirst) rather than at configuration time
-// — otherwise merely configuring this task on Linux would break unrelated
-// Gradle invocations such as `./gradlew tasks`, `bridgeFormat`, or `check`.
-fun bridgeBundleTargetsFor(osName: String): String? = when {
-    osName.startsWith("Windows") -> "nsis,msi"
-    osName.startsWith("Mac") -> "app,dmg"
-    else -> null
-}
+// Platform-specific Tauri `--bundles` targets live in RootBuildHelpers.bundleTargetsFor:
+// Windows gets WiX (.msi) plus NSIS (.exe) installer inputs; macOS gets the .app bundle plus a
+// .dmg installer. It returns null on unsupported hosts so the failure is raised at *execution*
+// time (in the task's doFirst) rather than at configuration time — otherwise merely configuring
+// this task on Linux would break unrelated Gradle invocations such as `./gradlew tasks`,
+// `bridgeFormat`, or `check`.
 
 val bridgeBundle = tasks.register<Exec>("bridgeBundle") {
     group = "native-bridge"
@@ -829,6 +1128,10 @@ val bridgeBundle = tasks.register<Exec>("bridgeBundle") {
     // Serialize behind the raw host build so bundle and build are never sibling
     // producers of the same `src-tauri/target` tree; bundle runs after build.
     dependsOn(bridgeBuild, bridgeInstall, bridgeRustToolchainCheck)
+    notCompatibleWithConfigurationCache(
+        "release/PR packaging pipeline; always run with --no-configuration-cache, see docs/reproducible-builds.md",
+    )
+    outputs.doNotCacheIf("release packaging") { true }
     inputs.files(
         fileTree(bridgeSrcTauriDir) { include("Cargo.toml", "Cargo.lock", "src/**/*.rs", "build.rs") },
         bridgeSrcTauriDir.file("tauri.conf.json"),
@@ -875,7 +1178,7 @@ val bridgeBundle = tasks.register<Exec>("bridgeBundle") {
             // Keep the bundle's Cargo link invocation consistent with bridgeBuild.
             environment("RUSTFLAGS", "-C link-arg=/Brepro")
         }
-        val targets = bridgeBundleTargetsFor(osName)
+        val targets = RootBuildHelpers.bundleTargetsFor(osName)
             ?: throw GradleException(
                 "bridgeBundle: unsupported host platform '$osName'. " +
                     "Tauri bundle targets are Windows (nsis,msi) or macOS (app,dmg) only; " +
@@ -906,6 +1209,10 @@ val bridgeManifests = tasks.register<Exec>("bridgeManifests") {
     group = "native-bridge"
     description = "Emits Chrome native-messaging host manifests for each OS."
     dependsOn(bridgeInstall)
+    notCompatibleWithConfigurationCache(
+        "release/PR packaging pipeline; always run with --no-configuration-cache, see docs/reproducible-builds.md",
+    )
+    outputs.doNotCacheIf("release packaging") { true }
     inputs.file(bridgeDir.file("src/manifest.mjs"))
     inputs.file(bridgeDir.file("scripts/manifests.mjs"))
     outputs.dir(bridgeBuildOutput.map { it.dir("manifests") })
@@ -920,6 +1227,10 @@ val bridgePackage = tasks.register<Exec>("bridgePackage") {
     // it), keeping a single serialized build → bundle → package line instead
     // of a diamond with two producers of `src-tauri/target`.
     dependsOn(bridgeBundle)
+    notCompatibleWithConfigurationCache(
+        "release/PR packaging pipeline; always run with --no-configuration-cache, see docs/reproducible-builds.md",
+    )
+    outputs.doNotCacheIf("release packaging") { true }
     inputs.file(bridgeDir.file("scripts/package.mjs"))
     inputs.file(bridgeDir.file("src/manifest.mjs"))
     inputs.file(bridgeDir.file("package.json"))
@@ -967,12 +1278,12 @@ val productionHostTargetDir = layout.buildDirectory.dir("native-bridge/host-targ
 val productionHostOutputDir = layout.buildDirectory.dir("native-bridge/host")
 val productionHostExecutable = "veles-native-host$windowsExecutableSuffix"
 
-fun Exec.productionHostEnvironment() {
+fun Exec.productionHostEnvironment(windows: Boolean) {
     workingDir(productionHostDir)
     environment("CARGO_TARGET_DIR", productionHostTargetDir.get().asFile)
     // The shipped host is self-contained for the same reason as the installer binaries:
     // a clean Windows has no vcruntime140.dll.
-    if (System.getProperty("os.name").startsWith("Windows")) {
+    if (windows) {
         environment("RUSTFLAGS", "-C target-feature=+crt-static")
     }
     // The origin allowlist is compiled in through option_env!("VELES_ALLOWED_ORIGINS"), so the variable is a
@@ -986,22 +1297,27 @@ val bridgeHostSources = productionHostDir.let { host ->
     }
 }
 
-val bridgeHostToolchainCheck = tasks.register("bridgeHostToolchainCheck") {
+val bridgeHostToolchainCheck = tasks.register<ToolchainCheckTask>("bridgeHostToolchainCheck") {
     group = "native-bridge"
     description = "Asserts the native-bridge/host crate resolves to its pinned Rust 1.98.0 toolchain."
-    inputs.file(productionHostDir.file("rust-toolchain.toml"))
-    doLast {
-        val hint = "Install rustup and run `rustup show active-toolchain` in native-bridge/host/ to install the pinned toolchain"
-        requireOnPath("rustup", "Rust 1.98.0", hint)
-        requireOnPath("cargo", "Rust 1.98.0", hint)
-        val rustc = providers.exec {
-            workingDir(productionHostDir)
-            commandLine("rustc", "--version")
-        }.standardOutput.asText.get().trim()
-        check(rustc.startsWith("rustc 1.98.0 ")) {
-            "native-bridge/host/rust-toolchain.toml requires Rust 1.98.0; active toolchain is '$rustc'"
-        }
-    }
+    workingDir.set(productionHostDir)
+    pathEnv.set(providers.environmentVariable("PATH").orElse(""))
+    toolchainFile.set(productionHostDir.file("rust-toolchain.toml"))
+    probes.set(
+        listOf(
+            ToolchainProbe(
+                requiredCommands = listOf("rustup", "cargo"),
+                versionCommand = listOf("rustc", "--version"),
+                expectedPrefix = "rustc 1.98.0 ",
+                mismatchMessageFormat =
+                    "native-bridge/host/rust-toolchain.toml requires Rust 1.98.0; active toolchain is '{actual}'",
+                versionHint = "Rust 1.98.0",
+                installHint =
+                    "Install rustup and run `rustup show active-toolchain` in native-bridge/host/ " +
+                        "to install the pinned toolchain",
+            ),
+        ),
+    )
 }
 
 val bridgeHostFormat = tasks.register<Exec>("bridgeHostFormat") {
@@ -1009,8 +1325,9 @@ val bridgeHostFormat = tasks.register<Exec>("bridgeHostFormat") {
     description = "Checks cargo fmt formatting for the production host crate."
     dependsOn(bridgeHostToolchainCheck)
     inputs.files(bridgeHostSources)
-    productionHostEnvironment()
+    productionHostEnvironment(isWindows)
     commandLine("cargo", "fmt", "--all", "--", "--check")
+    outputs.doNotCacheIf("verification only") { true }
 }
 
 val bridgeHostLint = tasks.register<Exec>("bridgeHostLint") {
@@ -1018,8 +1335,9 @@ val bridgeHostLint = tasks.register<Exec>("bridgeHostLint") {
     description = "Runs locked cargo clippy with -D warnings for the production host crate."
     dependsOn(bridgeHostToolchainCheck)
     inputs.files(bridgeHostSources)
-    productionHostEnvironment()
+    productionHostEnvironment(isWindows)
     commandLine("cargo", "clippy", "--all-targets", "--locked", "--", "-D", "warnings")
+    outputs.doNotCacheIf("verification only") { true }
 }
 
 val bridgeHostTest = tasks.register<Exec>("bridgeHostTest") {
@@ -1027,35 +1345,83 @@ val bridgeHostTest = tasks.register<Exec>("bridgeHostTest") {
     description = "Runs locked cargo test for the production host crate (portable plus current-OS adapter tests)."
     dependsOn(bridgeHostToolchainCheck)
     inputs.files(bridgeHostSources)
-    productionHostEnvironment()
+    productionHostEnvironment(isWindows)
     commandLine("cargo", "test", "--locked")
+    outputs.doNotCacheIf("runs a test") { true }
 }
 
-val bridgeHostBuild = tasks.register<Exec>("bridgeHostBuild") {
+/**
+ * Builds `veles-native-host` and stages it with a checksum. The action reads only its own
+ * properties, so the former `doFirst`/`doLast` pair captured nothing from the script.
+ */
+@DisableCachingByDefault(because = "builds and stages the production host binary")
+abstract class HostBuildTask : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val sources: ConfigurableFileCollection
+
+    @get:Input
+    abstract val allowedOrigins: Property<String>
+
+    @get:Input
+    abstract val executableName: Property<String>
+
+    @get:Input
+    abstract val windows: Property<Boolean>
+
+    @get:Internal
+    abstract val workingDirectory: DirectoryProperty
+
+    @get:Internal
+    abstract val cargoTargetDir: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @get:Inject
+    abstract val execOps: ExecOperations
+
+    @get:Inject
+    abstract val fsOps: FileSystemOperations
+
+    @TaskAction
+    fun build() {
+        val output = outputDirectory.get().asFile
+        // A stale executable or checksum must never be mistaken for this build's product.
+        fsOps.delete { delete(output) }
+        execOps.exec {
+            workingDir(this@HostBuildTask.workingDirectory.get().asFile)
+            environment("CARGO_TARGET_DIR", cargoTargetDir.get().asFile.absolutePath)
+            if (windows.get()) {
+                environment("RUSTFLAGS", "-C target-feature=+crt-static")
+            }
+            commandLine("cargo", "build", "--locked", "--release", "--bin", "veles-native-host")
+        }
+        val executable = executableName.get()
+        val built = cargoTargetDir.get().asFile.resolve("release/$executable")
+        // Only the production executable is accepted: no fallback to the Tauri scaffold output.
+        check(built.isFile) { "bridgeHostBuild: production executable missing at $built" }
+        output.mkdirs()
+        val staged = output.resolve(executable)
+        built.copyTo(staged, overwrite = true)
+        staged.setExecutable(true, false)
+        val digest = MessageDigest.getInstance("SHA-256").digest(staged.readBytes())
+            .joinToString("") { "%02x".format(it) }
+        output.resolve("SHA256SUMS").writeText("$digest  $executable\n")
+    }
+}
+
+val bridgeHostBuild = tasks.register<HostBuildTask>("bridgeHostBuild") {
     group = "native-bridge"
     description = "Builds only veles-native-host (locked, release, no features) and writes build/native-bridge/host/{exe,SHA256SUMS}."
     dependsOn(bridgeHostToolchainCheck)
-    inputs.files(bridgeHostSources)
-    outputs.dir(productionHostOutputDir)
-    productionHostEnvironment()
-    doFirst {
-        // A stale executable or checksum must never be mistaken for this build's product.
-        delete(productionHostOutputDir)
-    }
-    commandLine("cargo", "build", "--locked", "--release", "--bin", "veles-native-host")
-    doLast {
-        val built = productionHostTargetDir.get().asFile.resolve("release/$productionHostExecutable")
-        // Only the production executable is accepted: no fallback to the Tauri scaffold output.
-        check(built.isFile) { "bridgeHostBuild: production executable missing at $built" }
-        val outputDir = productionHostOutputDir.get().asFile
-        outputDir.mkdirs()
-        val staged = outputDir.resolve(productionHostExecutable)
-        built.copyTo(staged, overwrite = true)
-        staged.setExecutable(true, false)
-        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(staged.readBytes())
-            .joinToString("") { "%02x".format(it) }
-        outputDir.resolve("SHA256SUMS").writeText("$digest  $productionHostExecutable\n")
-    }
+    sources.from(bridgeHostSources)
+    allowedOrigins.set(providers.environmentVariable("VELES_ALLOWED_ORIGINS").orElse(""))
+    executableName.set(productionHostExecutable)
+    windows.set(isWindows)
+    workingDirectory.set(productionHostDir)
+    cargoTargetDir.set(productionHostTargetDir)
+    outputDirectory.set(productionHostOutputDir)
 }
 // ---- OTP-24 production host (end) ----
 
@@ -1098,7 +1464,7 @@ val installerDir = layout.projectDirectory.dir("native-bridge/installer")
 val installerBuildRoot = layout.buildDirectory.dir("native-bridge/installer")
 val installerAssembler = installerDir.file("scripts/assemble_unsigned.py")
 val installerReleaseGate = installerDir.file("scripts/release_gate.py")
-val installerOsName = System.getProperty("os.name")
+val installerOsName = osName
 val installerPlatform = when {
     installerOsName.startsWith("Windows") -> "windows"
     installerOsName.startsWith("Mac") -> "macos"
@@ -1185,10 +1551,11 @@ val installerDebugKind = InstallerBuildKind(
 fun installerRustFlags(): String {
     val checkout = layout.projectDirectory.asFile.absolutePath
     check(checkout.none { it.isWhitespace() }) { "RUSTFLAGS cannot carry a checkout path containing whitespace: $checkout" }
-    val cargoHome = System.getenv("CARGO_HOME")?.takeIf { it.isNotBlank() } ?: "${System.getProperty("user.home")}/.cargo"
+    val userHome = System.getProperty("user.home")
+    val cargoHome = System.getenv("CARGO_HOME")?.takeIf { it.isNotBlank() } ?: "$userHome/.cargo"
     val flags = mutableListOf(
         "--remap-path-prefix=$checkout=/veles-src",
-        cargoRegistryRemapRustFlags(),
+        RootBuildHelpers.registryRemapRustFlags(cargoHome, userHome),
         "--remap-path-prefix=$cargoHome/git/checkouts=/cargo-git",
     )
     if (installerPlatform == "windows") {
@@ -1238,94 +1605,182 @@ fun Exec.installerChannelEnvironment(channel: String) {
     }
 }
 
-val bridgeInstallerToolchainCheck = tasks.register("bridgeInstallerToolchainCheck") {
+val bridgeInstallerToolchainCheck = tasks.register<ToolchainCheckTask>("bridgeInstallerToolchainCheck") {
     group = "native-bridge"
     description = "Asserts the native-bridge/installer crate resolves to its pinned Rust 1.98.0 toolchain."
-    inputs.file(installerDir.file("rust-toolchain.toml"))
-    doLast {
-        val hint = "Install rustup and run `rustup show active-toolchain` in native-bridge/installer/ to install the pinned toolchain"
-        requireOnPath("rustup", "Rust 1.98.0", hint)
-        requireOnPath("cargo", "Rust 1.98.0", hint)
-        val rustc = providers.exec {
-            workingDir(installerDir)
-            commandLine("rustc", "--version")
-        }.standardOutput.asText.get().trim()
-        check(rustc.startsWith("rustc 1.98.0 ")) {
-            "native-bridge/installer/rust-toolchain.toml requires Rust 1.98.0; active toolchain is '$rustc'"
-        }
-    }
+    workingDir.set(installerDir)
+    pathEnv.set(providers.environmentVariable("PATH").orElse(""))
+    toolchainFile.set(installerDir.file("rust-toolchain.toml"))
+    probes.set(
+        listOf(
+            ToolchainProbe(
+                requiredCommands = listOf("rustup", "cargo"),
+                versionCommand = listOf("rustc", "--version"),
+                expectedPrefix = "rustc 1.98.0 ",
+                mismatchMessageFormat =
+                    "native-bridge/installer/rust-toolchain.toml requires Rust 1.98.0; " +
+                        "active toolchain is '{actual}'",
+                versionHint = "Rust 1.98.0",
+                installHint =
+                    "Install rustup and run `rustup show active-toolchain` in native-bridge/installer/ " +
+                        "to install the pinned toolchain",
+            ),
+        ),
+    )
 }
 
 val installerCheckTargetDir = installerBuildRoot.map { it.dir("target/check") }
 
-val bridgeInstallerFormat = tasks.register<Exec>("bridgeInstallerFormat") {
+val bridgeInstallerFormat = tasks.register<CargoExecTask>("bridgeInstallerFormat") {
     group = "native-bridge"
     description = "Checks cargo fmt formatting for the installer crate."
     dependsOn(bridgeInstallerToolchainCheck)
     inputs.files(installerSources)
     workingDir(installerDir)
-    environment("CARGO_TARGET_DIR", installerCheckTargetDir.get().asFile)
+    extraEnv.set(installerCheckTargetDir.map { mapOf("CARGO_TARGET_DIR" to it.asFile.absolutePath) })
     commandLine("cargo", "fmt", "--all", "--", "--check")
 }
 
-val bridgeInstallerLint = tasks.register<Exec>("bridgeInstallerLint") {
+val bridgeInstallerLint = tasks.register<CargoExecTask>("bridgeInstallerLint") {
     group = "native-bridge"
     description = "Runs locked cargo clippy with -D warnings for the installer crate."
     dependsOn(bridgeInstallerToolchainCheck)
     inputs.files(installerSources)
     workingDir(installerDir)
-    environment("CARGO_TARGET_DIR", installerCheckTargetDir.get().asFile)
+    extraEnv.set(installerCheckTargetDir.map { mapOf("CARGO_TARGET_DIR" to it.asFile.absolutePath) })
     commandLine("cargo", "clippy", "--all-targets", "--locked", "--", "-D", "warnings")
 }
 
-val bridgeInstallerTest = tasks.register<Exec>("bridgeInstallerTest") {
+val bridgeInstallerTest = tasks.register<CargoExecTask>("bridgeInstallerTest") {
     group = "native-bridge"
     description = "Runs locked cargo test for the installer crate (portable plus current-OS adapter tests)."
     dependsOn(bridgeInstallerToolchainCheck)
     inputs.files(installerSources)
     workingDir(installerDir)
-    environment("CARGO_TARGET_DIR", installerCheckTargetDir.get().asFile)
+    extraEnv.set(installerCheckTargetDir.map { mapOf("CARGO_TARGET_DIR" to it.asFile.absolutePath) })
     commandLine("cargo", "test", "--locked")
 }
 
-val bridgeInstallerScriptsTest = tasks.register<Exec>("bridgeInstallerScriptsTest") {
+val bridgeInstallerScriptsTest = tasks.register<CargoExecTask>("bridgeInstallerScriptsTest") {
     group = "native-bridge"
     description = "Runs the installer Python script suites (contracts, gate, correspondence, assembler); not run on Windows."
     enabled = installerPlatform != "windows"
     inputs.files(installerSources)
     workingDir(layout.projectDirectory)
-    environment("PYTHONDONTWRITEBYTECODE", "1")
+    extraEnv.set(mapOf("PYTHONDONTWRITEBYTECODE" to "1"))
     commandLine(installerPython, "-I", "-m", "unittest", "discover", "-s", "native-bridge/installer/scripts", "-p", "test_*.py")
 }
 
-val bridgeInstallerToolObservation = tasks.register<Exec>("bridgeInstallerToolObservation") {
-    group = "native-bridge"
-    description = "Observes the native compiler/SDK identities of THIS machine into build/ (records only; does not judge)."
-    inputs.files(installerSources)
-    outputs.file(installerToolObservation)
-    outputs.upToDateWhen { false }
-    doFirst {
-        requireInstallerHost()
-        delete(installerToolObservation)
+/** Records the native compiler/SDK identities of this machine; it only records, never judges. */
+@DisableCachingByDefault(because = "observes this host's tool identities")
+abstract class ToolObservationTask : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val sources: ConfigurableFileCollection
+
+    @get:Input
+    abstract val supported: Property<Boolean>
+
+    @get:Input
+    abstract val python: Property<String>
+
+    @get:InputFile
+    abstract val script: RegularFileProperty
+
+    @get:Input
+    abstract val target: Property<String>
+
+    @get:OutputFile
+    abstract val observation: RegularFileProperty
+
+    @get:Internal
+    abstract val workingDirectory: DirectoryProperty
+
+    @get:Inject
+    abstract val execOps: ExecOperations
+
+    @get:Inject
+    abstract val fsOps: FileSystemOperations
+
+    @TaskAction
+    fun observe() {
+        check(supported.get()) {
+            "OTP-25 installer inputs are built on a Windows or macOS runner; Linux is not a producer target."
+        }
+        val output = observation.get().asFile
+        fsOps.delete { delete(output) }
+        execOps.exec {
+            workingDir(workingDirectory.get().asFile)
+            commandLine(
+                python.get(), "-I", script.get().asFile.absolutePath, "observe",
+                "--target", target.get(), "--output", output.absolutePath,
+            )
+        }
     }
-    // The crate's rust-toolchain.toml must select the toolchain the build uses,
-    // not the caller's global default (N6).
-    workingDir(installerDir)
-    commandLine(
-        installerPython, "-I", installerToolsScript.asFile, "observe", "--target", installerToolTarget,
-        "--output", installerToolObservation.get().asFile,
-    )
 }
 
-val bridgeInstallerToolCheck = tasks.register<Exec>("bridgeInstallerToolCheck") {
+val bridgeInstallerToolObservation = tasks.register<ToolObservationTask>("bridgeInstallerToolObservation") {
+    group = "native-bridge"
+    description = "Observes the native compiler/SDK identities of THIS machine into build/ (records only; does not judge)."
+    sources.from(installerSources)
+    supported.set(installerPlatform != "unsupported")
+    python.set(installerPython)
+    script.set(installerToolsScript)
+    target.set(installerToolTarget)
+    observation.set(installerToolObservation)
+    outputs.upToDateWhen { false }
+    // The crate's rust-toolchain.toml must select the toolchain the build uses,
+    // not the caller's global default (N6).
+    workingDirectory.set(installerDir)
+}
+
+/** Fails unless the observed tools equal config/tools.lock.json. */
+@DisableCachingByDefault(because = "checks this host's tool identities against the lock")
+abstract class ToolCheckTask : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val sources: ConfigurableFileCollection
+
+    @get:Input
+    abstract val python: Property<String>
+
+    @get:InputFile
+    abstract val script: RegularFileProperty
+
+    @get:Input
+    abstract val target: Property<String>
+
+    @get:InputFile
+    abstract val observed: RegularFileProperty
+
+    @get:Internal
+    abstract val workingDirectory: DirectoryProperty
+
+    @get:Inject
+    abstract val execOps: ExecOperations
+
+    @TaskAction
+    fun checkTools() {
+        execOps.exec {
+            workingDir(workingDirectory.get().asFile)
+            commandLine(
+                python.get(), "-I", script.get().asFile.absolutePath, "check",
+                "--target", target.get(), "--observed", observed.get().asFile.absolutePath,
+            )
+        }
+    }
+}
+
+val bridgeInstallerToolCheck = tasks.register<ToolCheckTask>("bridgeInstallerToolCheck") {
     group = "native-bridge"
     description = "Fails unless the observed tools equal config/tools.lock.json; unresolved Windows identities always fail."
     dependsOn(bridgeInstallerToolObservation)
-    inputs.files(installerSources)
-    commandLine(
-        installerPython, "-I", installerToolsScript.asFile, "check", "--target", installerToolTarget,
-        "--observed", installerToolObservation.get().asFile,
-    )
+    sources.from(installerSources)
+    python.set(installerPython)
+    script.set(installerToolsScript)
+    target.set(installerToolTarget)
+    observed.set(installerToolObservation)
+    workingDirectory.set(layout.projectDirectory)
 }
 
 // Registers the two-pass producer for one channel and one build kind: config check, then per slot
@@ -1342,8 +1797,18 @@ fun registerInstallerProducer(
     kind: InstallerBuildKind,
 ): TaskProvider<Exec> {
     val buildName = kind.name
+    // The whole producer graph runs only in guarded release/PR invocations (design D2/D6), so it is
+    // opted out of the configuration cache as a unit instead of being rewritten. The reason string is
+    // the one docs/reproducible-builds.md and evidence/cc-optouts.md carry.
+    fun Task.markPackagingPipeline() {
+        notCompatibleWithConfigurationCache(
+            "release/PR packaging pipeline; always run with --no-configuration-cache, see docs/reproducible-builds.md",
+        )
+        outputs.doNotCacheIf("release packaging") { true }
+    }
     val configCheck = tasks.register<Exec>("${taskName}Config") {
         group = "native-bridge"
+        markPackagingPipeline()
         description = "Refuses a release config that is not tracked, unmodified and of the $channel channel."
         // A production build starts only on the locked toolchain; the fixture records what it was built with.
         dependsOn(if (channel == "production") bridgeInstallerToolCheck else bridgeInstallerToolObservation)
@@ -1453,6 +1918,7 @@ fun registerInstallerProducer(
         // closed binary set (the engine is not part of the payload inventory), never published.
         val engine = tasks.register<Exec>("${taskName}Engine$suffix") {
             group = "native-bridge"
+            markPackagingPipeline()
             description = "Builds the bootstrap installer engine and cleanup helper (slot $slot, $channel) the assembler consumes."
             dependsOn(configCheck, bridgeInstallerToolchainCheck)
             inputs.files(installerSources)
@@ -1479,6 +1945,7 @@ fun registerInstallerProducer(
         }
         val host = tasks.register<Exec>("${taskName}Host$suffix") {
             group = "native-bridge"
+            markPackagingPipeline()
             description = "Builds the production Native Messaging host (slot $slot, $channel) with the config's exact origin."
             dependsOn(configCheck, bridgeHostToolchainCheck)
             inputs.files(bridgeHostSources)
@@ -1504,6 +1971,7 @@ fun registerInstallerProducer(
         }
         val frontend = tasks.register<Exec>("${taskName}Frontend$suffix") {
             group = "native-bridge"
+            markPackagingPipeline()
             description = "Builds the SwiftUI installer frontend (macOS only, slot $slot, $channel) with a private scratch path."
             enabled = installerPlatform == "macos"
             dependsOn(configCheck)
@@ -1518,6 +1986,7 @@ fun registerInstallerProducer(
         }
         val uninstaller = tasks.register<Exec>("${taskName}Uninstaller$suffix") {
             group = "native-bridge"
+            markPackagingPipeline()
             description = "Generates the unsigned NSIS uninstaller (Windows only, slot $slot, $channel)."
             enabled = installerPlatform == "windows"
             dependsOn(configCheck)
@@ -1537,6 +2006,7 @@ fun registerInstallerProducer(
         }
         val stage = tasks.register<Sync>("${taskName}Stage$suffix") {
             group = "native-bridge"
+            markPackagingPipeline()
             description = "Stages exactly the bootstrap executables the assembler accepts (slot $slot, $channel)."
             dependsOn(engine, host, uninstaller)
             into(binDir)
@@ -1551,6 +2021,7 @@ fun registerInstallerProducer(
         }
         val assemble = tasks.register<Exec>("${taskName}Assemble$suffix") {
             group = "native-bridge"
+            markPackagingPipeline()
             description = "Assembles the bootstrap unsigned input tree and publishes the carrier (slot $slot, $channel)."
             dependsOn(stage, frontend)
             inputs.files(config)
@@ -1566,6 +2037,7 @@ fun registerInstallerProducer(
         // is checked against this tree's exact descriptor and the registered channel before compiling.
         val carrierCheck = tasks.register<Exec>("${taskName}CarrierCheck$suffix") {
             group = "native-bridge"
+            markPackagingPipeline()
             description = "Verifies the assembled carrier against the exact descriptor and channel (slot $slot, $channel)."
             dependsOn(assemble)
             inputs.files(assembledDir)
@@ -1588,6 +2060,7 @@ fun registerInstallerProducer(
         // `build.rs` refuses a production build that reaches this point without one.
         val engineEmbedded = tasks.register<Exec>("${taskName}EngineEmbedded$suffix") {
             group = "native-bridge"
+            markPackagingPipeline()
             description = "Rebuilds the engine with the verified carrier compiled in (slot $slot, $channel)."
             dependsOn(carrierCheck, bridgeInstallerToolchainCheck)
             inputs.files(installerSources)
@@ -1615,6 +2088,7 @@ fun registerInstallerProducer(
         }
         val stageEmbedded = tasks.register<Sync>("${taskName}StageEmbedded$suffix") {
             group = "native-bridge"
+            markPackagingPipeline()
             description = "Stages the carrier-bearing executables for the published tree (slot $slot, $channel)."
             dependsOn(engineEmbedded, host, uninstaller)
             into(embeddedBinDir)
@@ -1629,6 +2103,7 @@ fun registerInstallerProducer(
         }
         val assembleFinal = tasks.register<Exec>("${taskName}AssembleFinal$suffix") {
             group = "native-bridge"
+            markPackagingPipeline()
             description = "Assembles the published unsigned input tree from the carrier-bearing engine (slot $slot, $channel)."
             dependsOn(stageEmbedded, frontend)
             inputs.files(config)
@@ -1642,6 +2117,7 @@ fun registerInstallerProducer(
         }
         val embedCarrier = tasks.register<Exec>("${taskName}EmbedCarrier$suffix") {
             group = "native-bridge"
+            markPackagingPipeline()
             description = "Embeds the policy carrier resource into the published engine image (Windows only, slot $slot, $channel)."
             enabled = installerPlatform == "windows"
             dependsOn(assembleFinal)
@@ -1655,6 +2131,7 @@ fun registerInstallerProducer(
         }
         val verifyCarrier = tasks.register<Exec>("${taskName}VerifyCarrier$suffix") {
             group = "native-bridge"
+            markPackagingPipeline()
             description = "Requires the built engine image to contain exactly the assembler's carrier bytes (slot $slot, $channel)."
             dependsOn(if (installerPlatform == "windows") embedCarrier else assembleFinal)
             inputs.files(assembledFinalDir)
@@ -1696,6 +2173,7 @@ fun registerInstallerProducer(
         // NO-SOURCE, which would skip the dSYM generation too.
         val symbols = tasks.register("${taskName}Symbols") {
             group = "native-bridge"
+            markPackagingPipeline()
             description = "Generates and stages the debug symbols (PDBs on Windows, dSYMs on macOS)."
             dependsOn(slotFinishers)
             inputs.files(lastEmbeddedTargetDir!!.map { it.dir("$installerRustTriple/${kind.cargoBinaryDirectory}") })
@@ -1752,6 +2230,7 @@ fun registerInstallerProducer(
         }
         return tasks.register<Exec>(taskName) {
             group = "native-bridge"
+            markPackagingPipeline()
             description = summary
             dependsOn(slotFinishers)
             dependsOn(symbols)
@@ -1785,6 +2264,7 @@ fun registerInstallerProducer(
     }
     return tasks.register<Exec>(taskName) {
         group = "native-bridge"
+        markPackagingPipeline()
         description = summary
         dependsOn(slotFinishers)
         inputs.files(config)
@@ -1833,6 +2313,7 @@ val bridgeInstallerSupplyChain = tasks.register<Exec>("bridgeInstallerSupplyChai
     // Prerequisites (CI provisions them): npm ci --ignore-scripts --prefix verify; ./gradlew installCargoDeny.
     workingDir(layout.projectDirectory)
     commandLine("bash", "verify/verify-supply-chain.sh")
+    outputs.doNotCacheIf("runs the supply-chain policy") { true }
 }
 // ---- OTP-25 installer producers (end) ----
 
@@ -1867,6 +2348,7 @@ tasks.register("protocolCheck") {
         androidBuild.task(":app:protocolJvmTest"),
         sessionLoopbackCheck,
     )
+    outputs.doNotCacheIf("aggregates verification tasks") { true }
 }
 
 tasks.named<Delete>("clean") {

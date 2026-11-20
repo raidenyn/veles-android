@@ -212,7 +212,7 @@ def check_gradle(gradle, clean_script):
         if ('"cargo"' in task and '"build"' in task) or "\"swift\"" in task and "--scratch-path" in task and "--show-bin-path" not in task:
             if "delete(" not in task:
                 errors.append("a build task does not delete its target directory first (stale cache reuse)")
-    if code.count("--remap-path-prefix") < 2 or "cargoRegistryRemapRustFlags()" not in code:
+    if code.count("--remap-path-prefix") < 2 or "RootBuildHelpers.registryRemapRustFlags(" not in code:
         errors.append("RUSTFLAGS do not remap both the checkout and the cargo registry paths")
     if "projectDirectory" not in code or "/veles-src" not in code:
         errors.append("the checkout path is not remapped to a fixed prefix")
@@ -390,15 +390,15 @@ def check_gradle(gradle, clean_script):
 
     # 7b. Build-tool identity (F8): observed, checked against the lock before a production build, bound into
     # provenance, and the macOS SDK / deployment target selected explicitly from the lock.
-    observe = [call for call in command_lines(code) if "tool_observation" in call or "installerToolsScript" in call]
-    if not any('"observe"' in call and '"--target"' in call and '"--output"' in call for call in observe):
+    tool_calls = command_lines(code)
+    if not any('"observe"' in call and '"--target"' in call and '"--output"' in call for call in tool_calls):
         errors.append("no task observes the native tool identities (tool_observation.py observe)")
-    if not any('"check"' in call and '"--observed"' in call and '"--target"' in call for call in observe):
+    if not any('"check"' in call and '"--observed"' in call and '"--target"' in call for call in tool_calls):
         errors.append("no task checks the observed tools against tools.lock.json (tool_observation.py check)")
     # N6: the observation must run in the pinned crate context, so `rustup`/`rustc`
     # resolve the installer's rust-toolchain.toml exactly as the Cargo build does.
     observation_block = object_block(code, '"bridgeInstallerToolObservation"')
-    if observation_block is None or "workingDir(installerDir)" not in observation_block:
+    if observation_block is None or "workingDirectory.set(installerDir)" not in observation_block:
         errors.append("the native tool observation does not run from the pinned installer crate context")
     if not re.search(r'dependsOn\(\s*if \(channel == "production"\) bridgeInstallerToolCheck else bridgeInstallerToolObservation\s*\)', code):
         errors.append("the production producer does not depend on the tool check (the fixture only on the observation)")
@@ -1171,17 +1171,17 @@ class GradleGraph(unittest.TestCase):
         self.assertTrue(any("bind the tool observation" in e for e in found), found)
 
     def test_the_tool_tasks_must_exist(self):
-        found = self.violations(self.mutate('"observe", "--target"', '"noop", "--target"'))
+        found = self.violations(self.mutate('"observe"', '"noop"'))
         self.assertTrue(any("observes the native tool identities" in e for e in found), found)
-        found = self.violations(self.mutate('"check", "--target"', '"noop", "--target"'))
+        found = self.violations(self.mutate('"check"', '"noop"'))
         self.assertTrue(any("checks the observed tools" in e for e in found), found)
 
     def test_the_tool_observation_runs_in_the_pinned_crate_context(self):
         observation = object_block(self.gradle, '"bridgeInstallerToolObservation"')
         self.assertIsNotNone(observation)
-        self.assertIn("workingDir(installerDir)", observation)
+        self.assertIn("workingDirectory.set(installerDir)", observation)
         mutated = self.gradle.replace(
-            observation, observation.replace("workingDir(installerDir)\n", "", 1), 1
+            observation, observation.replace("workingDirectory.set(installerDir)\n", "", 1), 1
         )
         found = self.violations(mutated)
         self.assertTrue(any("pinned installer crate context" in e for e in found), found)
@@ -1201,7 +1201,7 @@ class GradleGraph(unittest.TestCase):
         self.assertTrue(any("production" in e for e in found), found)
 
     def test_a_linux_host_must_be_refused(self):
-        found = self.violations(self.mutate("Windows or macOS runner", "any runner"))
+        found = self.violations(self.mutate("Windows or macOS runner", "any runner", -1))
         self.assertTrue(any("Linux" in e for e in found), found)
 
     def test_signing_and_publication_are_not_reachable_from_the_graph(self):
