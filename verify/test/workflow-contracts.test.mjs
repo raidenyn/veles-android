@@ -2123,7 +2123,10 @@ function assertBoundarySuperset(source) {
   for (const term of installer.signing.split('|')) {
     assert.match(term, SIGNING_PATTERN, `the tooling signing check must reject the installer term "${term}"`);
   }
-  for (const line of ['environment: android-release', 'environment: release-publish']) {
+  const environmentGroup = installer.environment.match(/\(\?:([^)]*)\)/);
+  assert.ok(environmentGroup, 'the installer environment pattern must name its environments in a group');
+  for (const environment of environmentGroup[1].split('|')) {
+    const line = `environment: ${environment}`;
     assert.match(line, new RegExp(installer.environment.replace('(?m)', ''), 'm'), `the installer environment must accept ${line}`);
     assert.match(line, RELEASE_ENVIRONMENT_PATTERN, `the tooling environment check must accept ${line}`);
   }
@@ -2135,7 +2138,7 @@ test('only the protected release workflow may reference signing credentials or s
     if (name === PUBLISH_FILE) continue;
     const executable = executableYaml(await workflow(name));
     assert.doesNotMatch(executable, SIGNING_PATTERN, `${name} must not reference signing credentials or tools`);
-    assert.doesNotMatch(executable, RELEASE_ENVIRONMENT_PATTERN, `${name} must not enter a release environment`);
+    assert.doesNotMatch(executable, RELEASE_ENVIRONMENT_PATTERN, `${name} must not enter any environment`);
   }
 });
 
@@ -2150,16 +2153,21 @@ test('the all-workflow release boundary covers the installer boundary', async ()
   assert.notEqual(environmentIndex, -1, 'the installer environment literal must be findable');
   const removedLiteral = [...lines.slice(0, environmentIndex), ...lines.slice(environmentIndex + 1)].join('\n');
   const addedLiteral = [...lines.slice(0, environmentIndex + 1), '        if re.search(r"extra", other):', ...lines.slice(environmentIndex + 1)].join('\n');
+  const environmentLine = lines[environmentIndex];
+  const changedEnvironment = environmentLine.replace('release-publish)', 'release-publish|mac-release)');
+  assert.notEqual(changedEnvironment, environmentLine, 'the environment mutation must change the installer environment literal');
+  const extraEnvironment = [...lines.slice(0, environmentIndex), changedEnvironment, ...lines.slice(environmentIndex + 1)].join('\n');
   const mutations = {
-    'an added signing term': source.replace('KEYSTORE_|apksigner', 'KEYSTORE_|apksigner|VELES_NEW_'),
-    'a changed publishing term': source.replace('git push --atomic', 'git push --force'),
-    'a renamed anchor': source.replace('    for name, source in workflows.items():', '    for name, source in workflow_items():'),
-    'a removed literal': removedLiteral,
-    'an added literal': addedLiteral,
+    'an added signing term': { source: source.replace('KEYSTORE_|apksigner', 'KEYSTORE_|apksigner|VELES_NEW_'), error: /must reject the installer term/ },
+    'a changed publishing term': { source: source.replace('git push --atomic', 'git push --force'), error: /publishing pattern/ },
+    'a renamed anchor': { source: source.replace('    for name, source in workflows.items():', '    for name, source in workflow_items():'), error: /anchor is missing/ },
+    'a removed literal': { source: removedLiteral, error: /exactly the signing, environment and publishing/ },
+    'an added literal': { source: addedLiteral, error: /exactly the signing, environment and publishing/ },
+    'an added release environment': { source: extraEnvironment, error: /must accept environment: mac-release/ },
   };
-  for (const [label, mutated] of Object.entries(mutations)) {
-    assert.notEqual(mutated, source, `mutation "${label}" must change the installer suite`);
-    assert.throws(() => assertBoundarySuperset(mutated), `the superset check must reject ${label}`);
+  for (const [label, mutation] of Object.entries(mutations)) {
+    assert.notEqual(mutation.source, source, `mutation "${label}" must change the installer suite`);
+    assert.throws(() => assertBoundarySuperset(mutation.source), mutation.error, `the superset check must reject ${label}`);
   }
 });
 
@@ -3757,7 +3765,7 @@ function assertDocsCheckWorkflow(source, name = 'check-docs.yml') {
   for (const run of runs) {
     assert.ok(DOCS_RUN_ALLOWLIST.some((prefix) => run.startsWith(prefix)), `${name} run command "${run}" must start with python3 docs/checks/ or python3 -m unittest`);
   }
-  assert.doesNotMatch(source, /^\s*environment:/m, `${name} must not enter a release environment`);
+  assert.doesNotMatch(source, /^\s*environment:/m, `${name} must not enter any environment`);
   assert.doesNotMatch(executable, /\bgit push\b/, `${name} must not push`);
   assert.equal(runs.length, 4, `${name} must run exactly the offline guard, the agent-file check, the site guard and their tests`);
   const agentFiles = jobs['agent-files'];
@@ -3775,7 +3783,7 @@ function assertDocsCheckWorkflow(source, name = 'check-docs.yml') {
   }
 }
 
-test('docs workflow runs only the agent-file check, the site guard and their tests from the allow-list', async () => {
+test('docs workflow runs only the offline guard, the agent-file check, the site guard and their tests from the allow-list', async () => {
   const source = await workflow('check-docs.yml');
   assertDocsCheckWorkflow(source);
 
@@ -3829,7 +3837,7 @@ test('docs workflow runs only the agent-file check, the site guard and their tes
   assert.throws(() => assertDocsCheckWorkflow(offlineGuardArgs), /offline guard from the repository root/);
   const environment = source.replace('  agent-files:\n', '  agent-files:\n    environment: docs\n');
   assert.notEqual(environment, source, 'the environment mutation must change check-docs.yml');
-  assert.throws(() => assertDocsCheckWorkflow(environment), /must not enter a release environment/);
+  assert.throws(() => assertDocsCheckWorkflow(environment), /must not enter any environment/);
   const pushed = source.replace('python3 docs/checks/check_site.py --root .', 'python3 docs/checks/check_site.py --root . ; git push');
   assert.notEqual(pushed, source, 'the git-push mutation must change check-docs.yml');
   assert.throws(() => assertDocsCheckWorkflow(pushed), /must not push/);
