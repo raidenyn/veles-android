@@ -65,7 +65,7 @@ node's `AGENTS.md`).
 ## 10. Phase A landing (design Migration Plan step 1)
 
 - [x] 10.1 `.github/components.json`: `global-overrides["scripts/verify-commands.json"] = ["tooling", "docs"]`; CODEOWNERS entries for the new files; a test in `scripts/tests/test_components.py` that a change to only that file selects exactly `tooling` and `docs`; `python3 -I scripts/components.py check`
-- [ ] 10.2 Phase A is green: `./gradlew scriptsTest`, `python3 docs/checks/check_agent_files.py --root .`, `python3 -m unittest discover -s docs/checks -p 'test_*.py'`, `node --test verify/test/*.test.mjs`, the checks of every node 2.x touched, and `python3 -I scripts/verify.py` and `--branch` on this branch; the pre-push rule and `.claude/settings.json` are unchanged
+- [x] 10.2 Phase A is green: `./gradlew scriptsTest`, `python3 docs/checks/check_agent_files.py --root .`, `python3 -m unittest discover -s docs/checks -p 'test_*.py'`, `node --test verify/test/*.test.mjs`, the checks of every node 2.x touched, and `python3 -I scripts/verify.py` and `--branch` on this branch; the pre-push rule and `.claude/settings.json` are unchanged
 
 ## 11. Phase B: measure (design Migration Plan step 2)
 
