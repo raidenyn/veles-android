@@ -594,3 +594,46 @@ the Phase A landing.
 Phase A result: the task gate (`python3 -I scripts/verify.py`) exits 0 in 4 m 39 s and the branch gate
 (`--branch`) exits 0 in 10 m 3 s, with every node `PASS` and only the expected `NOT RUN`s (the device
 test, the macOS/Windows producers, and `protocol: NOT RUN (nothing planned: …)` in the task gate).
+
+## Task-gate timings (task 11.2)
+
+Phase B measured the task gate on four scratch commits on `V` = `ab479c90` (`chore(scripts): keep
+failure details before summary notes`). Each scenario created a fresh worktree at `V`, provisioned it
+as the node `AGENTS.md` files say (`npm ci` in `web-extension/`, `npm ci --ignore-scripts --prefix
+verify`, plus `./gradlew installCargoDeny` when the `supply-chain` node was selected), and committed
+exactly one changed path. The timed command was:
+
+```bash
+python3 -I scripts/verify.py --base ab479c900e3c7ce6fdf22baf4b43f0a2c2623146
+```
+
+- **Cold** — the first run in that worktree after `./gradlew --stop` and `(cd android && ./gradlew --stop)`,
+  with no verifier state, no Gradle project caches (`build/`, `.gradle`) and no gate output beyond the
+  provisioned `node_modules` and `build/verify-tools/cargo-deny` setup tool.
+- **Warm** — the same command again in the same worktree, without stopping daemons.
+- Every run exited 0; the totals and step times are `elapsed_s` from `build/verify/last-run.json`.
+  Each worktree was removed afterwards (`git worktree remove --force`), so no scratch commit remains.
+
+Machine: Linux dev container; Zulu JDK 21.0.12.1 (`java_home`), Android SDK with NDK 29.0.14206865,
+Rust 1.98.0, Node 26.8.1 / npm 11.19.0 (the supply-chain pin), Python 3.14.4, and pinned
+`cargo-deny` 0.20.2 / `cargo-cyclonedx` 0.5.9 in `path_prepend`.
+
+| Scenario | Changed path | Nodes (task gate) | Cold total s | Warm total s | Slowest step (cold / warm) |
+| --- | --- | --- | --- | --- | --- |
+| extension-only | `web-extension/src/background.ts` | `web-extension`, `supply-chain` (`protocol` NOT RUN) | 560.24 | 87.67 | `rust.wasm` 285.28 / `supply-chain.supply-chain` 52.30 |
+| rust | `rust/veles-crypto/src/lib.rs` | `android`, `rust`, `web-extension` (`protocol` NOT RUN) | 1193.37 | 91.64 | `android.release-hook-guard` 393.34 / `rust.test` 12.27 |
+| Android | `android/app/src/main/java/me/nagaev/veles/otp/handlers/RegexMessageHandler.kt` | `android` (incl. its related `RegexMessageHandlerTest`; `protocol` NOT RUN) | 935.59 | 66.03 | `android.release-hook-guard` 510.41 / `android.release-hook-guard` 18.31 |
+| docs | `docs/ci.md` | `docs` | 1.41 | 1.40 | `docs.offline-check` 0.51 / 0.41 |
+
+The largest cold total is 1,193.37 s (rust), below 1,695 s (the 1,740-s budget less the 45-s reserve):
+**budget stands**.
+
+Two environment facts belong with these numbers. The gate's `supply-chain` step reads
+`build/verify-tools/cargo-deny/bin/cargo-deny` directly, so `./gradlew installCargoDeny` is
+provisioning in every worktree that selects it (CI and `verify/AGENTS.md` treat it as setup); the
+`rustWasm` and `verifyCargoCyclonedx` tool installs are *not* provisioned — Gradle runs them on demand,
+which is why the cold totals carry their build cost and the warm ones do not. And a detached-HEAD
+linked worktree cannot configure Gradle at all: `AndroidGitVersionExtension.scan` throws
+`org.eclipse.jgit.errors.NoWorkTreeException: Bare Repository has neither a working tree, nor an
+index`, so each worktree was created detached as specified and then put on a throwaway local branch at
+`V` before the timed run (the branch was deleted with the worktree).
