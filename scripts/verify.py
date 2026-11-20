@@ -49,6 +49,12 @@ GRADLE_HOME_PREFIX = "{gradle_user_home}/"
 RESOLVER_SECONDS = 60
 # The last 45 seconds of a run are reserved for termination, settlement and the report (D9).
 DEADLINE_RESERVE_SECONDS = 45
+# The table configures no per-step time limit, so only the run deadline cuts a step short (D9).
+STEP_LIMIT_SECONDS = float("inf")
+# Contention and a deadline that passed between two steps (D9/D10).
+CONTENTION = "verification already running"
+ORPHAN_CONTENTION = "a previous verification's process group could not be stopped"
+NOT_REACHED_REASON = "the run deadline was reached before every step ran"
 # Running (D9): the poll interval, the TERM-to-KILL grace, and the tail the report shows.
 POLL_SECONDS = 0.1
 TERM_GRACE_SECONDS = 10.0
@@ -732,6 +738,26 @@ class NodeResult:
     failures: List[Tuple[str, Outcome, str]] = field(default_factory=list)
 
 
+@dataclass
+class RunOutcome:
+    """One gate's result (design D1/D4/D9/D10), enough for the CLI and the hook to settle.
+
+    `errors` is what the CLI prints before the node lines and what makes it exit 2 (a selection
+    error, a contended run, an unreadable config). `problems` is the report-ordered repeat
+    identity of every blocking result: `(node, step id, outcome kind)`, or the selection
+    identity. `incomplete` is True when the deadline left steps not reached; a blocking problem
+    still wins over it (design D12).
+    """
+
+    results: Dict[str, NodeResult] = field(default_factory=dict)
+    errors: List[str] = field(default_factory=list)
+    selection: Optional[Selection] = None
+    plan: Optional[Plan] = None
+    contended: bool = False
+    problems: List[tuple] = field(default_factory=list)
+    incomplete: bool = False
+
+
 def _utf8_len(text):
     return len(text.encode("utf-8"))
 
@@ -875,17 +901,19 @@ def prune_runs(ctx):
     return removed
 
 
-def write_last_run(ctx, results, steps):
+def write_last_run(ctx, results, steps, elapsed_s=None):
     """Write `build/verify/last-run.json` (design D10) and keep the newest ten run directories.
 
-    Version 1 holds the run id and directory, every node's status with its notes, and one record
-    per step with its own id, status, `elapsed_s`, re-run command and log path.
+    Version 1 holds the run id and directory, every node's status with its notes, one record per
+    step with its own id, status, `elapsed_s`, re-run command and log path, and the time the whole
+    invocation took (`elapsed_s`, measured by `run_gate`).
     """
     document = {
         "version": LAST_RUN_VERSION,
         "run": os.path.basename(os.path.normpath(ctx.run_dir)),
         "run_dir": _relative(ctx, os.path.abspath(ctx.run_dir))
                    or os.path.abspath(ctx.run_dir),
+        "elapsed_s": None if elapsed_s is None else float(elapsed_s),
         "nodes": {},
         "steps": [],
     }
@@ -908,6 +936,287 @@ def write_last_run(ctx, results, steps):
     _write_json(os.path.join(_verify_dir(ctx), "last-run.json"), document)
     prune_runs(ctx)
 
+
+def _step_rerun(step, argv):
+    """The exact re-run command of design D10: `cd <cwd> && <argv>`, every item quoted."""
+    return "cd %s && %s" % (shlex.quote(step.cwd or "."), _argv_text(list(argv)))
+
+
+def _not_run_reason(step_id, outcome):
+    message = outcome.error or outcome.fix or "the requirement is missing"
+    return "%s: %s" % (step_id, message.splitlines()[0].strip())
+
+
+def _output_requirements(table, producer_id):
+    """The generated requirements a producer must have created after it succeeds (D5)."""
+    return [(req_id, requirement) for req_id, requirement in table.requirements.items()
+            if requirement.get("kind") == "generated"
+            and requirement.get("producer") == producer_id]
+
+
+def _consumer_blocked(table, step, ctx, producer_outcomes):
+    """The `not_run` a consumer earns when a producer failed or its output is absent (D4/D5)."""
+    for req_id in step.requires:
+        requirement = table.requirements[req_id]
+        if requirement.get("kind") != "generated":
+            continue
+        producer = requirement.get("producer")
+        previous = producer_outcomes.get(producer)
+        if previous is not None and previous.kind != "ok":
+            detail = (previous.error or previous.kind or "it did not run").splitlines()[0]
+            return Outcome(
+                "not_run", fix=requirement["fix"],
+                error="the producer %s did not succeed (%s)\nfix: %s"
+                      % (producer, detail, requirement["fix"]))
+        if not ctx.fs.isdir(_abs_path(ctx, requirement["path"])):
+            return Outcome(
+                "not_run", fix=requirement["fix"],
+                error="generated output %s is missing\nfix: %s"
+                      % (requirement["path"], requirement["fix"]))
+    return None
+
+
+def _probe_step_requirements(table, step, ctx, env):
+    """Probe a step's tool and path requirements; generated ones follow their producer (D5/D7)."""
+    for req_id in step.requires:
+        requirement = table.requirements[req_id]
+        if requirement.get("kind") == "generated":
+            continue
+        outcome, _resolved = probe(req_id, requirement, ctx, env, ctx.runner.run)
+        if outcome.kind != "ok":
+            return outcome
+    return None
+
+
+def _run_step(step, argv, ctx, env, log_path):
+    """One command or producer through the runner, classified and with its log path (D9)."""
+    outcome = ctx.runner.run(list(argv), _abs_path(ctx, step.cwd), dict(env), log_path,
+                             step_cutoff(ctx, STEP_LIMIT_SECONDS), False)
+    outcome = classify_env_failure(step, outcome, log_path)
+    if outcome.log is None:
+        outcome = replace(outcome, log=log_path)
+    return outcome
+
+
+def _producer_outcome(table, step, argv, ctx, env, log_path):
+    """A producer is a step like any other; after success its whole output must exist (D5)."""
+    outcome = _run_step(step, argv, ctx, env, log_path)
+    if outcome.kind != "ok":
+        return outcome
+    for _req_id, requirement in _output_requirements(table, step.id):
+        if not ctx.fs.isdir(_abs_path(ctx, requirement["path"])):
+            return Outcome(
+                "not_run", log=log_path, fix=requirement["fix"],
+                error="the producer %s did not create %s\nfix: %s"
+                      % (step.id, requirement["path"], requirement["fix"]))
+    return outcome
+
+
+def _record_step(steps, step, argv, outcome):
+    steps.append({
+        "id": step.id,
+        "status": outcome.kind,
+        "elapsed_s": float(outcome.elapsed_s or 0.0),
+        "rerun": _step_rerun(step, argv),
+        "log": outcome.log,
+    })
+
+
+def _finish_node(result, entry, failed, unexpected, not_reached, ran):
+    """D10's node status precedence: FAIL over an unexpected NOT RUN, else the planned-skip text."""
+    if failed:
+        result.status = "FAIL"
+        return result
+    if unexpected:
+        result.status = "NOT RUN"
+        for step_id, outcome, _rerun in result.failures:
+            if outcome.kind == "not_run":
+                result.reason = _not_run_reason(step_id, outcome)
+                break
+        return result
+    if not_reached:
+        result.status = "NOT RUN"
+        result.reason = NOT_REACHED_REASON
+        return result
+    if not ran:
+        result.status = "NOT RUN"
+        result.reason = "nothing planned: %s" % (
+            (entry.none if entry is not None else None)
+            or "no check and no related test for the changed files")
+        return result
+    result.status = "PASS"
+    return result
+
+
+def _effective_environment(ctx):
+    """The inherited environment with the machine config applied (design D8)."""
+    config = Config(ctx.common_dir, repo=ctx.repo, fs=ctx.fs, wait=ctx.wait.sleep).load()
+    return effective_env(ctx.env, config)
+
+
+def _apply_sdk_warning(ctx, env, planned):
+    """D8: the `local.properties` mismatch is a note under the `android` node when it is planned."""
+    node_plan = planned.nodes.get("android")
+    if node_plan is None:
+        return
+    warning = sdk_dir_warning(ctx, env)
+    if warning and warning not in node_plan.notes:
+        node_plan.notes.append(warning)
+
+
+def run_gate(gate, base, ctx, table, cmap):
+    """One gate end to end, in the fixed order of design D1/D4/D5/D9/D10.
+
+    Take the run lock (tried once; held is contention) -> `cleanup_orphans` -> `select` -> `plan`
+    (resolvers) -> per node in table order, per step: probe, run, classify, stopping the node at
+    a command `FAIL` -> `write_last_run` -> release the lock. Once `deadline - 45` has passed no
+    step, probe or resolver starts: it and every later step are `not_reached`, which is reported
+    and makes the run incomplete but is not a problem.
+    """
+    started = ctx.clock.now()
+    outcome = RunOutcome()
+    lock = RunLock(os.path.join(_verify_dir(ctx), "lock"))
+    if not lock.try_acquire():
+        outcome.contended = True
+        outcome.errors.append(CONTENTION)
+        return outcome
+    try:
+        run_id = os.path.basename(os.path.normpath(ctx.run_dir))
+        if not cleanup_orphans(ctx, run_id):
+            outcome.contended = True
+            outcome.errors.append(ORPHAN_CONTENTION)
+            return outcome
+        try:
+            env = _effective_environment(ctx)
+        except ConfigError as error:
+            outcome.errors.append("cannot read the machine config: %s" % error)
+            return outcome
+        try:
+            selection_result = select(ctx.git, cmap, base)
+        except SelectionError as error:
+            outcome.errors.append(str(error))
+            if error.fix:
+                outcome.errors.append("fix: %s" % error.fix)
+            outcome.problems.append(error.identity)
+            return outcome
+        outcome.selection = selection_result
+        # The list-only resolvers read `ctx.env`; give them the effective environment too (D8),
+        # then leave the injected context as the caller passed it.
+        inherited = ctx.env
+        ctx.env = env
+        try:
+            planned = plan(table, selection_result, gate, ctx, ctx.runner.run)
+        finally:
+            ctx.env = inherited
+        outcome.plan = planned
+        _apply_sdk_warning(ctx, env, planned)
+        if not selection_result.files or selection_result.only_unowned:
+            # Zero-work outcomes print their own line; no node is ever a pass (design D10).
+            write_last_run(ctx, {}, [], elapsed_s=ctx.clock.now() - started)
+            return outcome
+
+        step_records = []
+        number = {}
+        for node, entry in table.nodes.items():
+            node_plan = planned.nodes.get(node)
+            if node_plan is None:
+                continue
+            result = NodeResult(status="PASS")
+            result.notes.extend(node_plan.notes)
+            ran = failed = unexpected = not_reached = stopped = False
+            producer_outcomes = {}
+            step_by_id = dict((command.id, command) for command in entry.commands)
+
+            # A resolver that did not complete is that test's result; the node keeps its other
+            # steps (design D4). One the reserve stopped before it started is `not_reached`.
+            for step_id, resolver_outcome in node_plan.unresolved:
+                step = step_by_id.get(step_id)
+                rerun = _step_rerun(step, step.run) if step is not None else None
+                if _past_cutoff(ctx) or resolver_outcome.error == TARGET_RESOLUTION_TIMEOUT:
+                    not_reached = True
+                    step_records.append({
+                        "id": step_id, "status": "not_reached", "elapsed_s": 0.0,
+                        "rerun": rerun, "log": None})
+                    continue
+                if resolver_outcome.kind == "timeout":
+                    failed = True
+                else:
+                    unexpected = True
+                result.failures.append((step_id, resolver_outcome, rerun))
+                step_records.append({
+                    "id": step_id,
+                    "status": resolver_outcome.kind,
+                    "elapsed_s": float(resolver_outcome.elapsed_s or 0.0),
+                    "rerun": rerun,
+                    "log": resolver_outcome.log,
+                })
+
+            for planned_step in node_plan.steps:
+                step = planned_step.step
+                count = number.get(step.id, 0) + 1
+                number[step.id] = count
+                log_path = os.path.join(ctx.run_dir, "%s.%d.log" % (step.id, count))
+                rerun = _step_rerun(step, planned_step.argv)
+                if _past_cutoff(ctx):
+                    # The reserve wins over a previous FAIL: the step was not reached, not
+                    # skipped by the node's own failure (design D9).
+                    not_reached = True
+                    step_records.append({
+                        "id": step.id, "status": "not_reached", "elapsed_s": 0.0,
+                        "rerun": rerun, "log": None})
+                    continue
+                if stopped:
+                    step_records.append({
+                        "id": step.id, "status": "skipped", "elapsed_s": 0.0,
+                        "rerun": rerun, "log": None})
+                    continue
+
+                blocked = _consumer_blocked(table, step, ctx, producer_outcomes)
+                if blocked is not None:
+                    step_outcome = blocked
+                else:
+                    probe_outcome = _probe_step_requirements(table, step, ctx, env)
+                    if probe_outcome is not None:
+                        step_outcome = probe_outcome
+                    elif step.kind == "producer":
+                        step_outcome = _producer_outcome(
+                            table, step, planned_step.argv, ctx, env, log_path)
+                    else:
+                        step_outcome = _run_step(step, planned_step.argv, ctx, env, log_path)
+
+                if step.kind == "producer":
+                    producer_outcomes[step.id] = step_outcome
+                if step_outcome.kind in ("fail", "timeout"):
+                    failed = True
+                    result.failures.append((step.id, step_outcome, rerun))
+                    if step.kind != "producer":
+                        # A command failure stops this node; a producer's failure only stops its
+                        # consumers (design D4).
+                        stopped = True
+                elif step_outcome.kind == "not_run":
+                    unexpected = True
+                    result.failures.append((step.id, step_outcome, rerun))
+                elif step_outcome.kind == "not_reached":
+                    # A probe used the last of the reserve before the step started: the runner
+                    # refused it, and this is the same not-reached report as the check above.
+                    not_reached = True
+                else:
+                    ran = True
+                _record_step(step_records, step, planned_step.argv, step_outcome)
+
+            outcome.results[node] = _finish_node(
+                result, entry, failed, unexpected, not_reached, ran)
+            if not_reached:
+                outcome.incomplete = True
+
+        for node in sorted(outcome.results):
+            for step_id, step_outcome, _rerun in outcome.results[node].failures:
+                outcome.problems.append((node, step_id, step_outcome.kind))
+        write_last_run(ctx, outcome.results, step_records,
+                       elapsed_s=ctx.clock.now() - started)
+        return outcome
+    finally:
+        lock.release()
 
 
 # --- the table (design D2) -------------------------------------------------------------------
@@ -1381,7 +1690,8 @@ def _resolve_base(git: Git, base: Optional[str]) -> str:
     """The base commit: `--base` resolved to a commit, else `origin/master`'s merge base."""
     label = base or "origin/master"
     try:
-        if base:
+        if base is not None:
+            # `--base ""` is a base selection error, never a silent fallback to origin/master.
             resolved = git.commit(base).strip()
         else:
             resolved = git.merge_base("origin/master").strip()
@@ -1939,26 +2249,52 @@ def render_plan(sel, result):
 
 
 def _list_mode(args, ctx, cmap, table):
-    """D1: selection and planning only; no probe, producer or command runs."""
+    """D1: selection and planning only; resolvers run, nothing else does.
+
+    It takes the same run lock (tried once; held is exit 2) and runs `cleanup_orphans` before any
+    resolver, so every runner call and every `running.json` write happens under the lock.
+    """
     gate = "branch" if args.branch else "task"
-    try:
-        selection_result = select(ctx.git, cmap, args.base)
-    except SelectionError as error:
-        ctx.log("verify: %s" % error)
-        if error.fix:
-            ctx.log("verify: fix: %s" % error.fix)
+    lock = RunLock(os.path.join(_verify_dir(ctx), "lock"))
+    if not lock.try_acquire():
+        ctx.log("verify: %s" % CONTENTION)
         return 2
-    if not selection_result.files:
-        ctx.log("verify: nothing changed against %s" % selection_result.base)
+    try:
+        run_id = os.path.basename(os.path.normpath(ctx.run_dir))
+        if not cleanup_orphans(ctx, run_id):
+            ctx.log("verify: %s" % ORPHAN_CONTENTION)
+            return 2
+        try:
+            env = _effective_environment(ctx)
+        except ConfigError as error:
+            ctx.log("verify: cannot read the machine config: %s" % error)
+            return 2
+        try:
+            selection_result = select(ctx.git, cmap, args.base)
+        except SelectionError as error:
+            ctx.log("verify: %s" % error)
+            if error.fix:
+                ctx.log("verify: fix: %s" % error.fix)
+            return 2
+        if not selection_result.files:
+            ctx.log("verify: nothing changed against %s" % selection_result.base)
+            return 0
+        if selection_result.only_unowned:
+            ctx.log("verify: only unowned paths changed (%s)"
+                    % ", ".join(selection_result.files))
+            return 0
+        inherited = ctx.env
+        ctx.env = env
+        try:
+            result = plan(table, selection_result, gate, ctx, ctx.runner.run)
+        finally:
+            ctx.env = inherited
+        _apply_sdk_warning(ctx, env, result)
+        for line in render_plan(selection_result, result):
+            ctx.log(line)
         return 0
-    if selection_result.only_unowned:
-        ctx.log("verify: only unowned paths changed (%s)"
-                % ", ".join(selection_result.files))
-        return 0
-    result = plan(table, selection_result, gate, ctx, ctx.runner.run)
-    for line in render_plan(selection_result, result):
-        ctx.log(line)
-    return 0
+    finally:
+        lock.release()
 
 
 # --- requirements, probes and the machine config (design D7, D8 and D2) ---------------------
@@ -2012,9 +2348,10 @@ class Config:
         """The saved keys, or `{}` without the file; a malformed file is a `ConfigError`."""
         try:
             text = self.fs.read_text(self.path)
-        except FileNotFoundError:
+        except (FileNotFoundError, KeyError):
+            # A fake filesystem reports an absent file as KeyError; both mean "no file yet".
             return {}
-        except (OSError, KeyError) as error:
+        except OSError as error:
             raise ConfigError("cannot read %s: %s" % (self.path, error))
         try:
             data = json.loads(text)
@@ -2941,7 +3278,7 @@ def _mode_name(args):
 
 
 def _unwired(args, ctx):
-    """Selection, plans, probes, running and the hook land in Tasks 4-8 and 13."""
+    """The Claude Code Stop hook is Phase B (design D11/D12); the gate modes are wired."""
     ctx.log("verify: the %s mode is not built yet" % _mode_name(args))
     return 2
 
@@ -2969,8 +3306,8 @@ def main(argv, ctx):
     except UsageError as error:
         ctx.log("verify: %s" % error)
         return 2
-    except SystemExit as exit_code:  # --help and --version
-        return exit_code.code if isinstance(exit_code.code, int) else 0
+    except SystemExit as stopped:  # --help and --version
+        return stopped.code if isinstance(stopped.code, int) else 0
     if args.command == "config":
         if args.branch or args.list_only or args.hook:
             ctx.log("verify: config cannot be combined with a gate")
@@ -2995,11 +3332,37 @@ def main(argv, ctx):
         return 2
     if args.list_only:
         return _list_mode(args, ctx, cmap, table)
-    return _unwired(args, ctx)
+    if args.hook:
+        return _unwired(args, ctx)
+    result = run_gate("branch" if args.branch else "task", args.base, ctx, table, cmap)
+    if result.contended:
+        for error in result.errors:
+            ctx.log("verify: %s" % error)
+        return 2
+    if result.errors:
+        for line in render(result.results, result.errors).splitlines():
+            ctx.log(line)
+        return exit_code(result.results, result.errors)
+    selection_result = result.selection
+    if selection_result is not None and not selection_result.files:
+        ctx.log("verify: nothing changed against %s" % selection_result.base)
+        return 0
+    if selection_result is not None and selection_result.only_unowned:
+        ctx.log("verify: only unowned paths changed (%s)"
+                % ", ".join(selection_result.files))
+        return 0
+    for line in render(result.results, result.errors).splitlines():
+        ctx.log(line)
+    return exit_code(result.results, result.errors)
 
 
 def _stderr(line):
     print(line, file=sys.stderr)
+
+
+def run_id(clock):
+    """D10's run id, `<UTC yyyymmddThhmmss>-<pid>` from the injected clock (no wall-clock read)."""
+    return "%s-%d" % (time.strftime("%Y%m%dT%H%M%S", time.gmtime(clock.now())), os.getpid())
 
 
 def real_context(env=None):
@@ -3019,7 +3382,7 @@ def real_context(env=None):
         env=environ,
         repo=repo,
         common_dir=common_dir,
-        run_dir=os.path.join(repo, "build", "verify", "runs", "manual"),
+        run_dir=os.path.join(repo, "build", "verify", "runs", run_id(clock)),
         deadline=None,
         log=_stderr,
     )
