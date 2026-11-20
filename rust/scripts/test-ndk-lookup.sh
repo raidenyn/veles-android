@@ -39,7 +39,8 @@ trap 'rm -rf "$TMP"' EXIT
 scratch="$TMP/repo"
 mkdir -p "$scratch/rust" "$scratch/android"
 cp "$ROOT/rust/build.gradle.kts" "$ROOT/rust/settings.gradle.kts" \
-  "$ROOT/rust/ndk-version" "$ROOT/rust/toolchain-tools.toml" "$scratch/rust/"
+  "$ROOT/rust/ndk-version" "$ROOT/rust/toolchain-tools.toml" \
+  "$ROOT/rust/gradle.properties" "$scratch/rust/"
 
 # A fake NDK only has to be a directory for the lookup; the Pkg.Revision check
 # belongs to the JNI tasks and is not exercised here.

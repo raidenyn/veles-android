@@ -191,8 +191,11 @@ object RustBuildHelpers {
 
     /**
      * Returns why a cacheable Rust task must not use the build cache, or null when it may. The
-     * environment is the one inherited from the Gradle process; the task's own RUSTFLAGS and
-     * CARGO_PROFILE_RELEASE_PANIC override the inherited values, so those two never refuse.
+     * environment is the one inherited from the Gradle process. The task sets its own RUSTFLAGS
+     * and CARGO_PROFILE_RELEASE_PANIC, but an inherited `CARGO_PROFILE_*` (including
+     * CARGO_PROFILE_RELEASE_PANIC), `CARGO_BUILD_*` or `CARGO_TARGET_*` still refuses caching:
+     * the spec's rule is deliberately conservative because other profile and build settings can
+     * change the output.
      */
     fun cacheRefusal(
         env: Map<String, String>,
