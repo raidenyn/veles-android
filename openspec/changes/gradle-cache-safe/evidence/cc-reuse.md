@@ -188,3 +188,75 @@ Ran 65 tests in 9.254s
 
 OK
 ```
+
+## Task 5 — the Android build (design D1, D2, D5)
+
+Every command below ran from `android/` with `--console=plain`, nothing else on the command line, so
+the committed `org.gradle.configuration-cache=true` / `org.gradle.configuration-cache.problems=fail`
+applied. Host: Linux container, Gradle 9.5.0 through the repository wrapper, Zulu 21.0.12
+(`JAVA_HOME=/home/dev/.jdk/zulu21`), `ANDROID_SDK_ROOT=ANDROID_HOME=/home/dev/.android-sdk`,
+`GRADLE_USER_HOME=/tmp/opencode/gradle-home-t5` (another session repeatedly issues `gradlew --stop`;
+the isolated home changes no build input). Logs: `/tmp/opencode/t5logs/`. `grep -c
+'Configuration cache problems'` is `0` in every log quoted here.
+
+| # | Command | Run 1 | Run 2 |
+| --- | --- | --- | --- |
+| 1 | `assembleDebug` | `BUILD SUCCESSFUL in 5m 27s` · `51 actionable tasks: 31 executed, 20 up-to-date` · `Configuration cache entry stored.` | `Reusing configuration cache.` · `BUILD SUCCESSFUL in 10s` · `Configuration cache entry reused.` |
+| 2 | `testDebugUnitTest` | `BUILD SUCCESSFUL in 2m 48s` · `47 actionable tasks: 12 executed, 35 up-to-date` · `Configuration cache entry stored.` | `Reusing configuration cache.` · `BUILD SUCCESSFUL in 6s` · `Configuration cache entry reused.` |
+| 3 | `spotlessCheck detekt lintDebug` | `BUILD SUCCESSFUL in 22s` · `41 actionable tasks: 2 executed, 39 up-to-date` · `Configuration cache entry stored.` | `Reusing configuration cache.` · `BUILD SUCCESSFUL in 7s` · `Configuration cache entry reused.` |
+| 4 | `:app:releaseHookGuard` | `BUILD SUCCESSFUL in 7m 2s` · `61 actionable tasks: 57 executed, 4 up-to-date` · `Configuration cache entry stored.` | `Reusing configuration cache.` · `BUILD SUCCESSFUL in 7s` · `Configuration cache entry reused.` |
+| 5 | `rustNdkVersion` | `29.0.14206865` · `BUILD SUCCESSFUL in 4s` · `Configuration cache entry stored.` | `Reusing configuration cache.` · `29.0.14206865` · `BUILD SUCCESSFUL in 2s` · `Configuration cache entry reused.` |
+| 6 | `:app:protocolJvmTest` | `BUILD SUCCESSFUL in 13s` · `47 actionable tasks: 3 executed, 44 up-to-date` · `Configuration cache entry stored.` | `Reusing configuration cache.` · `BUILD SUCCESSFUL in 2s` · `Configuration cache entry reused.` |
+
+Run 1 of gate 3 was itself a store after the last script edit:
+
+```text
+Calculating task graph as configuration cache cannot be reused because file 'build.gradle.kts' has changed.
+...
+BUILD SUCCESSFUL in 22s
+41 actionable tasks: 2 executed, 39 up-to-date
+Configuration cache entry stored.
+```
+
+The second-run headers are literal, one line each, in all six logs:
+
+```text
+Reusing configuration cache.
+```
+
+No log contains `Configuration cache problems found`, `problems were found` or `discarded with`; with
+`org.gradle.configuration-cache.problems=fail` a single problem would have failed the build. Gate 4
+executed `:app:releaseHookGuard` (it reads the minified release APK; it declares no outputs, so it
+executes on both runs), gate 6 executed `:app:protocolJvmTest`, gate 3 executed `:app:detekt`,
+`:app:spotlessCheck` and `:app:lintDebug`, and gates 1, 2 and 5 executed their own tasks.
+
+### Device run — `connectedDebugAndroidTest`
+
+One attached device, `ANDROID_SERIAL=864a3db0` (OnePlus `NE2215`, API 35):
+
+```text
+$ cd android && ./gradlew --console=plain \
+    --init-script config/android_keys/fixture-signing.gradle connectedDebugAndroidTest
+...
+Starting 77 tests on NE2215 - 15
+...
+NE2215 - 15 Tests 82/77 completed. (5 skipped) (0 failed)
+Finished 82 tests on NE2215 - 15
+...
+BUILD SUCCESSFUL in 10m 49s
+92 actionable tasks: 34 executed, 58 up-to-date
+Configuration cache entry stored.
+```
+
+`grep -c 'Configuration cache problems'` is `0`; the build stored a fresh entry because the init
+script changes the signing configuration, and no problem block was printed. Five tests skipped are the
+device-gated BLE interoperability cases the suite marks `SKIPPED` on this phone; 0 failed.
+
+The first attempt (kept in `/tmp/opencode/t5logs/connectedDebugAndroidTest.log`) failed at install with
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package me.nagaev.veles.debug signatures do not match
+newer version` because `android/config/android_keys/` is git-ignored and was absent in this worktree,
+so the build signed with the default debug key while the installed app carried the repository fixture
+identity. The ignored fixture signing script and keystore were copied from the main
+checkout into `android/config/android_keys/` (still ignored; never committed, never printed). No app
+was uninstalled, no data cleared and no key was generated; the rerun installed over the existing
+package and executed the tests above.

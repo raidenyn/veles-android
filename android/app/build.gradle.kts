@@ -2,8 +2,12 @@ import java.io.File
 import java.util.zip.ZipFile
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
@@ -67,14 +71,16 @@ android {
         includeInBundle = false
     }
 
-    val releaseKeystore = System.getenv("VELES_KEYSTORE_FILE")
+    // Release signing is opt-in through the environment. Reading it through providers keeps the
+    // configuration cache safe, and the signing values never become task inputs.
+    val releaseKeystore = providers.environmentVariable("VELES_KEYSTORE_FILE").orNull
     signingConfigs {
         if (releaseKeystore != null) {
             create("release") {
                 storeFile = file(releaseKeystore)
-                storePassword = System.getenv("VELES_KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("VELES_KEY_ALIAS")
-                keyPassword = System.getenv("VELES_KEY_PASSWORD")
+                storePassword = providers.environmentVariable("VELES_KEYSTORE_PASSWORD").orNull
+                keyAlias = providers.environmentVariable("VELES_KEY_ALIAS").orNull
+                keyPassword = providers.environmentVariable("VELES_KEY_PASSWORD").orNull
             }
         }
     }
@@ -271,24 +277,26 @@ val releaseHookForbidden = listOf(
     "Sharing service is not running; the coordinator is unavailable",
 )
 
-/** First byte offset of [needle] in this array, or -1. */
-fun indexOfBytes(haystack: ByteArray, needle: ByteArray): Int {
-    if (needle.isEmpty() || haystack.size < needle.size) return -1
-    outer@ for (start in 0..(haystack.size - needle.size)) {
-        for (index in needle.indices) {
-            if (haystack[start + index] != needle[index]) continue@outer
-        }
-        return start
-    }
-    return -1
-}
+/**
+ * OTP-09 D5 release guard: the minified release APK must not carry any debug hook class, receiver
+ * or synthetic probe string. Debug-only sources live under app/src/debug and the debug application
+ * handler never enters a release build; this task proves it against the actual R8 output in both
+ * UTF-8 and UTF-16LE.
+ *
+ * The action reads only the task's own properties, never a script-level `val` or `project`, which is
+ * what the configuration cache requires.
+ */
+@DisableCachingByDefault(because = "verification only: inspects the release APK and writes no output")
+abstract class ReleaseHookGuardTask : DefaultTask() {
+    @get:Input
+    abstract val forbiddenStrings: ListProperty<String>
 
-tasks.register("releaseHookGuard") {
-    group = "verification"
-    description = "Fails when the minified release APK contains a debug hook class, receiver or probe string."
-    dependsOn(":app:assembleRelease")
-    doLast {
-        val apkDir = layout.buildDirectory.dir("outputs/apk/release").get().asFile
+    @get:Internal
+    abstract val apkDirectory: DirectoryProperty
+
+    @TaskAction
+    fun guard() {
+        val apkDir = apkDirectory.get().asFile
         val apks = apkDir.listFiles { file -> file.isFile && file.extension == "apk" }
             .orEmpty()
             .sortedBy { it.name }
@@ -296,6 +304,7 @@ tasks.register("releaseHookGuard") {
             "releaseHookGuard: no release APK under ${apkDir.path}; run :app:assembleRelease"
         }
         val encodings = listOf(Charsets.UTF_8, Charsets.UTF_16LE)
+        val forbidden = forbiddenStrings.get()
         apks.forEach { apk ->
             ZipFile(apk).use { zip ->
                 val entries = zip.entries().asSequence()
@@ -312,9 +321,9 @@ tasks.register("releaseHookGuard") {
                 }
                 entries.forEach { entry ->
                     val bytes = zip.getInputStream(entry).use { it.readBytes() }
-                    releaseHookForbidden.forEach { needle ->
+                    forbidden.forEach { needle ->
                         encodings.forEach { charset ->
-                            val offset = indexOfBytes(bytes, needle.toByteArray(charset))
+                            val offset = indexOf(bytes, needle.toByteArray(charset))
                             if (offset >= 0) {
                                 throw GradleException(
                                     "releaseHookGuard: ${apk.name}!${entry.name} contains forbidden " +
@@ -331,6 +340,26 @@ tasks.register("releaseHookGuard") {
                 "receivers or probe strings",
         )
     }
+
+    /** First byte offset of [needle] in this array, or -1. */
+    private fun indexOf(haystack: ByteArray, needle: ByteArray): Int {
+        if (needle.isEmpty() || haystack.size < needle.size) return -1
+        outer@ for (start in 0..(haystack.size - needle.size)) {
+            for (index in needle.indices) {
+                if (haystack[start + index] != needle[index]) continue@outer
+            }
+            return start
+        }
+        return -1
+    }
+}
+
+tasks.register<ReleaseHookGuardTask>("releaseHookGuard") {
+    group = "verification"
+    description = "Fails when the minified release APK contains a debug hook class, receiver or probe string."
+    dependsOn(":app:assembleRelease")
+    forbiddenStrings.set(releaseHookForbidden)
+    apkDirectory.set(layout.buildDirectory.dir("outputs/apk/release"))
 }
 
 tasks.matching { it.name.matches(Regex("merge.*JniLibFolders")) }.configureEach {

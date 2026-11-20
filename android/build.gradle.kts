@@ -2,7 +2,7 @@
 // `apply false` so the app module shares one plugin classpath resolved from
 // android/gradle/libs.versions.toml. Spotless is applied at this root because it owns the Kotlin
 // sources of the whole build, so `cd android && ./gradlew spotlessCheck` checks android/ only.
-import java.io.File
+import com.diffplug.spotless.LineEnding
 
 plugins {
     base
@@ -34,20 +34,28 @@ spotless {
         )
         trimTrailingWhitespace()
         endWithNewline()
+        // The repository `.editorconfig` pins `end_of_line = lf` and no `.gitattributes` entry
+        // overrides it for Kotlin sources. Stating it explicitly also keeps Spotless out of the
+        // default JGit git-attributes lookup, whose `.git` reads otherwise change between runs
+        // and invalidate the configuration cache every time (`lineEndings` defaults to
+        // GIT_ATTRIBUTES).
+        lineEndings = LineEnding.UNIX
     }
 }
 
 // ---- Inputs owned by the repository root ------------------------------------------------
 // The Android build accesses exactly these paths outside android/: the shared protocol fixtures,
 // the pinned NDK version (rust/ndk-version, also read by the Rust build) and the shared hook
-// script. `layout.settingsDirectory` is android/, so one helper keeps the `../` arithmetic in a
-// single place; the two fixture roots are published for app/build.gradle.kts.
-fun repositoryRootFile(path: String): File = layout.settingsDirectory.dir("../$path").asFile
-
-extra["protocolV1Dir"] = repositoryRootFile("protocol/v1")
-extra["protocolConformanceDir"] = repositoryRootFile("protocol/conformance")
-// Single source of truth: rust/ndk-version is read here and by the Rust build (design D5).
-extra["ndkVersion"] = repositoryRootFile("rust/ndk-version").readText().trim()
+// script. `layout.settingsDirectory` is android/, so the two fixture roots are published for
+// app/build.gradle.kts from here; no `File` arithmetic runs through `rootProject` at execution time.
+extra["protocolV1Dir"] = layout.settingsDirectory.dir("../protocol/v1").asFile
+extra["protocolConformanceDir"] = layout.settingsDirectory.dir("../protocol/conformance").asFile
+// Single source of truth: rust/ndk-version is read here and by the Rust build (design D5). AGP
+// needs the value while the build is configured, so this is a configuration-time provider read;
+// Gradle records the file's content as a configuration-cache input.
+extra["ndkVersion"] = providers.fileContents(
+    layout.settingsDirectory.dir("../rust").file("ndk-version"),
+).asText.get().trim()
 
 // CI provisions the NDK from the pinned version: Android's documented entry point forwards to the
 // Rust build, which owns the file.
