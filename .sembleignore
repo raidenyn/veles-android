@@ -1,0 +1,8 @@
+# repo-search (Semble) index rules, gitignore syntax.
+# Vendored code and evidence dumps: noise and slow warm-ups.
+native-bridge/host/vendor/
+native-bridge/feasibility/evidence/
+# Semble skips YAML by default; a negated pattern with an extension forces it in
+# (OpenSpec schema and config, CI workflows).
+!*.yaml
+!*.yml
