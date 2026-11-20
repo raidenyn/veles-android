@@ -1703,8 +1703,12 @@ def run_gate(gate, base, ctx, table, cmap, use_passes=False):
             ran = failed = unexpected = not_reached = stopped = False
             producer_outcomes = {}
             step_by_id = dict((command.id, command) for command in entry.commands)
+            # The reserve is checked before anything can start: a node reached after it must not
+            # probe (a never-started probe is `not_reached`, not a blocking timeout) and cannot
+            # be remembered, so every planned step is recorded as not reached below.
+            reserve = _past_cutoff(ctx)
 
-            if lookup:
+            if lookup and not reserve:
                 hit, failure = remembered(node, gate, selection_result, planned, table, ctx)
                 if failure is not None:
                     # A requirement probe the runner cut off is that step's blocking timeout
@@ -1733,7 +1737,7 @@ def run_gate(gate, base, ctx, table, cmap, use_passes=False):
             # The source side of a possible record is hashed before the run, then again from
             # fresh observations after it (design D6's stability rule). A plan with any
             # `"reuse": false` step is never recordable, so it needs no hashing at all.
-            record_node = recordable and all(
+            record_node = recordable and not reserve and all(
                 planned.step.reuse is not False for planned in node_plan.steps)
             pre_source = None
             resolved_pre = None
@@ -3561,12 +3565,15 @@ def _requirement_text(args):
 def probe(req_id, req, ctx, env, run):
     """One requirement under the step's effective environment (design D7).
 
-    Returns `(outcome, resolved)` where `outcome.kind` is `ok` or `not_run` with `.fix`, or
-    `timeout` when the probe was cut off; `resolved` is `"<real path>@<version output>"` for the
+    Returns `(outcome, resolved)` where `outcome.kind` is `ok` or `not_run` with `.fix`,
+    `not_reached` when the reserve meant the probe never started, or `timeout` when a version
+    command it started was cut off; `resolved` is `"<real path>@<version output>"` for the
     fingerprint (D6) and None otherwise. A version command runs through `run` under the deadline.
     """
     if _past_cutoff(ctx):
-        return Outcome("timeout", error=PROBE_TIMEOUT), None
+        # Never started, so it is not the runner's cut-off (design D9/D10): only a command that
+        # ran and was terminated is a `timeout`.
+        return Outcome("not_reached", error=PROBE_TIMEOUT), None
     kind = req.get("kind")
     if kind == "path":
         path = req["path"]
@@ -3963,7 +3970,8 @@ class HookState:
 
     def __init__(self, common_dir, clock, wait=None, deadline=None):
         self.clock = clock
-        self.wait = wait if wait is not None else time.sleep
+        # `StateLock` calls `.sleep`, so the default is the wait primitive, never `time.sleep`.
+        self.wait = wait if wait is not None else Wait()
         self.deadline = deadline
         self.directory = os.path.join(os.path.realpath(common_dir), "veles-verify")
         self.path = os.path.join(self.directory, HOOK_STATE_POINTER)
@@ -4450,13 +4458,17 @@ def launcher(event_bytes, ctx, spawn):
     Always returns 0 and never writes to stdout itself. A separate clone, another repository, a
     non-checkout `cwd` and a checkout without `scripts/verify.py` let the stop through silently;
     an internal failure does too, with one line on stderr.
+
+    The launcher's own checkout is the one holding this script (`REPO`, the parent of `SCRIPTS`),
+    never the process cwd (design D11.3): run from outside any checkout, the hook still compares
+    against the checkout it was installed in.
     """
     event = read_event(io.BytesIO(event_bytes))
     if event is None:
         return 0
     try:
         outer = ctx.clock.now() + HOOK_OUTER_SECONDS
-        own = ctx.discover(ctx.repo)
+        own = ctx.discover(REPO)
         target = ctx.discover(event["cwd"])
         if not own or not target:
             return 0
@@ -4668,5 +4680,26 @@ def real_context(env=None):
     )
 
 
+def _hook_requested(argv):
+    """True when the command line asks for hook mode, before argparse has seen it."""
+    return any(item == "--hook" or item.startswith("--hook=") for item in argv)
+
+
+def _entry_point(argv):
+    """The process entry: hook mode builds its context inside the fail-open guard (design D11.6).
+
+    `real_context` discovers a checkout, which can raise for a `cwd` git cannot read; in hook
+    mode that must be one stderr line, empty stdout and exit 0, never a traceback before the
+    hook's own `try`.
+    """
+    if not _hook_requested(argv):
+        return main(argv, real_context())
+    try:
+        return main(argv, real_context())
+    except Exception as error:
+        _stderr(_hook_error(error))
+        return 0
+
+
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:], real_context()))
+    sys.exit(_entry_point(sys.argv[1:]))

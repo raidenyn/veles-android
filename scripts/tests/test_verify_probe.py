@@ -236,8 +236,9 @@ class JavaHomeTest(FixtureRepo):
                                             'openjdk version "21.0.13"'), 21)
 
     def test_probe_timeout_outcome(self):
-        # D9: a probe cut off by the deadline is a `timeout`, not a missing-tool `not_run`,
-        # and one that would start inside the reserve never starts at all.
+        # D9: a probe that never starts inside the reserve is `not_reached` (never a blocking
+        # timeout), while a probe the runner actually cut off is a `timeout`; neither is a
+        # missing-tool `not_run`.
         req = tool("java-home", fix=JAVA_FIX)
         jdk = self.abs("jdk21")
         context = self.context(
@@ -249,7 +250,7 @@ class JavaHomeTest(FixtureRepo):
         context.clock.value = 956.0  # inside the 45-second reserve
         outcome, fingerprint = probe("java-home", req, context, context.env,
                                      context.runner.run)
-        self.assertEqual(outcome.kind, "timeout")
+        self.assertEqual(outcome.kind, "not_reached")
         self.assertIsNone(fingerprint)
         self.assertEqual(context.runner.calls, [])
 

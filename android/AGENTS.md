@@ -34,6 +34,6 @@ and code: `docs/releasing.md` (the `androidGitVersion` format).
 
 ## Rules
 
-- `.agents/rules/android-lint-before-push.md` — run the lint and raw-`Log` gates before pushing.
+- `.agents/rules/android-lint-before-push.md` — run the lint and source guards (raw-`Log`, pairing-code, MAC comparisons) before pushing.
 
 > **Run your agent from the repository root.** Scoped rules in `.agents/rules/` load only from there; if you started in this folder, read this folder's rule files listed below by hand.

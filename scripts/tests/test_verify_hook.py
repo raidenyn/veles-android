@@ -268,11 +268,16 @@ class LauncherFixture(unittest.TestCase):
         self.never_exits = False
         self.files = {}
         self.lines = []
+        self.discovered = []
+        # The launcher's own checkout is derived from the script's location (design D11.3), so
+        # the fixture maps the real `verify.REPO` to the synthetic common dir as well.
+        self.checkout(verify.REPO, verify.REPO)
 
     def checkout(self, cwd, top, common=None):
         self.checkouts[os.path.realpath(cwd)] = (top, common or self.common)
 
     def discover(self, cwd):
+        self.discovered.append(os.path.realpath(cwd))
         return self.checkouts.get(os.path.realpath(cwd))
 
     def context(self, repo=None):
@@ -351,6 +356,35 @@ class LauncherTest(LauncherFixture):
         self.assertEqual(child.argv[2], self.worktree_script)
         self.assertEqual(child.cwd, self.worktree)
 
+    def test_own_checkout_comes_from_the_script_not_the_process_cwd(self):
+        # D11.3: the launcher's own checkout is the script's checkout even when the process cwd
+        # is not in any checkout, so the active checkout's verifier still runs.
+        self.files[self.script] = b""
+        self.checkout(self.repo, self.repo)
+        outside = os.path.join(self.root, "outside")
+        context = self.context(repo=outside)
+        data = json.dumps({"session_id": SESSION, "cwd": self.repo}).encode()
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = verify.launcher(data, context, self.spawn)
+        self.assertEqual((code, out.getvalue(), err.getvalue()), (0, "", ""))
+        self.assertEqual(len(self.children), 1)
+        child = self.children[0]
+        self.assertEqual(child.argv[2], self.script)
+        self.assertEqual(child.cwd, self.repo)
+        self.assertIn(os.path.realpath(verify.REPO), self.discovered)
+        self.assertNotIn(os.path.realpath(outside), self.discovered)
+
+    def test_separate_clone_with_the_verifier_still_silent(self):
+        # A clone is a checkout of another repository: even with `scripts/verify.py` present, its
+        # common dir differs from the launcher's own, so nothing runs.
+        clone = os.path.join(self.root, "clone")
+        self.files[os.path.join(clone, "scripts", "verify.py")] = b""
+        self.checkout(clone, clone, common=os.path.join(self.root, "other.git"))
+        code, out = self.run_launcher({"session_id": SESSION, "cwd": clone})
+        self.assertEqual((code, out, self.stderr), (0, "", ""))
+        self.assertEqual(self.children, [])
+
     def test_separate_clone_silent(self):
         self.files[self.script] = b""
         self.checkout(self.repo, self.repo)
@@ -402,6 +436,21 @@ class LauncherTest(LauncherFixture):
                 code = verify.main(["--hook", "claude"], context)
         self.assertEqual((code, out.getvalue()), (0, ""))
         self.assertFalse(popen.called)
+
+    def test_hook_context_failure_fails_open(self):
+        # D11.6: the hook builds its context inside the guarded path; a discovery failure is one
+        # stderr line, empty stdout and exit 0, never a traceback before the hook's try.
+        def failing_context(env=None):
+            raise verify.agent_rules.CheckoutError("git rev-parse failed with exit -9")
+
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(verify, "real_context", failing_context), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = verify._entry_point(["--hook", "claude"])
+        self.assertEqual((code, out.getvalue()), (0, ""))
+        lines = err.getvalue().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertIn("CheckoutError", lines[0])
 
     def test_hook_missing_session_id_fails_open(self):
         context = self.context()
@@ -493,6 +542,21 @@ class StateFixture(unittest.TestCase):
 
     def sessions(self):
         return read_sessions(self.common)
+
+
+class DefaultWaitTest(StateFixture):
+    def test_contended_state_lock_with_the_default_wait_does_not_raise(self):
+        # The default wait is the wait primitive with `.sleep`, not `time.sleep`: a held
+        # hook-state lock is retried and reported as HookStateError, never AttributeError.
+        lock = verify.RunLock(os.path.join(self.common, "veles-verify",
+                                           "hook-state.json.lock"))
+        self.assertTrue(lock.try_acquire())
+        self.addCleanup(lock.release)
+        state = verify.HookState(self.common, self.clock)  # no wait injected
+        with mock.patch("verify.time.sleep", side_effect=self.clock.advance):
+            with self.assertRaises(verify.HookStateError):
+                state.admit(SESSION, 10000.0)
+        self.assertGreaterEqual(self.clock.now(), 10.0)
 
 
 class AdmissionTest(StateFixture):
@@ -735,16 +799,23 @@ class GateFixture(unittest.TestCase):
     def write_table(self, commands=None, requirements=None, node="web-extension",
                     paths=None):
         commands = commands if commands is not None else self.table_commands
+        self.write_nodes({node: (commands, paths or ["web-extension/"])},
+                         requirements=requirements)
+
+    def write_nodes(self, nodes, requirements=None):
+        """A multi-node selection fixture: `{node: (commands, paths)}` in table order."""
         cmap = {
             "since": "0" * 40,
-            "nodes": {node: {"paths": paths or ["web-extension/"], "release": False}},
+            "nodes": dict((node, {"paths": list(paths), "release": False})
+                          for node, (_commands, paths) in nodes.items()),
             "global": [],
             "ci-global": [],
             "unowned": [],
         }
         write_json(os.path.join(self.repo, ".github", "components.json"), cmap)
         table = {"version": 1, "requirements": requirements or {}, "producers": [],
-                 "nodes": {node: {"commands": commands}}}
+                 "nodes": dict((node, {"commands": list(commands)})
+                               for node, (commands, _paths) in nodes.items())}
         write_json(os.path.join(self.repo, "scripts", "verify-commands.json"), table)
 
     def files(self):
@@ -886,6 +957,91 @@ class HookEndToEndTest(GateFixture):
         self.assertEqual(session["repeat"], {"id": ["x"], "n": 2})
         self.assertEqual(session["synopsis"], "kept")
         self.assertGreater(session["spent_s"], 10.0)
+
+    def test_deadline_crossed_before_a_node_does_not_block(self):
+        # Important 1: the first node's step ends inside the 45-second reserve. The next node's
+        # remembered lookup must not probe (which would report a timeout it cannot fix): that
+        # node's steps are `not_reached` and the hook settles `incomplete`, counters kept.
+        deadline = 1000.0
+        self.write_nodes({
+            "aaa": ([self.command("aaa.slow", ["slow"])], ["aaa/"]),
+            "web-extension": ([self.command("web-extension.lint", ["npm", "run", "lint"],
+                                            requires=["node"])], ["web-extension/"]),
+        }, requirements={"node": {"kind": "path", "path": "node-tree",
+                                  "fix": "install Node 22"}})
+        write_state(self.common, {SESSION: session_doc(
+            blocks=2, spent_s=10.0, repeat={"id": ["x"], "n": 2}, synopsis="kept")})
+        self.extra_files[os.path.join(self.repo, "aaa", "file.txt")] = b""
+
+        def on_call(clock, argv, outcome, cutoff, log_path):
+            if argv == ("slow",):
+                clock.value = deadline - 45.0 + 1.0
+            return None
+
+        looked_up = []
+        original = verify.remembered
+
+        def recording(*args, **kwargs):
+            looked_up.append(args[0])
+            return original(*args, **kwargs)
+
+        runner = HookRunner(self.clock, on_call=on_call)
+        context = self.context(runner=runner,
+                               git=FakeGit(diff=[EXT, "aaa/file.txt"], base=BASE))
+        with mock.patch.object(verify, "remembered", recording):
+            code, out, _err = self.call_hook(
+                context, ["--hook", "claude", "--dispatched", "--deadline", str(deadline)])
+        self.assertEqual(code, 0)
+        self.assertEqual(looked_up, ["aaa"])
+        document = json.loads(out)
+        self.assertNotIn("decision", document)
+        self.assertIn("web-extension.lint not reached", document["systemMessage"])
+        self.assertEqual(runner.calls[0]["argv"], ["slow"])
+        self.assertEqual(len(runner.calls), 1)
+        statuses = dict((step["id"], step["status"]) for step in self.last_run()["steps"])
+        self.assertEqual(statuses["aaa.slow"], "ok")
+        self.assertEqual(statuses["web-extension.lint"], "not_reached")
+        session = self.sessions()[SESSION]
+        self.assertEqual(session["blocks"], 2)
+        self.assertEqual(session["repeat"], {"id": ["x"], "n": 2})
+        self.assertEqual(session["synopsis"], "kept")
+        self.assertGreater(session["spent_s"], 10.0)
+
+    def test_deadline_crossed_across_every_node_settles_incomplete(self):
+        # The same crossing with every node selected: each node after the reserve starts
+        # nothing, and the scale never turns a never-started node into a blocking timeout.
+        deadline = 1000.0
+        self.write_nodes({
+            "aaa": ([self.command("aaa.slow", ["slow"])], ["aaa/"]),
+            "bbb": ([self.command("bbb.check", ["bbb"], requires=["node"])], ["bbb/"]),
+            "web-extension": ([self.command("web-extension.check", ["extension"],
+                                            requires=["node"])], ["web-extension/"]),
+        }, requirements={"node": {"kind": "path", "path": "node-tree",
+                                  "fix": "install Node 22"}})
+        self.extra_files[os.path.join(self.repo, "aaa", "file.txt")] = b""
+        self.extra_files[os.path.join(self.repo, "bbb", "file.txt")] = b""
+
+        def on_call(clock, argv, outcome, cutoff, log_path):
+            if argv == ("slow",):
+                clock.value = deadline - 45.0 + 1.0
+            return None
+
+        runner = HookRunner(self.clock, on_call=on_call)
+        context = self.context(
+            runner=runner,
+            git=FakeGit(diff=[EXT, "aaa/file.txt", "bbb/file.txt"], base=BASE))
+        code, out, _err = self.call_hook(
+            context, ["--hook", "claude", "--dispatched", "--deadline", str(deadline)])
+        self.assertEqual(code, 0)
+        document = json.loads(out)
+        self.assertNotIn("decision", document)
+        self.assertIn("bbb.check not reached", document["systemMessage"])
+        self.assertIn("web-extension.check not reached", document["systemMessage"])
+        self.assertEqual([call["argv"] for call in runner.calls], [["slow"]])
+        statuses = dict((step["id"], step["status"]) for step in self.last_run()["steps"])
+        self.assertEqual(statuses["aaa.slow"], "ok")
+        self.assertEqual(statuses["bbb.check"], "not_reached")
+        self.assertEqual(statuses["web-extension.check"], "not_reached")
 
     def test_blocking_wins_over_incomplete(self):
         deadline = 100.0

@@ -13,7 +13,8 @@ Read `.agents/rules/scripts-verify-commands.md` before editing the table.
   commands and, for each `test` command with a related-test strategy, only the tests related to the
   changed files. It is the fast signal and the gate the `Stop` hook runs.
 - **Branch gate** (`python3 -I scripts/verify.py --branch`): runs every selected node's checks and
-  all of its tests. It runs before a push (the pre-push rule) and in CI.
+  all of its tests. It runs before a push (the pre-push rule); CI runs the same commands (and
+  more) in its own jobs.
 
 Both gates select the same nodes: the changed paths against `git merge-base origin/master HEAD`
 (override with `--base <sha>`), mapped through `.github/components.json`. A path no node owns
@@ -180,8 +181,8 @@ The hook is bounded so it cannot trap a session: the launcher relays a child wit
 deadline of at most 1740 seconds (45 seconds are reserved for termination and the report), and its
 watchdog kills and reaps only that child 30 seconds past the child's admitted deadline. Admission
 allows at most 5 blocks and 3600 seconds of run time per session; a reservation is
-`min(1740, time left, time to the deadline)`. After 3 repeats of the same problem the hook passes
-with a notice instead of blocking again.
+`min(1740, time left, time to the deadline)`. After the third block for the same problem, the next
+stop passes with a notice instead of blocking again.
 
 Output forms: a problem is `{"decision":"block","reason":"<summary>"}` whose reason starts
 `verify: the task gate found problems; fix them and stop again (attempt <n> of 3)`; a pass with a
