@@ -1,5 +1,23 @@
 ---
-trigger: always_on
+pointer: "Every planning file and the closeout docs go through the review gate (ask for a preset first; stop after the plan); delivered at the openspec planning skills and commands; read this file then if it was not."
+skills:
+  - "openspec-ff-change"
+  - "opsx:ff"
+  - "openspec-propose"
+  - "opsx:propose"
+  - "openspec-new-change"
+  - "opsx:new"
+  - "openspec-continue-change"
+  - "opsx:continue"
+  - "openspec-apply-change"
+  - "opsx:apply"
+  - "openspec-verify-change"
+  - "opsx:verify"
+  - "openspec-archive-change"
+  - "opsx:archive"
+commands:
+  - "\\bopenspec\\s+new\\s+change\\b"
+  - "\\bopenspec\\s+instructions\\s+(brainstorm|proposal|design|specs|tasks|plan)\\b"
 ---
 
 Before reviewing, verifying or applying in a superspec change, read the sections Reviewer brief, Review passes and caps, Revision binding and Escalation of `docs/superspec-workflow.md`.

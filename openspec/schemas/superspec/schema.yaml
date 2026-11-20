@@ -262,7 +262,7 @@ artifacts:
       6. **Review records**: Audit every planning file against its
          records in the change's `reviews/`, per the *Revision
          binding* audit checklist in `docs/superspec-workflow.md`
-         and `.agents/rules/repo-superspec-review-gate.md`: every
+         and `.agents/hooked-rules/repo-superspec-review-gate.md`: every
          planning file has an approved record from every reviewer
          the record header's preset lists, the file's own hash and
          every recorded upstream hash recompute with the documented
@@ -525,7 +525,7 @@ artifacts:
             because of the label), report it and still start the
             closeout. The
             commands are in the `github-project` skill. Then hand off to
-            `.agents/rules/repo-superspec-closeout.md` and stay in
+            `.agents/hooked-rules/repo-superspec-closeout.md` and stay in
             monitoring mode. Before acting, read the *Closeout* and
             *Monitoring* sections of `docs/superspec-workflow.md` as
             the rule instructs. Monitoring, the sync and the archive
@@ -750,7 +750,7 @@ apply:
 
     0a. **Review pre-flight — the review gate must be satisfied**:
 
-       Read `.agents/rules/repo-superspec-review-gate.md` and the
+       Read `.agents/hooked-rules/repo-superspec-review-gate.md` and the
        *Revision binding* section of `docs/superspec-workflow.md`
        (including its audit checklist) before this step. Refuse to
        start apply unless all three conditions below hold. If one

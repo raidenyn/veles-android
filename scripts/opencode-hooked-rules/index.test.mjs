@@ -1490,6 +1490,201 @@ test("budget: a hanging engine run is cut by the budget, not by a fresh timer pe
   assert.deepEqual(spawn.calls[0].child.signals, ["SIGKILL"])
 })
 
+// ---- turn end (stop) ----------------------------------------------------------------------------------------
+
+const succeeded = (sessionID) => ({ type: "session.execution.succeeded", data: { sessionID } })
+const interrupted = (sessionID) => ({ type: "session.execution.interrupted", data: { sessionID, reason: "user" } })
+const failed = (sessionID) => ({ type: "session.execution.failed", data: { sessionID, error: {} } })
+const stopEntry = (change, writeId) => ({ rule: ["stop", change], write_id: writeId })
+const STREAM_SIGNAL = new AbortController().signal
+
+/**
+ * Handlers over the fake host and a fake engine, for the turn-end tests: `script` answers every engine run,
+ * so a script that answers by call order counts the spawns itself (the event is parsed only after spawn).
+ */
+function turnEnd({ script, sessions, syntheticError, syntheticNever, env = {} } = {}) {
+  const timers = fakeTimers()
+  const spawn = fakeSpawn(script ?? { code: 0, stdout: "" })
+  const ctx = fakeCtx({ sessions, syntheticError, syntheticNever })
+  const handlers = createHandlers(ctx, {
+    engine: (event, options) =>
+      runEngine(event, { spawn, setTimer: timers.setTimer, clearTimer: timers.clearTimer, ...options }),
+    env,
+    sleep: async () => {},
+    setTimer: timers.setTimer,
+    clearTimer: timers.clearTimer,
+  })
+  return { ctx, spawn, timers, handlers }
+}
+
+test("turn end: succeeded on a root session sends stop and resumes with the block text", async () => {
+  const { ctx, spawn, handlers } = turnEnd({
+    script: answer("block", "STOP TEXT", [stopEntry("demo", 7)]),
+  })
+  await handlers.onEvent(succeeded("ses_a"), STREAM_SIGNAL)
+  assert.equal(await settled(spawn.called(1)), true, "the stop event was sent")
+  await flush()
+  assert.deepEqual(spawn.events(), [{ event: "stop", session: "ses_a", cwd: DIR }])
+  assert.equal(ctx.synthetics.length, 1)
+  assert.equal(ctx.synthetics[0].sessionID, "ses_a")
+  assert.equal(ctx.synthetics[0].text, "STOP TEXT")
+  assert.equal(ctx.synthetics[0].resume, true, "the prompt resumes the session")
+  assert.match(ctx.synthetics[0].id, /^msg_[0-9a-zA-Z_]+$/)
+  assert.deepEqual(spawn.events().map((event) => event.event), ["stop"], "a delivered block voids nothing")
+})
+
+test("turn end: succeeded on a child session sends nothing", async () => {
+  const sessions = { ses_child: { id: "ses_child", parentID: "ses_root" }, ses_root: { id: "ses_root" } }
+  const { ctx, spawn, handlers } = turnEnd({ sessions })
+  await handlers.onEvent(succeeded("ses_child"), STREAM_SIGNAL)
+  await flush()
+  assert.equal(spawn.calls.length, 0)
+  assert.deepEqual(ctx.synthetics, [])
+})
+
+test("turn end: a session get failure sends nothing", async () => {
+  const { ctx, spawn, handlers } = turnEnd()
+  ctx.session.get = async () => {
+    throw new Error("gone")
+  }
+  await handlers.onEvent(succeeded("ses_a"), STREAM_SIGNAL)
+  await flush()
+  assert.equal(spawn.calls.length, 0)
+  assert.deepEqual(ctx.synthetics, [])
+})
+
+test("turn end: a session lookup that never answers sends nothing", async () => {
+  const { ctx, spawn, timers, handlers } = turnEnd({ sessions: { ses_a: NEVER } })
+  await handlers.onEvent(succeeded("ses_a"), STREAM_SIGNAL)
+  await flush()
+  timers.fire()
+  await flush()
+  assert.equal(spawn.calls.length, 0)
+  assert.deepEqual(ctx.synthetics, [])
+})
+
+test("turn end: a second success while one is in flight sends nothing", async () => {
+  const { ctx, spawn, handlers } = turnEnd({ script: { hang: true } })
+  const first = handlers.onEvent(succeeded("ses_a"), STREAM_SIGNAL)
+  assert.equal(await settled(spawn.called(1)), true, "the stop event was sent")
+  assert.equal(await settled(first), true, "the event stream is not held by the turn-end call")
+  const second = handlers.onEvent(succeeded("ses_a"), STREAM_SIGNAL)
+  assert.equal(await settled(second), true)
+  await flush()
+  assert.equal(spawn.calls.length, 1)
+  assert.deepEqual(ctx.synthetics, [])
+})
+
+test("turn end: interrupted sends nothing", async () => {
+  const { ctx, spawn, handlers } = turnEnd()
+  await handlers.onEvent(interrupted("ses_a"), STREAM_SIGNAL)
+  await flush()
+  assert.equal(spawn.calls.length, 0)
+  assert.deepEqual(ctx.synthetics, [])
+})
+
+test("turn end: failed sends nothing", async () => {
+  const { ctx, spawn, handlers } = turnEnd()
+  await handlers.onEvent(failed("ses_a"), STREAM_SIGNAL)
+  await flush()
+  assert.equal(spawn.calls.length, 0)
+  assert.deepEqual(ctx.synthetics, [])
+})
+
+test("turn end: a failed synthetic prompt voids the stop entry", async () => {
+  let spawned = 0
+  const { ctx, spawn, handlers } = turnEnd({
+    script: () => {
+      spawned += 1
+      return spawned === 1 ? answer("block", "STOP TEXT", [stopEntry("demo", 7)]) : { code: 0, stdout: "" }
+    },
+    syntheticError: new Error("host refused"),
+  })
+  await handlers.onEvent(succeeded("ses_a"), STREAM_SIGNAL)
+  assert.equal(await settled(spawn.called(2)), true, "both engine calls were made")
+  await flush()
+  assert.deepEqual(ctx.synthetics, [])
+  assert.deepEqual(spawn.events(), [
+    { event: "stop", session: "ses_a", cwd: DIR },
+    { event: "void", session: "ses_a", cwd: DIR, write_ids: [7] },
+  ])
+})
+
+test("turn end: a context response at a stop moment is ignored", async () => {
+  const { ctx, spawn, handlers } = turnEnd({ script: answer("context", FAIL_NOTICE_TEXT) })
+  await handlers.onEvent(succeeded("ses_a"), STREAM_SIGNAL)
+  assert.equal(await settled(spawn.called(1)), true, "the stop event was sent")
+  await flush()
+  assert.deepEqual(spawn.events().map((event) => event.event), ["stop"])
+  assert.deepEqual(ctx.synthetics, [], "the engine-failure notice does not resume the session")
+})
+
+test("turn end: an engine timeout at a stop moment does nothing", async () => {
+  const { ctx, spawn, timers, handlers } = turnEnd({ script: { hang: true } })
+  await handlers.onEvent(succeeded("ses_a"), STREAM_SIGNAL)
+  assert.equal(await settled(spawn.called(1)), true, "the stop event was sent")
+  timers.fire()
+  await flush()
+  assert.equal(spawn.calls.length, 1)
+  assert.deepEqual(spawn.events().map((event) => event.event), ["stop"])
+  assert.deepEqual(ctx.synthetics, [])
+})
+
+test("turn end: a missing python at a stop moment does nothing", async () => {
+  const { ctx, spawn, handlers } = turnEnd({
+    script: { error: Object.assign(new Error("spawn python3 ENOENT"), { code: "ENOENT" }) },
+  })
+  await handlers.onEvent(succeeded("ses_a"), STREAM_SIGNAL)
+  assert.equal(await settled(spawn.called(1)), true, "the stop event was sent")
+  await flush()
+  assert.deepEqual(spawn.events().map((event) => event.event), ["stop"])
+  assert.deepEqual(ctx.synthetics, [])
+})
+
+test("a block for a non-stop event is rejected as a malformed response", async () => {
+  for (const kind of ["prompt", "tool-before", "tool-after", "compacted", "void"]) {
+    const timers = fakeTimers()
+    const result = await runEngine(
+      { event: kind, session: "s", cwd: DIR },
+      {
+        spawn: fakeSpawn(answer("block", "TEXT", [stopEntry("demo", 1)])),
+        setTimer: timers.setTimer,
+        clearTimer: timers.clearTimer,
+      },
+    )
+    assert.equal(result, null, kind)
+  }
+  const timers = fakeTimers()
+  const result = await runEngine(
+    { event: "stop", session: "s", cwd: DIR },
+    {
+      spawn: fakeSpawn(answer("block", "TEXT", [stopEntry("demo", 1)])),
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer,
+    },
+  )
+  assert.deepEqual(result, { decision: "block", text: "TEXT", entries: [stopEntry("demo", 1)] })
+})
+
+test("turn end: a second success after the first budget ended sends stop", async () => {
+  let spawned = 0
+  const { ctx, spawn, timers, handlers } = turnEnd({
+    script: () => {
+      spawned += 1
+      return spawned === 1 ? { hang: true } : answer("block", "SECOND", [stopEntry("demo", 2)])
+    },
+  })
+  await handlers.onEvent(succeeded("ses_a"), STREAM_SIGNAL)
+  assert.equal(await settled(spawn.called(1)), true, "the stop event was sent")
+  timers.fire() // the first call's budget ends, so its slot is free again
+  await flush()
+  await handlers.onEvent(succeeded("ses_a"), STREAM_SIGNAL)
+  assert.equal(await settled(spawn.called(2)), true, "both engine calls were made")
+  await flush()
+  assert.deepEqual(spawn.events().map((event) => event.event), ["stop", "stop"])
+  assert.deepEqual(ctx.synthetics.map((message) => [message.text, message.resume]), [["SECOND", true]])
+})
+
 // ---- the session's own checkout ------------------------------------------------------------------------------
 
 const located = (id, directory, extra = {}) => ({ id, ...extra, location: { directory } })

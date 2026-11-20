@@ -21,12 +21,12 @@ schema: superspec
 
 # Every planning artifact goes through the review gate before anything reads it.
 rules:
-  brainstorm: ["After writing it, run the review gate in .agents/rules/repo-superspec-review-gate.md."]
-  proposal: ["After writing it, run the review gate in .agents/rules/repo-superspec-review-gate.md."]
-  design: ["After writing it, run the review gate in .agents/rules/repo-superspec-review-gate.md."]
-  specs: ["After writing it, run the review gate in .agents/rules/repo-superspec-review-gate.md."]
-  tasks: ["After writing it, run the review gate in .agents/rules/repo-superspec-review-gate.md."]
-  plan: ["After writing it, run the review gate in .agents/rules/repo-superspec-review-gate.md."]
+  brainstorm: ["After writing it, run the review gate in .agents/hooked-rules/repo-superspec-review-gate.md."]
+  proposal: ["After writing it, run the review gate in .agents/hooked-rules/repo-superspec-review-gate.md."]
+  design: ["After writing it, run the review gate in .agents/hooked-rules/repo-superspec-review-gate.md."]
+  specs: ["After writing it, run the review gate in .agents/hooked-rules/repo-superspec-review-gate.md."]
+  tasks: ["After writing it, run the review gate in .agents/hooked-rules/repo-superspec-review-gate.md."]
+  plan: ["After writing it, run the review gate in .agents/hooked-rules/repo-superspec-review-gate.md."]
 
 # Per-operation guidance (optional)
 # Add advisory guidance for how apply and archive work should be conducted.
@@ -41,5 +41,8 @@ rules:
 #         - Summarize the archive outcome before finishing
 
 operations:
-  apply: { guidance: ["Do not start until the review gate's apply stop in .agents/rules/repo-superspec-review-gate.md is satisfied."] }
-  archive: { guidance: ["Archive runs once, in the closeout; see .agents/rules/repo-superspec-closeout.md."] }
+  apply:
+    guidance:
+      - "Do not start until the review gate's apply stop in .agents/hooked-rules/repo-superspec-review-gate.md is satisfied."
+      - "When every task is done, run verify and then finalize in the same turn without asking: finalize pushes the branch and creates or readies the PR, as .agents/hooked-rules/repo-superspec-closeout.md states."
+  archive: { guidance: ["Archive runs once, in the closeout; see .agents/hooked-rules/repo-superspec-closeout.md."] }

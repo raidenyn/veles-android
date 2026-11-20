@@ -6,7 +6,7 @@ This capability defines how every superspec planning file, and the documentation
 ## Requirements
 
 ### Requirement: The reviewer roster is the single source of models
-`.agents/rules/repo-review-models.md` SHALL hold a table of reviewers (label, model name, effort) and a list of presets, each preset an ordered list of reviewer labels. The roster MUST define at least two reviewers, a single-reviewer preset for each of them, and a two-reviewer preset that runs them in order (first, then second). The roster MUST state the capability a reviewer needs (a read-only subagent on the named model at the named effort). No other workflow instruction file SHALL name a model, namely the other rules in `.agents/rules/`, `openspec/schemas/`, `openspec/config.yaml`, `openspec/specs/`, `docs/superspec-workflow.md`, `docs/AGENTS.md`, `docs/agent-guidance.md`, `docs/openspec-workflow.md` and `docs/opencode-rules.md`; they MUST refer to "the roster's presets" and to the "first" and "second" reviewer of a preset. `openspec/changes/**` and historical evidence, investigations and records elsewhere under `docs/` are outside this restriction. An agent MUST NOT substitute another model for an unavailable one: it MUST stop and tell the user. With a two-reviewer preset and one reviewer unavailable it MUST stop and ask, and MAY run the other reviewer alone only if the user says so.
+`.agents/hooked-rules/repo-review-models.md` SHALL hold a table of reviewers (label, model name, effort) and a list of presets, each preset an ordered list of reviewer labels. The roster MUST define at least two reviewers, a single-reviewer preset for each of them, and a two-reviewer preset that runs them in order (first, then second). The roster MUST state the capability a reviewer needs (a read-only subagent on the named model at the named effort). No other workflow instruction file SHALL name a model, namely the rules in `.agents/rules/`, the other rules in `.agents/hooked-rules/`, `openspec/schemas/`, `openspec/config.yaml`, `openspec/specs/`, `docs/superspec-workflow.md`, `docs/AGENTS.md`, `docs/agent-guidance.md`, `docs/openspec-workflow.md`, `docs/opencode-rules.md` and `docs/hook-delivered-rules.md`; they MUST refer to "the roster's presets" and to the "first" and "second" reviewer of a preset. `openspec/changes/**` and historical evidence, investigations and records elsewhere under `docs/` are outside this restriction. An agent MUST NOT substitute another model for an unavailable one: it MUST stop and tell the user. With a two-reviewer preset and one reviewer unavailable it MUST stop and ask, and MAY run the other reviewer alone only if the user says so.
 
 #### Scenario: A model changes
 - **WHEN** a model name in the roster is replaced by a newer one
@@ -15,6 +15,10 @@ This capability defines how every superspec planning file, and the documentation
 #### Scenario: A model name appears elsewhere
 - **WHEN** a roster model name appears in a workflow instruction file listed above other than the roster
 - **THEN** the plan's verification step (a grep over exactly those paths) fails and the occurrence is replaced by a reference to the roster
+
+#### Scenario: A model name in another hooked rule
+- **WHEN** `.agents/hooked-rules/repo-superspec-review-gate.md` names a roster model
+- **THEN** the verification grep fails
 
 #### Scenario: Historical documents
 - **WHEN** a historical document under `docs/` outside the listed files names a model
@@ -67,15 +71,15 @@ The agent SHALL have an independent, read-only subagent review each planning fil
 - **THEN** superspec's standard single review subagent is used and the roster is not consulted
 
 ### Requirement: openspec/config.yaml carries thin hooks
-`openspec/config.yaml` SHALL carry a per-artifact rule for each of the six planning artifacts (brainstorm, proposal, design, specs, tasks, plan) that runs the review gate after the artifact is written, an `operations.apply.guidance` entry that points to the apply stop, and an `operations.archive.guidance` entry that points to the closeout's archive-once procedure. The hooks MUST name no model and no project, and MUST survive a reinstall of the schema.
+`openspec/config.yaml` SHALL carry a per-artifact rule for each of the six planning artifacts (brainstorm, proposal, design, specs, tasks, plan) that runs the review gate after the artifact is written, citing `.agents/hooked-rules/repo-superspec-review-gate.md`; an `operations.apply.guidance` list with one entry that points to the apply stop and a separate entry, owned by capability `superspec-closeout`, that tells the agent to run verify and then finalize without asking once every task is done; and an `operations.archive.guidance` entry that points to the closeout's archive-once procedure. The hooks MUST name no model and no project, and MUST survive a reinstall of the schema.
 
 #### Scenario: Per-artifact hooks
 - **WHEN** `openspec instructions <artifact>` is run for any of the six planning artifacts
-- **THEN** the returned rules include the review-gate hook
+- **THEN** the returned rules include the review-gate hook with the `.agents/hooked-rules/` path
 
 #### Scenario: Operation guidance
 - **WHEN** the apply and archive operations read the project config
-- **THEN** apply's guidance points to the apply stop and archive's guidance points to the closeout
+- **THEN** apply's guidance points to the apply stop and to running verify and finalize without asking, and archive's guidance points to the closeout
 
 #### Scenario: Schema reinstall
 - **WHEN** the superspec schema is reinstalled from upstream
@@ -201,7 +205,7 @@ Whenever verification is performed, however it is invoked, the agent SHALL audit
 
 #### Scenario: Direct verify invocation
 - **WHEN** `openspec-verify-change` runs without fetching the schema's verify instruction
-- **THEN** the audit still runs because the always-on rule requires it
+- **THEN** the audit still runs because the review-gate rule, delivered at the verify skill (or read by hand from its pointer), requires it
 
 #### Scenario: One reviewer missing
 - **WHEN** a session using a two-reviewer preset stopped after the first reviewer approved
@@ -260,3 +264,29 @@ The superspec schema fork SHALL stay at version 5 in `schema.yaml` and its descr
 #### Scenario: Skills untouched
 - **WHEN** this change's diff is inspected
 - **THEN** it touches no file under `.agents/skills/` or `.claude/skills/`
+
+### Requirement: The review-gate and roster rules are hook-delivered
+The review-gate rule SHALL be `.agents/hooked-rules/repo-superspec-review-gate.md` and the roster
+`.agents/hooked-rules/repo-review-models.md` (capability `hooked-rule-delivery`).
+
+- The review-gate rule MUST be delivered at the fast-forward, propose, new-change, continue, apply, verify and
+  archive skills, at `openspec new change`, and at `openspec instructions` for each planning artifact
+  (brainstorm, proposal, design, specs, tasks, plan).
+- The roster MUST be delivered at the fast-forward, propose, new-change, continue and archive skills and at the
+  same two command patterns.
+- Each pointer MUST keep its fact always on: for the review gate, that every planning file and the closeout docs
+  are reviewed, the preset is asked first and the workflow stops after the plan; for the roster, that models and
+  presets live only in the roster and no model is substituted.
+- The `openspec/config.yaml` hooks and the schema MUST cite the rules by their `.agents/hooked-rules/` paths.
+
+#### Scenario: Fast-forward starts
+- **WHEN** an agent invokes `openspec-ff-change`
+- **THEN** the review-gate rule and the roster are added to its context
+
+#### Scenario: Planning instructions
+- **WHEN** `openspec instructions brainstorm --change x` succeeds in a context that has not received the rules from that trigger
+- **THEN** both rules are added to that call's output
+
+#### Scenario: Verify audits without the roster
+- **WHEN** the agent invokes `openspec-verify-change`
+- **THEN** the review-gate rule is added and the roster is not

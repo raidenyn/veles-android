@@ -1,9 +1,9 @@
 # The superspec workflow procedure
 
 This file holds the procedures of the superspec review gate, the tracker intake and the closeout. It is read
-on demand by the four workflow rules — `.agents/rules/repo-review-models.md`,
-`.agents/rules/repo-superspec-review-gate.md`, `.agents/rules/repo-tracker-intake.md` and
-`.agents/rules/repo-superspec-closeout.md` — and each rule sends the agent here for the part it does not
+on demand by the four workflow rules — `.agents/hooked-rules/repo-review-models.md`,
+`.agents/hooked-rules/repo-superspec-review-gate.md`, `.agents/rules/repo-tracker-intake.md` and
+`.agents/hooked-rules/repo-superspec-closeout.md` — and each rule sends the agent here for the part it does not
 repeat: the review-gate rule cites *Reviewer brief*, *Review passes and caps*, *Revision binding* and
 *Escalation*; the tracker-intake rule cites *Next task* and *tracker.md*; the closeout rule cites *Closeout*
 and *Monitoring*. Read a cited section before acting on the rule that cites it. This file names no model and
@@ -190,8 +190,8 @@ differed; a `+` box differed from the `-` box with the same text.
 
 ### The audit checklist
 
-Whenever verification is performed, however it is invoked — through `openspec-verify-change`, directly by an
-always-on rule, or by hand — audit every planning file against its records. For each file:
+Whenever verification is performed, however it is invoked — through `openspec-verify-change`, directly by
+the review-gate rule, or by hand — audit every planning file against its records. For each file:
 
 1. **Each listed reviewer approved it.** The record header's preset lists the reviewers in order; there is an
    approved record from every one of them, not only the first.

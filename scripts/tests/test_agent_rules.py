@@ -20,13 +20,18 @@ from agent_rules import (  # noqa: E402
     FAILURE_NOTICE,
     FAIL_AFTER_WRITE,
     FileLock,
+    LOCK_RETRY_SECONDS,
     LockTimeout,
+    PendingChange,
     RuleError,
     Store,
     StoreError,
     CheckoutError,
+    canonical_skill,
+    change_roots,
     checkout_for,
     discover_checkout,
+    finalize_pending,
     hook_main,
     context_key,
     decide,
@@ -36,6 +41,7 @@ from agent_rules import (  # noqa: E402
     parse_rule,
     render,
     render_pointer_block,
+    rule_text as rule_body,
 )
 
 CLI = os.path.join(SCRIPTS, "agent_rules.py")
@@ -44,6 +50,7 @@ POINTER = "Commit and PR types: read before choosing a commit or PR type."
 SKILLS_LINE = 'skills: ["opsx:apply"]'
 COMMANDS_LINE = 'commands: ["\\\\bopenspec\\\\s+instructions\\\\s+finalize\\\\b"]'
 GATES_LINE = 'gates: ["\\\\bgit\\\\b[^;&|\\\\n]*?\\\\scommit\\\\b"]'
+STOPS_LINE = 'stops: ["superspec-finalize-pending"]'
 
 
 def rule_text(pointer=POINTER, extra=None, body="Body.\n", lines=None):
@@ -64,6 +71,7 @@ class ParseRuleTest(unittest.TestCase):
             [r.pattern for r in rule.commands], ["\\bopenspec\\s+instructions\\s+finalize\\b"]
         )
         self.assertEqual([r.pattern for r in rule.gates], ["\\bgit\\b[^;&|\\n]*?\\scommit\\b"])
+        self.assertEqual(rule.stops, ())
         self.assertEqual(rule.body, "Body.\n")
         self.assertEqual(
             rule.identity,
@@ -115,9 +123,26 @@ class ParseRuleTest(unittest.TestCase):
         with self.assertRaises(RuleError):
             parse_rule("x.md", rule_text(lines=['pointer: "p"', 'commands: ["%s"]' % pattern]))
 
+    def test_stops_parsed(self):
+        rule = parse_rule("x.md", rule_text(extra=[STOPS_LINE]))
+        self.assertEqual(rule.stops, ("superspec-finalize-pending",))
+
+    def test_unknown_stop_predicate(self):
+        with self.assertRaises(RuleError) as caught:
+            parse_rule("x.md", rule_text(lines=['pointer: "p"', 'stops: ["not-a-predicate"]']))
+        self.assertIn("unknown stop predicate", str(caught.exception))
+
+    def test_stops_only_rule_is_valid(self):
+        rule = parse_rule("x.md", rule_text(lines=['pointer: "p"', STOPS_LINE]))
+        self.assertEqual(rule.stops, ("superspec-finalize-pending",))
+        self.assertEqual(rule.skills, [])
+        self.assertEqual(rule.commands, [])
+        self.assertEqual(rule.gates, [])
+
     def test_no_trigger(self):
-        with self.assertRaises(RuleError):
+        with self.assertRaises(RuleError) as caught:
             parse_rule("x.md", rule_text(lines=['pointer: "p"']))
+        self.assertIn("stops", str(caught.exception))
 
     def test_missing_pointer(self):
         with self.assertRaises(RuleError):
@@ -660,14 +685,33 @@ class ParseEventTest(unittest.TestCase):
 
 
 class RenderTest(unittest.TestCase):
-    KINDS = ("tool-before", "tool-after", "prompt", "compacted", "void")
+    KINDS = ("tool-before", "tool-after", "prompt", "compacted", "stop", "void")
     NAMES = {
         "tool-before": "PreToolUse", "tool-after": "PostToolUse",
-        "prompt": "UserPromptSubmit", "compacted": "PreCompact", "void": "void",
+        "prompt": "UserPromptSubmit", "compacted": "PreCompact", "stop": "Stop", "void": "void",
     }
 
     def event(self, kind):
         return Event(kind, "s", None, "/c", None, None, None, None, None, None, None)
+
+    def test_claude_block(self):
+        out = render("claude", self.event("stop"), Decision("block", "why", []))
+        self.assertEqual(json.loads(out), {"decision": "block", "reason": "why"})
+
+    def test_plain_block_entry(self):
+        entries = [(("stop", "demo"), 4)]
+        out = json.loads(render("plain", self.event("stop"), Decision("block", "why", entries)))
+        self.assertEqual(
+            out,
+            {"decision": "block", "text": "why",
+             "entries": [{"rule": ["stop", "demo"], "write_id": 4}]},
+        )
+
+    def test_block_rejected_for_tool_after(self):
+        for kind in ("tool-before", "tool-after", "prompt", "compacted", "void"):
+            for fmt in ("claude", "plain"):
+                with self.assertRaises(ValueError, msg=(fmt, kind)):
+                    render(fmt, self.event(kind), Decision("block", "why", []))
 
     def test_render_pass_is_empty(self):
         for kind in self.KINDS:
@@ -703,7 +747,7 @@ class RenderTest(unittest.TestCase):
         entries = [(("r.md", "ab" * 32), 7)]
         for kind in self.KINDS:
             for fmt in ("claude", "plain"):
-                for decision in ("pass", "context", "deny"):
+                for decision in ("pass", "context", "deny", "block"):
                     try:
                         out = render(fmt, self.event(kind), Decision(decision, "text", entries))
                     except ValueError:
@@ -714,11 +758,26 @@ class RenderTest(unittest.TestCase):
 
     def test_failure_output_never_allows(self):
         import agent_rules
-        for name in ("PreToolUse", "PostToolUse", "UserPromptSubmit", "PreCompact", "SessionStart"):
+        for name in ("PreToolUse", "PostToolUse", "UserPromptSubmit", "PreCompact", "Stop",
+                     "SessionStart"):
             with contextlib.redirect_stderr(io.StringIO()):
                 out = agent_rules._failure_output("claude", {"hook_event_name": name})
             self.assertNotIn("allow", out, name)
             self.assertNotIn("permissionDecision", out, name)
+
+    def test_failure_output_at_a_stop_uses_system_message(self):
+        import agent_rules
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            out = agent_rules._failure_output("claude", {"hook_event_name": "Stop"})
+        self.assertEqual(json.loads(out), {"systemMessage": FAILURE_NOTICE})
+        self.assertEqual(stderr.getvalue(), FAILURE_NOTICE + "\n")
+
+    def test_render_claude_context_is_silent_at_a_compaction_and_a_stop(self):
+        # Claude Code has no `additionalContext` channel at either moment; `Stop` reads `systemMessage`.
+        for kind in ("compacted", "stop"):
+            with self.subTest(kind=kind):
+                self.assertEqual(render("claude", self.event(kind), Decision("context", "note", [])), "")
 
     def test_plain_entries(self):
         entries = [(("a.md", "11" * 32), 5), (("b.md", "22" * 32), 6)]
@@ -1447,6 +1506,171 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(len(self.entries_of("\ufffd")), 1)
 
 
+class StateV2Test(unittest.TestCase):
+    """The version 2 state file: new fields, the version 1 migration and the entry merge rules."""
+
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="veles-agent-state-v2-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.state_dir = os.path.join(self.tmp, "agent-rules")
+        self.store = Store(self.state_dir, sleep=no_sleep, lock_attempts=3)
+
+    def v1_document(self):
+        return {
+            "version": 1,
+            "session": "s1",
+            "generations": {},
+            "entries": [{
+                "key": "s1", "name": IDENTITY_A[0], "sha256": IDENTITY_A[1],
+                "state": "delivered", "patterns": ["git commit"], "generation": 0, "write_id": 1,
+            }],
+        }
+
+    def write_state(self, document):
+        os.makedirs(self.state_dir, exist_ok=True)
+        with open(self.store.session_path("s1"), "w", encoding="utf-8") as handle:
+            json.dump(document, handle)
+
+    def stored(self):
+        with open(self.store.session_path("s1"), encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def test_v1_file_loads_as_v2(self):
+        self.store.next_write_id()  # the index the old engine left behind, and its counter
+        self.write_state(self.v1_document())
+        with self.store.transaction("s1") as state:
+            entry = state.entries[("s1", IDENTITY_A)]
+            self.assertEqual(entry["patterns"], {"git commit"})
+            self.assertEqual(entry["triggers"], set())
+            self.assertEqual(state.changes, [])
+            self.assertEqual(state.stops, [])
+            self.assertIs(state.applied, False)  # a version 1 file has no apply flag
+            self.assertEqual(json.loads(state.dump())["version"], 2)
+        self.assertEqual(self.stored()["version"], 1)  # an unmodified load is not rewritten
+        with self.store.transaction("s1") as state:
+            state.put("s1", IDENTITY_A, "delivered", set())  # the first write publishes version 2
+        stored = self.stored()
+        self.assertEqual(stored["version"], 2)
+        self.assertEqual(stored["changes"], [])
+        self.assertEqual(stored["stops"], [])
+        self.assertIs(stored["applied"], False)
+        self.assertEqual(stored["entries"][0]["triggers"], [])
+
+    def test_apply_flag_round_trips_and_a_v2_file_without_it_loads_unset(self):
+        # A version 2 file written before the flag existed loads with it unset rather than failing
+        # open: the gate is simply not armed until the session invokes apply.
+        base = {"version": 2, "session": "s1", "generations": {}, "changes": [], "stops": [],
+                "entries": []}
+        self.store.next_write_id()
+        self.write_state(base)
+        with self.store.transaction("s1") as state:
+            self.assertIs(state.applied, False)
+        self.assertNotIn("applied", self.stored())  # an unmodified load is not rewritten
+        with self.store.transaction("s1") as state:
+            state.applied = True
+        self.assertIs(self.stored()["applied"], True)
+        with self.store.transaction("s1") as state:
+            self.assertIs(state.applied, True)
+
+    def test_unknown_version_fails_open(self):
+        # `handle` turns this StoreError into the read-by-hand notice and lets the call pass; this pins
+        # the refusal and that the damaged file is left untouched.
+        document = self.v1_document()
+        document["version"] = 3
+        self.write_state(document)
+        with self.assertRaises(StoreError):
+            with self.store.transaction("s1"):
+                self.fail("a version 3 file must not load")
+        self.assertEqual(self.stored()["version"], 3)
+
+    def test_state_round_trips_changes_and_stops(self):
+        stops = [
+            {"change": "alpha", "iteration": 1, "verify_state": "none", "write_id": 7},
+            {"change": "beta", "iteration": 2, "verify_state": "pass", "write_id": 9},
+        ]
+        with self.store.transaction("s1") as state:
+            state.changes.extend(["alpha", "beta"])
+            state.stops.extend(stops)
+        with self.store.transaction("s1") as state:
+            self.assertEqual(state.changes, ["alpha", "beta"])
+            self.assertEqual(state.stops, stops)
+        self.assertEqual(self.stored()["changes"], ["alpha", "beta"])
+        self.assertEqual(self.stored()["stops"], stops)
+
+    def test_invalid_v2_fields_are_rejected(self):
+        base = {"version": 2, "session": "s1", "generations": {}, "changes": [], "stops": [],
+                "entries": []}
+        entry = {
+            "key": "s1", "name": IDENTITY_A[0], "sha256": IDENTITY_A[1], "state": "delivered",
+            "patterns": [], "triggers": [], "generation": 0, "write_id": 1,
+        }
+        record = {"change": "demo", "iteration": 1, "verify_state": "none", "write_id": 4}
+        missing = dict(base)
+        del missing["changes"]
+        missing_stops = dict(base)
+        del missing_stops["stops"]
+        cases = [
+            missing,
+            missing_stops,
+            dict(base, changes={}),
+            dict(base, changes=["Demo"]),
+            dict(base, changes=["demo", "demo"]),
+            dict(base, changes=[1]),
+            dict(base, stops={}),
+            dict(base, stops=[record, "x"]),
+            dict(base, stops=[dict(record, change="")]),
+            dict(base, stops=[dict(record, change="a" * 65)]),
+            dict(base, stops=[dict(record, iteration=-1)]),
+            dict(base, stops=[dict(record, verify_state="maybe")]),
+            dict(base, stops=[dict(record, write_id=None)]),
+            dict(base, applied="yes"),
+            dict(base, applied=1),
+            dict(base, entries=[{key: value for key, value in entry.items() if key != "triggers"}]),
+            dict(base, entries=[dict(entry, triggers="x")]),
+            dict(base, entries=[dict(entry, triggers=[1])]),
+        ]
+        for case in cases:
+            self.write_state(case)
+            with self.assertRaises(StoreError, msg=case):
+                with self.store.transaction("s1"):
+                    self.fail("the body must not run on invalid state")
+
+    def test_put_merges_within_a_generation(self):
+        with self.store.transaction("s1") as state:
+            state.put("s1", IDENTITY_A, "pending", {"git commit"},
+                      {"skill:openspec-apply-change"})
+            first = state.entries[("s1", IDENTITY_A)]["write_id"]
+            state.put("s1", IDENTITY_A, "delivered", {"gh pr create"}, {"command:finalize"})
+            entry = state.entries[("s1", IDENTITY_A)]
+        self.assertEqual(entry["state"], "delivered")
+        self.assertEqual(entry["patterns"], {"git commit", "gh pr create"})
+        self.assertEqual(entry["triggers"], {"skill:openspec-apply-change", "command:finalize"})
+        self.assertGreater(entry["write_id"], first)
+
+    def test_put_after_a_bump_starts_fresh(self):
+        with self.store.transaction("s1") as state:
+            state.put("s1", IDENTITY_A, "delivered", {"git commit"}, {"skill:openspec-apply-change"})
+            state.bump("s1")
+            state.put("s1", IDENTITY_A, "delivered", set(), {"command:finalize"})
+            entry = state.entries[("s1", IDENTITY_A)]
+        self.assertEqual(entry["generation"], 1)
+        self.assertEqual(entry["patterns"], set())
+        self.assertEqual(entry["triggers"], {"command:finalize"})
+
+    def test_compaction_keeps_changes_and_stops(self):
+        record = {"change": "demo", "iteration": 1, "verify_state": "none", "write_id": 4}
+        with self.store.transaction("s1") as state:
+            state.put("s1", IDENTITY_A, "delivered", set(), {"skill:openspec-apply-change"})
+            state.changes.append("demo")
+            state.stops.append(record)
+        with self.store.transaction("s1") as state:
+            self.assertEqual(decide([], state, "s1", event("compacted")), Decision("pass", "", []))
+            self.assertEqual(state.changes, ["demo"])
+            self.assertEqual(state.stops, [record])
+        with self.store.transaction("s1") as state:
+            self.assertEqual(state.generation("s1"), 1)
+
+
 class FileLockTest(unittest.TestCase):
     def setUp(self):
         self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="veles-agent-lock-"))
@@ -1481,7 +1705,8 @@ def flow(values):
 
 
 def make_rule(name, body="Commit types guide.\n", skills=("openspec-apply-change", "opsx:apply"),
-              commands=(FINALIZE_COMMAND,), gates=(GIT_COMMIT_GATE, PR_CREATE_GATE, PR_EDIT_GATE)):
+              commands=(FINALIZE_COMMAND,), gates=(GIT_COMMIT_GATE, PR_CREATE_GATE, PR_EDIT_GATE),
+              stops=()):
     lines = ['pointer: "Read %s."' % name]
     if skills:
         lines.append("skills: " + flow(skills))
@@ -1489,12 +1714,15 @@ def make_rule(name, body="Commit types guide.\n", skills=("openspec-apply-change
         lines.append("commands: " + flow(commands))
     if gates:
         lines.append("gates: " + flow(gates))
+    if stops:
+        lines.append("stops: " + flow(stops))
     return parse_rule(name, "---\n" + "\n".join(lines) + "\n---\n" + body)
 
 
 def event(kind, session="s1", agent=None, cwd="/work/repo", tool=None, command=None, ok=None,
-          skill=None, path=None, prompt=None, write_ids=None):
-    return Event(kind, session, agent, cwd, tool, command, ok, skill, path, prompt, write_ids)
+          skill=None, path=None, prompt=None, write_ids=None, stop_hook_active=None):
+    return Event(kind, session, agent, cwd, tool, command, ok, skill, path, prompt, write_ids,
+                 stop_hook_active)
 
 
 def bash_before(command, **fields):
@@ -1537,12 +1765,704 @@ class ContextKeyTest(unittest.TestCase):
         self.assertEqual(context_key(event("prompt", agent="")), "s1")
 
 
+class ChangeSetTest(EngineTest):
+    """The session change set: change names from successful ``openspec`` shell calls, 20 newest."""
+
+    def changes(self, session="s1"):
+        with self.store.transaction(session) as state:
+            return list(state.changes)
+
+    def applied(self, session="s1"):
+        with self.store.transaction(session) as state:
+            return state.applied
+
+    def test_change_forms(self):
+        forms = ("--change demo", "--change=demo", '--change "demo"', "--change 'demo'")
+        # Each form gets its own session: a name recorded by an earlier form cannot mask a form that
+        # never matched. `openspec status` matches no rule, so this is the pass path.
+        for index, form in enumerate(forms):
+            session = "f%d" % index
+            self.assertEqual(
+                self.run_event(bash_after("openspec status %s" % form, session=session)).kind, "pass"
+            )
+            self.assertEqual(self.changes(session), ["demo"], form)
+
+    def test_64_character_name_recorded(self):
+        # Exactly the longest name `CHANGE_NAME_RE` accepts; the 65-character test below is the
+        # rejecting side of the same boundary.
+        name = "a" * 64
+        self.run_event(bash_after("openspec status --change %s" % name))
+        self.assertEqual(self.changes(), [name])
+
+    def test_several_names_in_one_command(self):
+        self.run_event(bash_after("openspec x --change a --change=a --change b", session="multi"))
+        self.assertEqual(self.changes("multi"), ["a", "b"])
+
+    def test_long_name_ignored(self):
+        # 65 characters: one past the longest change name, and the trailing character proves the
+        # parser does not silently take a 64-character prefix.
+        self.run_event(bash_after("openspec status --change %s" % ("a" * 65)))
+        self.assertEqual(self.changes(), [])
+
+    def test_non_openspec_command_ignored(self):
+        self.run_event(bash_after('grep -- "--change demo" notes.txt'))
+        self.assertEqual(self.changes(), [])
+
+    def test_failed_command_ignored(self):
+        self.run_event(bash_after("openspec status --change demo", ok=False))
+        self.assertEqual(self.changes(), [])
+
+    def test_subagent_call_counts(self):
+        self.run_event(bash_after("openspec status --change demo", agent="a7"))
+        self.assertEqual(self.changes(), ["demo"])
+        with self.store.transaction("s1") as state:
+            self.assertEqual(list(state.entries), [])  # no delivery was credited to either key
+
+    def test_keeps_20_newest(self):
+        names = ["c%02d" % index for index in range(21)]
+        for name in names:
+            self.run_event(bash_after("openspec status --change %s" % name))
+        self.assertEqual(self.changes(), names[1:])
+        # A name already in the set moves to the newest end, so the oldest one after it is dropped.
+        self.run_event(bash_after("openspec status --change %s" % names[0]))
+        self.assertEqual(self.changes(), names[2:] + [names[0]])
+
+    def test_apply_skill_arms_the_session(self):
+        # The invocation forms arm the session — the Skill call, its `opsx:apply` spelling, and the
+        # `/opsx:apply` prompt — and each gets its own session so one form cannot mask another. A
+        # `SKILL.md` read is not an invocation: it delivers the moment as before but does not arm
+        # (StopGateTest.test_apply_skill_read_does_not_arm).
+        forms = (
+            event("tool-after", tool="Skill", skill="openspec-apply-change", session="f0"),
+            event("tool-after", tool="Skill", skill="opsx:apply", session="f1"),
+            event("prompt", prompt="/opsx:apply hook-workflow-rules", session="f2"),
+        )
+        for ev in forms:
+            self.run_event(ev)
+            self.assertTrue(self.applied(ev.session), ev)
+
+    def test_named_change_without_apply_is_not_armed(self):
+        # A delegated verify or review session may name the change; only the apply skill arms it.
+        for session, command in (
+            ("status", "openspec status --change demo"),
+            ("instructions", "openspec instructions apply --change demo"),
+        ):
+            self.assertEqual(self.run_event(bash_after(command, session=session)).kind, "pass")
+            self.assertEqual(self.changes(session), ["demo"])
+            self.assertFalse(self.applied(session), command)
+
+
+class PredicateTest(unittest.TestCase):
+    """The finalize-pending stop predicate, over a fake ``.git`` layout in a temporary directory.
+
+    No git process runs: a checkout is a directory with a ``.git`` file-tree whose ``config`` and
+    ``worktrees/*/gitdir`` files are written by hand, as ``git rev-parse`` would report them.
+    """
+
+    VERIFY_DECISIONS = (
+        "- [ ] ✅ PASS — ready to proceed",
+        "- [ ] ⚠️ PASS WITH WARNINGS — can proceed with notes",
+        "- [ ] ❌ FAIL — return to the failed artifact, fix, then re-run verify",
+    )
+    TICKED = {"pass": 0, "warnings": 1, "fail": 2}
+
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="veles-predicate-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def path(self, *parts):
+        return os.path.join(self.tmp, *parts)
+
+    def write(self, path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+
+    def write_bytes(self, path, data):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as handle:
+            handle.write(data)
+
+    def checkout(self, name, bare=False):
+        """A root with the common directory ``<root>/.git`` and the config git would write there."""
+        root = self.path(name)
+        os.makedirs(root, exist_ok=True)
+        self.write(
+            os.path.join(root, ".git", "config"),
+            "[core]\n\tbare = %s\n" % ("true" if bare else "false"),
+        )
+        return root
+
+    def link_worktree(self, common_dir, name, root):
+        """Register ``root`` under ``common_dir`` as ``worktrees/<name>``, as git links a worktree."""
+        os.makedirs(root, exist_ok=True)
+        self.write(os.path.join(common_dir, "worktrees", name, "gitdir"), os.path.join(root, ".git") + "\n")
+        return root
+
+    def common(self, root):
+        return os.path.join(root, ".git")
+
+    def apply_text(self, name, iteration):
+        return "\n".join([
+            "# Apply Receipt",
+            "",
+            "**Change**: `%s`" % name,
+            "**Iteration**: `%s`" % iteration,
+            "",
+            "## Workspace",
+            "",
+            "- **Branch**: `demo`",
+            "",
+        ])
+
+    def verify_text(self, name, iteration, decision):
+        decisions = list(self.VERIFY_DECISIONS)
+        ticked = self.TICKED.get(decision)
+        if ticked is not None:
+            decisions[ticked] = decisions[ticked].replace("- [ ]", "- [x]", 1)
+        elif decision == "warnings-plain":  # the variation selector after ⚠ is optional
+            decisions[1] = "- [x] ⚠ PASS WITH WARNINGS — can proceed with notes"
+        return "\n".join([
+            "# Verify Receipt",
+            "",
+            "**Change**: `%s`" % name,
+            "**Iteration**: `%s`" % iteration,
+            "",
+            "## Overall Decision",
+            "",
+        ] + decisions + [""])
+
+    def make_change(self, root, name, apply_iter=None, verify=None, finalize=False):
+        """Write a change's receipts under ``root``; ``verify`` is ``(iteration, decision)``."""
+        directory = os.path.join(root, "openspec", "changes", name)
+        os.makedirs(directory, exist_ok=True)
+        if apply_iter is not None:
+            self.write(os.path.join(directory, "apply.md"), self.apply_text(name, apply_iter))
+        if verify is not None:
+            self.write(
+                os.path.join(directory, "verify.md"),
+                self.verify_text(name, verify[0], verify[1]),
+            )
+        if finalize:
+            self.write(os.path.join(directory, "finalize.md"), "# Finalize Receipt\n\nPushed.\n")
+        return directory
+
+    def pending(self, toplevel, common_dir, changes=("demo",)):
+        return finalize_pending(change_roots(toplevel, common_dir), list(changes))
+
+    def test_pending_after_apply(self):
+        root = self.checkout("repo")
+        # An applied change with no verify and no finalize receipt is pending, sorted by name.
+        self.make_change(root, "zeta", apply_iter=1)
+        self.make_change(root, "demo", apply_iter=1)
+        self.assertEqual(
+            self.pending(root, self.common(root), ["zeta", "demo"]),
+            [PendingChange("demo", 1, "none"), PendingChange("zeta", 1, "none")],
+        )
+
+    def test_no_apply_receipt_not_pending(self):
+        root = self.checkout("repo")
+        directory = self.make_change(root, "demo")
+        self.write(os.path.join(directory, "tasks.md"), "## Tasks\n\n- [ ] 1.1 one\n")
+        self.assertEqual(self.pending(root, self.common(root)), [])
+
+    def test_finalize_anywhere_clears(self):
+        main = self.checkout("main")
+        linked = self.link_worktree(self.common(main), "wt", self.path("linked"))
+        self.make_change(linked, "demo", apply_iter=1)
+        self.make_change(main, "demo", finalize=True)
+        self.assertEqual(self.pending(linked, self.common(main)), [])
+
+    def test_archived_copy_clears(self):
+        main = self.checkout("main")
+        linked = self.link_worktree(self.common(main), "wt", self.path("linked"))
+        self.make_change(linked, "demo", apply_iter=1)
+        os.makedirs(os.path.join(main, "openspec", "changes", "archive", "2026-01-01-demo"))
+        self.assertEqual(self.pending(linked, self.common(main)), [])
+
+    def test_archive_suffix_does_not_clear(self):
+        # The archive name carries a date prefix plus the *exact* change name; a longer name that
+        # merely ends with this one is another change and must not clear it.
+        root = self.checkout("repo")
+        self.make_change(root, "stop-gate", apply_iter=1)
+        archive = os.path.join(root, "openspec", "changes", "archive")
+        os.makedirs(os.path.join(archive, "2026-01-01-hook-stop-gate"))
+        os.makedirs(os.path.join(archive, "2026-01-02-stop-gate-extra"))
+        self.assertEqual(
+            self.pending(root, self.common(root), ["stop-gate"]),
+            [PendingChange("stop-gate", 1, "none")],
+        )
+
+    def test_fail_same_iteration_clears(self):
+        root = self.checkout("repo")
+        self.make_change(root, "demo", apply_iter=1, verify=(1, "fail"))
+        self.assertEqual(self.pending(root, self.common(root)), [])
+
+    def test_earlier_fail_is_pending(self):
+        # A failing verify of an earlier iteration does not hide a re-apply.
+        root = self.checkout("repo")
+        self.make_change(root, "demo", apply_iter=2, verify=(1, "fail"))
+        self.assertEqual(
+            self.pending(root, self.common(root)), [PendingChange("demo", 2, "none")]
+        )
+
+    def test_verify_pass_state(self):
+        for decision in ("pass", "warnings", "warnings-plain"):
+            with self.subTest(decision=decision):
+                root = self.checkout("repo-" + decision)
+                self.make_change(root, "demo", apply_iter=1, verify=(1, decision))
+                self.assertEqual(
+                    self.pending(root, self.common(root)),
+                    [PendingChange("demo", 1, "pass")],
+                )
+
+    def test_undecided_verify_is_none(self):
+        root = self.checkout("repo")
+        self.make_change(root, "demo", apply_iter=1, verify=(1, "undecided"))
+        self.assertEqual(
+            self.pending(root, self.common(root)), [PendingChange("demo", 1, "none")]
+        )
+
+    def test_missing_iteration_is_zero(self):
+        root = self.checkout("repo")
+        self.write(
+            os.path.join(root, "openspec", "changes", "demo", "apply.md"),
+            "# Apply Receipt\n\n**Change**: `demo`\n\nNo iteration line.\n",
+        )
+        self.make_change(root, "other", apply_iter="many")  # unparsable
+        # A verify that also records no iteration reads as iteration 0, so it decides this apply.
+        self.write(
+            os.path.join(root, "openspec", "changes", "both-zero", "apply.md"),
+            "# Apply Receipt\n\n**Change**: `both-zero`\n\nNo iteration line.\n",
+        )
+        self.write(
+            os.path.join(root, "openspec", "changes", "both-zero", "verify.md"),
+            "# Verify Receipt\n\n## Overall Decision\n\n- [x] ❌ FAIL — return\n",
+        )
+        self.assertEqual(
+            self.pending(root, self.common(root), ["demo", "other", "both-zero"]),
+            [PendingChange("demo", 0, "none"), PendingChange("other", 0, "none")],
+        )
+
+    def test_receipts_in_linked_worktree(self):
+        main = self.checkout("main")
+        common = self.common(main)
+        self.link_worktree(common, "wt-a", self.path("wt-a"))
+        linked = self.link_worktree(common, "wt-b", self.path("wt-b"))
+        self.make_change(linked, "demo", apply_iter=1, verify=(1, "pass"))
+        self.assertEqual(
+            self.pending(main, common), [PendingChange("demo", 1, "pass")]
+        )
+
+    def test_main_tree_searched_from_worktree(self):
+        main = self.checkout("main")
+        common = self.common(main)
+        linked = self.link_worktree(common, "wt", self.path("linked"))
+        self.make_change(main, "demo", apply_iter=1, verify=(1, "pass"))
+        self.assertEqual(change_roots(linked, common), [linked, main])
+        self.assertEqual(
+            self.pending(linked, common), [PendingChange("demo", 1, "pass")]
+        )
+
+    def test_bare_repo_has_no_main_tree(self):
+        bare = self.checkout("bare", bare=True)
+        event = self.path("event")
+        os.makedirs(event)
+        self.make_change(bare, "demo", apply_iter=1)
+        self.assertEqual(change_roots(event, self.common(bare)), [event])
+        self.assertEqual(self.pending(event, self.common(bare)), [])
+
+    def test_32_worktree_cap(self):
+        main = self.checkout("main")
+        common = self.common(main)
+        for index in range(40):
+            self.link_worktree(common, "wt-%02d" % index, self.path("wt-%02d" % index))
+        # Sorted `gitdir` file names, first 32 visited: wt-31 is the last one read, wt-32 the first
+        # one dropped.
+        self.make_change(self.path("wt-31"), "demo", apply_iter=1)
+        self.make_change(self.path("wt-32"), "other", apply_iter=1)
+        self.assertEqual(len(change_roots(main, common)), 1 + 32)
+        self.assertEqual(
+            self.pending(main, common, ["demo", "other"]),
+            [PendingChange("demo", 1, "none")],
+        )
+
+    def test_oversized_receipt_not_pending(self):
+        root = self.checkout("repo")
+        directory = self.make_change(root, "apply", apply_iter=1)
+        oversized = self.apply_text("apply", 1).ljust(65537, "#")
+        self.write(os.path.join(directory, "apply.md"), oversized)
+        self.assertEqual(os.path.getsize(os.path.join(directory, "apply.md")), 65537)
+        directory = self.make_change(root, "verify", apply_iter=1)
+        self.write(os.path.join(directory, "verify.md"), "#" * 65537)
+        # The bound is "larger than 65,536 bytes": a receipt of exactly that size still reads.
+        directory = self.make_change(root, "boundary", apply_iter=1)
+        self.write(os.path.join(directory, "apply.md"), self.apply_text("boundary", 1).ljust(65536, "#"))
+        self.assertEqual(os.path.getsize(os.path.join(directory, "apply.md")), 65536)
+        self.assertEqual(
+            self.pending(root, self.common(root), ["apply", "verify", "boundary"]),
+            [PendingChange("boundary", 1, "none")],
+        )
+
+    def test_crlf_receipts(self):
+        root = self.checkout("repo")
+
+        def crlf(directory, name, apply_iteration, verify_iteration=None, decision=None):
+            self.write(
+                os.path.join(directory, "apply.md"),
+                self.apply_text(name, apply_iteration).replace("\n", "\r\n"),
+            )
+            if decision is not None:
+                self.write(
+                    os.path.join(directory, "verify.md"),
+                    self.verify_text(name, verify_iteration, decision).replace("\n", "\r\n"),
+                )
+
+        crlf(self.make_change(root, "demo", verify=(1, "fail")), "demo", 1, 1, "fail")
+        crlf(self.make_change(root, "later", verify=(1, "fail")), "later", 2, 1, "fail")
+        crlf(self.make_change(root, "passing", verify=(1, "pass")), "passing", 1, 1, "pass")
+        self.assertEqual(
+            self.pending(root, self.common(root), ["demo", "later", "passing"]),
+            [PendingChange("later", 2, "none"), PendingChange("passing", 1, "pass")],
+        )
+
+    def test_stale_worktree_gitdir_skipped(self):
+        main = self.checkout("main")
+        common = self.common(main)
+        # A worktree whose `.git` path was deleted: its root is not visited, and it is not an error.
+        self.write(
+            os.path.join(common, "worktrees", "gone", "gitdir"),
+            os.path.join(self.path("gone"), ".git") + "\n",
+        )
+        self.make_change(main, "demo", apply_iter=1)
+        self.assertEqual(change_roots(main, common), [main])
+        self.assertEqual(
+            self.pending(main, common), [PendingChange("demo", 1, "none")]
+        )
+
+    def test_stray_file_under_worktrees_skipped(self):
+        # A stray non-directory entry such as `.DS_Store` is not a worktree: it is skipped quietly,
+        # and a valid sibling worktree is still found.
+        main = self.checkout("main")
+        common = self.common(main)
+        self.write(os.path.join(common, "worktrees", ".DS_Store"), "junk\n")
+        linked = self.link_worktree(common, "wt", self.path("linked"))
+        self.make_change(linked, "demo", apply_iter=1)
+        self.assertEqual(change_roots(main, common), [main, linked])
+        self.assertEqual(
+            self.pending(main, common), [PendingChange("demo", 1, "none")]
+        )
+
+    def test_verify_from_other_change_counts(self):
+        # Accepted residual: the predicate reads only the iteration and the decision, not `**Change**`,
+        # so a verify receipt copied from another change still decides this one.
+        root = self.checkout("repo")
+        directory = self.make_change(root, "demo", apply_iter=1)
+        self.write(os.path.join(directory, "verify.md"), self.verify_text("other", 1, "fail"))
+        self.assertEqual(self.pending(root, self.common(root)), [])
+
+    def test_tie_takes_first_in_checkout_order(self):
+        # Two copies at the same iteration: the event checkout is read first, so its verify decides.
+        for label, event_decision, main_decision, expected in (
+            ("event-pass", "pass", "fail", [PendingChange("demo", 1, "pass")]),
+            ("event-fail", "fail", "pass", []),
+        ):
+            with self.subTest(order=label):
+                main = self.checkout("main-" + label)
+                common = self.common(main)
+                linked = self.link_worktree(common, "wt", self.path("linked-" + label))
+                self.make_change(linked, "demo", apply_iter=1, verify=(1, event_decision))
+                self.make_change(main, "demo", apply_iter=1, verify=(1, main_decision))
+                self.assertEqual(self.pending(linked, common), expected)
+
+    def test_unreadable_receipt_raises_store_error(self):
+        # A receipt that cannot be read as UTF-8 text is a recoverable engine failure: the caller
+        # fails open (a stop passes with the notice) rather than blocking on a damaged checkout.
+        root = self.checkout("repo")
+        directory = self.make_change(root, "demo", apply_iter=1)
+        os.makedirs(os.path.join(directory, "verify.md"))
+        with self.assertRaises(StoreError):
+            self.pending(root, self.common(root))
+        os.rmdir(os.path.join(directory, "verify.md"))
+        self.write_bytes(os.path.join(directory, "verify.md"), b"\xff\xfe not utf-8\n")
+        with self.assertRaises(StoreError):
+            self.pending(root, self.common(root))
+
+
+STOP_TEXT = (
+    "Change `%s` has an apply receipt and no finalize receipt. Run verify if it has not run, then "
+    "finalize now: it pushes and creates the PR without asking. If a rule requires you to ask the "
+    "user, or the user told you to stop, say which and end your turn; the next stop is not blocked."
+)
+CLOSEOUT_TEXT = "Run verify, then finalize."
+
+
+class StopGateTest(EngineTest):
+    """The stop gate: one block per pending change phase, its record, and what leaves it alone."""
+
+    def setUp(self):
+        super(StopGateTest, self).setUp()
+        self.root = os.path.join(self.tmp, "repo")
+        os.makedirs(self.root)
+        self.roots = [self.root]
+        self.closeout = make_rule(
+            "repo-superspec-closeout.md", body=CLOSEOUT_TEXT + "\n",
+            skills=(), commands=(), gates=(), stops=("superspec-finalize-pending",),
+        )
+        self.rules = [self.closeout]
+
+    def write(self, path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+
+    def make_change(self, name, apply_iter=None, verify=None):
+        """Write a change's receipts under the fixture root; ``verify`` is ``(iteration, passed)``."""
+        directory = os.path.join(self.root, "openspec", "changes", name)
+        os.makedirs(directory, exist_ok=True)
+        if apply_iter is not None:
+            self.write(os.path.join(directory, "apply.md"), "**Iteration**: `%d`\n" % apply_iter)
+        if verify is not None:
+            self.write(os.path.join(directory, "verify.md"), "\n".join([
+                "**Iteration**: `%d`" % verify[0],
+                "",
+                "- [%s] ✅ PASS — ready to proceed" % ("x" if verify[1] else " "),
+                "",
+            ]))
+        return directory
+
+    def name_change(self, name):
+        """Record ``name`` in the session change set the way a successful openspec call does."""
+        self.run_event(bash_after("openspec status --change %s" % name))
+
+    def arm(self, session="s1"):
+        """Arm the stop gate the way the session's own apply-skill moment does."""
+        with self.store.transaction(session) as state:
+            state.applied = True
+
+    def run_stop(self, roots=None, **fields):
+        ev = event("stop", **fields)
+        with self.store.transaction(ev.session) as state:
+            return decide(self.rules, state, context_key(ev), ev,
+                          list(self.roots) if roots is None else roots)
+
+    def stops(self, session="s1"):
+        with self.store.transaction(session) as state:
+            return [dict(record) for record in state.stops]
+
+    def assert_blocked(self, decision, name):
+        self.assertEqual(decision.kind, "block", decision)
+        self.assertEqual(decision.text, (STOP_TEXT % name) + "\n\n" + CLOSEOUT_TEXT)
+        records = self.stops()
+        self.assertEqual(records[-1]["change"], name)
+        self.assertEqual(decision.entries, [(("stop", name), records[-1]["write_id"])])
+        self.assertIsNone(self.entry(self.closeout))
+        return records[-1]
+
+    def test_stall_after_apply_blocks(self):
+        self.name_change("demo")
+        self.arm()
+        self.make_change("demo", apply_iter=1)
+        record = self.assert_blocked(self.run_stop(), "demo")
+        self.assertEqual(len(self.stops()), 1)
+        self.assertEqual((record["change"], record["iteration"], record["verify_state"]),
+                         ("demo", 1, "none"))
+
+    def test_second_stop_passes(self):
+        self.name_change("demo")
+        self.arm()
+        self.make_change("demo", apply_iter=1)
+        self.assert_blocked(self.run_stop(), "demo")
+        self.assertEqual(self.run_stop(), Decision("pass", "", []))
+        self.assertEqual(len(self.stops()), 1)
+
+    def test_pass_phase_blocks_again(self):
+        self.name_change("demo")
+        self.arm()
+        self.make_change("demo", apply_iter=1)
+        self.assert_blocked(self.run_stop(), "demo")
+        self.make_change("demo", apply_iter=1, verify=(1, True))
+        record = self.assert_blocked(self.run_stop(), "demo")
+        self.assertEqual(record["verify_state"], "pass")
+        self.assertEqual(len(self.stops()), 2)
+        self.assertEqual(self.run_stop(), Decision("pass", "", []))
+
+    def test_new_iteration_blocks_again(self):
+        self.name_change("demo")
+        self.arm()
+        self.make_change("demo", apply_iter=1)
+        self.assert_blocked(self.run_stop(), "demo")
+        self.make_change("demo", apply_iter=2)
+        record = self.assert_blocked(self.run_stop(), "demo")
+        self.assertEqual((record["iteration"], record["verify_state"]), (2, "none"))
+
+    def test_stop_hook_active_same_phase_passes(self):
+        self.name_change("demo")
+        self.arm()
+        self.make_change("demo", apply_iter=1)
+        self.assert_blocked(self.run_stop(), "demo")
+        self.assertEqual(self.run_stop(stop_hook_active=True), Decision("pass", "", []))
+        self.assertEqual(len(self.stops()), 1)
+
+    def test_stop_hook_active_new_phase_blocks(self):
+        self.name_change("demo")
+        self.arm()
+        self.make_change("demo", apply_iter=1)
+        self.assert_blocked(self.run_stop(), "demo")
+        self.make_change("demo", apply_iter=1, verify=(1, True))
+        record = self.assert_blocked(self.run_stop(stop_hook_active=True), "demo")
+        self.assertEqual(record["verify_state"], "pass")
+
+    def test_compaction_keeps_record(self):
+        self.name_change("demo")
+        self.arm()
+        self.make_change("demo", apply_iter=1)
+        self.assert_blocked(self.run_stop(), "demo")
+        self.assertEqual(self.run_event(event("compacted")), Decision("pass", "", []))
+        self.assertEqual(self.run_stop(), Decision("pass", "", []))
+        self.assertEqual(len(self.stops()), 1)
+
+    def test_no_block_without_change_set(self):
+        self.make_change("demo", apply_iter=1)
+        self.assertEqual(self.run_stop(), Decision("pass", "", []))
+        self.assertEqual(self.stops(), [])
+
+    def test_not_armed_without_apply_skill(self):
+        # A change with an apply receipt, named by a plain `openspec` call: the session never invoked
+        # the apply skill, so this stop passes and writes no record.
+        self.name_change("demo")
+        self.make_change("demo", apply_iter=1)
+        ev = event("stop")
+        with self.store.transaction(ev.session) as state:
+            self.assertEqual(
+                decide(self.rules, state, context_key(ev), ev, list(self.roots)),
+                Decision("pass", "", []),
+            )
+        self.assertFalse(state.wrote)  # an unarmed gate writes no record
+        self.assertEqual(self.stops(), [])
+
+    def test_apply_skill_read_does_not_arm(self):
+        # Reading the apply skill's SKILL.md is a moment (it delivers the rule), not an invocation:
+        # a reviewer that opens the file while reviewing agent tooling is not armed, so its stop
+        # with a named pending change passes and writes no record.
+        self.run_event(event("tool-after", tool="Read", path=(
+            "/work/repo/.agents/skills/openspec-apply-change/SKILL.md")))
+        with self.store.transaction("s1") as state:
+            self.assertIs(state.applied, False)
+        self.name_change("demo")
+        self.make_change("demo", apply_iter=1)
+        ev = event("stop")
+        with self.store.transaction(ev.session) as state:
+            self.assertEqual(
+                decide(self.rules, state, context_key(ev), ev, list(self.roots)),
+                Decision("pass", "", []),
+            )
+        self.assertFalse(state.wrote)
+        self.assertEqual(self.stops(), [])
+
+    def test_first_unrecorded_change_named(self):
+        with self.store.transaction("s1") as state:
+            state.applied = True
+            state.changes.extend(["alpha", "beta"])
+            state.stops.append({"change": "alpha", "iteration": 1, "verify_state": "none",
+                                "write_id": state.store.next_write_id()})
+        self.make_change("alpha", apply_iter=1)
+        self.make_change("beta", apply_iter=1)
+        self.assert_blocked(self.run_stop(), "beta")
+        self.assertEqual([record["change"] for record in self.stops()], ["alpha", "beta"])
+
+    def test_subagent_stop_event_not_gated(self):
+        self.name_change("demo")
+        self.arm()
+        self.make_change("demo", apply_iter=1)
+        self.assertEqual(self.run_stop(agent="a1"), Decision("pass", "", []))
+        self.assertEqual(self.stops(), [])
+
+    def test_void_removes_stop_record(self):
+        self.name_change("demo")
+        self.arm()
+        self.make_change("demo", apply_iter=1)
+        record = self.assert_blocked(self.run_stop(), "demo")
+        self.run_event(event("void", write_ids=[record["write_id"]]))
+        self.assertEqual(self.stops(), [])
+        self.assert_blocked(self.run_stop(), "demo")
+
+    def test_late_void_keeps_newer_record(self):
+        self.name_change("demo")
+        self.arm()
+        self.make_change("demo", apply_iter=1)
+        first = self.assert_blocked(self.run_stop(), "demo")
+        self.make_change("demo", apply_iter=1, verify=(1, True))
+        second = self.assert_blocked(self.run_stop(), "demo")
+        self.run_event(event("void", write_ids=[first["write_id"]]))
+        self.assertEqual(self.stops(), [second])
+        self.assertEqual(self.run_stop(), Decision("pass", "", []))
+
+    def test_records_capped_at_40(self):
+        self.name_change("demo")
+        self.arm()
+        with self.store.transaction("s1") as state:
+            for iteration in range(40):
+                state.stops.append({"change": "demo", "iteration": iteration,
+                                    "verify_state": "none",
+                                    "write_id": state.store.next_write_id()})
+        self.make_change("demo", apply_iter=99)
+        record = self.assert_blocked(self.run_stop(), "demo")
+        self.assertEqual(record["iteration"], 99)
+        records = self.stops()
+        self.assertEqual(len(records), 40)
+        self.assertEqual(records[0]["iteration"], 1)
+        self.assertEqual(records[-1]["iteration"], 99)
+
+    def test_stop_text_capped(self):
+        # The runtime cap is the backstop: rules that do not fit whole are left out, and the change is
+        # still named.
+        self.rules = [
+            make_rule("repo-%s.md" % letter, body=letter * 4000 + "\n", skills=(), commands=(),
+                      gates=(), stops=("superspec-finalize-pending",))
+            for letter in "abc"
+        ]
+        self.name_change("demo")
+        self.arm()
+        self.make_change("demo", apply_iter=1)
+        decision = self.run_stop()
+        self.assertEqual(decision.kind, "block")
+        self.assertEqual(
+            decision.text,
+            (STOP_TEXT % "demo") + "\n\n" + "a" * 4000 + "\n\n" + "b" * 4000,
+        )
+        self.assertLessEqual(len(decision.text.encode("utf-8")), 9000)
+        self.assertEqual(len(self.stops()), 1)
+
+    def test_parse_stop_hook_active_in_both_formats(self):
+        stopped = parse_event("claude", claude("Stop", stop_hook_active=True))
+        self.assertEqual((stopped.kind, stopped.stop_hook_active), ("stop", True))
+        plain = parse_event(
+            "plain",
+            {"event": "stop", "session": "s", "cwd": "/c", "stop_hook_active": False},
+        )
+        self.assertEqual((plain.kind, plain.stop_hook_active), ("stop", False))
+        for fmt, payload in (
+            ("claude", claude("Stop", stop_hook_active="yes")),
+            ("claude", claude("Stop", stop_hook_active=1)),
+            ("claude", claude("Stop")),
+            ("plain", {"event": "stop", "session": "s", "cwd": "/c", "stop_hook_active": 1}),
+            ("plain", {"event": "stop", "session": "s", "cwd": "/c"}),
+        ):
+            self.assertIsNone(parse_event(fmt, payload).stop_hook_active, payload)
+
+    def test_event_stop_hook_active_defaults_to_none(self):
+        self.assertIsNone(event("prompt").stop_hook_active)
+        self.assertIsNone(Event("stop", "s", None, "/c", None, None, None, None, None, None,
+                                None).stop_hook_active)
+
+
 class MomentTest(EngineTest):
-    def assert_moment(self, decision):
+    def assert_moment(self, decision, key="s1"):
         rule = self.rules[0]
         self.assertEqual(decision.kind, "context")
         self.assertEqual(decision.text, "Commit types guide.")
-        entry = self.entry()
+        entry = self.entry(key=key)
         self.assertEqual(entry["state"], "delivered")
         self.assertEqual(decision.entries, [(rule.identity, entry["write_id"])])
 
@@ -1564,7 +2484,10 @@ class MomentTest(EngineTest):
 
     def test_slash_prompt_alone_and_with_leading_space(self):
         self.assert_moment(self.run_event(event("prompt", prompt="/openspec-apply-change")))
-        self.assert_moment(self.run_event(event("prompt", prompt="  /opsx:apply\nnow")))
+        # Both prompt forms name one skill, so one context sees the text once; another context
+        # proves the leading-space form parses.
+        second = self.run_event(event("prompt", session="s2", prompt="  /opsx:apply\nnow"))
+        self.assert_moment(second, key="s2")
 
     def test_plain_prompt_text_is_not_a_moment(self):
         for prompt in (
@@ -1609,15 +2532,19 @@ class MomentTest(EngineTest):
             self.skipTest("symlinks are unavailable")
         return link
 
-    def read(self, path, rules=None):
-        return self.run_event(event("tool-after", tool="Read", path=path), rules=rules)
+    def read(self, path, rules=None, session="s1"):
+        return self.run_event(event("tool-after", session=session, tool="Read", path=path), rules=rules)
 
     def test_skill_md_read_by_real_path(self):
         target = self.make_skill(".agents", "skills", "openspec-apply-change")
         link = self.symlink(target, ".claude", "skills", "openspec-apply-change")
         self.assertEqual(self.read(os.path.join(link, "SKILL.md")).kind, "context")
         whole = self.symlink(os.path.join(self.tmp, "repo", ".agents", "skills"), ".claude", "linked")
-        self.assertEqual(self.read(os.path.join(whole, "openspec-apply-change", "SKILL.md")).kind, "context")
+        # The same skill through another path is one trigger; another context proves the resolution.
+        self.assertEqual(
+            self.read(os.path.join(whole, "openspec-apply-change", "SKILL.md"), session="s2").kind,
+            "context",
+        )
 
     def test_skill_md_lookalike_resolving_elsewhere_is_not_a_moment(self):
         elsewhere = self.make_skill("docs", "notes")
@@ -1677,7 +2604,11 @@ class MomentTest(EngineTest):
             tool_response={"backgroundTaskId": "b1"},
         )
         self.assert_moment(self.run_event(parse_event("claude", payload)))
-        self.assert_moment(self.run_event(bash_after("openspec instructions finalize --change x &")))
+        # A backgrounded command is its own call; another context proves it is still a moment.
+        self.assert_moment(
+            self.run_event(bash_after("openspec instructions finalize --change x &", session="s2")),
+            key="s2",
+        )
 
     def test_gate_only_rule_has_no_moments(self):
         rule = make_rule("repo-gate-only.md", skills=(), commands=())
@@ -1688,12 +2619,6 @@ class MomentTest(EngineTest):
         ):
             self.assertEqual(self.run_event(ev, rules=[rule]).kind, "pass")
         self.assertEqual(self.entries(), {})
-
-    def test_moment_redelivers_with_a_fresh_write_id(self):
-        first = self.run_event(event("prompt", prompt="/opsx:apply"))
-        second = self.run_event(event("prompt", prompt="/opsx:apply"))
-        self.assertEqual(second.kind, "context")
-        self.assertGreater(second.entries[0][1], first.entries[0][1])
 
     def test_moment_confirms_a_pending_rule(self):
         self.assertEqual(self.run_event(bash_before("gh pr create --fill")).kind, "deny")
@@ -1712,6 +2637,86 @@ class MomentTest(EngineTest):
         self.run_event(event("prompt", prompt="/opsx:apply"))
         sibling = [make_rule("repo-commit-types.md", body="A different guide.\n")]
         self.assertEqual(self.run_event(bash_before("git commit -m x"), rules=sibling).kind, "deny")
+
+
+class MomentRepeatTest(EngineTest):
+    """One delivery per trigger and generation; a different trigger delivers the same rule again."""
+
+    APPLY = event("tool-after", tool="Skill", skill="openspec-apply-change")
+
+    def test_canonical_skill_table(self):
+        self.assertEqual(canonical_skill("opsx:apply"), "openspec-apply-change")
+        self.assertEqual(canonical_skill("opsx:propose"), "openspec-propose")
+        self.assertEqual(canonical_skill("opsx:explore"), "openspec-explore")
+        self.assertEqual(canonical_skill("openspec-apply-change"), "openspec-apply-change")
+        self.assertEqual(canonical_skill("other-skill"), "other-skill")
+        # `opsx:sync` would need `openspec-sync-specs`, not the generic `openspec-sync-change`; the
+        # table covers only the skills the rules list, and no rule lists `opsx:sync`.
+
+    def test_repeat_trigger_skipped(self):
+        first = self.run_event(bash_after("openspec instructions finalize --change x"))
+        self.assertEqual(first.kind, "context")
+        write_id = first.entries[0][1]
+        second = self.run_event(bash_after("openspec instructions finalize --change y"))
+        self.assertEqual(second.kind, "pass")
+        self.assertEqual(second.text, "")
+        self.assertEqual(self.entry()["write_id"], write_id)  # nothing was recorded again
+
+    def test_skill_forms_are_one_trigger(self):
+        self.assertEqual(self.run_event(self.APPLY).kind, "context")
+        read = event("tool-after", tool="Read",
+                     path="/work/repo/.agents/skills/openspec-apply-change/SKILL.md")
+        self.assertEqual(self.run_event(read).kind, "pass")
+        self.assertEqual(self.run_event(event("prompt", prompt="/opsx:apply")).kind, "pass")
+        self.assertEqual(self.entry()["triggers"], {"skill:openspec-apply-change"})
+
+    def test_different_trigger_redelivers(self):
+        first = self.run_event(self.APPLY)
+        self.assertEqual(first.kind, "context")
+        second = self.run_event(bash_after("openspec instructions finalize --change x"))
+        self.assertEqual(second.kind, "context")
+        self.assertEqual(second.text, "Commit types guide.")
+        self.assertGreater(second.entries[0][1], first.entries[0][1])
+        self.assertEqual(
+            self.entry()["triggers"],
+            {"skill:openspec-apply-change", "command:" + FINALIZE_COMMAND},
+        )
+
+    def test_pending_rule_delivered_at_moment(self):
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "deny")
+        self.assertEqual(self.entry()["state"], "pending")
+        self.assertEqual(self.run_event(self.APPLY).kind, "context")
+        self.assertEqual(self.entry()["state"], "delivered")
+        self.assertEqual(self.run_event(bash_before("gh pr create --fill")).kind, "pass")
+
+    def test_redelivery_keeps_patterns(self):
+        self.run_event(bash_before("git commit -m x"))
+        self.assertEqual(self.entry()["patterns"], {GIT_COMMIT_GATE})
+        self.assertEqual(self.run_event(self.APPLY).kind, "context")
+        self.assertEqual(self.entry()["patterns"], {GIT_COMMIT_GATE})
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "pass")
+        self.assertEqual(self.entry()["patterns"], {GIT_COMMIT_GATE})
+
+    def test_compaction_redelivers_same_trigger(self):
+        command = bash_after("openspec instructions finalize")
+        self.assertEqual(self.run_event(command).kind, "context")
+        self.assertEqual(self.run_event(event("compacted")).kind, "pass")
+        self.assertEqual(self.run_event(command).kind, "context")
+
+    def test_heredoc_mention_delivers_once(self):
+        command = "cat > notes.md <<'EOF'\nopenspec instructions finalize --change x\nEOF"
+        self.assertEqual(self.run_event(bash_after(command)).kind, "context")
+        self.assertEqual(self.run_event(bash_after(command)).kind, "pass")
+
+    def test_cap_counts_only_sent_rules(self):
+        rules = [
+            make_rule("repo-%s.md" % letter, body=sized_body(4000, letter)) for letter in "abc"
+        ]
+        first = self.run_event(event("prompt", prompt="/opsx:apply"), rules=rules)
+        self.assertEqual([identity[0] for identity, _ in first.entries], ["repo-a.md", "repo-b.md"])
+        second = self.run_event(event("prompt", prompt="/opsx:apply"), rules=rules)
+        self.assertEqual([identity[0] for identity, _ in second.entries], ["repo-c.md"])
+        self.assertEqual(second.text, "c" * 3999)
 
 
 class GateTest(EngineTest):
@@ -2003,6 +3008,17 @@ class VoidTest(EngineTest):
         self.run_event(event("prompt", prompt="/opsx:apply"))
         self.void([])
         self.assertEqual(self.entry()["state"], "delivered")
+
+    def test_void_after_new_trigger_removes_entry(self):
+        first = self.run_event(event("prompt", prompt="/opsx:apply"))
+        second = self.run_event(bash_after("openspec instructions finalize"))
+        self.assertEqual(second.kind, "context")
+        self.assertGreater(second.entries[0][1], first.entries[0][1])
+        self.void([second.entries[0][1]])
+        self.assertIsNone(self.entry())
+        # The merged entry went whole, so the same trigger delivers again: the extra delivery is the
+        # safe side of losing both triggers' credit.
+        self.assertEqual(self.run_event(bash_after("openspec instructions finalize")).kind, "context")
 
 
 def quick_store(state_dir):
@@ -2306,6 +3322,151 @@ class HandleTest(CheckoutFixture):
         self.assertTrue(os.path.isfile(self.store.session_path("s9")))
 
 
+class MomentRepeatAfterWriteTest(CheckoutFixture):
+    """A delivery whose host call failed after the write still suppresses the same trigger."""
+
+    def test_stale_delivery_same_trigger_skipped(self):
+        command = "openspec instructions finalize --change x"
+        self.assertEqual(
+            self.call(self.plain("tool-after", tool="bash", command=command, ok=True),
+                      env={FAIL_AFTER_WRITE: "1"}),
+            ("", 1),
+        )
+        entry = self.entries()[("s1", self.rule.identity)]
+        self.assertEqual(entry["state"], "delivered")
+        self.assertEqual(entry["triggers"], {"command:" + FINALIZE_COMMAND})
+        self.assertEqual(
+            self.call(self.plain("tool-after", tool="bash", command=command, ok=True)), ("", 0)
+        )
+        out, code = self.call(self.plain("tool-after", tool="skill", skill="opsx:apply"))
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["decision"], "context")
+        self.assertEqual(json.loads(out)["text"], "Commit types guide.")
+        self.assertEqual(
+            self.entries()[("s1", self.rule.identity)]["triggers"],
+            {"command:" + FINALIZE_COMMAND, "skill:openspec-apply-change"},
+        )
+
+
+class HandleStopTest(CheckoutFixture):
+    """The stop event end to end: ``handle`` computes the change roots and renders the block."""
+
+    def setUp(self):
+        super(HandleStopTest, self).setUp()
+        self.write_rule("repo-superspec-closeout.md", self.closeout_source())
+        self.make_change("demo", 1)
+
+    def closeout_source(self):
+        lines = ['pointer: "Close out after apply."',
+                 "stops: " + flow(("superspec-finalize-pending",))]
+        return "---\n" + "\n".join(lines) + "\n---\n" + CLOSEOUT_TEXT + "\n"
+
+    def make_change(self, name, iteration):
+        directory = os.path.join(self.root, "openspec", "changes", name)
+        os.makedirs(directory, exist_ok=True)
+        with open(os.path.join(directory, "apply.md"), "w", encoding="utf-8") as handle_:
+            handle_.write("**Iteration**: `%d`\n" % iteration)
+
+    def test_plain_stop_blocks_with_the_record(self):
+        self.call(self.plain("tool-after", tool="skill", skill="openspec-apply-change"))
+        self.call(self.plain("tool-after", tool="bash", command="openspec status --change demo",
+                             ok=True))
+        out, code = self.call(self.plain("stop"))
+        response = json.loads(out)
+        self.assertEqual((code, response["decision"]), (0, "block"))
+        self.assertEqual(response["text"], (STOP_TEXT % "demo") + "\n\n" + CLOSEOUT_TEXT)
+        with self.store.transaction("s1") as state:
+            record = state.stops[0]
+        self.assertEqual(
+            response["entries"],
+            [{"rule": ["stop", "demo"], "write_id": record["write_id"]}],
+        )
+
+    def test_claude_stop_blocks_then_passes_in_the_same_phase(self):
+        self.call(self.claude_event("PostToolUse", tool_name="Skill",
+                                    tool_input={"skill": "openspec-apply-change"}), fmt="claude")
+        self.call(self.claude_bash("PostToolUse", "openspec status --change demo"), fmt="claude")
+        out, code = self.call(self.claude_event("Stop", stop_hook_active=False), fmt="claude")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), {
+            "decision": "block", "reason": (STOP_TEXT % "demo") + "\n\n" + CLOSEOUT_TEXT})
+        self.assertEqual(self.call(self.claude_event("Stop", stop_hook_active=True), fmt="claude"),
+                         ("", 0))
+
+
+class StopFailOpenTest(CheckoutFixture):
+    """A recoverable failure at a Claude Code `Stop` hook: `systemMessage` on stdout, notice on stderr, 0."""
+
+    def setUp(self):
+        super(StopFailOpenTest, self).setUp()
+        self.write_rule(
+            "repo-superspec-closeout.md",
+            "---\n" + 'pointer: "Close out after apply."\n' + STOPS_LINE + "\n---\n"
+            + CLOSEOUT_TEXT + "\n",
+        )
+
+    def make_change_directory(self, name):
+        directory = os.path.join(self.root, "openspec", "changes", name)
+        os.makedirs(directory, exist_ok=True)
+        return directory
+
+    def assert_stop_notice(self, out, code):
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), {"systemMessage": FAILURE_NOTICE})
+        self.assertIn(FAILURE_NOTICE, self.stderr)
+        self.assertNotIn("additionalContext", out)
+
+    def test_stop_corrupt_state_passes_with_system_message(self):
+        os.makedirs(self.state_dir, exist_ok=True)
+        path = self.store.session_path("s1")
+        with open(path, "w", encoding="utf-8") as handle_:
+            handle_.write("{not json")
+        self.assert_stop_notice(*self.call(self.claude_event("Stop"), fmt="claude"))
+        self.assertIn("StoreError", self.stderr)
+        with open(path, "r", encoding="utf-8") as handle_:
+            self.assertEqual(handle_.read(), "{not json")
+
+    def test_stop_unreadable_receipt_passes(self):
+        directory = self.make_change_directory("demo")
+        os.makedirs(os.path.join(directory, "apply.md"))
+        self.call(self.plain("tool-after", tool="skill", skill="openspec-apply-change"))
+        self.call(self.plain("tool-after", tool="bash", command="openspec status --change demo",
+                             ok=True))
+        with self.store.transaction("s1") as state:
+            self.assertEqual(state.changes, ["demo"])
+        self.assert_stop_notice(*self.call(self.claude_event("Stop"), fmt="claude"))
+        self.assertIn("cannot read the receipt", self.stderr)
+
+    def test_stop_lock_timeout_passes(self):
+        slept = []
+
+        def record(seconds):
+            slept.append(seconds)
+
+        store = Store(self.state_dir, sleep=record, lock_attempts=2)
+
+        def factory(state_dir):
+            return store
+
+        with FileLock(self.store.session_lock_path("s1"), no_sleep, 1):
+            self.assert_stop_notice(
+                *self.call(self.claude_event("Stop"), fmt="claude", store_factory=factory)
+            )
+        self.assertIn("LockTimeout", self.stderr)
+        self.assertEqual(slept, [LOCK_RETRY_SECONDS])  # between the two tries, never after the last
+
+    def test_plain_stop_failure_stays_a_context_notice(self):
+        os.makedirs(self.state_dir, exist_ok=True)
+        with open(self.store.session_path("s1"), "w", encoding="utf-8") as handle_:
+            handle_.write("{not json")
+        out, code = self.call(self.plain("stop"))
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            json.loads(out), {"decision": "context", "text": FAILURE_NOTICE, "entries": []}
+        )
+        self.assertIn("failed open", self.stderr)
+
+
 class DiscoveryFailureTest(CheckoutFixture):
     def test_missing_git_gives_the_notice(self):
         for error in (FileNotFoundError("git"), subprocess.TimeoutExpired(["git"], 5)):
@@ -2547,9 +3708,24 @@ TYPE_LINE_PREFIX = "- `"
 class RealRepoRuleTest(unittest.TestCase):
     """The repository's own hooked rules, read from this checkout."""
 
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="veles-real-rules-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.store = Store(os.path.join(self.tmp, "agent-rules"), sleep=no_sleep, lock_attempts=2)
+        self.rules, self.errors = load_rules(REPO_ROOT)
+        self.by_name = dict((rule.name, rule) for rule in self.rules)
+
     def real_rule(self):
         with open(COMMIT_TYPES_RULE, "r", encoding="utf-8", newline="") as handle:
             return parse_rule("repo-commit-types.md", handle.read())
+
+    def rule(self, name):
+        self.assertIn(name, self.by_name)
+        return self.by_name[name]
+
+    def run_event(self, ev):
+        with self.store.transaction(ev.session) as state:
+            return decide(self.rules, state, context_key(ev), ev)
 
     def test_real_rules_load_without_errors(self):
         rules, errors = load_rules(REPO_ROOT)
@@ -2598,6 +3774,52 @@ class RealRepoRuleTest(unittest.TestCase):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_push_denied_without_delivery(self):
+        # A context that has delivered nothing: the push gate denies with the pre-push rule text.
+        decision = self.run_event(bash_before("git push origin feature"))
+        self.assertEqual(decision.kind, "deny")
+        self.assertEqual(decision.text, rule_body(self.rule("repo-pre-push-checks.md").body))
+        self.assertIn("scripts/components.py changed", decision.text)
+
+    def test_push_after_finalize_passes(self):
+        decision = self.run_event(bash_after("openspec instructions finalize --change demo"))
+        self.assertEqual(decision.kind, "context")
+        self.assertIn(rule_body(self.rule("repo-pre-push-checks.md").body), decision.text)
+        self.assertEqual(self.run_event(bash_before("git push origin feature")).kind, "pass")
+
+    def test_gh_pr_create_denied_with_real_device(self):
+        # A fresh context, so nothing but this gate has been delivered before the PR is created.
+        decision = self.run_event(bash_before("gh pr create --fill"))
+        self.assertEqual(decision.kind, "deny")
+        self.assertIn(rule_body(self.rule("repo-real-device-testing.md").body), decision.text)
+
+    def test_finalize_command_delivers_closeout_real_device_pre_push(self):
+        decision = self.run_event(bash_after("openspec instructions finalize --change demo"))
+        self.assertEqual(decision.kind, "context")
+        for name in (
+            "repo-superspec-closeout.md",
+            "repo-real-device-testing.md",
+            "repo-pre-push-checks.md",
+        ):
+            self.assertIn(rule_body(self.rule(name).body), decision.text, name)
+
+    def test_ff_skill_delivers_gate_and_roster(self):
+        decision = self.run_event(event("tool-after", tool="Skill", skill="openspec-ff-change"))
+        self.assertEqual(decision.kind, "context")
+        self.assertIn(rule_body(self.rule("repo-superspec-review-gate.md").body), decision.text)
+        self.assertIn(rule_body(self.rule("repo-review-models.md").body), decision.text)
+
+    def test_verify_skill_delivers_gate_not_roster(self):
+        decision = self.run_event(event("tool-after", tool="Skill", skill="openspec-verify-change"))
+        self.assertEqual(decision.kind, "context")
+        self.assertIn(rule_body(self.rule("repo-superspec-review-gate.md").body), decision.text)
+        self.assertNotIn(rule_body(self.rule("repo-review-models.md").body), decision.text)
+
+    def test_closeout_declares_stop_predicate(self):
+        self.assertEqual(
+            self.rule("repo-superspec-closeout.md").stops, ("superspec-finalize-pending",)
+        )
 
 
 if __name__ == "__main__":

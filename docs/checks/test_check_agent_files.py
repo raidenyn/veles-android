@@ -25,6 +25,8 @@ from check_agent_files import (  # noqa: E402
     NOTICE_NESTED,
     NOTICE_ROOT,
     SCOPES,
+    check_always_on_rules,
+    check_budget,
     check_claude_hooks,
     check_codeowners,
     check_hooked_rules,
@@ -33,6 +35,7 @@ from check_agent_files import (  # noqa: E402
     check_plugin_mentions,
     check_pointer_block,
     check_repo,
+    check_stop_predicates,
     list_files,
     list_links,
     main,
@@ -113,10 +116,10 @@ EXPECTED_SCOPE_AGENTS = {
 RULE_SIZE_MAX = 24000
 REPO_RULE_SIZE_MAX = 4096
 SIZE_CAP_CASES = (  # (case, rule name, scope, size, expected size findings)
-    ("repo at its cap", "repo-cap.md", "repo", REPO_RULE_SIZE_MAX, 0),
-    ("repo over its cap", "repo-cap.md", "repo", REPO_RULE_SIZE_MAX + 1, 1),
-    ("repo far over", "repo-cap.md", "repo", 30000, 1),
-    ("repo over the node cap", "repo-cap.md", "repo", RULE_SIZE_MAX + 1, 1),
+    ("repo at its cap", "repo-no-time-based-tests.md", "repo", REPO_RULE_SIZE_MAX, 0),
+    ("repo over its cap", "repo-no-time-based-tests.md", "repo", REPO_RULE_SIZE_MAX + 1, 1),
+    ("repo far over", "repo-no-time-based-tests.md", "repo", 30000, 1),
+    ("repo over the node cap", "repo-no-time-based-tests.md", "repo", RULE_SIZE_MAX + 1, 1),
     ("node over the repo cap", "android-cap.md", "android", REPO_RULE_SIZE_MAX + 1, 0),
     ("node at its cap", "android-cap.md", "android", RULE_SIZE_MAX, 0),
     ("node over its cap", "android-cap.md", "android", RULE_SIZE_MAX + 1, 1),
@@ -174,27 +177,57 @@ EXPECTED_HOOKS = (
     ("PostToolUse", "Bash|Skill|Read"),
     ("UserPromptSubmit", None),
     ("PreCompact", None),
+    ("Stop", None),
 )
 OPENCODE_PACKAGE = "opencode-rules@>=2.0.0 <3"
 LOCAL_PLUGIN = "./scripts/opencode-hooked-rules"
 LOCAL_PLUGIN_INDEX = "scripts/opencode-hooked-rules/index.js"
-# The eight always-on `repo-*` rules the root AGENTS.md lists once the Conventional Commits rule
-# moved to `.agents/hooked-rules/`.
+# The three always-on `repo-*` rules the root AGENTS.md lists, once the five workflow rules moved
+# to `.agents/hooked-rules/`.
 EXPECTED_REPO_RULES = (
-    "repo-real-device-testing.md",
     "repo-no-time-based-tests.md",
-    "repo-pre-push-checks.md",
-    "repo-review-models.md",
-    "repo-superspec-review-gate.md",
     "repo-tracker-intake.md",
-    "repo-superspec-closeout.md",
     "repo-signing-keys.md",
 )
+# Every rule that moved; the value is its file name under `.agents/hooked-rules/`.
+EXPECTED_MOVED_RULES = {
+    "repo-conventional-commits.md": "repo-commit-types.md",
+    "repo-pre-push-checks.md": "repo-pre-push-checks.md",
+    "repo-real-device-testing.md": "repo-real-device-testing.md",
+    "repo-review-models.md": "repo-review-models.md",
+    "repo-superspec-closeout.md": "repo-superspec-closeout.md",
+    "repo-superspec-review-gate.md": "repo-superspec-review-gate.md",
+}
+# The brief's predicate registry and delivery-budget trigger commands, repeated here so a wrong
+# constant cannot satisfy its own fixture.
+EXPECTED_STOP_PREDICATES = ("superspec-finalize-pending",)
+EXPECTED_BUDGET_COMMANDS = tuple(
+    "openspec instructions %s" % artifact
+    for artifact in (
+        "brainstorm",
+        "proposal",
+        "design",
+        "specs",
+        "tasks",
+        "plan",
+        "apply",
+        "verify",
+        "finalize",
+    )
+) + (
+    "openspec new change x",
+    "openspec instructions verify && openspec instructions finalize",
+)
+BUDGET_SKILL = "budget-probe"
 MOVED_RULE = ".agents/rules/repo-conventional-commits.md"
 HOOKED_DIR = ".agents/hooked-rules/"
 HOOKED_NAME = "repo-commit-types.md"
 HOOKED_PATH = HOOKED_DIR + HOOKED_NAME
 HOOKED_POINTER = "Fixture commit types: read before `git commit`."
+# Every hooked rule the clean fixture carries: one per moved rule's new path, so a deleted target
+# is a missing rule and not an otherwise empty directory.
+HOOKED_TARGETS = tuple(sorted(set(EXPECTED_MOVED_RULES.values())))
+HOOKED_POINTER_OTHER = "Fixture workflow rule: read before acting."
 ENGINE_FILE = "scripts/agent_rules.py"
 
 
@@ -206,10 +239,35 @@ def hooked_rule_text(pointer=HOOKED_POINTER, lines=None, body="Fixture body.\n")
     return "---\n" + "\n".join(head + list(lines)) + "\n---\n" + body
 
 
+def fixture_hooked_rules():
+    """The clean fixture's ``{file name: text}`` for every moved rule's target."""
+    texts = {}
+    for name in HOOKED_TARGETS:
+        pointer = HOOKED_POINTER if name == HOOKED_NAME else HOOKED_POINTER_OTHER
+        texts[name] = hooked_rule_text(pointer=pointer)
+    return texts
+
+
+def budget_rule_text(skills=(), stops=(), size=0):
+    """A hooked rule whose emitted text (``rule_text``) is exactly ``size`` ASCII bytes.
+
+    The body is ``size`` bytes plus its newline, well under the engine's 4,096-byte body cap; the
+    triggers list only the given skills or stops, so the rule is matched by that trigger alone.
+    """
+    if not 0 < size <= 4095:
+        raise AssertionError("the emitted text must be 1..4095 bytes, got %d" % size)
+    lines = []
+    if skills:
+        lines.extend(["skills:"] + ['  - "%s"' % skill for skill in skills])
+    if stops:
+        lines.extend(["stops:"] + ['  - "%s"' % stop for stop in stops])
+    return hooked_rule_text(lines=lines, body="x" * size + "\n")
+
+
 def pointer_block(rule_texts=None):
-    """The engine's pointer block over ``{name: text}`` (the fixture rule by default)."""
+    """The engine's pointer block over ``{name: text}`` (the fixture rules by default)."""
     if rule_texts is None:
-        rule_texts = {HOOKED_NAME: hooked_rule_text()}
+        rule_texts = fixture_hooked_rules()
     rules = [ENGINE.parse_rule(name, text) for name, text in sorted(rule_texts.items())]
     return ENGINE.render_pointer_block(rules)
 
@@ -424,8 +482,9 @@ def clean_files(skills=None):
         ".agents/skills/.openspec-target": "claude\n",
         LOCAL_PLUGIN_INDEX: "export default {}\n",
         ENGINE_FILE: ENGINE_TEXT,
-        HOOKED_PATH: hooked_rule_text(),
     }
+    for name, text in fixture_hooked_rules().items():
+        files[HOOKED_DIR + name] = text
     for name in EXPECTED_REPO_RULES:
         files[".agents/rules/" + name] = repo_rule_text()
     for path in EXPECTED_NODE_FILES:
@@ -574,6 +633,16 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assertEqual(getattr(check_module, "RULE_SIZE_MAX", None), RULE_SIZE_MAX)
         self.assertEqual(getattr(check_module, "REPO_RULE_SIZE_MAX", None), REPO_RULE_SIZE_MAX)
         self.assertEqual(getattr(check_module, "AGENTS_LINE_MAX", None), 40)
+        self.assertEqual(tuple(check_module.ALWAYS_ON_REPO_RULES), EXPECTED_REPO_RULES)
+        self.assertEqual(tuple(check_module.CLAUDE_HOOKS), EXPECTED_HOOKS)
+        self.assertEqual(tuple(check_module.BUDGET_COMMANDS), EXPECTED_BUDGET_COMMANDS)
+        self.assertEqual(
+            dict(check_module.MOVED_RULES),
+            dict(
+                (name, ".agents/hooked-rules/" + target)
+                for name, target in EXPECTED_MOVED_RULES.items()
+            ),
+        )
 
     def test_clean_fixture_passes(self):
         root = self.repo()
@@ -908,26 +977,36 @@ class AgentFileCheckTest(unittest.TestCase):
 
     def test_unknown_frontmatter_key_fails(self):
         text = rule_text("trigger: always_on\nkeywords: otp\n")
-        files = with_rule(clean_files(), "repo-keywords.md", text, "repo")
+        files = clean_files()
+        files[".agents/rules/repo-no-time-based-tests.md"] = text
         findings = check_repo(self.repo(files))
-        self.assert_finding(findings, "error", ".agents/rules/repo-keywords.md", "keywords")
+        self.assert_finding(
+            findings, "error", ".agents/rules/repo-no-time-based-tests.md", "keywords"
+        )
         self.assertEqual(len(findings), 1, findings)
 
     def test_repo_rule_with_globs_fails(self):
         for key in ("globs", "paths"):
             with self.subTest(key=key):
                 text = rule_text("trigger: always_on\n%s: [\"android/**\"]\n" % key)
-                files = with_rule(clean_files(), "repo-scoped.md", text, "repo")
+                files = clean_files()
+                files[".agents/rules/repo-no-time-based-tests.md"] = text
                 findings = check_repo(self.repo(files))
                 self.assert_finding(
-                    findings, "error", ".agents/rules/repo-scoped.md", "must not set `%s`" % key
+                    findings,
+                    "error",
+                    ".agents/rules/repo-no-time-based-tests.md",
+                    "must not set `%s`" % key,
                 )
                 self.assertEqual(len(findings), 1, findings)
 
     def test_repo_rule_must_be_always_on(self):
-        files = with_rule(clean_files(), "repo-glob.md", repo_rule_text("glob"), "repo")
+        files = clean_files()
+        files[".agents/rules/repo-no-time-based-tests.md"] = repo_rule_text("glob")
         findings = check_repo(self.repo(files))
-        self.assert_finding(findings, "error", ".agents/rules/repo-glob.md", "always_on")
+        self.assert_finding(
+            findings, "error", ".agents/rules/repo-no-time-based-tests.md", "always_on"
+        )
         self.assertEqual(len(findings), 1, findings)
 
     def test_node_rule_globs_must_be_list(self):
@@ -1107,16 +1186,38 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assertEqual(check_repo(self.repo(files)), [])
 
     def test_repo_rules_listed_by_root(self):
+        # The root, not a node, lists the three always-on rules. Dropping a mention is reported
+        # both by the rule's own listing check and by the always-on listing check.
         files = clean_files()
-        files[".agents/rules/repo-test-rule.md"] = repo_rule_text()
-        files["android/AGENTS.md"] = listed(files["android/AGENTS.md"], "repo-test-rule.md")
+        files["AGENTS.md"] = root_text().replace("`.agents/rules/repo-tracker-intake.md`", "`BUILD.md`")
         findings = check_repo(self.repo(files))
         self.assert_finding(
-            findings, "error", ".agents/rules/repo-test-rule.md", "is not listed in AGENTS.md"
+            findings, "error", ".agents/rules/repo-tracker-intake.md", "is not listed in AGENTS.md"
+        )
+        self.assert_finding(
+            findings, "error", "AGENTS.md", "does not list `.agents/rules/repo-tracker-intake.md`"
+        )
+        self.assertEqual(len(findings), 2, findings)
+        files["AGENTS.md"] = root_text()
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_extra_repo_rule_rejected(self):
+        # `.agents/rules/` holds exactly the three always-on `repo-*` rules; a fourth would compete
+        # for the context budget, so it must be hook-delivered or scoped to a node instead.
+        files = with_rule(clean_files(), "repo-extra.md", repo_rule_text(), "repo")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", ".agents/rules/repo-extra.md", "the three always-on"
         )
         self.assertEqual(len(findings), 1, findings)
-        files["AGENTS.md"] = listed(files["AGENTS.md"], "repo-test-rule.md")
-        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_missing_always_on_listing_rejected(self):
+        files = clean_files()
+        files["AGENTS.md"] = root_text().replace("`.agents/rules/repo-signing-keys.md`", "`BUILD.md`")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", "AGENTS.md", "does not list `.agents/rules/repo-signing-keys.md`"
+        )
 
     def test_listed_rule_file_missing_fails(self):
         files = clean_files()
@@ -1126,18 +1227,18 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assertEqual(len(findings), 1, findings)
 
     def test_reference_must_match_whole_rule_path(self):
-        # `.agents/rules/repo-x.md.bak` is not a mention of `repo-x.md`: it must not satisfy the
-        # listing, and it must not be reported as a missing rule file either.
+        # `.agents/rules/android-x.md.bak` is not a mention of `android-x.md`: it must not satisfy
+        # the listing, and it must not be reported as a missing rule file either.
         files = clean_files()
-        files[".agents/rules/repo-x.md"] = repo_rule_text()
-        files["AGENTS.md"] = listed(files["AGENTS.md"], "repo-x.md.bak")
+        files[".agents/rules/android-x.md"] = node_rule_text("android/**")
+        files["android/AGENTS.md"] = listed(files["android/AGENTS.md"], "android-x.md.bak")
         findings = check_repo(self.repo(files))
         self.assert_finding(
-            findings, "error", ".agents/rules/repo-x.md", "is not listed in AGENTS.md"
+            findings, "error", ".agents/rules/android-x.md", "is not listed in android/AGENTS.md"
         )
         self.assertEqual(len(findings), 1, findings)
 
-        files["AGENTS.md"] = listed(files["AGENTS.md"], "repo-x.md")
+        files["android/AGENTS.md"] = listed(files["android/AGENTS.md"], "android-x.md")
         self.assertEqual(check_repo(self.repo(files)), [])
 
     def test_reference_prefix_does_not_fail_as_missing(self):
@@ -1147,14 +1248,15 @@ class AgentFileCheckTest(unittest.TestCase):
 
     def test_empty_topic_fails(self):
         files = clean_files()
-        files[".agents/rules/repo-.md"] = repo_rule_text()
-        files["AGENTS.md"] = listed(files["AGENTS.md"], "repo-.md")
+        files[".agents/rules/android-.md"] = node_rule_text("android/**")
+        files["android/AGENTS.md"] = listed(files["android/AGENTS.md"], "android-.md")
         findings = check_repo(self.repo(files))
-        self.assert_finding(findings, "error", ".agents/rules/repo-.md", "empty topic")
+        self.assert_finding(findings, "error", ".agents/rules/android-.md", "empty topic")
         self.assertEqual(len(findings), 1, findings)
 
     def test_oversized_rule_skips_content_parsing(self):
-        for name, scope, cap in (("repo-huge.md", "repo", REPO_RULE_SIZE_MAX),
+        # An always-on rule keeps its name: the oversize check must not become a layout finding too.
+        for name, scope, cap in (("repo-no-time-based-tests.md", "repo", REPO_RULE_SIZE_MAX),
                                  ("android-huge.md", "android", RULE_SIZE_MAX)):
             with self.subTest(name=name):
                 text = "not a frontmatter block\n" + "y" * cap + "\n"
@@ -1197,6 +1299,18 @@ class AgentFileCheckTest(unittest.TestCase):
     def test_hooked_missing_pointer(self):
         text = hooked_rule_text(pointer=None, lines=['gates: ["\\\\bgit\\\\b"]'])
         self.assert_single(self.hooked_findings(text), HOOKED_PATH, "`pointer` is required")
+
+    def test_unknown_stop_predicate_rejected(self):
+        text = hooked_rule_text(lines=['stops: ["not-a-predicate"]'])
+        files = clean_files()
+        files[HOOKED_PATH] = text
+        root = self.repo(files)
+        findings = check_repo(root)
+        # One finding, from the registry check: the generic invalid-rule finding stays away.
+        self.assert_single(findings, HOOKED_PATH, "outside the engine registry")
+        self.assertIn("superspec-finalize-pending", findings[0].message)
+        self.assertIn("not-a-predicate", findings[0].message)
+        self.assertEqual(check_stop_predicates(root), findings)
 
     def hooked_body(self, size):
         """The fixture rule with a body of exactly ``size`` UTF-8 bytes (a multi-byte character included)."""
@@ -1265,33 +1379,45 @@ class AgentFileCheckTest(unittest.TestCase):
                 files[ENGINE_FILE] = text
                 self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "cannot be imported")
 
-    def test_retained_block_with_missing_engine_is_one_finding(self):
+    def test_retained_block_with_missing_engine_reports_it_once(self):
         files = clean_files()
         del files[HOOKED_PATH]
         del files[ENGINE_FILE]
-        self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "cannot be imported")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ENGINE_FILE, "cannot be imported")
+        self.assert_finding(findings, "error", HOOKED_PATH, "the moved rule must exist")
+        self.assertEqual(len(findings), 2, findings)
 
-    def test_lone_marker_with_missing_engine_is_one_finding(self):
+    def test_lone_marker_with_missing_engine_reports_it_once(self):
         files = clean_files()
         del files[HOOKED_PATH]
         del files[ENGINE_FILE]
         files["AGENTS.md"] = root_text(block=False) + "\n<!-- hooked-rules:end -->\n"
-        self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "cannot be imported")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ENGINE_FILE, "cannot be imported")
+        self.assert_finding(findings, "error", HOOKED_PATH, "the moved rule must exist")
+        self.assertEqual(len(findings), 2, findings)
 
-    def test_on_disk_hooked_file_with_missing_engine_is_one_finding(self):
+    def test_on_disk_hooked_file_with_missing_engine_reports_it_once(self):
         files = clean_files()
         del files[ENGINE_FILE]
         files["AGENTS.md"] = root_text(block=False)
-        del files[HOOKED_PATH]
         files[".gitignore"] = ".agents/hooked-rules/\n"
         root = self.repo(files)
         write_text(root, HOOKED_PATH, hooked_rule_text())
-        self.assert_single(check_repo(root), ENGINE_FILE, "cannot be imported")
+        findings = check_repo(root)
+        self.assert_finding(findings, "error", ENGINE_FILE, "cannot be imported")
+        for name in HOOKED_TARGETS:
+            self.assert_finding(findings, "error", HOOKED_DIR + name, "the moved rule must exist")
+        self.assertEqual(len(findings), len(HOOKED_TARGETS) + 1, findings)
 
-    def test_retained_block_with_zero_rules_is_stale(self):
+    def test_retained_block_with_a_vanished_rule_is_stale(self):
         files = clean_files()
         del files[HOOKED_PATH]
-        self.assert_single(check_repo(self.repo(files)), "AGENTS.md", "stale")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", "AGENTS.md", "stale")
+        self.assert_finding(findings, "error", HOOKED_PATH, "the moved rule must exist")
+        self.assertEqual(len(findings), 2, findings)
 
     def test_ignored_hooked_file_rejected_by_loader_is_one_finding(self):
         files = clean_files()
@@ -1307,34 +1433,37 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assert_single(findings, HOOKED_PATH, "invalid regex")
 
     def test_marker_found_in_a_damaged_root_agents_md(self):
-        # With a marker the hooked-rule check needs the engine; without one only the configured
-        # Claude Code hooks do, which is reported as such.
-        for block, fragment in ((None, "cannot be imported"), (False, "the Claude Code hooks")):
-            with self.subTest(block=block):
-                files = clean_files()
-                del files[HOOKED_PATH]
-                del files[ENGINE_FILE]
-                files["AGENTS.md"] = root_text(block=block)
-                root = self.repo(files)
-                with open(os.path.join(root, "AGENTS.md"), "ab") as handle:
-                    handle.write(b"A damaged byte: \xff\n")
-                self.assert_single(check_repo(root), ENGINE_FILE, fragment)
-
-    def test_no_hooked_rules_and_no_block_passes(self):
+        # A damaged byte elsewhere in the root cannot hide a retained marker: the hooked-rule check
+        # still needs the engine and reports it, next to the vanished rule's missing target.
         files = clean_files()
         del files[HOOKED_PATH]
-        files["AGENTS.md"] = root_text(block=False)
-        # Hooks with zero hooked rules are valid: the engine passes silently.
-        self.assertEqual(check_repo(self.repo(files)), [])
-        # The configured Claude Code hooks still run the engine, so it must exist.
         del files[ENGINE_FILE]
-        self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "the Claude Code hooks")
+        files["AGENTS.md"] = root_text(block=False) + "\n<!-- hooked-rules:begin -->\n"
+        root = self.repo(files)
+        with open(os.path.join(root, "AGENTS.md"), "ab") as handle:
+            handle.write(b"A damaged byte: \xff\n")
+        findings = check_repo(root)
+        self.assert_finding(findings, "error", ENGINE_FILE, "cannot be imported")
+        self.assert_finding(findings, "error", HOOKED_PATH, "the moved rule must exist")
+        self.assertEqual(len(findings), 2, findings)
+
+    def test_no_pointer_block_with_missing_engine_is_still_reported(self):
+        # Six required hooked rules need the engine even with no pointer block, so the configured
+        # hooks never run an absent parser.
+        files = clean_files()
+        del files[ENGINE_FILE]
+        files["AGENTS.md"] = root_text(block=False)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ENGINE_FILE, "cannot be imported")
+        self.assertEqual(len(findings), 1, findings)
 
     def test_pointer_block_stale(self):
         files = clean_files()
         files[HOOKED_PATH] = hooked_rule_text(pointer="A changed pointer.")
         self.assert_single(check_repo(self.repo(files)), "AGENTS.md", "stale")
-        files["AGENTS.md"] = root_text(block=pointer_block({HOOKED_NAME: files[HOOKED_PATH]}))
+        texts = fixture_hooked_rules()
+        texts[HOOKED_NAME] = files[HOOKED_PATH]
+        files["AGENTS.md"] = root_text(block=pointer_block(texts))
         self.assertEqual(check_repo(self.repo(files)), [])
 
     def test_pointer_block_stale_for_a_new_rule(self):
@@ -1358,8 +1487,8 @@ class AgentFileCheckTest(unittest.TestCase):
             ),
             ("no end marker", root_text().replace(ENGINE.POINTER_END + "\n", ""), "begin line"),
             (
-                "two blocks",
-                root_text() + "\n" + pointer_block() + "\n",
+                "second begin marker",
+                root_text() + ENGINE.POINTER_BEGIN + "\n",
                 "begin line",
             ),
         )
@@ -1395,11 +1524,42 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assert_finding(findings, "error", "AGENTS.md", "now lives at")
         self.assertEqual(len(findings), 2, findings)
 
-    def test_root_lists_the_eight_repo_rules(self):
+    def test_moved_rule_left_behind(self):
+        for name, target in sorted(EXPECTED_MOVED_RULES.items()):
+            with self.subTest(name=name):
+                files = clean_files()
+                files[".agents/rules/" + name] = repo_rule_text()
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings,
+                    "error",
+                    ".agents/rules/" + name,
+                    ".agents/hooked-rules/" + target,
+                )
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_moved_rule_target_missing(self):
+        # A moved rule has one home: its `.agents/hooked-rules/` target. Deleting it must fail even
+        # when the pointer block is regenerated over the remaining rules, as it then matches again
+        # and no listing or pointer check would notice the vanished rule.
+        for name, target in sorted(EXPECTED_MOVED_RULES.items()):
+            with self.subTest(name=name):
+                files = clean_files()
+                del files[HOOKED_DIR + target]
+                texts = fixture_hooked_rules()
+                del texts[target]
+                files["AGENTS.md"] = root_text(block=pointer_block(texts))
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings, "error", HOOKED_DIR + target, "the moved rule must exist"
+                )
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_root_lists_the_three_always_on_repo_rules(self):
         text = root_text()
         for name in EXPECTED_REPO_RULES:
             self.assertIn(".agents/rules/" + name, text)
-        self.assertEqual(len(EXPECTED_REPO_RULES), 8)
+        self.assertEqual(len(EXPECTED_REPO_RULES), 3)
 
     def test_check_functions_accept_the_real_tree_shape(self):
         root = self.repo()
@@ -1411,6 +1571,52 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assertEqual(check_plugin_mentions(root), [])
         self.assertEqual(check_hooked_rules(root, files), [])
         self.assertEqual(check_pointer_block(root), [])
+        self.assertEqual(check_stop_predicates(root), [])
+        self.assertEqual(check_budget(root), [])
+
+    def budget_root(self, sizes, **kwargs):
+        """A fixture repository whose only budget-triggered rules are ``sizes`` bytes each."""
+        files = clean_files()
+        for index, size in enumerate(sizes):
+            files[HOOKED_DIR + "repo-budget-%d.md" % index] = budget_rule_text(
+                size=size, **kwargs
+            )
+        return self.repo(files)
+
+    def test_budget_at_cap_passes(self):
+        # 2,998 + 3,000 + 2,998 bytes and two separators are exactly the 9,000-byte cap.
+        root = self.budget_root([2998, 3000, 2998], skills=[BUDGET_SKILL])
+        self.assertEqual(check_budget(root), [])
+        # The fixture really is at the cap: the engine's own texts total exactly 9,000 bytes.
+        rules, errors = ENGINE.load_rules(root)
+        self.assertEqual(errors, [])
+        texts = [ENGINE.rule_text(rule.body) for rule in rules if BUDGET_SKILL in rule.skills]
+        self.assertEqual(len(texts), 3)
+        self.assertEqual(len(ENGINE.RULE_SEPARATOR.join(texts).encode("utf-8")), 9000)
+
+    def test_budget_over_cap_fails(self):
+        # One byte more than the cap fails, and the message names the trigger and its rules.
+        root = self.budget_root([2998, 3000, 2999], skills=[BUDGET_SKILL])
+        findings = check_budget(root)
+        self.assertEqual(len(findings), 1, findings)
+        self.assert_finding(findings, "error", HOOKED_DIR.rstrip("/"), "skill:" + BUDGET_SKILL)
+        self.assert_finding(findings, "error", HOOKED_DIR.rstrip("/"), "9,001 bytes")
+        self.assert_finding(findings, "error", HOOKED_DIR.rstrip("/"), "9,000-byte delivery budget")
+        self.assert_finding(findings, "error", HOOKED_DIR.rstrip("/"), "repo-budget-2.md")
+
+    def test_stop_text_counted(self):
+        # Two 4,000-byte rules naming the predicate and the 342-byte stop line fit. Three rules of
+        # about 2,900 bytes are 8,705 bytes with separators, under the cap, so only the stop line
+        # (which carries a 64-character change name) can push that trigger over it.
+        fits = self.budget_root([4000, 4000], stops=[EXPECTED_STOP_PREDICATES[0]])
+        self.assertEqual(check_budget(fits), [])
+        over = self.budget_root([2900, 2900, 2901], stops=[EXPECTED_STOP_PREDICATES[0]])
+        findings = check_budget(over)
+        self.assertEqual(len(findings), 1, findings)
+        self.assert_finding(
+            findings, "error", HOOKED_DIR.rstrip("/"), "stop:" + EXPECTED_STOP_PREDICATES[0]
+        )
+        self.assert_finding(findings, "error", HOOKED_DIR.rstrip("/"), "repo-budget-2.md")
 
     def test_documented_skill_section_parses(self):
         text = "# x\n\n## OpenSpec skills\n\n- `alpha`\n- `beta`\n\n## Next\n\n- `gamma`\n"
@@ -1792,6 +1998,29 @@ class AgentFileCheckTest(unittest.TestCase):
     def test_hooks_clean(self):
         self.assertEqual(check_claude_hooks(self.repo()), [])
         self.assertEqual(check_repo(self.repo()), [])
+
+    def test_stop_hook_required(self):
+        files = clean_files()
+        files[".claude/settings.json"] = settings_text(hooks_block(drop="Stop"))
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".claude/settings.json", "hook Stop is missing")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_subagent_stop_rejected(self):
+        # A subagent stop is not a delivery moment; wiring it would run the stop gate twice.
+        block = hooks_block()
+        block["SubagentStop"] = [
+            {
+                "hooks": [
+                    {"type": "command", "command": HOOK_COMMAND, "timeout": 5}
+                ]
+            }
+        ]
+        files = clean_files()
+        files[".claude/settings.json"] = settings_text(block)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".claude/settings.json", "SubagentStop")
+        self.assertEqual(len(findings), 1, findings)
 
     def test_hooks_settings_unreadable_or_without_hooks_fail(self):
         files = clean_files()

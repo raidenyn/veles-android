@@ -45,8 +45,12 @@ POINTER_BEGIN = "<!-- hooked-rules:begin -->"
 POINTER_END = "<!-- hooked-rules:end -->"
 
 SCALAR_KEYS = ("pointer",)
-LIST_KEYS = ("skills", "commands", "gates")
+LIST_KEYS = ("skills", "commands", "gates", "stops")
 RULE_KEYS = SCALAR_KEYS + LIST_KEYS
+
+# The predicates a rule may name under `stops`; the stop gate implements each one.
+FINALIZE_PENDING = "superspec-finalize-pending"
+STOP_PREDICATES = (FINALIZE_PENDING,)
 
 FRONTMATTER_KEY_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):(?: (.*))?$")
 FRONTMATTER_ITEM = r'"(?:[^"\\]|\\.)*"'
@@ -62,9 +66,9 @@ class RuleError(Exception):
 
 
 # identity is (file name, sha256 hex of the raw file bytes); skills is a list of strings,
-# commands and gates are lists of compiled regexes.
+# commands and gates are lists of compiled regexes, and stops is a tuple of predicate names.
 Rule = collections.namedtuple(
-    "Rule", ["name", "identity", "pointer", "skills", "commands", "gates", "body"]
+    "Rule", ["name", "identity", "pointer", "skills", "commands", "gates", "stops", "body"]
 )
 
 
@@ -197,7 +201,7 @@ def parse_rule(name, text):
 
     The identity hash covers the text as given (the raw file, before newline normalisation). A body
     with no text (empty or only blank lines) is an error: a gate would deny with no reason and a moment
-    would credit a rule it never showed.
+    would credit a rule it never showed. Every `stops` entry must name one of ``STOP_PREDICATES``.
     """
     values, body, original_body = _split(text)
     pointer = values.get("pointer")
@@ -208,15 +212,21 @@ def parse_rule(name, text):
     skills = values.get("skills", [])
     commands = _regexes("commands", values.get("commands", []))
     gates = _regexes("gates", values.get("gates", []))
-    if not (skills or commands or gates):
-        raise RuleError("a rule needs at least one entry in `skills`, `commands` or `gates`")
+    stops = tuple(values.get("stops", []))
+    for stop in stops:
+        if stop not in STOP_PREDICATES:
+            raise RuleError("unknown stop predicate %r" % (stop,))
+    if not (skills or commands or gates or stops):
+        raise RuleError(
+            "a rule needs at least one entry in `skills`, `commands`, `gates` or `stops`"
+        )
     size = len(original_body.encode("utf-8", "surrogatepass"))
     if size > BODY_LIMIT:
         raise RuleError("the body is %d bytes, over the %d byte limit" % (size, BODY_LIMIT))
     if not rule_text(body):
         raise RuleError("the body is empty; a rule needs text to show at its moments and gates")
     digest = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
-    return Rule(name, (name, digest), pointer, skills, commands, gates, body)
+    return Rule(name, (name, digest), pointer, skills, commands, gates, stops, body)
 
 
 def _read_rule_file(path):
@@ -431,8 +441,8 @@ def _pointers(args):
     return 0
 
 
-EVENT_KINDS = ("tool-before", "tool-after", "prompt", "compacted", "void")
-DECISION_KINDS = ("pass", "context", "deny")
+EVENT_KINDS = ("tool-before", "tool-after", "prompt", "compacted", "stop", "void")
+DECISION_KINDS = ("pass", "context", "deny", "block")
 # Variables that select or relocate the repository; git honours them over ``-C``, so a host started from
 # a git hook could otherwise point the engine at an unrelated checkout. GIT_CEILING_DIRECTORIES is kept:
 # it can only make discovery fail, which passes silently.
@@ -453,6 +463,7 @@ CLAUDE_EVENTS = {
     "PostToolUse": "tool-after",
     "UserPromptSubmit": "prompt",
     "PreCompact": "compacted",
+    "Stop": "stop",
 }
 CLAUDE_NAMES = dict((kind, name) for name, kind in CLAUDE_EVENTS.items())
 
@@ -462,11 +473,14 @@ class EventError(Exception):
 
 
 # One normalized hook event. Only the fields the engine needs are kept: a tool response, which can be
-# megabytes, is never copied. ``write_ids`` is a list of ints on a ``void`` event and None otherwise.
+# megabytes, is never copied. ``write_ids`` is a list of ints on a ``void`` event and None otherwise;
+# ``stop_hook_active`` is Claude Code's flag on a ``Stop`` and None everywhere else.
 Event = collections.namedtuple(
     "Event",
-    ["kind", "session", "agent", "cwd", "tool", "command", "ok", "skill", "path", "prompt", "write_ids"],
+    ["kind", "session", "agent", "cwd", "tool", "command", "ok", "skill", "path", "prompt",
+     "write_ids", "stop_hook_active"],
 )
+Event.__new__.__defaults__ = (None,)  # a construction that predates stop_hook_active still works
 
 # kind is one of DECISION_KINDS; entries is a list of (rule identity, write id).
 Decision = collections.namedtuple("Decision", ["kind", "text", "entries"])
@@ -483,6 +497,12 @@ def _text(payload, key, required=False):
     if required and not value:
         raise EventError("`%s` must not be empty" % key)
     return value
+
+
+def _flag(payload, key):
+    """The boolean member ``key`` of ``payload``, or None; a non-boolean value is ignored."""
+    value = payload.get(key)
+    return value if isinstance(value, bool) else None
 
 
 def _parse_claude(payload):
@@ -512,6 +532,7 @@ def _parse_claude(payload):
         _text(payload, "agent_id"),
         _text(payload, "cwd", required=True),
         tool, command, ok, skill, path, prompt, None,
+        _flag(payload, "stop_hook_active") if kind == "stop" else None,
     )
 
 
@@ -541,6 +562,7 @@ def _parse_plain(payload):
         _text(payload, "path"),
         _text(payload, "prompt"),
         write_ids,
+        _flag(payload, "stop_hook_active") if kind == "stop" else None,
     )
 
 
@@ -559,13 +581,19 @@ def parse_event(fmt, payload):
 def render(fmt, event, decision):
     """The text the engine prints for ``decision``: ``""`` for a pass, JSON otherwise.
 
-    A decision is never a permission grant: Claude Code's ``allow`` is never written. Raises
-    ``ValueError`` for a decision or format that has no form.
+    A decision is never a permission grant: Claude Code's ``allow`` is never written. ``block`` is only
+    valid for a ``stop`` event, where Claude Code reads ``{"decision": "block", "reason": ...}`` and the
+    plain format carries the stop record's entry. Claude Code has no ``additionalContext`` channel at a
+    compaction or a stop, so a ``context`` decision there renders nothing (the stop hook's notice is a
+    ``systemMessage``, written only by ``_failure_output``). Raises ``ValueError`` for a decision or
+    format that has no form.
     """
     if decision.kind not in DECISION_KINDS:
         raise ValueError("unknown decision %r" % (decision.kind,))
     if fmt not in ("claude", "plain"):
         raise ValueError("unknown output format %r" % (fmt,))
+    if decision.kind == "block" and event.kind != "stop":
+        raise ValueError("a block is only valid for a stop event, not %r" % (event.kind,))
     if decision.kind == "pass":
         return ""
     if fmt == "plain":
@@ -577,6 +605,8 @@ def render(fmt, event, decision):
                 for identity, write_id in decision.entries
             ],
         })
+    if decision.kind == "block":
+        return json.dumps({"decision": "block", "reason": decision.text})
     if decision.kind == "deny":
         if event.kind != "tool-before":
             raise ValueError("Claude Code can only deny a tool-before event, not %r" % event.kind)
@@ -586,8 +616,9 @@ def render(fmt, event, decision):
             "permissionDecisionReason": decision.text,
         }})
     name = CLAUDE_NAMES.get(event.kind)
-    if name is None or event.kind == "compacted":
-        return ""  # Claude Code has no context channel for a compaction, and no void event
+    if name is None or event.kind in ("compacted", "stop"):
+        # Claude Code has no context channel for a compaction or a stop, and no void event.
+        return ""
     return json.dumps({"hookSpecificOutput": {"hookEventName": name, "additionalContext": decision.text}})
 
 
@@ -654,10 +685,20 @@ def checkout_for(cwd):
         return None
 
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 KEEP_SESSIONS = 50
+KEEP_CHANGES = 20  # the session change set keeps this many names, newest last
+KEEP_STOPS = 40  # the session stop records keep this many, oldest first
 LOCK_RETRY_SECONDS = 0.1
 ENTRY_STATES = ("delivered", "pending")
+STOP_VERIFY_STATES = ("none", "pass")
+# A change name as openspec writes it: the bound keeps every name in a state file a plain token.
+CHANGE_NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+# The `--change` argument of an openspec command: `--change demo`, `--change=demo` and both quoted
+# forms. The lookahead refuses a longer name rather than taking a 64-character prefix of it.
+CHANGE_ARG_RE = re.compile(r"--change(?:=|\s+)[\"']?([a-z0-9][a-z0-9-]{0,63})(?![a-z0-9-])")
+# A command that runs openspec at all; only its successful calls record a change name.
+OPENSPEC_COMMAND_RE = re.compile(r"\bopenspec\b")
 INITIALIZED_MARKER = "initialized"
 STEM_RE = re.compile(r"[0-9a-f]{64}")
 SESSION_FILE_RE = re.compile(r"[0-9a-f]{64}\.json")
@@ -784,29 +825,79 @@ def _count(value):
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
+def _change_names(value):
+    """A version 2 file's change set: distinct change names, newest last; StoreError otherwise."""
+    if not isinstance(value, list) or not all(
+        isinstance(name, str) and CHANGE_NAME_RE.fullmatch(name) for name in value
+    ):
+        raise StoreError("session state has an invalid change set")
+    if len(set(value)) != len(value):
+        raise StoreError("session state change set names a change twice")
+    return list(value)
+
+
+def _stop_records(value):
+    """A version 2 file's stop records, oldest first; StoreError for an invalid record."""
+    if not isinstance(value, list):
+        raise StoreError("session state has no stops list")
+    records = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise StoreError("a stop record is not an object")
+        change = item.get("change")
+        iteration = _count(item.get("iteration"))
+        verify_state = item.get("verify_state")
+        write_id = _count(item.get("write_id"))
+        if not isinstance(change, str) or CHANGE_NAME_RE.fullmatch(change) is None:
+            raise StoreError("a stop record has an invalid change name")
+        if iteration is None or write_id is None:
+            raise StoreError("a stop record has an invalid iteration or write id")
+        if verify_state not in STOP_VERIFY_STATES:
+            raise StoreError("a stop record has an invalid verify state")
+        records.append({
+            "change": change, "iteration": iteration,
+            "verify_state": verify_state, "write_id": write_id,
+        })
+    return records
+
+
 class SessionState(object):
     """One session's delivery state, read and written only inside ``Store.transaction``.
 
-    ``entries`` maps ``(key, rule identity)`` to ``{"state", "patterns", "generation", "write_id"}``.
-    A key is ``session`` for the main context and ``"session/agent"`` for a subagent; each key has its
-    own generation, 0 until bumped.
+    ``entries`` maps ``(key, rule identity)`` to
+    ``{"state", "patterns", "triggers", "generation", "write_id"}``. A key is ``session`` for the main
+    context and ``"session/agent"`` for a subagent; each key has its own generation, 0 until bumped.
+    ``changes`` (newest last), ``stops`` (oldest first) and ``applied`` are session-wide, not per key:
+    ``applied`` records that this session invoked the apply skill, which is what arms the stop gate.
     """
 
-    def __init__(self, store, session, generations, entries):
+    def __init__(self, store, session, generations, entries, changes=None, stops=None,
+                 applied=False):
         self.store = store
         self.session = session
         self.generations = generations
         self.entries = entries
+        self.changes = [] if changes is None else changes
+        self.stops = [] if stops is None else stops
+        self.applied = applied
         self.wrote = False  # set by ``Store.transaction`` once it published a changed state
 
     @classmethod
     def load(cls, store, session, data):
-        """The state held in ``data`` (None for a session never written); StoreError when invalid."""
+        """The state held in ``data`` (None for a session never written); StoreError when invalid.
+
+        A version 1 file is a version 2 file whose entries have no triggers, whose change set and
+        stop records are empty and whose apply flag is unset. A version 2 file written before the
+        flag existed also loads it unset, so the gate stays closed rather than failing open.
+        """
         generations = {}
         entries = {}
+        changes = []
+        stops = []
+        applied = False
         if data is not None:
             version = data.get("version")
-            if type(version) is not int or version != STATE_VERSION:
+            if type(version) is not int or version not in (1, STATE_VERSION):
                 raise StoreError("unsupported session state version %r" % (version,))
             if data.get("session") != session:
                 raise StoreError("the stored state belongs to session %r" % (data.get("session"),))
@@ -818,14 +909,20 @@ class SessionState(object):
                     raise StoreError("invalid generation for %r" % (key,))
                 generations[key] = value
             for item in items:
-                identity, entry = cls._entry(item)
+                identity, entry = cls._entry(item, version)
                 if identity in entries:
                     raise StoreError("duplicate entry %r" % (identity,))
                 entries[identity] = entry
-        return cls(store, session, generations, entries)
+            if version > 1:
+                changes = _change_names(data.get("changes"))
+                stops = _stop_records(data.get("stops"))
+                applied = data.get("applied", False)
+                if not isinstance(applied, bool):
+                    raise StoreError("session state has an invalid apply flag")
+        return cls(store, session, generations, entries, changes, stops, applied)
 
     @staticmethod
-    def _entry(item):
+    def _entry(item, version):
         if not isinstance(item, dict):
             raise StoreError("a state entry is not an object")
         key, name, digest = item.get("key"), item.get("name"), item.get("sha256")
@@ -836,12 +933,20 @@ class SessionState(object):
             raise StoreError("a state entry has an invalid state")
         if not isinstance(patterns, list) or not all(isinstance(pattern, str) for pattern in patterns):
             raise StoreError("a state entry has invalid patterns")
+        triggers = item.get("triggers", [])
+        if not isinstance(triggers, list) or not all(
+            isinstance(trigger, str) for trigger in triggers
+        ):
+            raise StoreError("a state entry has invalid triggers")
+        if version > 1 and "triggers" not in item:
+            raise StoreError("a version 2 state entry has no triggers")
         generation, write_id = _count(item.get("generation")), _count(item.get("write_id"))
         if generation is None or write_id is None:
             raise StoreError("a state entry has an invalid generation or write id")
         return (key, (name, digest)), {
             "state": item["state"],
             "patterns": set(patterns),
+            "triggers": set(triggers),
             "generation": generation,
             "write_id": write_id,
         }
@@ -855,13 +960,17 @@ class SessionState(object):
                 "sha256": digest,
                 "state": entry["state"],
                 "patterns": sorted(entry["patterns"]),
+                "triggers": sorted(entry["triggers"]),
                 "generation": entry["generation"],
                 "write_id": entry["write_id"],
             })
         return json.dumps({
             "version": STATE_VERSION,
             "session": self.session,
+            "applied": self.applied,
             "generations": self.generations,
+            "changes": list(self.changes),
+            "stops": [dict(record) for record in self.stops],
             "entries": entries,
         }, sort_keys=True, indent=1) + "\n"
 
@@ -869,7 +978,7 @@ class SessionState(object):
         return self.generations.get(key, 0)
 
     def bump(self, key):
-        """Void every entry of ``key`` and no other key."""
+        """Void every entry of ``key`` and no other key; the change set and stop records stay."""
         self.generations[key] = self.generation(key) + 1
 
     def bump_all(self):
@@ -879,14 +988,27 @@ class SessionState(object):
         for key in keys:
             self.bump(key)
 
-    def put(self, key, identity, state, patterns):
-        """Record ``state`` for ``(key, identity)`` at the key's generation, with a fresh write id."""
+    def put(self, key, identity, state, patterns, triggers=()):
+        """Record ``state`` for ``(key, identity)`` at the key's generation, with a fresh write id.
+
+        An entry of the same generation keeps its patterns and triggers and gains the new ones; an
+        entry of an older generation (voided by a re-arm) is replaced, not merged.
+        """
         if state not in ENTRY_STATES:
             raise ValueError("unknown entry state %r" % (state,))
-        self.entries[(key, tuple(identity))] = {
+        identity = (key, tuple(identity))
+        generation = self.generation(key)
+        entry = self.entries.get(identity)
+        if entry is not None and entry["generation"] == generation:
+            patterns = entry["patterns"] | set(patterns)
+            triggers = entry["triggers"] | set(triggers)
+        else:
+            patterns, triggers = set(patterns), set(triggers)
+        self.entries[identity] = {
             "state": state,
-            "patterns": set(patterns),
-            "generation": self.generation(key),
+            "patterns": patterns,
+            "triggers": triggers,
+            "generation": generation,
             "write_id": self.store.next_write_id(),
         }
 
@@ -1190,6 +1312,24 @@ def _live(state, key, identity):
     return entry
 
 
+# The fixed `opsx:` skill table: an `opsx:<x>` command runs the `openspec-<x>-change` skill, except
+# for the two skills that do not follow that shape. It covers the skills the rules list; no rule
+# lists `opsx:sync`, whose skill is `openspec-sync-specs`, so the generic form is never used for it.
+SKILL_ALIASES = {
+    "opsx:propose": "openspec-propose",
+    "opsx:explore": "openspec-explore",
+}
+
+
+def canonical_skill(name):
+    """The canonical skill name of ``name``: the alias table, else the generic ``opsx:<x>`` form."""
+    if name in SKILL_ALIASES:
+        return SKILL_ALIASES[name]
+    if name.startswith("opsx:"):
+        return "openspec-%s-change" % name[len("opsx:"):]
+    return name
+
+
 def _skill_dirs(rule):
     """The skill directory names a rule answers to: each skill, and its part after the last ``:``."""
     return set(rule.skills) | set(skill.rsplit(":", 1)[-1] for skill in rule.skills)
@@ -1223,80 +1363,481 @@ def _read_skill_dirs(event):
 
 
 def _moment_rules(rules, event):
-    """The rules whose moment ``event`` is: a skill tool call, a ``/<skill>`` prompt, a SKILL.md read, or
-    a successful command."""
+    """``[(rule, triggers)]`` for the rules whose moment ``event`` is.
+
+    The triggers are the ones this event matched, as a frozenset of ``"skill:<canonical name>"`` and
+    ``"command:<pattern source>"``: a skill tool call, a ``/<skill>`` prompt, a SKILL.md read, or a
+    successful command.
+    """
     if event.kind == "prompt":
         skill = _prompt_skill(event.prompt)
-        return [rule for rule in rules if skill is not None and skill in rule.skills]
+        if skill is None:
+            return []
+        trigger = "skill:" + canonical_skill(skill)
+        return [(rule, frozenset([trigger])) for rule in rules if skill in rule.skills]
     if event.kind != "tool-after":
         return []
     matched = []
     read_dirs = _read_skill_dirs(event) if event.path else set()
     for rule in rules:
+        triggers = set()
         if event.skill is not None and event.skill in rule.skills:
-            matched.append(rule)
-        elif read_dirs & _skill_dirs(rule):
-            matched.append(rule)
-        elif event.command is not None and event.ok is True and any(
-            pattern.search(event.command) for pattern in rule.commands
-        ):
-            matched.append(rule)
+            triggers.add("skill:" + canonical_skill(event.skill))
+        triggers.update("skill:" + directory for directory in read_dirs & _skill_dirs(rule))
+        if event.command is not None and event.ok is True:
+            triggers.update(
+                "command:" + pattern.pattern
+                for pattern in rule.commands
+                if pattern.search(event.command)
+            )
+        if triggers:
+            matched.append((rule, frozenset(triggers)))
     return matched
+
+
+# The apply skill's canonical name and the trigger its invocation records; the stop gate is armed
+# only by the session that invoked this skill, never by one that merely named a change or read the
+# skill's file.
+APPLY_SKILL = "openspec-apply-change"
+APPLY_TRIGGER = "skill:" + APPLY_SKILL
+
+
+def _skill_triggers(event):
+    """The ``skill:`` triggers an invocation in ``event`` matches, whether or not a rule lists it.
+
+    Only the two invocation forms of a skill count — a Skill tool call and a ``/<skill>`` prompt —
+    normalised exactly as ``_moment_rules`` normalises them. A ``SKILL.md`` read is a moment that
+    delivers the rule, but it is not an invocation: a reviewer opening the apply skill's file is not
+    armed, so the read contributes no trigger here. The event's own skill is counted even when no rule
+    lists it, which is what lets ``decide`` arm the session on the apply skill alone.
+    """
+    if event.kind == "prompt":
+        skill = _prompt_skill(event.prompt)
+        return set() if skill is None else set(["skill:" + canonical_skill(skill)])
+    if event.kind != "tool-after":
+        return set()
+    if event.skill is None:
+        return set()
+    return set(["skill:" + canonical_skill(event.skill)])
 
 
 def _utf8_size(text):
     return len(text.encode("utf-8", "surrogatepass"))
 
 
-def _capped(rules):
-    """``(included rules, joined text)``: rules in name order, each whole, the text at most CONTEXT_CAP bytes.
+def _capped(rules, prefix=""):
+    """``(included rules, text)``: rules in name order, each whole, the text at most CONTEXT_CAP bytes.
 
     Each rule contributes ``rule_text(rule.body)`` (never empty: ``parse_rule`` rejects a blank body),
-    and the texts are joined with one blank line (``RULE_SEPARATOR``). The cap counts the UTF-8 bytes
-    of exactly the text returned, separators included. A rule that does not fit is left out and the
+    and the texts are joined with one blank line (``RULE_SEPARATOR``). ``prefix`` (the stop gate's
+    engine line) comes first, counts against the cap, and is followed by the same separator. The cap
+    counts the UTF-8 bytes of exactly the text returned. A rule that does not fit is left out and the
     next one is still tried.
     """
     included = []
     parts = []
-    size = 0
+    size = _utf8_size(prefix)
     for rule in sorted(rules, key=lambda item: item.name):
         part = rule_text(rule.body)
         if not part:
             continue  # unreachable for a parsed rule; a rule with no text is never credited
-        added = _utf8_size(part) + (_utf8_size(RULE_SEPARATOR) if parts else 0)
+        separator = RULE_SEPARATOR if parts or prefix else ""
+        added = _utf8_size(separator) + _utf8_size(part)
         if size + added > CONTEXT_CAP:
             continue
         included.append(rule)
         parts.append(part)
         size += added
-    return included, RULE_SEPARATOR.join(parts)
+    joined = prefix + (RULE_SEPARATOR if prefix and parts else "") + RULE_SEPARATOR.join(parts)
+    return included, joined
 
 
 def _recorded(state, key, rules):
     return [(rule.identity, state.entries[(key, rule.identity)]["write_id"]) for rule in rules]
 
 
-def decide(rules, state, key, event):
+def _deliver_moment(state, key, rule, matched):
+    """Record ``rule`` as delivered for this context, keeping its gate patterns and adding triggers."""
+    entry = _live(state, key, rule.identity)
+    patterns = entry["patterns"] if entry is not None else set()
+    state.put(key, rule.identity, "delivered", patterns, matched)
+
+
+def record_changes(state, event):
+    """Add the change names of a successful ``openspec`` shell call to the session change set.
+
+    The set is session-wide, not per context, so a subagent's call counts too. Each name moves to the
+    newest end (an already recorded name included) and only the ``KEEP_CHANGES`` newest are kept.
+    An event that is not a successful ``openspec`` command records nothing.
+    """
+    if event.kind != "tool-after" or event.ok is not True or not event.command:
+        return
+    if OPENSPEC_COMMAND_RE.search(event.command) is None:
+        return
+    for name in CHANGE_ARG_RE.findall(event.command):
+        if name in state.changes:
+            state.changes.remove(name)
+        state.changes.append(name)
+    if len(state.changes) > KEEP_CHANGES:
+        del state.changes[:len(state.changes) - KEEP_CHANGES]
+
+
+# Stop predicates
+#
+# A rule's `stops` entries name predicates the stop gate asks about the checkout. This section holds
+# the one the registry has, `superspec-finalize-pending`, which answers whether a named change has an
+# apply receipt and no finalize receipt. It reads receipts as plain files: no subprocess and no clock.
+
+CHANGES_DIR = ("openspec", "changes")  # where openspec keeps a change's receipts and its archive
+RECEIPT_LIMIT = 65536  # bytes read from one receipt; a larger receipt makes its change not pending
+WORKTREE_LIMIT = 32  # linked worktrees visited, in `gitdir` file-name order (sorted)
+ARCHIVE_PREFIX_RE = re.compile(r"\d{4}-\d{2}-\d{2}-")
+ITERATION_RE = re.compile(r"^\*\*Iteration\*\*:\s*`?(\d+)`?", re.M)
+FAIL_TICKED_RE = re.compile(r"^- \[[xX]\] ❌ FAIL", re.M)
+PASS_TICKED_RE = re.compile(r"^- \[[xX]\] (✅ PASS|⚠\ufe0f? PASS WITH WARNINGS)", re.M)
+
+# One change the session named that waits for finalize: the newest apply iteration and the verify
+# state at that iteration, `"none"` or `"pass"` (an entry of ``STOP_VERIFY_STATES``).
+PendingChange = collections.namedtuple("PendingChange", ["name", "iteration", "verify_state"])
+
+
+class _OversizedReceipt(Exception):
+    """A receipt larger than ``RECEIPT_LIMIT``: its change is not pending, silently."""
+
+
+def _core_bare(config_path):
+    """Whether the repository config at ``config_path`` sets ``bare`` true in its ``[core]`` section.
+
+    Git's config syntax is only skimmed for the one value: a ``bare`` key is true when it is written
+    as ``true``, ``yes``, ``on`` or ``1``, or with no value at all. An unreadable config counts as not
+    bare, which can only add a main-tree root that ``change_roots`` skips when it does not exist.
+    """
+    try:
+        with open(config_path, "r", encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+    except OSError:
+        return False
+    section = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and "]" in stripped:
+            header = stripped[1:stripped.index("]")].split(None, 1)
+            section = header[0].strip('"').lower() if header else None
+            continue
+        if section != "core":
+            continue
+        key, separator, value = stripped.partition("=")
+        if key.strip().lower() != "bare":
+            continue
+        if not separator:
+            return True
+        value = re.split(r"[#;]", value, maxsplit=1)[0].strip().strip('"').lower()
+        return value in ("true", "yes", "on", "1")
+    return False
+
+
+def _main_working_tree(common_dir):
+    """The main working tree that shares ``common_dir``; None for a bare repository or a non-``.git``.
+
+    A non-bare repository's common directory is its main working tree's ``.git`` directory, so the main
+    tree is its parent. A bare repository's common directory is the repository itself and has no tree.
+    """
+    if not isinstance(common_dir, str) or not common_dir:
+        return None
+    normalised = os.path.normpath(common_dir)
+    if os.path.basename(normalised) != ".git":
+        return None
+    if _core_bare(os.path.join(normalised, "config")):
+        return None
+    return os.path.dirname(normalised)
+
+
+def _linked_worktree_roots(common_dir):
+    """The linked worktrees of ``common_dir``, in ``gitdir`` file-name order, at most 32.
+
+    Git links a worktree by writing ``<common-dir>/worktrees/<name>/gitdir`` with the path of the
+    worktree's own ``.git`` file; the worktree root is the parent of that path. An entry that is not a
+    directory, or that has no ``gitdir`` file, is not a worktree and is skipped: a stray file such as
+    a ``.DS_Store`` under ``worktrees/`` costs no error. A directory or link that cannot be read
+    raises ``StoreError``: the predicate cannot then answer, and the stop fails open with the notice.
+    """
+    directory = os.path.join(common_dir, "worktrees")
+    try:
+        names = sorted(os.listdir(directory))
+    except FileNotFoundError:
+        return []
+    except OSError as error:
+        raise StoreError("cannot read the worktree directory %s: %s" % (directory, error))
+    roots = []
+    for name in names[:WORKTREE_LIMIT]:
+        entry = os.path.join(directory, name)
+        link = os.path.join(entry, "gitdir")
+        if not os.path.isdir(entry):
+            continue  # a stray file is not a worktree
+        try:
+            with open(link, "r", encoding="utf-8") as handle:
+                target = handle.read().strip()
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except (OSError, UnicodeDecodeError) as error:
+            raise StoreError("cannot read the worktree link %s: %s" % (link, error))
+        if not target:
+            continue
+        if not os.path.isabs(target):
+            target = os.path.join(os.path.dirname(link), target)
+        roots.append(os.path.dirname(target))
+    return roots
+
+
+def change_roots(toplevel, common_dir):
+    """The checkouts to search for a change's receipts, in visit order, as unique real paths.
+
+    The event's checkout (``toplevel``), then the main working tree of ``common_dir`` (unless the
+    repository is bare), then the common directory's linked worktrees, each root read from its
+    ``gitdir`` file (at most ``WORKTREE_LIMIT``). A candidate that is not an existing directory is
+    skipped, and one real path is visited once however many names reach it, so a plain checkout is
+    its ``toplevel`` alone.
+    """
+    candidates = [toplevel]
+    main = _main_working_tree(common_dir)
+    if main is not None:
+        candidates.append(main)
+    candidates.extend(_linked_worktree_roots(common_dir))
+    roots = []
+    seen = set()
+    for candidate in candidates:
+        if not isinstance(candidate, str) or not candidate:
+            continue
+        try:
+            real = os.path.realpath(candidate)
+            if not os.path.isdir(real):
+                continue
+        except (OSError, ValueError):
+            continue
+        if real not in seen:
+            seen.add(real)
+            roots.append(real)
+    return roots
+
+
+def _receipt_text(path):
+    """The text of the receipt at ``path``, or None when there is no such file.
+
+    At most ``RECEIPT_LIMIT`` + 1 bytes are read, opening non-blocking where the platform allows it so
+    a FIFO in a change directory cannot hold the hook. ``_OversizedReceipt`` for a larger file, and
+    ``StoreError`` when the file cannot be read as UTF-8 text, so a damaged checkout fails open.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise StoreError("cannot read the receipt %s: %s" % (path, error))
+    try:
+        chunks = []
+        size = 0
+        while size <= RECEIPT_LIMIT:
+            chunk = os.read(fd, RECEIPT_LIMIT + 1 - size)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+    except OSError as error:
+        raise StoreError("cannot read the receipt %s: %s" % (path, error))
+    finally:
+        os.close(fd)
+    if size > RECEIPT_LIMIT:
+        raise _OversizedReceipt(path)
+    try:
+        return b"".join(chunks).decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise StoreError("cannot read the receipt %s: %s" % (path, error))
+
+
+def _iteration(text):
+    """The ``**Iteration**`` number of a receipt; 0 when the line is missing or unparsable."""
+    match = ITERATION_RE.search(text) if text else None
+    if match is None:
+        return 0
+    try:
+        return int(match.group(1))
+    except ValueError:  # a digit run too long for int(), i.e. unparsable
+        return 0
+
+
+def _archived(root, name):
+    """Whether ``root`` holds the directory ``openspec/changes/archive/<YYYY-MM-DD>-<name>/``.
+
+    The name after the date must be exactly ``name``, so archiving `hook-stop-gate` does not clear
+    `stop-gate`.
+    """
+    directory = os.path.join(root, *(CHANGES_DIR + ("archive",)))
+    try:
+        entries = os.listdir(directory)
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise StoreError("cannot read the change archive %s: %s" % (directory, error))
+    for entry in entries:
+        prefix = ARCHIVE_PREFIX_RE.match(entry)
+        if prefix is not None and entry[prefix.end():] == name:
+            if os.path.isdir(os.path.join(directory, entry)):
+                return True
+    return False
+
+
+def _change_pending(roots, name):
+    """The ``PendingChange`` for one change, or None when it is not pending.
+
+    Every root is searched, because a finalize receipt or an archived copy anywhere clears the change:
+    the event's checkout may see a change another worktree finalized. The newest apply receipt is the
+    highest iteration, the first root on a tie, and only its neighbouring ``verify.md`` decides
+    whether the change failed verification. ``_OversizedReceipt`` propagates, and the caller reads it
+    as "not pending".
+    """
+    newest = None  # (iteration, root) of the newest apply receipt seen
+    for root in roots:
+        if _archived(root, name):
+            return None
+        directory = os.path.join(root, *(CHANGES_DIR + (name,)))
+        if _receipt_text(os.path.join(directory, "finalize.md")) is not None:
+            return None
+        text = _receipt_text(os.path.join(directory, "apply.md"))
+        if text is None:
+            continue
+        iteration = _iteration(text)
+        if newest is None or iteration > newest[0]:
+            newest = (iteration, root)
+    if newest is None:
+        return None
+    iteration, root = newest
+    verify = _receipt_text(os.path.join(root, *(CHANGES_DIR + (name, "verify.md"))))
+    verify_state = "none"
+    if verify is not None and _iteration(verify) == iteration:
+        if FAIL_TICKED_RE.search(verify):
+            return None
+        if PASS_TICKED_RE.search(verify):
+            verify_state = "pass"
+    return PendingChange(name, iteration, verify_state)
+
+
+def finalize_pending(roots, changes):
+    """The ``changes`` that need finalize, as ``PendingChange`` sorted by name.
+
+    ``roots`` is a ``change_roots`` list and ``changes`` the session change set. A change is pending
+    when some copy in some root has ``apply.md``, no copy has ``finalize.md``, no root has an archived
+    copy, and the ``verify.md`` beside the newest ``apply.md`` is missing, records another iteration,
+    or has no FAIL box ticked. A receipt over ``RECEIPT_LIMIT`` bytes makes only its own change not
+    pending, silently; a name that is not a valid change name is ignored. ``StoreError`` (a recoverable
+    engine failure) propagates, so the caller fails open rather than blocking on a damaged checkout.
+    """
+    pending = []
+    for name in changes:
+        if not isinstance(name, str) or CHANGE_NAME_RE.fullmatch(name) is None:
+            continue
+        try:
+            found = _change_pending(roots, name)
+        except _OversizedReceipt:
+            continue
+        if found is not None:
+            pending.append(found)
+    return sorted(pending, key=lambda change: change.name)
+
+
+STOP_LINE = (
+    "Change `{name}` has an apply receipt and no finalize receipt. Run verify if it has not run, "
+    "then finalize now: it pushes and creates the PR without asking. If a rule requires you to ask "
+    "the user, or the user told you to stop, say which and end your turn; the next stop is not "
+    "blocked."
+)
+
+
+def _stop_gate(rules, state, event, roots):
+    """The stop gate: block once per pending change phase, with the rule text and a stop record.
+
+    A ``stop`` in the main context asks every rule naming the ``superspec-finalize-pending`` predicate
+    about the session change set over ``roots`` (the ``change_roots`` list; None reads as no checkout),
+    but only when the session invoked the apply skill (``state.applied``). A session that merely
+    named the change — a delegated verify or review session — passes without writing a record: the
+    reminder belongs to the session that will finalize, normally the parent that applied.
+    The first pending change by name whose phase (newest apply iteration and verify state) has no stop
+    record is named in ``STOP_LINE``, followed by the text of the rules that fit under the cap; the
+    phase's record is written in the same transaction, keeping the ``KEEP_STOPS`` newest, and the rules
+    are not marked delivered. A subagent stop, an unarmed session, a rule without the predicate, or no
+    unrecorded pending change passes. ``stop_hook_active`` is not consulted: the per-phase records
+    bound the blocks, and a phase that changed may block again even when the earlier block continued
+    the turn.
+    """
+    if event.agent:
+        return Decision("pass", "", [])
+    if not state.applied:
+        return Decision("pass", "", [])
+    gated = [rule for rule in rules if FINALIZE_PENDING in rule.stops]
+    if not gated:
+        return Decision("pass", "", [])
+    recorded = set(
+        (record["change"], record["iteration"], record["verify_state"]) for record in state.stops
+    )
+    for change in finalize_pending(roots or [], state.changes):
+        if (change.name, change.iteration, change.verify_state) in recorded:
+            continue
+        _, text = _capped(gated, STOP_LINE.format(name=change.name))
+        write_id = state.store.next_write_id()
+        state.stops.append({
+            "change": change.name,
+            "iteration": change.iteration,
+            "verify_state": change.verify_state,
+            "write_id": write_id,
+        })
+        del state.stops[:max(0, len(state.stops) - KEEP_STOPS)]
+        return Decision("block", text, [(("stop", change.name), write_id)])
+    return Decision("pass", "", [])
+
+
+def decide(rules, state, key, event, roots=None):
     """The ``Decision`` for ``event`` in context ``key``; records it in ``state`` (one transaction).
 
-    Moments (``tool-after``, ``prompt``) add the matched rules as context and mark them delivered. Gates
-    (``tool-before`` with a command) deny a call matching a rule not delivered in this context, record
-    the denied rules as pending with the matched patterns, and confirm a pending rule when a call matches
-    one of its pending patterns. Only rules included under the cap are recorded. ``compacted`` re-arms
-    and ``void`` removes entries by write id; both pass.
+    Moments (``tool-after``, ``prompt``) add the matched rules as context and mark them delivered, and
+    an apply-skill invocation (a Skill call or a ``/<skill>`` prompt) also sets the session-wide
+    apply flag that arms the stop gate. A
+    rule is skipped when its entry is delivered in this context's current generation and already holds
+    every trigger the event matched; a different trigger delivers it again, and a pending entry never
+    suppresses. Gates (``tool-before`` with a command) deny a call matching a rule not delivered in
+    this context, record the denied rules as pending with the matched patterns, and confirm a pending
+    rule when a call matches one of its pending patterns. Only rules included under the cap are
+    recorded. A successful ``openspec`` shell call records its ``--change`` names in the session change
+    set, on the pass path too. ``stop`` runs the stop gate (``_stop_gate``) when ``roots`` holds the
+    ``change_roots`` list; ``compacted`` re-arms and ``void`` removes entries and stop records by write
+    id; both pass.
     """
+    if event.kind == "stop":
+        return _stop_gate(rules, state, event, roots)
+    if event.kind == "tool-after":
+        record_changes(state, event)
     if event.kind in ("prompt", "tool-after"):
-        included, text = _capped(_moment_rules(rules, event))
+        if APPLY_TRIGGER in _skill_triggers(event):
+            state.applied = True
+        fresh = []
+        matched = {}
+        for rule, triggers in _moment_rules(rules, event):
+            entry = _live(state, key, rule.identity)
+            if entry is not None and entry["state"] == "delivered" and triggers <= entry["triggers"]:
+                continue
+            fresh.append(rule)
+            matched[rule.identity] = triggers
+        included, text = _capped(fresh)
         if not included:
             return Decision("pass", "", [])
         for rule in included:
-            state.put(key, rule.identity, "delivered", set())
+            _deliver_moment(state, key, rule, matched[rule.identity])
         return Decision("context", text, _recorded(state, key, included))
     if event.kind == "tool-before":
         return _gate(rules, state, key, event)
     if event.kind == "compacted":
         # An identified subagent re-arms only its own key; otherwise the whole session errs toward an
-        # extra delivery (a main-context compaction never carries an agent id on either host).
+        # extra delivery (a main-context compaction never carries an agent id on either host). A bump
+        # leaves the session change set and stop records alone.
         if event.agent:
             state.bump(key)
         else:
@@ -1307,11 +1848,15 @@ def decide(rules, state, key, event):
 
 
 def _void(state, key, write_ids):
-    """Remove ``key``'s entries that still carry exactly one of ``write_ids``; a newer id survives."""
+    """Remove ``key``'s entries and the session's stop records that carry a ``write_ids`` id exactly.
+
+    A newer entry or record with its own id survives, so a late ``void`` cannot undo a later block.
+    """
     wanted = set(write_ids)
     for entry_key, identity in list(state.entries):
         if entry_key == key and state.entries[(entry_key, identity)]["write_id"] in wanted:
             del state.entries[(entry_key, identity)]
+    state.stops[:] = [record for record in state.stops if record["write_id"] not in wanted]
 
 
 def _gate(rules, state, key, event):
@@ -1400,16 +1945,23 @@ def _diagnose(what, error):
 
 
 def _failure_output(fmt, payload):
-    """The read-by-hand notice where the host has a context channel; otherwise ``""`` and stderr."""
+    """The read-by-hand notice where the host can show it, else ``""``; the notice always goes to stderr.
+
+    ``plain`` keeps its ``context`` decision. On Claude Code the notice is ``additionalContext`` at a
+    moment that has that channel, and ``systemMessage`` at a ``Stop`` (which has no ``additionalContext``
+    channel); every other Claude Code event prints nothing. No form is ever a permission decision.
+    """
     if fmt == "plain":
         return render("plain", None, Decision("context", FAILURE_NOTICE, []))
-    if fmt == "claude" and isinstance(payload, dict):
-        name = payload.get("hook_event_name")
-        if isinstance(name, str) and CLAUDE_EVENTS.get(name) in CLAUDE_CONTEXT_EVENTS:
-            return json.dumps({"hookSpecificOutput": {
-                "hookEventName": name, "additionalContext": FAILURE_NOTICE,
-            }})
+    name = payload.get("hook_event_name") if isinstance(payload, dict) else None
+    kind = CLAUDE_EVENTS.get(name) if isinstance(name, str) else None
+    if kind in CLAUDE_CONTEXT_EVENTS:
+        return json.dumps({"hookSpecificOutput": {
+            "hookEventName": name, "additionalContext": FAILURE_NOTICE,
+        }})
     _stderr(FAILURE_NOTICE + "\n")
+    if kind == "stop":
+        return json.dumps({"systemMessage": FAILURE_NOTICE})
     return ""
 
 
@@ -1434,9 +1986,12 @@ def handle(stdin_text, fmt, env, store_factory):
         if not rules:
             return "", 0
         store = store_factory(os.path.join(common_dir, "agent-rules"))
+        # The stop gate's receipts are searched across the checkout and its worktrees; every other
+        # event needs no git layout beyond the discovery above.
+        roots = change_roots(toplevel, common_dir) if event.kind == "stop" else None
         with store.transaction(event.session) as state:
             # Rendering inside the transaction: a decision that cannot be printed is never recorded.
-            output = render(fmt, event, decide(rules, state, context_key(event), event))
+            output = render(fmt, event, decide(rules, state, context_key(event), event, roots))
         if state.wrote:
             try:
                 store.prune(event.session)

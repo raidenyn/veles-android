@@ -6,7 +6,9 @@ This capability defines the closeout after the last implementation commit: monit
 ## Requirements
 
 ### Requirement: Closeout starts when finalize confirms an open PR
-`.agents/rules/repo-superspec-closeout.md` SHALL start the closeout when the last implementation commit is pushed and finalize has confirmed an open pull request, whether the work is tracked or not, and the agent MUST then stay in monitoring mode.
+`.agents/hooked-rules/repo-superspec-closeout.md` SHALL start the closeout when the last implementation commit is
+pushed and finalize has confirmed an open pull request, whether the work is tracked or not, and the agent MUST then
+stay in monitoring mode.
 
 A spec pre-review pull request, when one is opened before finalize, MUST be opened as a draft.
 
@@ -24,7 +26,7 @@ The outcomes `merge-locally`, `kept-as-is` and `discarded` MUST remain available
 - for `pr-created` and `pr-updated`: monitor to green, sync and archive once, review the docs, push, monitor to merge and complete the applicable follow-ups;
 - for `merge-locally`: the local-merge requirement below.
 
-The order of the closeout MUST be: babysit to green, sync and archive once, review the docs, push, babysit again, answer comments and monitor to merge, then complete the applicable follow-ups (for tracked work, the post-merge check). Before acting the agent MUST read the *Closeout* and *Monitoring* sections of `docs/superspec-workflow.md` as the rule instructs.
+The order of the closeout MUST be: babysit to green, sync and archive once, review the docs, push, babysit again, answer comments and monitor to merge, then complete the applicable follow-ups (for tracked work, the post-merge check). Before acting the agent MUST read the *Closeout* and *Monitoring* sections of `docs/superspec-workflow.md` as the rule instructs. The schema's references to the closeout rule MUST use its `.agents/hooked-rules/` path.
 
 #### Scenario: No pull request exists
 - **WHEN** finalize completes implementation on a feature branch that has no pull request
@@ -259,3 +261,36 @@ If the PR merged before sync, archive and doc review were completed, the agent M
 #### Scenario: Closed without merging
 - **WHEN** the PR is closed unmerged
 - **THEN** the agent reports it, the issue stays open, and the item's Status is re-derived (In Progress when the claim remains, no other ready closing PR is open and there is no blocked label)
+
+### Requirement: The closeout rule is hook-delivered and guards the stop
+The closeout rule SHALL be the hook-delivered rule `.agents/hooked-rules/repo-superspec-closeout.md`. It MUST be
+delivered at the apply, verify, continue and archive skills and at `openspec instructions verify` and
+`openspec instructions finalize`, and MUST declare the stop predicate `superspec-finalize-pending`
+(capability `hooked-rule-delivery`).
+
+Its body MUST open with this instruction: after the last apply task, run verify and then finalize in the same
+turn, without asking, because the owner durably authorizes finalize to push the feature branch, create or update
+the pull request and mark it ready; stop only when verify fails, finalize cannot create or confirm the pull
+request, a rule requires asking the user (a device or browser is unavailable, a blocker, an ambiguity) or the user
+said to stop. Its always-on pointer MUST carry the same
+authorization in one line.
+
+`openspec/config.yaml` `operations.apply.guidance` MUST carry the same instruction as its own entry, one sentence
+citing `.agents/hooked-rules/repo-superspec-closeout.md`, next to the separate entry that points to the apply stop
+(capability `superspec-review-gate`).
+
+#### Scenario: Apply finishes
+- **WHEN** an agent finishes the last apply task
+- **THEN** the closeout rule and the apply guidance in its context tell it to run verify and then finalize without asking, and the end-to-end run of `hooked-rule-delivery` outcome 7 records whether it did
+
+#### Scenario: Agent stops to ask
+- **WHEN** the agent ends its turn after apply to ask whether to push or open the pull request
+- **THEN** the stop gate blocks the stop once with the closeout rule and the engine line telling it to finalize now
+
+#### Scenario: A rule requires asking
+- **WHEN** a required device is unavailable after apply and the stop gate blocks the agent's stop
+- **THEN** the agent says that a rule requires it to ask and ends its turn, and that next stop is not blocked
+
+#### Scenario: Apply guidance
+- **WHEN** `openspec instructions apply` is run
+- **THEN** its guidance tells the agent to run verify and finalize without asking and names `.agents/hooked-rules/repo-superspec-closeout.md`

@@ -1,5 +1,20 @@
 ---
-trigger: always_on
+pointer: "Behaviour changes need a real device, emulator or Chrome run before done, stated in the PR or report; delivered at planning, apply, verify and before `gh pr create`; read this file then if it was not."
+skills:
+  - "openspec-ff-change"
+  - "opsx:ff"
+  - "openspec-propose"
+  - "opsx:propose"
+  - "openspec-continue-change"
+  - "opsx:continue"
+  - "openspec-apply-change"
+  - "opsx:apply"
+  - "openspec-verify-change"
+  - "opsx:verify"
+commands:
+  - "\\bopenspec\\s+instructions\\s+(tasks|plan|finalize)\\b"
+gates:
+  - "\\bgh\\s+pr\\s+create\\b"
 ---
 
 Unit tests are not enough: plan real-environment tests with the change and run them before calling it done.

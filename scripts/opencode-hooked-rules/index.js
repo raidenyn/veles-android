@@ -52,11 +52,12 @@ function validEntry(item) {
 
 /**
  * The decoded engine response, or null when the bytes are not exactly the plain contract:
- * `{decision: "context"|"deny", text: string, entries: [{rule: [string, string], write_id: uint}]}`.
- * Zero bytes of stdout is the normal empty pass; whitespace-only output is not. A deny must carry the
- * text the model is shown: a deny with empty or blank text is malformed, so the call passes.
+ * `{decision: "context"|"deny"|"block", text: string, entries: [{rule: [string, string], write_id: uint}]}`.
+ * `kind` is the engine event the response answers; `block` is valid only at a `stop` event. Zero bytes of
+ * stdout is the normal empty pass; whitespace-only output is not. A deny or block must carry the text the
+ * model is shown: one with empty or blank text is malformed, so the call passes.
  */
-function decode(bytes) {
+function decode(bytes, kind) {
   if (bytes.length === 0) return PASS
   let text
   try {
@@ -71,9 +72,10 @@ function decode(bytes) {
     return null
   }
   if (!isPlainObject(value) || !hasExactKeys(value, ["decision", "entries", "text"])) return null
-  if (value.decision !== "context" && value.decision !== "deny") return null
+  if (value.decision !== "context" && value.decision !== "deny" && value.decision !== "block") return null
+  if (value.decision === "block" && kind !== "stop") return null
   if (!isString(value.text) || !Array.isArray(value.entries)) return null
-  if (value.decision === "deny" && value.text.trim() === "") return null
+  if (value.decision !== "context" && value.text.trim() === "") return null
   if (!value.entries.every(validEntry)) return null
   return { decision: value.decision, text: value.text, entries: value.entries }
 }
@@ -179,7 +181,7 @@ export function runEngine(
       stopCleanup()
       if (settled) return
       if (code !== 0) return finish(null)
-      finish(decode(Buffer.concat(chunks)))
+      finish(decode(Buffer.concat(chunks), event && event.event))
     })
     try {
       if (!child.stdin) return fail()
@@ -273,6 +275,7 @@ export function createHandlers(
   const directory = ctx.location.directory
   const contexts = new Map() // session id -> {key, cwd}, only for verified chains
   const compactions = new Map() // session id -> the promise of its observed, unfinished compaction
+  const stopsInFlight = new Set() // session ids whose turn end is still being handled
 
   const budget = (parent) => startBudget(budgetMs, setTimer, clearTimer, parent)
 
@@ -469,14 +472,68 @@ export function createHandlers(
   }
 
   /**
-   * Handle one host event. A `session.compaction.started` is registered at once as pending for its session,
-   * so a gate or moment of that session (or of a child of it) that arrives meanwhile waits for it.
+   * Handle one turn end (`session.execution.succeeded`) of a root session inside its own budget: send
+   * `stop`, and on a `block` resume the session with the engine text through a synthetic prompt.
+   * Nothing at all is done for a child session (an unverified chain is not a turn end either), when the
+   * session record cannot be read, when the engine fails or the response is not a `block` (a `context`
+   * is the engine-failure notice, and a stop moment has no notice channel), or when the budget runs out.
+   * A failed resume voids the stop record, so a later stop in the same phase can remind again.
+   */
+  async function stopTurn(sessionID, signal) {
+    const bound = budget(signal)
+    const release = () => stopsInFlight.delete(sessionID)
+    // The one-in-flight slot lasts for this call's budget, not for the resume promise: a resume that
+    // never settles must not keep a later turn end from sending.
+    bound.signal.addEventListener("abort", release, { once: true })
+    try {
+      const resolved = await lookup(sessionID, bound)
+      if (resolved === null) return
+      if (resolved.key.agent !== undefined) return // a child session's turn end is not a stop moment
+      const response = await send({ event: "stop", ...resolved.key, cwd: resolved.cwd }, bound)
+      if (response === null || response.decision !== "block") return
+      let outcome
+      if (env[FAIL_INJECTION_VARIABLE] === "1") {
+        outcome = { status: "error" } // the test-only switch fails every injection
+      } else {
+        // resume:true continues the same session with the block text.
+        outcome = await bound.settle(
+          invoke(
+            (text) => ctx.session.synthetic({ sessionID, id: messageId(), text, resume: true }),
+            response.text,
+          ),
+        )
+      }
+      if (outcome.status === "error") await voidEntries(resolved, response.entries, bound)
+    } catch {
+      // a stop moment is best effort: nothing is retried and nothing is reported
+    } finally {
+      bound.end()
+      release()
+    }
+  }
+
+  /**
+   * Handle one host event. A `session.execution.succeeded` is a turn end: its work starts detached, one
+   * call in flight per session, each bounded by its own budget, so the event stream is never held.
+   * `session.execution.interrupted` and `session.execution.failed` are not turn ends and are ignored, as
+   * is every other event except a compaction. A `session.compaction.started` is registered at once as
+   * pending for its session, so a gate or moment of that session (or of a child of it) that arrives
+   * meanwhile waits for it.
    */
   function onEvent(event, signal) {
-    if (!event || event.type !== "session.compaction.started") return Promise.resolve()
+    if (!event || (signal && signal.aborted)) return Promise.resolve()
+    if (event.type === "session.execution.succeeded") {
+      const sessionID = event.data && event.data.sessionID
+      if (!isString(sessionID) || sessionID === "" || stopsInFlight.has(sessionID)) return Promise.resolve()
+      stopsInFlight.add(sessionID)
+      stopTurn(sessionID, signal).catch(() => {
+        // a detached stop call never reports and never holds the stream
+      })
+      return Promise.resolve()
+    }
+    if (event.type !== "session.compaction.started") return Promise.resolve()
     const sessionID = event.data && event.data.sessionID
     if (!isString(sessionID) || sessionID === "") return Promise.resolve()
-    if (signal && signal.aborted) return Promise.resolve()
     const previous = compactions.get(sessionID) || Promise.resolve()
     const run = previous.then(() => compact(sessionID, signal))
     compactions.set(sessionID, run)

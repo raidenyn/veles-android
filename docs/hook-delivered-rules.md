@@ -14,9 +14,11 @@ OpenCode runs it from the local plugin `scripts/opencode-hooked-rules/`.
   - `pointer` (required): a double-quoted one-line summary that says when to read the file;
   - `skills`: skill names, namespaced names such as `"opsx:apply"` included;
   - `commands`: Python regexes (`re.search`) for a workflow command that succeeded;
-  - `gates`: Python regexes for a shell command about to run.
-- An omitted list is empty, but a rule needs at least one entry in `skills`, `commands` or `gates`.
-  Duplicate keys, unknown keys, `[]` and invalid regexes are errors.
+  - `gates`: Python regexes for a shell command about to run;
+  - `stops`: predicate names from the engine's registry, today only
+    `"superspec-finalize-pending"`; any other name is an error.
+- An omitted list is empty, but a rule needs at least one entry in `skills`, `commands`, `gates` or
+  `stops`. Duplicate keys, unknown keys, `[]` and invalid regexes are errors.
 - The body is at most 4,096 UTF-8 bytes and must hold text: an empty or blank body is an error.
 - The rule is a regular file of at most 64 KiB; a symlink is an error.
 - A gate regex runs against the raw command text, so it also matches words inside a quoted string.
@@ -41,11 +43,22 @@ stale block. Each rule adds one line to the root, which is capped at 40 lines; s
 - The text shown is the body with its line endings normalised to LF and its leading and trailing
   blank lines removed; indentation and all other Markdown are kept. Several rules are joined in
   file-name order with one blank line between them, up to 9,000 UTF-8 bytes of the emitted text
-  (separators included); a rule that does not fit is left for its next moment or gate.
+  (separators included); a rule that does not fit is left for its next moment or gate. The agent-file
+  check applies the same selection and byte count to each declared trigger form separately — every
+  skill name as a rule writes it, every listed command, and each stop predicate's line — so it does
+  not merge a rule's `opsx:` and canonical skill names into one trigger.
 - Delivery is recorded per session and per agent context (a subagent and its parent never share
   credit) under the git common directory (`agent-rules/`) of the checkout the session works in: in
   OpenCode the session's `location.directory`, else its root session's, else the plugin's. A rule's
   identity is its file name plus the sha256 of the file, so editing a rule delivers it again.
+- A delivered rule is skipped only while its entry is current for the context and already holds every
+  trigger the event matched; a different trigger delivers it again. The entry keeps the triggers and
+  gate patterns it has gained, and a `void` of it removes it whole, earlier triggers included, so the
+  duplicate delivery that follows is the safe side of the lost credit.
+- The state file is version 2: entries carry their triggers, and the session carries a change set,
+  the stop records and the apply flag that arms the stop gate. A version 1 file loads with those
+  fields empty and the flag unset, and is written back as version 2; a version 2 file written before
+  the flag existed also loads it unset.
 - The store keeps the newest 50 sessions by write order. Pruning runs after an event that wrote
   state, never removes the current session or one of the newest 50, skips a busy session, and also
   removes stale lock files.
@@ -57,9 +70,58 @@ stale block. Each rule adds one line to the root, which is capped at 40 lines; s
 - Read the text and re-run the command: a re-run matching a pending pattern confirms the rule and
   passes, even with a changed message or title.
 - A sibling that matches a different gate pattern of the same rule is denied as well.
-- Residuals: two same-kind gates in one parallel batch can let the second pass as a "re-run" before
-  the model saw the rule; a moment plus a gate in one parallel batch passed the gate on Claude Code
-  (it ran the moment first) and was denied on OpenCode.
+- Residuals: two same-kind gates in one parallel batch can let one of them pass, in either order,
+  before the model saw the rule (Claude Code let the second pass; OpenCode let the first pass and denied
+  the second); a moment plus a gate in one parallel batch passed the gate on both hosts in the final
+  verification (the moment was processed first on Claude Code; OpenCode had denied it in an earlier
+  observation, so the order of the two hooks is not guaranteed).
+
+## Stop gate
+
+- A `stops` entry names a predicate the engine answers about the checkout; the registry has one,
+  `superspec-finalize-pending`, and an unknown name is an error.
+- **Session change set:** every successful shell call whose command matches `\bopenspec\b` adds the
+  names of its `--change <name>` and `--change=<name>` arguments, quoted forms included, keeping the
+  20 newest. A name matches `[a-z0-9][a-z0-9-]{0,63}` — at most 64 characters; a longer one is
+  ignored. The set is session-wide, so a subagent's call counts too.
+- **Arming:** only a session that invoked the apply skill is armed — a Skill call for
+  `openspec-apply-change` (its `opsx:apply` form included) or a `/opsx:apply` prompt. Reading the
+  skill's `SKILL.md` delivers the rule as a moment like any other, but it is not an invocation and
+  arms nothing. A session that only named the change, such as a delegated verify or review session,
+  is never reminded: the reminder belongs to the session that will finalize, normally the parent that
+  applied. If the session never invoked apply, its stop passes without writing a record.
+- **Predicate:** a change is pending when some copy has `apply.md`, no copy has `finalize.md`, no
+  checkout has `openspec/changes/archive/<YYYY-MM-DD>-<name>/`, and the copy with the newest apply
+  iteration has no `verify.md`, a `verify.md` of another iteration, or one with no FAIL box ticked. A
+  receipt over 64 KiB counts as not pending for that change.
+- **Checkouts:** the event's checkout, the main working tree and each linked worktree (at most 32) of
+  the same common directory, one real path each. A `--separate-git-dir` checkout's main working tree
+  is not resolved, so a receipt that exists only there is not seen from a linked worktree; the
+  event's own checkout is always searched. A stray non-directory entry under
+  `<common-dir>/worktrees/` (such as a `.DS_Store` file) is skipped, never an error.
+- **Block once per phase:** a stop in the main context asks every rule naming the predicate. The
+  first pending change by name whose phase — the newest apply iteration plus its verify state,
+  `none` or `pass` — has no stop record is blocked, with one engine line naming the change and then
+  the rule text under the cap. The record `{change, iteration, verify_state, write_id}` is written in
+  the same transaction (the 40 newest kept), and the rules are not marked delivered. A subagent stop,
+  an unarmed session, no rule with the predicate, a recorded phase and no pending change pass. A
+  `void` carrying a stop record's write id removes that record, so the same phase can remind again.
+  At most two reminders per apply iteration: one in the `none` phase after apply and one in the
+  `pass` phase after a passing verify.
+- **`stop_hook_active` is not consulted:** after a block the agent may continue in the same turn, run
+  verify and stall again, and that post-verify phase must block once; the per-phase records bound the
+  blocks, so no loop is possible.
+- **Failed delivery:** a block whose record was written but whose delivery failed (a host timeout or
+  error after the write) does not remind again in that phase, because the record stands; Claude
+  Code's `Stop` has no `void`. OpenCode sends its `void` when the synthetic prompt fails, so there the
+  same phase can remind again.
+- **Claude Code wiring:** the engine runs from the `Stop` hook in `.claude/settings.json`, with the
+  same command and 5-second timeout as the other hooks. `SubagentStop` is never wired, so a subagent's
+  turn end is not a stop moment.
+- **OpenCode:** the plugin sends `stop` for a root session's `session.execution.succeeded` only; a
+  child session, `session.execution.failed` and `session.execution.interrupted` are not stop moments.
+  The event name is that of the verified OpenCode 2.3.2 and may change in a later version. A `block`
+  resumes the session with the text as a synthetic prompt; a failed resume sends its `void`.
 
 ## Re-arm and stale credit
 
@@ -67,7 +129,8 @@ stale block. Each rule adds one line to the root, which is capped at 40 lines; s
   compaction re-arms every key of the session, so every context gets the rule again.
 - Stale credit, two cases; each can last until the next compaction of that context:
   - *stale delivery*: the host fails, cancels or times out after the engine recorded a delivery, so
-    the rule counts as delivered although the agent may not have seen it;
+    the rule counts as delivered although the agent may not have seen it; until re-armed it also
+    suppresses repeats of the same trigger, while a different trigger still delivers;
   - *stale pending denial*: the engine recorded a pending denial but the host never showed or applied
     the deny (cancel, timeout, crash or error). A later call that matches a recorded pending pattern
     confirms the entry, so this rule no longer denies it or later gates (another matching rule still
@@ -99,6 +162,10 @@ The hooks never block a call because of their own failure.
   notice is `additionalContext` with no permission decision, so the call goes through the normal
   permission flow. `PreCompact` has no model-visible channel, nor has an undecodable or
   unidentifiable Claude Code event, so there the notice goes to stderr only.
+- *Stop failures*: a stop moment fails open. An engine error, lock timeout or unreadable receipt
+  passes; a non-blocking Claude Code `Stop` output has no model channel, so the read-by-hand notice
+  goes in `systemMessage`, which reaches the user, and to stderr. The OpenCode plugin does nothing at
+  a stop moment when the engine fails.
 - *Probe behind the `PreToolUse` notice* (Claude Code 2.1.326, a disposable clone with no remote): a
   `PreToolUse` hook printing only `hookSpecificOutput.additionalContext` with a random canary, no
   `permissionDecision`. The model quoted the canary verbatim as hook context, the command ran under
@@ -125,8 +192,26 @@ The hooks never block a call because of their own failure.
 
 ## Verified tools
 
-- Spike evidence (Claude Code 2.1.326, OpenCode 2.3.2, next to `opencode-rules` 2.0.0); the final live
-  verification is recorded in `spike.md` of the `hook-delivered-rules` change after plan Task 10.
+- Spike evidence: Claude Code 2.1.328, OpenCode 2.3.2, next to `opencode-rules` 2.0.0.
+- Final live verification of every `hooked-rule-delivery` outcome, by host and version (2026-11-20):
+  - **Claude Code 2.1.328**: outcomes 1, 2, 3, 5, 6 and 7 PASS. Outcome 4 PASS for re-arm and for
+    parent↔subagent isolation in both directions; its **subagent-compaction sub-case is UNVERIFIED** —
+    a subagent context could not be made to overflow on purpose (the host does carry `agent_id`). The
+    spike's **interactive Esc is UNVERIFIED** as well (a headless interrupt was used).
+  - **OpenCode 2.3.2**: outcomes 1, 2, 3, 4, 5, 6 and 7 PASS, including the second stop after a passing
+    verify, a retained stop record across a compaction, an apply-to-finalize run that went on without
+    asking, and a child-session compaction. Outcome 7's **interactive TUI Esc abort is UNVERIFIED** —
+    the client exits with no terminal event, so the plugin cannot see it; accepted as a residual.
+  - **Not exercised**: the two OpenCode plugins together. The disposable config loaded the tracked
+    local `./scripts/opencode-hooked-rules` but not the tracked `opencode-rules` package, so the local
+    hooked-rules plugin was exercised alone.
+  - The runs, the residual batch results and the per-outcome table are in `spike.md` of the
+    `hook-workflow-rules` change (§6).
+- The OpenCode stop gate requires a kept-alive session. `opencode run --standalone` exits at the end of
+  its turn, before the plugin's detached stop call can finish, so a one-shot run may end without the
+  stop reminder being delivered (no block, no message). The gate was verified against a persistent
+  `opencode serve` plus `run --server`; the TUI stop gate was **not exercised**. The owner accepted
+  this limitation on 2026-11-20, keeping the plugin's dispose behaviour as shipped.
 - The OpenCode plugin entry in `opencode.json` is a directory path string
   (`"./scripts/opencode-hooked-rules"`); a path to `index.js` or a `file:` package is rejected or not
   loaded.

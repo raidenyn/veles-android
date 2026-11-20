@@ -1,5 +1,19 @@
 ---
-trigger: always_on
+pointer: "Reviewer models and presets live only in this file; never substitute a model; delivered with the review gate; read this file before any review."
+skills:
+  - "openspec-ff-change"
+  - "opsx:ff"
+  - "openspec-propose"
+  - "opsx:propose"
+  - "openspec-new-change"
+  - "opsx:new"
+  - "openspec-continue-change"
+  - "opsx:continue"
+  - "openspec-archive-change"
+  - "opsx:archive"
+commands:
+  - "\\bopenspec\\s+new\\s+change\\b"
+  - "\\bopenspec\\s+instructions\\s+(brainstorm|proposal|design|specs|tasks|plan)\\b"
 ---
 
 # Reviewer roster

@@ -1,5 +1,9 @@
 ---
-trigger: always_on
+pointer: "Before `git push`, run the checks of every node `scripts/components.py changed` selects; delivered at `openspec instructions finalize` and before the push; read this file then if it was not."
+commands:
+  - "\\bopenspec\\s+instructions\\s+finalize\\b"
+gates:
+  - "\\bgit\\b[^;&|\\n]*?\\spush\\b"
 ---
 
 Before pushing, find the nodes you touched with

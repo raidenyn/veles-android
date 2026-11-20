@@ -49,6 +49,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"$CLAUDE_PROJECT_DIR/scripts/agent_rules.py\" hook --format claude",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

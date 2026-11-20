@@ -24,17 +24,17 @@ Read `<dir>/AGENTS.md` before changing files there; node detail lives in the doc
 
 ## Rules
 
-Repo-wide rules in `.agents/rules/` are always on:
-`.agents/rules/repo-real-device-testing.md`, `.agents/rules/repo-no-time-based-tests.md`,
-`.agents/rules/repo-pre-push-checks.md`, `.agents/rules/repo-review-models.md`,
-`.agents/rules/repo-superspec-review-gate.md`, `.agents/rules/repo-tracker-intake.md`,
-`.agents/rules/repo-superspec-closeout.md`, `.agents/rules/repo-signing-keys.md`.
-Node rules are path-scoped and listed in each node's `AGENTS.md`.
-
+Always on: `.agents/rules/repo-no-time-based-tests.md`, `.agents/rules/repo-tracker-intake.md`,
+`.agents/rules/repo-signing-keys.md`; node rules are path-scoped and listed in each node's `AGENTS.md`.
 OpenCode needs the `opencode-rules` plugin pinned in `opencode.json` (`docs/opencode-rules.md`); do not run
 `/init`; a parent `CLAUDE.md` hides `AGENTS.md`. Tool and checkout setup: `CONTRIBUTING.md`.
 
 ## Hook-delivered rules
 <!-- hooked-rules:begin -->
 - Every commit subject and PR title is a Conventional Commit `type(scope): description`; the type guide is delivered when you apply or finalize a change and before `git commit`, `gh pr create` or `gh pr edit`; read this file at those moments if it was not. — .agents/hooked-rules/repo-commit-types.md
+- Before `git push`, run the checks of every node `scripts/components.py changed` selects; delivered at `openspec instructions finalize` and before the push; read this file then if it was not. — .agents/hooked-rules/repo-pre-push-checks.md
+- Behaviour changes need a real device, emulator or Chrome run before done, stated in the PR or report; delivered at planning, apply, verify and before `gh pr create`; read this file then if it was not. — .agents/hooked-rules/repo-real-device-testing.md
+- Reviewer models and presets live only in this file; never substitute a model; delivered with the review gate; read this file before any review. — .agents/hooked-rules/repo-review-models.md
+- After apply, run verify then finalize without asking (finalize pushes and creates or readies the PR, owner-authorized); delivered at apply, verify, finalize, archive and a stop before finalize; read this file then if it was not. — .agents/hooked-rules/repo-superspec-closeout.md
+- Every planning file and the closeout docs go through the review gate (ask for a preset first; stop after the plan); delivered at the openspec planning skills and commands; read this file then if it was not. — .agents/hooked-rules/repo-superspec-review-gate.md
 <!-- hooked-rules:end -->
