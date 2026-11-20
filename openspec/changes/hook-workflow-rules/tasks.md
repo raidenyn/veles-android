@@ -27,7 +27,7 @@ Every unit test injects its clock, `sleep` and timers: no real waits and no wall
 ## 4. Hosts (design §3 OpenCode, hooked-rule-delivery Host adapters)
 
 - [x] 4.1 `.claude/settings.json`: add the `Stop` hook with the engine command and `timeout: 5`; no `SubagentStop`
-- [ ] 4.2 OpenCode plugin: map a root session's `session.execution.succeeded` (`interrupted` and `failed` never map; a failed or timed-out `session.get` sends nothing) to `stop`; send a `block` as a resuming synthetic prompt (the form task 1.2 found); `void` the stop entry when it fails; accept `block` only for `stop` and ignore any other response at a stop moment; do nothing at a stop moment when the engine times out or Python is missing; tests in `index.test.mjs` with injected timers
+- [x] 4.2 OpenCode plugin: map a root session's `session.execution.succeeded` (`interrupted` and `failed` never map; a failed or timed-out `session.get` sends nothing) to `stop`; send a `block` as a resuming synthetic prompt (the form task 1.2 found); `void` the stop entry when it fails; accept `block` only for `stop` and ignore any other response at a stop moment; do nothing at a stop moment when the engine times out or Python is missing; tests in `index.test.mjs` with injected timers
 
 ## 5. Move the rules (design §1, §8)
 
