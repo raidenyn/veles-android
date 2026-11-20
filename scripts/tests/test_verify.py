@@ -536,6 +536,108 @@ class ResolverTest(GateFixture):
                 "global": [], "ci-global": [], "unowned": []}
         return load_table(path, cmap), cmap
 
+    def two_node_fixture(self):
+        """An earlier node whose check can use up the reserve, then the extension node."""
+        repo = os.path.join(self.tmp, "later-fixture")
+        os.makedirs(os.path.join(repo, "scripts"))
+        command = {"cwd": ".", "doc": "scripts/AGENTS.md", "reuse": False}
+        table = {
+            "version": 1,
+            "requirements": {},
+            "producers": [],
+            "nodes": {
+                "aaa": {"commands": [
+                    dict(command, id="aaa.slow", kind="check", run=["slow"]),
+                    dict(command, id="aaa.after", kind="check", run=["after"]),
+                ]},
+                "web-extension": {"commands": [{
+                    "id": "web-extension.unit",
+                    "kind": "test",
+                    "cwd": "web-extension",
+                    "run": ["npx", "vitest", "run"],
+                    "doc": "scripts/AGENTS.md",
+                    "reuse": False,
+                    "related": {
+                        "strategy": "files-arg",
+                        "match": ["web-extension/src/"],
+                        "resolve": ["resolve", "{changed}"],
+                        "run": ["npx", "vitest", "run", "{targets}"],
+                    },
+                }]},
+            },
+        }
+        path = os.path.join(repo, "scripts", "verify-commands.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(table, handle)
+        cmap = {"nodes": {"aaa": {"paths": ["aaa/"]},
+                          "web-extension": {"paths": ["web-extension/"]}},
+                "global": [], "ci-global": [], "unowned": []}
+        return load_table(path, cmap), cmap, repo
+
+    def two_node_context(self, repo, runner, deadline=None, clock=None):
+        os.makedirs(os.path.join(repo, "build", "verify", "runs", RUN))
+        return self.context(
+            git=FakeGit(diff=[EXT, "aaa/file.txt"], base=BASE), runner=runner,
+            repo=repo, files={os.path.join(repo, EXT): b"",
+                              os.path.join(repo, "aaa/file.txt"): b""},
+            run_dir=os.path.join(repo, "build", "verify", "runs", RUN),
+            deadline=deadline, clock=clock)
+
+    def past_the_reserve(self, deadline):
+        def on_call(clock, argv, outcome, cutoff, log_path):
+            if argv == ("slow",):
+                clock.value = deadline - 45.0 + 1.0
+            return None
+        return on_call
+
+    def test_resolver_timeout_stays_blocking_after_the_reserve(self):
+        # Important 1: the resolver was killed at its own cutoff during `plan`; an earlier node's
+        # step then pushes the clock past the reserve, but the captured timeout still blocks.
+        table, cmap, repo = self.two_node_fixture()
+        deadline = 1000.0
+        runner = ScriptedRunner(self.clock, script={
+            ("resolve", "src/background.ts"): Outcome(
+                "timeout", error="the step reached its cutoff"),
+        }, on_call=self.past_the_reserve(deadline))
+        context = self.two_node_context(repo, runner, deadline=deadline)
+        outcome = run_gate("task", None, context, table, cmap)
+        self.assertEqual(exit_code(outcome.results, outcome.errors), 1)
+        self.assertIn(("web-extension", "web-extension.unit", "timeout"), outcome.problems)
+        self.assertTrue(outcome.incomplete)
+        self.assertNotIn(["npx", "vitest", "run"], self.step_calls(runner))
+
+    def test_resolver_failure_stays_blocking_after_the_reserve(self):
+        # Important 1: a resolver that ran and failed is an unexpected NOT RUN (exit 2), even
+        # when a later node reads its result after the reserve has passed.
+        table, cmap, repo = self.two_node_fixture()
+        deadline = 1000.0
+        runner = ScriptedRunner(self.clock, script={
+            ("resolve", "src/background.ts"): Outcome(
+                "not_run", error="vitest is not installed"),
+        }, on_call=self.past_the_reserve(deadline))
+        context = self.two_node_context(repo, runner, deadline=deadline)
+        outcome = run_gate("task", None, context, table, cmap)
+        self.assertEqual(exit_code(outcome.results, outcome.errors), 2)
+        self.assertIn(("web-extension", "web-extension.unit", "not_run"), outcome.problems)
+        self.assertTrue(outcome.incomplete)
+
+    def test_resolver_not_started_in_reserve_is_not_blocking(self):
+        # The other case: resolution itself never started because the plan ran inside the
+        # reserve. That is `not_reached`, reported and incomplete, but not a problem.
+        table, cmap, repo = self.two_node_fixture()
+        deadline = 1000.0
+        clock = FakeClock(deadline - 45.0 + 1.0)
+        runner = ScriptedRunner(clock)
+        context = self.two_node_context(repo, runner, deadline=deadline, clock=clock)
+        outcome = run_gate("task", None, context, table, cmap)
+        self.assertEqual(runner.calls, [])
+        self.assertEqual(outcome.problems, [])
+        self.assertEqual(exit_code(outcome.results, outcome.errors), 0)
+        self.assertTrue(outcome.incomplete)
+        document = read_json(os.path.join(repo, "build", "verify", "last-run.json"))
+        statuses = dict((step["id"], step["status"]) for step in document["steps"])
+        self.assertEqual(statuses["web-extension.unit"], "not_reached")
+
     def test_resolver_uses_effective_env(self):
         # D8: the list-only resolver is a command the verifier runs, so the machine config's
         # `path_prepend` applies to it too.

@@ -1132,7 +1132,11 @@ def run_gate(gate, base, ctx, table, cmap):
             for step_id, resolver_outcome in node_plan.unresolved:
                 step = step_by_id.get(step_id)
                 rerun = _step_rerun(step, step.run) if step is not None else None
-                if _past_cutoff(ctx) or resolver_outcome.error == TARGET_RESOLUTION_TIMEOUT:
+                # The captured result says which case this is: a resolver the reserve stopped
+                # before it started is `not_reached`; one that actually ran and was cut off or
+                # failed stays the blocking timeout/NOT RUN it earned, even if earlier nodes'
+                # steps pushed the clock past the reserve since (design D9/D10).
+                if resolver_outcome.error == TARGET_RESOLUTION_TIMEOUT:
                     not_reached = True
                     step_records.append({
                         "id": step_id, "status": "not_reached", "elapsed_s": 0.0,
