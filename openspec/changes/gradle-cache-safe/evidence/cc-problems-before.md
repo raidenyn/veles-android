@@ -4,26 +4,37 @@ Task 1.5 probe. Base commit `597ee2c691f2d4c2dec1c4450072eca86a76054e` (`git mer
 2026-11-20, Linux container. JDK: Temurin 21.0.12 at `~/.local/jdks/temurin-21.0.12`; Android SDK/NDK
 from `ANDROID_SDK_ROOT=/home/dev/.android-sdk` (NDK 29.0.14206865); Gradle 9.5.0 through the repository wrapper.
 
-Every invocation below ran in one fresh worktree at the merge base, with
+Every invocation below ran in a fresh worktree at the merge base, with
 `--configuration-cache --configuration-cache-problems=warn --console=plain`, in the directory and with the
 command the inventory names. `-q` is dropped where the workflow uses it, because `-q` hides the problem summary.
 A build that fails while *executing* a task still stores its configuration cache entry (that is what `warn`
-means); the failure is recorded with the invocation. Each `- Task …` line below is followed in Gradle's own
-output by the same two-line requirement link, which is omitted here.
+means); the failure is recorded with the invocation.
 
-The observed problem is always the same family: a task action or input holds a Gradle script object reference,
-an `org.gradle.api.Project`, or another `Task` (`AndroidUnitTest`), so the task cannot be serialized into the
-cache entry. A few tasks then fail at execution time because the script reference is null after deserialization.
+Gradle's console lists at most 15 problems and then says `plus N more problems. Please see the report for
+details.` The six truncated invocations (`rustPackage`, `rustInstall`, `rustTest`, `protocolCheck`, the two
+alias dry runs) were rerun in a second fresh worktree, and their complete lists below are taken from the
+configuration-cache report HTML each stored entry writes (the console prints its path as `See the complete
+report at …`). Exact duplicate lines are collapsed, which reproduces Gradle's own `N of which seem unique`
+count. Every other section was below the console limit and its lines are quoted from the console output.
+
+Two kinds of problem appear. The task kind is a task action, input or field holding a Gradle script object
+reference, an `org.gradle.api.Project`, or another `Task` (`AndroidUnitTest`), so the task cannot be
+serialized into the entry; a few of those tasks then fail at execution time because the script reference is
+null after deserialization. The non-task kind is `com.gladed.androidgitversion` 0.4.14 starting `git` while
+`android/app/build.gradle.kts` is configured, which Gradle reports against the build file. Each `- Task …`
+and `- Build file …` line below is followed in Gradle's own output by a documentation link, which is omitted
+here.
 
 `cd android && ./gradlew --version` in the acceptance check is not a Gradle configuration and is not probed.
 The `--self-test` build of `verify/check-root-aliases.sh` is probed; it fails on a missing task before the
 configuration cache matters, and stores a clean entry. The Windows `gradlew.bat` jobs and the
 macOS/Windows installer producers are out of scope for 1.5.
 
-### Tasks with problems, at a glance
+### Tasks and build files with problems, at a glance
 
-| Task | Type | Problem kinds |
+| Task or build file | Type | Problem kinds |
 | --- | --- | --- |
+| `app/build.gradle.kts` (build file, not a task) | — | external process at configuration time: `external process started '/usr/bin/git --version'`, `external process started '/usr/bin/git config --system --show-origin --list -z'` (reported as `android/app/build.gradle.kts` from the root build and as `app/build.gradle.kts` from the Android build) — `com.gladed.androidgitversion` 0.4.14, removed with the plugin in Task 2 |
 | `:android:app:sessionLoopbackClasspath` | `org.gradle.api.DefaultTask` | Task object |
 | `:app:androidGitVersion` | `org.gradle.api.DefaultTask` | Project object |
 | `:app:releaseHookGuard` | `org.gradle.api.DefaultTask` | script object reference, Project object |
@@ -52,6 +63,7 @@ macOS/Windows installer producers are out of scope for 1.5.
 | `:rust:verifyWasmBindgenCli` | `org.gradle.api.DefaultTask` | script object reference |
 | `:rust:verifyWasmPack` | `org.gradle.api.DefaultTask` | script object reference |
 | `:rustNdkDir` | `org.gradle.api.DefaultTask` | script object reference |
+| `:sessionLoopbackCheck` | `org.gradle.api.tasks.Exec` | script object reference |
 | `:verifyCargoCyclonedx` | `org.gradle.api.DefaultTask` | script object reference |
 
 ### Workflow invocations
@@ -102,25 +114,37 @@ Configuration cache: 8 problem(s) storing the cache.
 
 Call site: build-rust.yml:40.
 
-Result: `BUILD FAILED in 8s`.
-Execution failure: `Execution failed for task ':rust:rustToolchainCheck'` — `Cannot invoke "Build_gradle.requireOnPath(String, String, String)" because "this.this$0" is null`.
-Configuration cache: 24 problem(s) storing the cache, 22 unique.
+Complete list: from the configuration-cache report of a fresh rerun; the console showed only the
+first 15 and then `plus N more problems`.
 
-- Task `:rust:installCargoNdk` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+Result: `BUILD FAILED in 37s`.
+Execution failure: `Execution failed for task ':rust:rustToolchainCheck'` — `Cannot invoke "Build_gradle.requireOnPath(String, String, String)" because "this.this$0" is null`.
+Configuration cache: 26 problem(s) storing the cache, 24 unique.
+
+- Build file 'android/app/build.gradle.kts': external process started '/usr/bin/git --version'
+- Build file 'android/app/build.gradle.kts': external process started '/usr/bin/git config --system --show-origin --list -z'
+- Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:installCargoNdk` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustJni` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyCargoNdk` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:rustJni` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustPackage` of type `org.gradle.api.tasks.Sync`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmBindgenCli` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmPack` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasm` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:rustPackage` of type `org.gradle.api.tasks.Sync`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installCargoNdk` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyCargoNdk` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustJni` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmBindgenCli` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmPack` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:rustWasm` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustPackage` of type `org.gradle.api.tasks.Sync`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 
 #### `w05-rustWasm`: `./gradlew rustWasm` in `repository root`
 
@@ -165,7 +189,7 @@ Call site: check-android.yml:32.
 Result: `BUILD SUCCESSFUL in 34s`.
 Configuration cache: entry stored with no problems.
 
-No `- Task …` problem lines.
+No `- Task …` or `- Build file …` problem lines.
 
 #### `w08-detekt`: `./gradlew detekt` in `android/`
 
@@ -174,7 +198,7 @@ Call site: check-android.yml:34.
 Result: `BUILD SUCCESSFUL in 25s`.
 Configuration cache: entry stored with no problems.
 
-No `- Task …` problem lines.
+No `- Task …` or `- Build file …` problem lines.
 
 #### `w09-lintDebug`: `./gradlew lintDebug` in `android/`
 
@@ -185,7 +209,7 @@ The first attempt was killed when another session sharing the Gradle user home r
 Result: `BUILD SUCCESSFUL in 3m 1s`.
 Configuration cache: entry reused with no problems.
 
-No `- Task …` problem lines.
+No `- Task …` or `- Build file …` problem lines.
 
 #### `w10-testDebugUnitTest`: `./gradlew testDebugUnitTest` in `android/`
 
@@ -195,6 +219,8 @@ Result: `BUILD FAILED in 37s`.
 Execution failure: `Execution failed for task ':rust:rustToolchainCheck'` — `Cannot invoke "Build_gradle.requireOnPath(String, String, String)" because "this.this$0" is null`.
 Configuration cache: 8 problem(s) storing the cache, 6 unique.
 
+- Build file 'app/build.gradle.kts': external process started '/usr/bin/git --version'
+- Build file 'app/build.gradle.kts': external process started '/usr/bin/git config --system --show-origin --list -z'
 - Task `:rust:rustHostJni` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:rustHostJni` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
@@ -260,49 +286,57 @@ Configuration cache: 8 problem(s) storing the cache.
 
 Call site: check-rust.yml:46, check-rust.yml:78, check-rust.yml:124.
 
-Result: `BUILD FAILED in 2s`.
+Complete list: from the configuration-cache report of a fresh rerun; the console showed only the
+first 15 and then `plus N more problems`.
+
+Result: `BUILD FAILED in 4s`.
 Execution failure: `Execution failed for task ':rust:rustToolchainCheck'` — `Cannot invoke "Build_gradle.requireOnPath(String, String, String)" because "this.this$0" is null`.
 Configuration cache: 16 problem(s) storing the cache.
 
-- Task `:rust:installCargoNdk` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installCargoNdk` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:verifyCargoNdk` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:verifyCargoNdk` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:verifyWasmBindgenCli` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:verifyWasmBindgenCli` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installCargoNdk` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyCargoNdk` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmPack` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmBindgenCli` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installCargoNdk` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyCargoNdk` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:verifyWasmPack` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 
 #### `w15-rustTest`: `./gradlew rustTest` in `repository root`
 
 Call site: check-rust.yml:76.
 
+Complete list: from the configuration-cache report of a fresh rerun; the console showed only the
+first 15 and then `plus N more problems`.
+
 Result: `BUILD FAILED in 2s`.
 Execution failure: `Execution failed for task ':rust:rustToolchainCheck'` — `Cannot invoke "Build_gradle.requireOnPath(String, String, String)" because "this.this$0" is null`.
 Configuration cache: 16 problem(s) storing the cache.
 
-- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustWasmSmoke` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustWasmSmoke` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustWasm` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustWasm` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:verifyWasmBindgenCli` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:verifyWasmBindgenCli` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmPack` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasm` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasmSmoke` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmBindgenCli` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:verifyWasmPack` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasm` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasmSmoke` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 
 #### `w17-assembleDebug`: `./gradlew assembleDebug` in `repository root`
 
@@ -341,7 +375,7 @@ Call site: check-rust.yml:119.
 Result: `BUILD SUCCESSFUL in 2s`.
 Configuration cache: entry stored with no problems.
 
-No `- Task …` problem lines.
+No `- Task …` or `- Build file …` problem lines.
 
 #### `w21-assembleDebug-after-clean`: `./gradlew assembleDebug` in `repository root`
 
@@ -365,7 +399,7 @@ Call site: check-tooling.yml:45.
 Result: `BUILD SUCCESSFUL in 47s`.
 Configuration cache: entry stored with no problems.
 
-No `- Task …` problem lines.
+No `- Task …` or `- Build file …` problem lines.
 
 #### `w24-bridgeFormat-group`: `./gradlew bridgeFormat bridgeLint bridgeTypecheck bridgeRustFormat bridgeRustLint` in `repository root`
 
@@ -423,6 +457,8 @@ Result: `BUILD FAILED in 1m 4s`.
 Execution failure: `Execution failed for task ':bridgeInstallerToolchainCheck'` — `Cannot invoke "Build_gradle.requireOnPath(String, String, String)" because "this.this$0" is null`.
 Configuration cache: 4 problem(s) storing the cache.
 
+- Build file 'android/app/build.gradle.kts': external process started '/usr/bin/git --version'
+- Build file 'android/app/build.gradle.kts': external process started '/usr/bin/git config --system --show-origin --list -z'
 - Task `:bridgeInstallerToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:bridgeInstallerToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
 
@@ -433,7 +469,7 @@ Call site: check-installer.yml:125.
 Result: `BUILD SUCCESSFUL in 2m 12s`.
 Configuration cache: entry stored with no problems.
 
-No `- Task …` problem lines.
+No `- Task …` or `- Build file …` problem lines.
 
 #### `w29-bridgeHostCheck-group`: `./gradlew bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint` in `repository root`
 
@@ -498,25 +534,37 @@ Configuration cache: 3 problem(s) reusing the cache, 2 unique.
 
 Call site: check-protocol.yml:49.
 
-Result: `BUILD FAILED in 3m 53s`.
+Complete list: from the configuration-cache report of a fresh rerun; the console showed only the
+first 15 and then `plus N more problems`.
+
+Result: `BUILD FAILED in 3m 16s`.
 Execution failure: `Execution failed for task ':android:app:sessionLoopbackClasspath'` — `Cannot invoke "org.gradle.api.tasks.testing.Test.getClasspath()" because "this.$unitTest" is null`.
 Configuration cache: 26 problem(s) storing the cache, 24 unique.
 
-- Task `:android:app:sessionLoopbackClasspath` of type `org.gradle.api.DefaultTask`: cannot deserialize object of type 'org.gradle.api.Task' as these are not supported with the configuration cache.
-- Task `:android:app:sessionLoopbackClasspath` of type `org.gradle.api.DefaultTask`: cannot serialize object of type 'com.android.build.gradle.tasks.factory.AndroidUnitTest', a subtype of 'org.gradle.api.Task', as these are not supported with the configuration cache.
-- Task `:bridgeNodeCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:bridgeNodeCheck` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:protocolNodeCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:protocolNodeCheck` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustHostJni` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustHostJni` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:sessionLoopbackCheck` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:android:app:sessionLoopbackClasspath` of type `org.gradle.api.DefaultTask`: cannot serialize object of type 'com.android.build.gradle.tasks.factory.AndroidUnitTest', a subtype of 'org.gradle.api.Task', as these are not supported with the configuration cache.
 - Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmBindgenCli` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmPack` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasm` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustHostJni` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:bridgeNodeCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:protocolNodeCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:sessionLoopbackCheck` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:android:app:sessionLoopbackClasspath` of type `org.gradle.api.DefaultTask`: cannot deserialize object of type 'org.gradle.api.Task' as these are not supported with the configuration cache.
+- Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmBindgenCli` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmPack` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasm` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustHostJni` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 
 #### `w35-installGitCliff`: `./gradlew installGitCliff` in `repository root`
 
@@ -525,7 +573,7 @@ Call site: release-build.yml:125, publish-release.yml:103.
 Result: `BUILD SUCCESSFUL in 7s`.
 Configuration cache: entry stored with no problems.
 
-No `- Task …` problem lines.
+No `- Task …` or `- Build file …` problem lines.
 
 ### Script invocations
 
@@ -536,7 +584,7 @@ Call site: verify/check-android-layout.sh:147.
 Result: `BUILD SUCCESSFUL in 20s`.
 Configuration cache: entry stored with no problems.
 
-No `- Task …` problem lines.
+No `- Task …` or `- Build file …` problem lines.
 
 #### `s02-layout-rerun-group`: `./gradlew assembleDebug testDebugUnitTest rustHostJni rustJni --no-parallel --rerun-tasks` in `repository root`
 
@@ -561,23 +609,41 @@ Configuration cache: 12 problem(s) storing the cache, 10 unique.
 
 Call site: verify/check-android-layout.sh:203.
 
-Result: `BUILD SUCCESSFUL in 16s`.
+Complete list: from the configuration-cache report of a fresh rerun; the console showed only the
+first 15 and then `plus N more problems`.
+
+Result: `BUILD SUCCESSFUL in 44s`.
 Configuration cache: 32 problem(s) storing the cache, 30 unique.
 
-- Task `:android:app:sessionLoopbackClasspath` of type `org.gradle.api.DefaultTask`: cannot deserialize object of type 'org.gradle.api.Task' as these are not supported with the configuration cache.
-- Task `:android:app:sessionLoopbackClasspath` of type `org.gradle.api.DefaultTask`: cannot serialize object of type 'com.android.build.gradle.tasks.factory.AndroidUnitTest', a subtype of 'org.gradle.api.Task', as these are not supported with the configuration cache.
-- Task `:bridgeNodeCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:bridgeNodeCheck` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:protocolNodeCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:protocolNodeCheck` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installCargoNdk` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installCargoNdk` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:sessionLoopbackCheck` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:android:app:sessionLoopbackClasspath` of type `org.gradle.api.DefaultTask`: cannot serialize object of type 'com.android.build.gradle.tasks.factory.AndroidUnitTest', a subtype of 'org.gradle.api.Task', as these are not supported with the configuration cache.
+- Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmBindgenCli` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustHostJni` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmPack` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasm` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:rustHostJni` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installCargoNdk` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyCargoNdk` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustJni` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:bridgeNodeCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:protocolNodeCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:sessionLoopbackCheck` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:android:app:sessionLoopbackClasspath` of type `org.gradle.api.DefaultTask`: cannot deserialize object of type 'org.gradle.api.Task' as these are not supported with the configuration cache.
+- Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmBindgenCli` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmPack` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasm` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustHostJni` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installCargoNdk` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyCargoNdk` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:rustJni` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 
 #### `s05-filtered-tests-dry-run`: `./gradlew testDebugUnitTest --dry-run --tests me.nagaev.veles.otp.handlers.RegexMessageHandlerTest` in `android/`
@@ -615,23 +681,41 @@ Configuration cache: 8 problem(s) storing the cache.
 
 Call site: verify/check-root-aliases.sh:41.
 
-Result: `BUILD SUCCESSFUL in 8s`.
+Complete list: from the configuration-cache report of a fresh rerun; the console showed only the
+first 15 and then `plus N more problems`.
+
+Result: `BUILD SUCCESSFUL in 18s`.
 Configuration cache: 32 problem(s) storing the cache, 30 unique.
 
-- Task `:android:app:sessionLoopbackClasspath` of type `org.gradle.api.DefaultTask`: cannot deserialize object of type 'org.gradle.api.Task' as these are not supported with the configuration cache.
-- Task `:android:app:sessionLoopbackClasspath` of type `org.gradle.api.DefaultTask`: cannot serialize object of type 'com.android.build.gradle.tasks.factory.AndroidUnitTest', a subtype of 'org.gradle.api.Task', as these are not supported with the configuration cache.
-- Task `:bridgeNodeCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:bridgeNodeCheck` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:protocolNodeCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:protocolNodeCheck` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installCargoNdk` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installCargoNdk` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:sessionLoopbackCheck` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:android:app:sessionLoopbackClasspath` of type `org.gradle.api.DefaultTask`: cannot serialize object of type 'com.android.build.gradle.tasks.factory.AndroidUnitTest', a subtype of 'org.gradle.api.Task', as these are not supported with the configuration cache.
+- Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmBindgenCli` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
-- Task `:rust:rustHostJni` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmPack` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasm` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:rustHostJni` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installCargoNdk` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyCargoNdk` of type `org.gradle.api.DefaultTask`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustJni` of type `org.gradle.api.tasks.Exec`: cannot serialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:bridgeNodeCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:protocolNodeCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:sessionLoopbackCheck` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:android:app:sessionLoopbackClasspath` of type `org.gradle.api.DefaultTask`: cannot deserialize object of type 'org.gradle.api.Task' as these are not supported with the configuration cache.
+- Task `:rust:rustToolchainCheck` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmBindgenCli` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmBindgenCli` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasmBindgenConsistency` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installWasmPack` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyWasmPack` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustWasm` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:rustHostJni` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:installCargoNdk` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
+- Task `:rust:verifyCargoNdk` of type `org.gradle.api.DefaultTask`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 - Task `:rust:rustJni` of type `org.gradle.api.tasks.Exec`: cannot deserialize Gradle script object references as these are not supported with the configuration cache.
 
 #### `s08-root-alias-selftest`: `./gradlew -p <scratch> --dry-run brokenAlias` in `repository root`
@@ -643,7 +727,7 @@ The self-test of the alias check: a scratch build whose alias targets a missing 
 Result: `BUILD FAILED in 2s` — the expected failure of the self-test (a missing task), before the
 configuration cache is relevant. `Configuration cache entry stored.` with no problems.
 
-No `- Task …` problem lines.
+No `- Task ……` or `- Build file ……` problem lines.
 
 #### `s09-verifyCargoCyclonedx`: `./gradlew verifyCargoCyclonedx` in `repository root`
 
