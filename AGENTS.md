@@ -32,7 +32,7 @@ OpenCode needs the `opencode-rules` plugin pinned in `opencode.json` (`docs/open
 ## Hook-delivered rules
 <!-- hooked-rules:begin -->
 - Every commit subject and PR title is a Conventional Commit `type(scope): description`; the type guide is delivered when you apply or finalize a change and before `git commit`, `gh pr create` or `gh pr edit`; read this file at those moments if it was not. — .agents/hooked-rules/repo-commit-types.md
-- Before `git push`, run the checks of every node `scripts/components.py changed` selects; delivered at `openspec instructions finalize` and before the push; read this file then if it was not. — .agents/hooked-rules/repo-pre-push-checks.md
+- Before `git push`, run `python3 -I scripts/verify.py --branch` (the node `AGENTS.md` lists where it cannot run); delivered at `openspec instructions finalize` and before the push; read this file then if it was not. — .agents/hooked-rules/repo-pre-push-checks.md
 - Behaviour changes need a real device, emulator or Chrome run before done, stated in the PR or report; delivered at planning, apply, verify and before `gh pr create`; read this file then if it was not. — .agents/hooked-rules/repo-real-device-testing.md
 - Reviewer models and presets live only in this file; never substitute a model; delivered with the review gate; read this file before any review. — .agents/hooked-rules/repo-review-models.md
 - After apply, run verify then finalize without asking (finalize pushes and creates or readies the PR, owner-authorized); delivered at apply, verify, finalize, archive and a stop before finalize; read this file then if it was not. — .agents/hooked-rules/repo-superspec-closeout.md
