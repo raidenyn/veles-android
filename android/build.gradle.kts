@@ -63,6 +63,8 @@ tasks.register("rustNdkVersion") {
     group = "android"
     description = "Prints the pinned Android NDK version (rust/ndk-version) for CI provisioning."
     dependsOn(gradle.includedBuild("rust").task(":rustNdkVersion"))
+    // Same reason as the root forwarders: this task only delegates to the included build.
+    outputs.doNotCacheIf("forwards to the included rust build") { true }
 }
 
 // Enables the repo's Conventional Commits commit-msg hook (.githooks) for local clones. One shared

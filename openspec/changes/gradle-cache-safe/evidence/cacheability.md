@@ -119,7 +119,7 @@ The full list matches `./gradlew tasks --all`.
 
 | Task | Mechanism | Reason |
 | --- | --- | --- |
-| `rustNdkVersion` | plain `DefaultTask` with `dependsOn(gradle.includedBuild("rust").task(":rustNdkVersion"))`, no action and no outputs | lifecycle forwarder; a task with no output property is never cached |
+| `rustNdkVersion` | plain `DefaultTask` with `dependsOn(gradle.includedBuild("rust").task(":rustNdkVersion"))` + `doNotCacheIf` | forwards to the included rust build |
 | `installGitHooks` (applied from `.githooks/install-hooks.gradle.kts`, below) | `InstallGitHooksTask`, typed non-cacheable | writes local git config |
 
 ## `android/app/build.gradle.kts`
@@ -127,7 +127,7 @@ The full list matches `./gradlew tasks --all`.
 | Task | Mechanism | Reason |
 | --- | --- | --- |
 | `sessionLoopbackClasspath` | `SessionLoopbackClasspathTask`, typed non-cacheable | writes a generated classpath file |
-| `protocolJvmTest` | `Test` (Gradle's built-in cacheable type; script registers it and sets `classpath`, `testClassesDirs`, `filter`) | built-in key is the test classpath and classes; outputs are only the JUnit binary results/HTML report, no custom product; the task executes when those change |
+| `protocolJvmTest` | `Test` + `doNotCacheIf` | loads the Rust host JNI library from build/rust/host-jni, which is not a task input; a cache hit could skip testing a changed native library, so it is never cached |
 | `releaseHookGuard` | `ReleaseHookGuardTask`, typed non-cacheable | verification only: inspects the release APK and writes no output |
 
 AGP's own tasks are not script-registered. The two tasks the script reconfigures,
@@ -150,5 +150,7 @@ declared cacheability; `connectedDebugAndroidTest` is device-bound and belongs t
 
 Every script-registered task is accounted for: the three `CargoBuildTask` products (`rustHostJni`,
 `rustWasm`, `rustJni`), a typed class or `doNotCacheIf` reason carrying its `because`/reason string, or a
-`Sync`/`Delete` (plus one output-less forwarder and the `base` lifecycle `check`). No task relies on the
-implicit "has outputs" default without a stated reason.
+`Sync`/`Delete`. The only script-configured task without its own marker is the `base` lifecycle `check`,
+which has no action and no outputs and is not cacheable. Every `Test` the script registers
+(`protocolJvmTest`) is explicitly excluded from the build cache because it loads a native library Gradle
+cannot key. No task relies on the implicit "has outputs" default without a stated reason.

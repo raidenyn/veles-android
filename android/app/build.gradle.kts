@@ -6,8 +6,8 @@ import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFiles
-import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
@@ -201,6 +201,13 @@ afterEvaluate {
         filter {
             includeTestsMatching("me.nagaev.veles.protocol.ProtocolFixturesTest")
         }
+        // The test loads the Rust host JNI library staged under build/rust/host-jni through
+        // java.library.path. That directory is a dependency of :rustHostJni, not a task input, so
+        // Gradle's key cannot see a changed native library with unchanged JVM classes: a build-cache
+        // hit would restore a stale result without testing the new library. Never cache it.
+        outputs.doNotCacheIf(
+            "loads the Rust host JNI library from build/rust/host-jni, which is not a task input",
+        ) { true }
     }
 
     // OTP-09 Task 10: `sessionLoopbackCheck` runs the TypeScript client against the real
@@ -291,7 +298,11 @@ abstract class ReleaseHookGuardTask : DefaultTask() {
     @get:Input
     abstract val forbiddenStrings: ListProperty<String>
 
-    @get:Internal
+    // Declares the real input so the APK directory is part of the task's state; `dependsOn`
+    // keeps assembleRelease in the graph that produces it. The path is relative so it never
+    // leaks the worktree location into the key, and the task is never cached anyway.
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val apkDirectory: DirectoryProperty
 
     @TaskAction
