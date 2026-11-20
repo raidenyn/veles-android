@@ -24,3 +24,12 @@
 | low | The "Offline hook tests" scenario names only the refused and clean cases as skipping when the binary is absent; the staged-deletion and default-path cases also skip then. | deferred: the requirement says cases that need the binary skip individually; the scenario is an example, not an exhaustive list, and the text was not changed by this pass. |
 
 Approved content: closeout-docs sha256 53af504e28a3ed87ad2efe515d9a06f4ff04e7cf2775ba3e1b2a47cfed041d94 — openspec/specs/secret-scanning/spec.md
+
+### Round 3 — approve (docs-site wrapper)
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| low | The wrapper description said "the push-protection enforcement model", which implies push protection alone enforces the rule and hides that the hook is part of it. | fixed: "the enforcement model (push protection plus the hook)". |
+| low | The description omitted the digest verification and the CI run of the hook tests. | fixed: "pinned, digest-verified gitleaks install" and "the hook tests". |
+
+Approved content: closeout-docs sha256 6f849e7fe4892427a377d45fc8b6519154eea06b7219f8d843daa83ac8d6b95b — docs/dev/specs/secret-scanning.mdx
