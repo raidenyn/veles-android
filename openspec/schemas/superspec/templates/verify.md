@@ -78,7 +78,7 @@ Scenarios in `specs/*.md`:
 
 ## 6. Review Records (review gate)
 
-Audit every planning file against `.agents/rules/repo-superspec-review-gate.md` and the
+Audit every planning file against `.agents/hooked-rules/repo-superspec-review-gate.md` and the
 *Revision binding* audit checklist in `docs/superspec-workflow.md`. Recompute hashes with the
 documented hash command; a changed hash must carry its note; never rewrite a hash to hide a
 triggering edit. One row per artifact and listed reviewer:

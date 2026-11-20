@@ -50,7 +50,7 @@ A reinstall also drops the fork's own edits, so re-apply each divergence as well
 3. **Finalize hand-off**: the `finalize` instruction's always-create PR step (no prompt, no skip), the open-PR
    confirmation and the fail-closed stop, the receipt written only after confirmation, the `tracker.md`
    record (committed and pushed as part of the PR) and the In Review confirmation, the per-outcome hand-off
-   to `.agents/rules/repo-superspec-closeout.md`, and the matching "Next step" bullets in
+   to `.agents/hooked-rules/repo-superspec-closeout.md`, and the matching "Next step" bullets in
    `templates/finalize.md`.
 4. **Archive once, in the closeout**: the replaced direct-archive directions in the `verify` and `finalize`
    instructions, `apply:` step 4, `templates/verify.md`'s PASS option and next-step note, the `README.md`
