@@ -147,24 +147,29 @@ What is cached:
   tasks, packaging, git state — is explicitly non-cacheable, so a hit never hides a download or a host
   probe.
 
-Rust caching is refused (no load and no store) when the environment inherited by Gradle may change the
-output:
+Rust caching is refused (no load and no store) when:
 
-- a non-empty `CARGO_ENCODED_RUSTFLAGS`, `CARGO_BUILD_RUSTFLAGS`, `CARGO_INCREMENTAL`, `RUSTC`,
-  `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `RUSTC_BOOTSTRAP`, `RUSTUP_TOOLCHAIN`,
-  `MACOSX_DEPLOYMENT_TARGET`, `SDKROOT`, `CC`, `CXX`, `AR`, `CFLAGS`, `CXXFLAGS` or `LDFLAGS`
-  variable;
+- the environment inherited by Gradle may change the output: a non-empty `CARGO_ENCODED_RUSTFLAGS`,
+  `CARGO_BUILD_RUSTFLAGS`, `CARGO_INCREMENTAL`, `RUSTC`, `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`,
+  `RUSTC_BOOTSTRAP`, `RUSTUP_TOOLCHAIN`, `MACOSX_DEPLOYMENT_TARGET`, `SDKROOT`, `CC`, `CXX`, `AR`,
+  `CFLAGS`, `CXXFLAGS` or `LDFLAGS` variable;
 - a non-empty `CARGO_PROFILE_*`, `CARGO_BUILD_*`, `CC_*`, `CFLAGS_*`, `AR_*` or `CARGO_TARGET_*`
-  variable (`CARGO_TARGET_DIR` excepted);
-- a cargo configuration file: `config` or `config.toml` under `$CARGO_HOME` (default `~/.cargo`), or
-  `.cargo/config` or `.cargo/config.toml` in `rust/` or any of its ancestor directories.
+  variable is set (`CARGO_TARGET_DIR` excepted);
+- a cargo configuration file exists: `config` or `config.toml` under `$CARGO_HOME` (default
+  `~/.cargo`), or `.cargo/config` or `.cargo/config.toml` in `rust/` or any of its ancestor
+  directories;
+- the task is `rustHostJni` on Windows, where the MSVC linker identity is not probed; it carries
+  `doNotCacheIf` with that reason, so a Windows host-JNI build never gets a hit.
 
-CI and release builds are unaffected: they always pass `--no-build-cache --no-configuration-cache`, so
-a machine-wide opt-in never reaches a release
+Release and verification workflows always pass `--no-build-cache --no-configuration-cache`, so a
+machine-wide opt-in never reaches a release
 ([docs/reproducible-builds.md](https://github.com/raidenyn/veles-android/blob/master/docs/reproducible-builds.md)
-lists the guarded files). A local **signed** `assembleRelease` adds `--no-configuration-cache` as well:
-the signing values are read while the build is configured, and they stay out of the
-configuration-cache entry:
+lists the guarded files). The check workflows (`check-android.yml`, `check-bridge-scaffold.yml`,
+`check-native-host.yml`) run with the committed defaults — configuration cache on, build cache off —
+so CI never reads or writes the build cache. A local **signed** `assembleRelease` adds
+`--no-configuration-cache` as well: the flag keeps the signing values, which are read while the build
+is configured, out of the configuration-cache entry (with the configuration cache on, AGP stores the
+resolved signing values in the entry, encrypted):
 
 ```bash
 ./gradlew assembleRelease --no-configuration-cache

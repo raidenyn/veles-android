@@ -433,11 +433,15 @@ The opted-out tasks are:
   `bridgeInstallerDebugSymbols` is registered for the debug producer only.
 
 No other task of the repository is opted out; the complete set is what
-`./gradlew tasks --all` lists. The check-only bridge tasks
+`./gradlew tasks --all` lists. The check-only tasks stay configuration-cache
+clean and run unguarded: `check-bridge-scaffold.yml` runs `bridgeFormat`,
+`bridgeLint`, `bridgeTypecheck`, `bridgeRustFormat`, `bridgeRustLint`,
+`bridgeNpmTest` and `bridgeRustTest`; the installer check tasks
 (`bridgeInstallerFormat`, `bridgeInstallerLint`, `bridgeInstallerTest`,
 `bridgeInstallerScriptsTest`, `bridgeInstallerToolObservation`,
-`bridgeInstallerToolCheck`, the `bridgeHost*` and `bridge*` check tasks) stay
-configuration-cache clean and run unguarded.
+`bridgeInstallerToolCheck`) and the host tasks (`bridgeHostToolchainCheck`,
+`bridgeHostFormat`, `bridgeHostLint`, `bridgeHostTest`, `bridgeHostBuild`) run
+unguarded as well.
 
 `notCompatibleWithConfigurationCache` does not by itself keep the pipeline out of
 the configuration-cache report: a run that includes an opted-out task still
