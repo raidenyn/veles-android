@@ -25,6 +25,7 @@ from agent_rules import (  # noqa: E402
     Store,
     StoreError,
     CheckoutError,
+    canonical_skill,
     checkout_for,
     discover_checkout,
     hook_main,
@@ -1466,6 +1467,151 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(len(self.entries_of("\ufffd")), 1)
 
 
+class StateV2Test(unittest.TestCase):
+    """The version 2 state file: new fields, the version 1 migration and the entry merge rules."""
+
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="veles-agent-state-v2-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.state_dir = os.path.join(self.tmp, "agent-rules")
+        self.store = Store(self.state_dir, sleep=no_sleep, lock_attempts=3)
+
+    def v1_document(self):
+        return {
+            "version": 1,
+            "session": "s1",
+            "generations": {},
+            "entries": [{
+                "key": "s1", "name": IDENTITY_A[0], "sha256": IDENTITY_A[1],
+                "state": "delivered", "patterns": ["git commit"], "generation": 0, "write_id": 1,
+            }],
+        }
+
+    def write_state(self, document):
+        os.makedirs(self.state_dir, exist_ok=True)
+        with open(self.store.session_path("s1"), "w", encoding="utf-8") as handle:
+            json.dump(document, handle)
+
+    def stored(self):
+        with open(self.store.session_path("s1"), encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def test_v1_file_loads_as_v2(self):
+        self.store.next_write_id()  # the index the old engine left behind, and its counter
+        self.write_state(self.v1_document())
+        with self.store.transaction("s1") as state:
+            entry = state.entries[("s1", IDENTITY_A)]
+            self.assertEqual(entry["patterns"], {"git commit"})
+            self.assertEqual(entry["triggers"], set())
+            self.assertEqual(state.changes, [])
+            self.assertEqual(state.stops, [])
+            self.assertEqual(json.loads(state.dump())["version"], 2)
+        self.assertEqual(self.stored()["version"], 1)  # an unmodified load is not rewritten
+        with self.store.transaction("s1") as state:
+            state.put("s1", IDENTITY_A, "delivered", set())  # the first write publishes version 2
+        stored = self.stored()
+        self.assertEqual(stored["version"], 2)
+        self.assertEqual(stored["changes"], [])
+        self.assertEqual(stored["stops"], [])
+        self.assertEqual(stored["entries"][0]["triggers"], [])
+
+    def test_unknown_version_fails_open(self):
+        # `handle` turns this StoreError into the read-by-hand notice and lets the call pass; this pins
+        # the refusal and that the damaged file is left untouched.
+        document = self.v1_document()
+        document["version"] = 3
+        self.write_state(document)
+        with self.assertRaises(StoreError):
+            with self.store.transaction("s1"):
+                self.fail("a version 3 file must not load")
+        self.assertEqual(self.stored()["version"], 3)
+
+    def test_state_round_trips_changes_and_stops(self):
+        stops = [
+            {"change": "alpha", "iteration": 1, "verify_state": "none", "write_id": 7},
+            {"change": "beta", "iteration": 2, "verify_state": "pass", "write_id": 9},
+        ]
+        with self.store.transaction("s1") as state:
+            state.changes.extend(["alpha", "beta"])
+            state.stops.extend(stops)
+        with self.store.transaction("s1") as state:
+            self.assertEqual(state.changes, ["alpha", "beta"])
+            self.assertEqual(state.stops, stops)
+        self.assertEqual(self.stored()["changes"], ["alpha", "beta"])
+        self.assertEqual(self.stored()["stops"], stops)
+
+    def test_invalid_v2_fields_are_rejected(self):
+        base = {"version": 2, "session": "s1", "generations": {}, "changes": [], "stops": [],
+                "entries": []}
+        entry = {
+            "key": "s1", "name": IDENTITY_A[0], "sha256": IDENTITY_A[1], "state": "delivered",
+            "patterns": [], "triggers": [], "generation": 0, "write_id": 1,
+        }
+        record = {"change": "demo", "iteration": 1, "verify_state": "none", "write_id": 4}
+        missing = dict(base)
+        del missing["changes"]
+        missing_stops = dict(base)
+        del missing_stops["stops"]
+        cases = [
+            missing,
+            missing_stops,
+            dict(base, changes={}),
+            dict(base, changes=["Demo"]),
+            dict(base, changes=["demo", "demo"]),
+            dict(base, changes=[1]),
+            dict(base, stops={}),
+            dict(base, stops=[record, "x"]),
+            dict(base, stops=[dict(record, change="")]),
+            dict(base, stops=[dict(record, change="a" * 65)]),
+            dict(base, stops=[dict(record, iteration=-1)]),
+            dict(base, stops=[dict(record, verify_state="maybe")]),
+            dict(base, stops=[dict(record, write_id=None)]),
+            dict(base, entries=[{key: value for key, value in entry.items() if key != "triggers"}]),
+            dict(base, entries=[dict(entry, triggers="x")]),
+            dict(base, entries=[dict(entry, triggers=[1])]),
+        ]
+        for case in cases:
+            self.write_state(case)
+            with self.assertRaises(StoreError, msg=case):
+                with self.store.transaction("s1"):
+                    self.fail("the body must not run on invalid state")
+
+    def test_put_merges_within_a_generation(self):
+        with self.store.transaction("s1") as state:
+            state.put("s1", IDENTITY_A, "pending", {"git commit"},
+                      {"skill:openspec-apply-change"})
+            first = state.entries[("s1", IDENTITY_A)]["write_id"]
+            state.put("s1", IDENTITY_A, "delivered", {"gh pr create"}, {"command:finalize"})
+            entry = state.entries[("s1", IDENTITY_A)]
+        self.assertEqual(entry["state"], "delivered")
+        self.assertEqual(entry["patterns"], {"git commit", "gh pr create"})
+        self.assertEqual(entry["triggers"], {"skill:openspec-apply-change", "command:finalize"})
+        self.assertGreater(entry["write_id"], first)
+
+    def test_put_after_a_bump_starts_fresh(self):
+        with self.store.transaction("s1") as state:
+            state.put("s1", IDENTITY_A, "delivered", {"git commit"}, {"skill:openspec-apply-change"})
+            state.bump("s1")
+            state.put("s1", IDENTITY_A, "delivered", set(), {"command:finalize"})
+            entry = state.entries[("s1", IDENTITY_A)]
+        self.assertEqual(entry["generation"], 1)
+        self.assertEqual(entry["patterns"], set())
+        self.assertEqual(entry["triggers"], {"command:finalize"})
+
+    def test_compaction_keeps_changes_and_stops(self):
+        record = {"change": "demo", "iteration": 1, "verify_state": "none", "write_id": 4}
+        with self.store.transaction("s1") as state:
+            state.put("s1", IDENTITY_A, "delivered", set(), {"skill:openspec-apply-change"})
+            state.changes.append("demo")
+            state.stops.append(record)
+        with self.store.transaction("s1") as state:
+            self.assertEqual(decide([], state, "s1", event("compacted")), Decision("pass", "", []))
+            self.assertEqual(state.changes, ["demo"])
+            self.assertEqual(state.stops, [record])
+        with self.store.transaction("s1") as state:
+            self.assertEqual(state.generation("s1"), 1)
+
+
 class FileLockTest(unittest.TestCase):
     def setUp(self):
         self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="veles-agent-lock-"))
@@ -1557,11 +1703,11 @@ class ContextKeyTest(unittest.TestCase):
 
 
 class MomentTest(EngineTest):
-    def assert_moment(self, decision):
+    def assert_moment(self, decision, key="s1"):
         rule = self.rules[0]
         self.assertEqual(decision.kind, "context")
         self.assertEqual(decision.text, "Commit types guide.")
-        entry = self.entry()
+        entry = self.entry(key=key)
         self.assertEqual(entry["state"], "delivered")
         self.assertEqual(decision.entries, [(rule.identity, entry["write_id"])])
 
@@ -1583,7 +1729,10 @@ class MomentTest(EngineTest):
 
     def test_slash_prompt_alone_and_with_leading_space(self):
         self.assert_moment(self.run_event(event("prompt", prompt="/openspec-apply-change")))
-        self.assert_moment(self.run_event(event("prompt", prompt="  /opsx:apply\nnow")))
+        # Both prompt forms name one skill, so one context sees the text once; another context
+        # proves the leading-space form parses.
+        second = self.run_event(event("prompt", session="s2", prompt="  /opsx:apply\nnow"))
+        self.assert_moment(second, key="s2")
 
     def test_plain_prompt_text_is_not_a_moment(self):
         for prompt in (
@@ -1628,15 +1777,19 @@ class MomentTest(EngineTest):
             self.skipTest("symlinks are unavailable")
         return link
 
-    def read(self, path, rules=None):
-        return self.run_event(event("tool-after", tool="Read", path=path), rules=rules)
+    def read(self, path, rules=None, session="s1"):
+        return self.run_event(event("tool-after", session=session, tool="Read", path=path), rules=rules)
 
     def test_skill_md_read_by_real_path(self):
         target = self.make_skill(".agents", "skills", "openspec-apply-change")
         link = self.symlink(target, ".claude", "skills", "openspec-apply-change")
         self.assertEqual(self.read(os.path.join(link, "SKILL.md")).kind, "context")
         whole = self.symlink(os.path.join(self.tmp, "repo", ".agents", "skills"), ".claude", "linked")
-        self.assertEqual(self.read(os.path.join(whole, "openspec-apply-change", "SKILL.md")).kind, "context")
+        # The same skill through another path is one trigger; another context proves the resolution.
+        self.assertEqual(
+            self.read(os.path.join(whole, "openspec-apply-change", "SKILL.md"), session="s2").kind,
+            "context",
+        )
 
     def test_skill_md_lookalike_resolving_elsewhere_is_not_a_moment(self):
         elsewhere = self.make_skill("docs", "notes")
@@ -1696,7 +1849,11 @@ class MomentTest(EngineTest):
             tool_response={"backgroundTaskId": "b1"},
         )
         self.assert_moment(self.run_event(parse_event("claude", payload)))
-        self.assert_moment(self.run_event(bash_after("openspec instructions finalize --change x &")))
+        # A backgrounded command is its own call; another context proves it is still a moment.
+        self.assert_moment(
+            self.run_event(bash_after("openspec instructions finalize --change x &", session="s2")),
+            key="s2",
+        )
 
     def test_gate_only_rule_has_no_moments(self):
         rule = make_rule("repo-gate-only.md", skills=(), commands=())
@@ -1707,12 +1864,6 @@ class MomentTest(EngineTest):
         ):
             self.assertEqual(self.run_event(ev, rules=[rule]).kind, "pass")
         self.assertEqual(self.entries(), {})
-
-    def test_moment_redelivers_with_a_fresh_write_id(self):
-        first = self.run_event(event("prompt", prompt="/opsx:apply"))
-        second = self.run_event(event("prompt", prompt="/opsx:apply"))
-        self.assertEqual(second.kind, "context")
-        self.assertGreater(second.entries[0][1], first.entries[0][1])
 
     def test_moment_confirms_a_pending_rule(self):
         self.assertEqual(self.run_event(bash_before("gh pr create --fill")).kind, "deny")
@@ -1731,6 +1882,86 @@ class MomentTest(EngineTest):
         self.run_event(event("prompt", prompt="/opsx:apply"))
         sibling = [make_rule("repo-commit-types.md", body="A different guide.\n")]
         self.assertEqual(self.run_event(bash_before("git commit -m x"), rules=sibling).kind, "deny")
+
+
+class MomentRepeatTest(EngineTest):
+    """One delivery per trigger and generation; a different trigger delivers the same rule again."""
+
+    APPLY = event("tool-after", tool="Skill", skill="openspec-apply-change")
+
+    def test_canonical_skill_table(self):
+        self.assertEqual(canonical_skill("opsx:apply"), "openspec-apply-change")
+        self.assertEqual(canonical_skill("opsx:propose"), "openspec-propose")
+        self.assertEqual(canonical_skill("opsx:explore"), "openspec-explore")
+        self.assertEqual(canonical_skill("openspec-apply-change"), "openspec-apply-change")
+        self.assertEqual(canonical_skill("other-skill"), "other-skill")
+        # `opsx:sync` would need `openspec-sync-specs`, not the generic `openspec-sync-change`; the
+        # table covers only the skills the rules list, and no rule lists `opsx:sync`.
+
+    def test_repeat_trigger_skipped(self):
+        first = self.run_event(bash_after("openspec instructions finalize --change x"))
+        self.assertEqual(first.kind, "context")
+        write_id = first.entries[0][1]
+        second = self.run_event(bash_after("openspec instructions finalize --change y"))
+        self.assertEqual(second.kind, "pass")
+        self.assertEqual(second.text, "")
+        self.assertEqual(self.entry()["write_id"], write_id)  # nothing was recorded again
+
+    def test_skill_forms_are_one_trigger(self):
+        self.assertEqual(self.run_event(self.APPLY).kind, "context")
+        read = event("tool-after", tool="Read",
+                     path="/work/repo/.agents/skills/openspec-apply-change/SKILL.md")
+        self.assertEqual(self.run_event(read).kind, "pass")
+        self.assertEqual(self.run_event(event("prompt", prompt="/opsx:apply")).kind, "pass")
+        self.assertEqual(self.entry()["triggers"], {"skill:openspec-apply-change"})
+
+    def test_different_trigger_redelivers(self):
+        first = self.run_event(self.APPLY)
+        self.assertEqual(first.kind, "context")
+        second = self.run_event(bash_after("openspec instructions finalize --change x"))
+        self.assertEqual(second.kind, "context")
+        self.assertEqual(second.text, "Commit types guide.")
+        self.assertGreater(second.entries[0][1], first.entries[0][1])
+        self.assertEqual(
+            self.entry()["triggers"],
+            {"skill:openspec-apply-change", "command:" + FINALIZE_COMMAND},
+        )
+
+    def test_pending_rule_delivered_at_moment(self):
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "deny")
+        self.assertEqual(self.entry()["state"], "pending")
+        self.assertEqual(self.run_event(self.APPLY).kind, "context")
+        self.assertEqual(self.entry()["state"], "delivered")
+        self.assertEqual(self.run_event(bash_before("gh pr create --fill")).kind, "pass")
+
+    def test_redelivery_keeps_patterns(self):
+        self.run_event(bash_before("git commit -m x"))
+        self.assertEqual(self.entry()["patterns"], {GIT_COMMIT_GATE})
+        self.assertEqual(self.run_event(self.APPLY).kind, "context")
+        self.assertEqual(self.entry()["patterns"], {GIT_COMMIT_GATE})
+        self.assertEqual(self.run_event(bash_before("git commit -m x")).kind, "pass")
+        self.assertEqual(self.entry()["patterns"], {GIT_COMMIT_GATE})
+
+    def test_compaction_redelivers_same_trigger(self):
+        command = bash_after("openspec instructions finalize")
+        self.assertEqual(self.run_event(command).kind, "context")
+        self.assertEqual(self.run_event(event("compacted")).kind, "pass")
+        self.assertEqual(self.run_event(command).kind, "context")
+
+    def test_heredoc_mention_delivers_once(self):
+        command = "cat > notes.md <<'EOF'\nopenspec instructions finalize --change x\nEOF"
+        self.assertEqual(self.run_event(bash_after(command)).kind, "context")
+        self.assertEqual(self.run_event(bash_after(command)).kind, "pass")
+
+    def test_cap_counts_only_sent_rules(self):
+        rules = [
+            make_rule("repo-%s.md" % letter, body=sized_body(4000, letter)) for letter in "abc"
+        ]
+        first = self.run_event(event("prompt", prompt="/opsx:apply"), rules=rules)
+        self.assertEqual([identity[0] for identity, _ in first.entries], ["repo-a.md", "repo-b.md"])
+        second = self.run_event(event("prompt", prompt="/opsx:apply"), rules=rules)
+        self.assertEqual([identity[0] for identity, _ in second.entries], ["repo-c.md"])
+        self.assertEqual(second.text, "c" * 3999)
 
 
 class GateTest(EngineTest):
@@ -2022,6 +2253,17 @@ class VoidTest(EngineTest):
         self.run_event(event("prompt", prompt="/opsx:apply"))
         self.void([])
         self.assertEqual(self.entry()["state"], "delivered")
+
+    def test_void_after_new_trigger_removes_entry(self):
+        first = self.run_event(event("prompt", prompt="/opsx:apply"))
+        second = self.run_event(bash_after("openspec instructions finalize"))
+        self.assertEqual(second.kind, "context")
+        self.assertGreater(second.entries[0][1], first.entries[0][1])
+        self.void([second.entries[0][1]])
+        self.assertIsNone(self.entry())
+        # The merged entry went whole, so the same trigger delivers again: the extra delivery is the
+        # safe side of losing both triggers' credit.
+        self.assertEqual(self.run_event(bash_after("openspec instructions finalize")).kind, "context")
 
 
 def quick_store(state_dir):
@@ -2323,6 +2565,32 @@ class HandleTest(CheckoutFixture):
         payload = {"event": "tool-before", "session": "s9", "cwd": linked, "command": "git commit"}
         self.assertEqual(json.loads(self.call(payload)[0])["decision"], "deny")
         self.assertTrue(os.path.isfile(self.store.session_path("s9")))
+
+
+class MomentRepeatAfterWriteTest(CheckoutFixture):
+    """A delivery whose host call failed after the write still suppresses the same trigger."""
+
+    def test_stale_delivery_same_trigger_skipped(self):
+        command = "openspec instructions finalize --change x"
+        self.assertEqual(
+            self.call(self.plain("tool-after", tool="bash", command=command, ok=True),
+                      env={FAIL_AFTER_WRITE: "1"}),
+            ("", 1),
+        )
+        entry = self.entries()[("s1", self.rule.identity)]
+        self.assertEqual(entry["state"], "delivered")
+        self.assertEqual(entry["triggers"], {"command:" + FINALIZE_COMMAND})
+        self.assertEqual(
+            self.call(self.plain("tool-after", tool="bash", command=command, ok=True)), ("", 0)
+        )
+        out, code = self.call(self.plain("tool-after", tool="skill", skill="opsx:apply"))
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["decision"], "context")
+        self.assertEqual(json.loads(out)["text"], "Commit types guide.")
+        self.assertEqual(
+            self.entries()[("s1", self.rule.identity)]["triggers"],
+            {"command:" + FINALIZE_COMMAND, "skill:openspec-apply-change"},
+        )
 
 
 class DiscoveryFailureTest(CheckoutFixture):

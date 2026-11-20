@@ -663,10 +663,15 @@ def checkout_for(cwd):
         return None
 
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 KEEP_SESSIONS = 50
+KEEP_CHANGES = 20  # the session change set keeps this many names, newest last
+KEEP_STOPS = 40  # the session stop records keep this many, oldest first
 LOCK_RETRY_SECONDS = 0.1
 ENTRY_STATES = ("delivered", "pending")
+STOP_VERIFY_STATES = ("none", "pass")
+# A change name as openspec writes it: the bound keeps every name in a state file a plain token.
+CHANGE_NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 INITIALIZED_MARKER = "initialized"
 STEM_RE = re.compile(r"[0-9a-f]{64}")
 SESSION_FILE_RE = re.compile(r"[0-9a-f]{64}\.json")
@@ -793,29 +798,74 @@ def _count(value):
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
+def _change_names(value):
+    """A version 2 file's change set: distinct change names, newest last; StoreError otherwise."""
+    if not isinstance(value, list) or not all(
+        isinstance(name, str) and CHANGE_NAME_RE.fullmatch(name) for name in value
+    ):
+        raise StoreError("session state has an invalid change set")
+    if len(set(value)) != len(value):
+        raise StoreError("session state change set names a change twice")
+    return list(value)
+
+
+def _stop_records(value):
+    """A version 2 file's stop records, oldest first; StoreError for an invalid record."""
+    if not isinstance(value, list):
+        raise StoreError("session state has no stops list")
+    records = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise StoreError("a stop record is not an object")
+        change = item.get("change")
+        iteration = _count(item.get("iteration"))
+        verify_state = item.get("verify_state")
+        write_id = _count(item.get("write_id"))
+        if not isinstance(change, str) or CHANGE_NAME_RE.fullmatch(change) is None:
+            raise StoreError("a stop record has an invalid change name")
+        if iteration is None or write_id is None:
+            raise StoreError("a stop record has an invalid iteration or write id")
+        if verify_state not in STOP_VERIFY_STATES:
+            raise StoreError("a stop record has an invalid verify state")
+        records.append({
+            "change": change, "iteration": iteration,
+            "verify_state": verify_state, "write_id": write_id,
+        })
+    return records
+
+
 class SessionState(object):
     """One session's delivery state, read and written only inside ``Store.transaction``.
 
-    ``entries`` maps ``(key, rule identity)`` to ``{"state", "patterns", "generation", "write_id"}``.
-    A key is ``session`` for the main context and ``"session/agent"`` for a subagent; each key has its
-    own generation, 0 until bumped.
+    ``entries`` maps ``(key, rule identity)`` to
+    ``{"state", "patterns", "triggers", "generation", "write_id"}``. A key is ``session`` for the main
+    context and ``"session/agent"`` for a subagent; each key has its own generation, 0 until bumped.
+    ``changes`` (newest last) and ``stops`` (oldest first) are session-wide, not per key.
     """
 
-    def __init__(self, store, session, generations, entries):
+    def __init__(self, store, session, generations, entries, changes=None, stops=None):
         self.store = store
         self.session = session
         self.generations = generations
         self.entries = entries
+        self.changes = [] if changes is None else changes
+        self.stops = [] if stops is None else stops
         self.wrote = False  # set by ``Store.transaction`` once it published a changed state
 
     @classmethod
     def load(cls, store, session, data):
-        """The state held in ``data`` (None for a session never written); StoreError when invalid."""
+        """The state held in ``data`` (None for a session never written); StoreError when invalid.
+
+        A version 1 file is a version 2 file whose entries have no triggers and whose change set and
+        stop records are empty.
+        """
         generations = {}
         entries = {}
+        changes = []
+        stops = []
         if data is not None:
             version = data.get("version")
-            if type(version) is not int or version != STATE_VERSION:
+            if type(version) is not int or version not in (1, STATE_VERSION):
                 raise StoreError("unsupported session state version %r" % (version,))
             if data.get("session") != session:
                 raise StoreError("the stored state belongs to session %r" % (data.get("session"),))
@@ -827,14 +877,17 @@ class SessionState(object):
                     raise StoreError("invalid generation for %r" % (key,))
                 generations[key] = value
             for item in items:
-                identity, entry = cls._entry(item)
+                identity, entry = cls._entry(item, version)
                 if identity in entries:
                     raise StoreError("duplicate entry %r" % (identity,))
                 entries[identity] = entry
-        return cls(store, session, generations, entries)
+            if version > 1:
+                changes = _change_names(data.get("changes"))
+                stops = _stop_records(data.get("stops"))
+        return cls(store, session, generations, entries, changes, stops)
 
     @staticmethod
-    def _entry(item):
+    def _entry(item, version):
         if not isinstance(item, dict):
             raise StoreError("a state entry is not an object")
         key, name, digest = item.get("key"), item.get("name"), item.get("sha256")
@@ -845,12 +898,20 @@ class SessionState(object):
             raise StoreError("a state entry has an invalid state")
         if not isinstance(patterns, list) or not all(isinstance(pattern, str) for pattern in patterns):
             raise StoreError("a state entry has invalid patterns")
+        triggers = item.get("triggers", [])
+        if not isinstance(triggers, list) or not all(
+            isinstance(trigger, str) for trigger in triggers
+        ):
+            raise StoreError("a state entry has invalid triggers")
+        if version > 1 and "triggers" not in item:
+            raise StoreError("a version 2 state entry has no triggers")
         generation, write_id = _count(item.get("generation")), _count(item.get("write_id"))
         if generation is None or write_id is None:
             raise StoreError("a state entry has an invalid generation or write id")
         return (key, (name, digest)), {
             "state": item["state"],
             "patterns": set(patterns),
+            "triggers": set(triggers),
             "generation": generation,
             "write_id": write_id,
         }
@@ -864,6 +925,7 @@ class SessionState(object):
                 "sha256": digest,
                 "state": entry["state"],
                 "patterns": sorted(entry["patterns"]),
+                "triggers": sorted(entry["triggers"]),
                 "generation": entry["generation"],
                 "write_id": entry["write_id"],
             })
@@ -871,6 +933,8 @@ class SessionState(object):
             "version": STATE_VERSION,
             "session": self.session,
             "generations": self.generations,
+            "changes": list(self.changes),
+            "stops": [dict(record) for record in self.stops],
             "entries": entries,
         }, sort_keys=True, indent=1) + "\n"
 
@@ -878,7 +942,7 @@ class SessionState(object):
         return self.generations.get(key, 0)
 
     def bump(self, key):
-        """Void every entry of ``key`` and no other key."""
+        """Void every entry of ``key`` and no other key; the change set and stop records stay."""
         self.generations[key] = self.generation(key) + 1
 
     def bump_all(self):
@@ -888,14 +952,27 @@ class SessionState(object):
         for key in keys:
             self.bump(key)
 
-    def put(self, key, identity, state, patterns):
-        """Record ``state`` for ``(key, identity)`` at the key's generation, with a fresh write id."""
+    def put(self, key, identity, state, patterns, triggers=()):
+        """Record ``state`` for ``(key, identity)`` at the key's generation, with a fresh write id.
+
+        An entry of the same generation keeps its patterns and triggers and gains the new ones; an
+        entry of an older generation (voided by a re-arm) is replaced, not merged.
+        """
         if state not in ENTRY_STATES:
             raise ValueError("unknown entry state %r" % (state,))
-        self.entries[(key, tuple(identity))] = {
+        identity = (key, tuple(identity))
+        generation = self.generation(key)
+        entry = self.entries.get(identity)
+        if entry is not None and entry["generation"] == generation:
+            patterns = entry["patterns"] | set(patterns)
+            triggers = entry["triggers"] | set(triggers)
+        else:
+            patterns, triggers = set(patterns), set(triggers)
+        self.entries[identity] = {
             "state": state,
-            "patterns": set(patterns),
-            "generation": self.generation(key),
+            "patterns": patterns,
+            "triggers": triggers,
+            "generation": generation,
             "write_id": self.store.next_write_id(),
         }
 
@@ -1199,6 +1276,24 @@ def _live(state, key, identity):
     return entry
 
 
+# The fixed `opsx:` skill table: an `opsx:<x>` command runs the `openspec-<x>-change` skill, except
+# for the two skills that do not follow that shape. It covers the skills the rules list; no rule
+# lists `opsx:sync`, whose skill is `openspec-sync-specs`, so the generic form is never used for it.
+SKILL_ALIASES = {
+    "opsx:propose": "openspec-propose",
+    "opsx:explore": "openspec-explore",
+}
+
+
+def canonical_skill(name):
+    """The canonical skill name of ``name``: the alias table, else the generic ``opsx:<x>`` form."""
+    if name in SKILL_ALIASES:
+        return SKILL_ALIASES[name]
+    if name.startswith("opsx:"):
+        return "openspec-%s-change" % name[len("opsx:"):]
+    return name
+
+
 def _skill_dirs(rule):
     """The skill directory names a rule answers to: each skill, and its part after the last ``:``."""
     return set(rule.skills) | set(skill.rsplit(":", 1)[-1] for skill in rule.skills)
@@ -1232,24 +1327,35 @@ def _read_skill_dirs(event):
 
 
 def _moment_rules(rules, event):
-    """The rules whose moment ``event`` is: a skill tool call, a ``/<skill>`` prompt, a SKILL.md read, or
-    a successful command."""
+    """``[(rule, triggers)]`` for the rules whose moment ``event`` is.
+
+    The triggers are the ones this event matched, as a frozenset of ``"skill:<canonical name>"`` and
+    ``"command:<pattern source>"``: a skill tool call, a ``/<skill>`` prompt, a SKILL.md read, or a
+    successful command.
+    """
     if event.kind == "prompt":
         skill = _prompt_skill(event.prompt)
-        return [rule for rule in rules if skill is not None and skill in rule.skills]
+        if skill is None:
+            return []
+        trigger = "skill:" + canonical_skill(skill)
+        return [(rule, frozenset([trigger])) for rule in rules if skill in rule.skills]
     if event.kind != "tool-after":
         return []
     matched = []
     read_dirs = _read_skill_dirs(event) if event.path else set()
     for rule in rules:
+        triggers = set()
         if event.skill is not None and event.skill in rule.skills:
-            matched.append(rule)
-        elif read_dirs & _skill_dirs(rule):
-            matched.append(rule)
-        elif event.command is not None and event.ok is True and any(
-            pattern.search(event.command) for pattern in rule.commands
-        ):
-            matched.append(rule)
+            triggers.add("skill:" + canonical_skill(event.skill))
+        triggers.update("skill:" + directory for directory in read_dirs & _skill_dirs(rule))
+        if event.command is not None and event.ok is True:
+            triggers.update(
+                "command:" + pattern.pattern
+                for pattern in rule.commands
+                if pattern.search(event.command)
+            )
+        if triggers:
+            matched.append((rule, frozenset(triggers)))
     return matched
 
 
@@ -1285,27 +1391,45 @@ def _recorded(state, key, rules):
     return [(rule.identity, state.entries[(key, rule.identity)]["write_id"]) for rule in rules]
 
 
+def _deliver_moment(state, key, rule, matched):
+    """Record ``rule`` as delivered for this context, keeping its gate patterns and adding triggers."""
+    entry = _live(state, key, rule.identity)
+    patterns = entry["patterns"] if entry is not None else set()
+    state.put(key, rule.identity, "delivered", patterns, matched)
+
+
 def decide(rules, state, key, event):
     """The ``Decision`` for ``event`` in context ``key``; records it in ``state`` (one transaction).
 
-    Moments (``tool-after``, ``prompt``) add the matched rules as context and mark them delivered. Gates
-    (``tool-before`` with a command) deny a call matching a rule not delivered in this context, record
-    the denied rules as pending with the matched patterns, and confirm a pending rule when a call matches
-    one of its pending patterns. Only rules included under the cap are recorded. ``compacted`` re-arms
-    and ``void`` removes entries by write id; both pass.
+    Moments (``tool-after``, ``prompt``) add the matched rules as context and mark them delivered. A
+    rule is skipped when its entry is delivered in this context's current generation and already holds
+    every trigger the event matched; a different trigger delivers it again, and a pending entry never
+    suppresses. Gates (``tool-before`` with a command) deny a call matching a rule not delivered in
+    this context, record the denied rules as pending with the matched patterns, and confirm a pending
+    rule when a call matches one of its pending patterns. Only rules included under the cap are
+    recorded. ``compacted`` re-arms and ``void`` removes entries by write id; both pass.
     """
     if event.kind in ("prompt", "tool-after"):
-        included, text = _capped(_moment_rules(rules, event))
+        fresh = []
+        matched = {}
+        for rule, triggers in _moment_rules(rules, event):
+            entry = _live(state, key, rule.identity)
+            if entry is not None and entry["state"] == "delivered" and triggers <= entry["triggers"]:
+                continue
+            fresh.append(rule)
+            matched[rule.identity] = triggers
+        included, text = _capped(fresh)
         if not included:
             return Decision("pass", "", [])
         for rule in included:
-            state.put(key, rule.identity, "delivered", set())
+            _deliver_moment(state, key, rule, matched[rule.identity])
         return Decision("context", text, _recorded(state, key, included))
     if event.kind == "tool-before":
         return _gate(rules, state, key, event)
     if event.kind == "compacted":
         # An identified subagent re-arms only its own key; otherwise the whole session errs toward an
-        # extra delivery (a main-context compaction never carries an agent id on either host).
+        # extra delivery (a main-context compaction never carries an agent id on either host). A bump
+        # leaves the session change set and stop records alone.
         if event.agent:
             state.bump(key)
         else:
