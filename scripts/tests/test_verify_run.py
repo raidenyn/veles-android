@@ -546,6 +546,31 @@ class ReportTest(RunFixture):
                             for line in text.splitlines()))
         self.assertEqual(exit_code(results, []), 1)
 
+    def test_summary_overflow_from_notes_keeps_status_lines_and_pointer(self):
+        # Phase A: the "tests: none related" note lists every changed path, and on a wide branch
+        # the notes alone pass 8 KiB. Every node keeps its status line, the missing-tool fix still
+        # prints, and the summary stays at most 8 KiB and points at last-run.json.
+        note = "tests: none related (%s)" % " ".join(
+            "some/deep/path/file_%03d.py" % number for number in range(1, 151))
+        fix = "run `./gradlew installCargoDeny` and put its bin directory on PATH"
+        outcome = Outcome("not_run", fix=fix, log=self.log_path("supply-chain.supply-chain"),
+                          error="path-tool: cargo-deny is required (any version)\nfix: " + fix)
+        results = {
+            "android": NodeResult("PASS", None, [note], []),
+            "web-extension": NodeResult("PASS", None, [note], []),
+            "supply-chain": NodeResult("NOT RUN", "cargo-deny is required", [], [
+                failure("supply-chain.supply-chain", outcome,
+                        "cd . && verify/verify-supply-chain.sh")]),
+        }
+        text = render(results, [])
+        self.assertLessEqual(len(text.encode("utf-8")), 8192)
+        lines = text.splitlines()
+        for node in ("android", "web-extension", "supply-chain"):
+            self.assertTrue(any(line.startswith("%s:" % node) for line in lines), node)
+        self.assertIn(fix, text)
+        self.assertTrue(any("build/verify/last-run.json" in line for line in lines))
+        self.assertEqual(exit_code(results, []), 2)
+
     def test_missing_tool_exit_2(self):
         # D10: an unexpected NOT RUN is exit 2, and its fix is in the summary.
         fix = "install a JDK 21 and run config set java_home"
