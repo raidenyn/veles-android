@@ -9,7 +9,8 @@ reminds the agent once per phase to run verify and finalize (which creates the P
 
 **Architecture:** The stdlib engine `scripts/agent_rules.py` gains a `stops` key, a `stop` event, a `block`
 decision, per-trigger delivery records, a session change set and per-phase stop records (state version 2). Claude
-Code wires a fifth hook (`Stop`); the OpenCode plugin maps root-session `session.idle` to `stop`. The agent-file
+Code wires a fifth hook (`Stop`); the OpenCode plugin maps a root session's `session.execution.succeeded` to `stop`.
+The agent-file
 check enforces the wiring, the predicate registry, the layout and a delivery budget.
 
 **Tech Stack:** Python 3.8+ standard library (`python3 -I`), `unittest`; Node ESM plugin with `node --test`;
@@ -63,21 +64,21 @@ OpenSpec CLI 2.x.
 **Interfaces:**
 - Produces: the OpenCode resuming-prompt call form and the abort/error event names used by Task 8.
 
-- [ ] **Step 1:** Clone the repo to a disposable directory with no remote. Add a throwaway `Stop` hook in its
+- [x] **Step 1:** Clone the repo to a disposable directory with no remote. Add a throwaway `Stop` hook in its
   `.claude/settings.json` running a short script that appends its stdin JSON to `stop-log.jsonl` and keeps a
   counter file: run 1 prints `{"decision":"block","reason":"CANARY-1-<random>: say the canary"}`, run 2 (expected
   with `stop_hook_active: true`) prints the same with `CANARY-2-<random>`, run 3 and later print nothing (pass).
-- [ ] **Step 2:** Run a Claude Code session there with a trivial prompt. Expected: the model quotes canary 1,
+- [x] **Step 2:** Run a Claude Code session there with a trivial prompt. Expected: the model quotes canary 1,
   continues, then quotes canary 2 (a block with `stop_hook_active` true is obeyed). Reset the counter, start a
   run and press Esc: `stop-log.jsonl` gains no line. Record version and transcript excerpts in `spike.md`.
-- [ ] **Step 3:** In a disposable OpenCode setup, add a throwaway plugin that on `session.idle` for a session
-  with no parent calls the session's synthetic-prompt API with a canary and resume enabled. Find the resuming form
-  (today's call is `ctx.session.synthetic({…, resume: false})`; try `resume: true`), and whether it resolves before
-  the resumed run ends. Log the event types seen on
-  user abort and on a provoked error, and on a child (task) session's idle.
-- [ ] **Step 4:** Record in `spike.md`: the resuming call and whether it resolves before the resumed run ends, the event names for abort and error, how a child
+- [x] **Step 3:** In a disposable OpenCode setup, add a throwaway plugin that answers the session's turn-end event
+  (`session.idle` is absent in 2.3.2; the run used `session.execution.succeeded`) for a session with no parent by
+  calling the session's synthetic-prompt API with a canary and resume enabled. Find the resuming form and whether it
+  resolves before the resumed run ends. Log the event types seen on user abort and on a provoked error, and on a child
+  (task) session's turn end.
+- [x] **Step 4:** Record in `spike.md`: the resuming call and whether it resolves before the resumed run ends, the event names for abort and error, how a child
   session is identified (parent id), versions. If either host fails, stop and ask the owner (task 1.3).
-- [ ] **Step 5: Commit** `git add openspec/changes/hook-workflow-rules/spike.md && git commit -m "docs(openspec): stop gate spike for hook-workflow-rules"`
+- [x] **Step 5: Commit** `git add openspec/changes/hook-workflow-rules/spike.md && git commit -m "docs(openspec): stop gate spike for hook-workflow-rules"`
 
 ### Task 2: Grammar `stops` and the predicate registry
 
@@ -245,7 +246,7 @@ Change `{name}` has an apply receipt and no finalize receipt. Run verify if it h
 
 **Interfaces:**
 - Produces: on any recoverable failure at a Claude `Stop` event, stdout `{"systemMessage": FAILURE_NOTICE}`, the
-  notice on stderr, exit 0; plain format unchanged (`context` notice, which the plugin ignores at idle).
+  notice on stderr, exit 0; plain format unchanged (`context` notice, which the plugin ignores at a stop moment).
 
 - [ ] **Step 1: Write failing tests** `test_stop_corrupt_state_passes_with_system_message`,
   `test_stop_unreadable_receipt_passes` (a receipt path that is a directory), `test_stop_lock_timeout_passes`
@@ -256,32 +257,34 @@ Change `{name}` has an apply receipt and no finalize receipt. Run verify if it h
 - [ ] **Step 4:** Run the engine suite. Expected: PASS.
 - [ ] **Step 5: Commit** `chore(agents): wire the stop hook and fail open at a stop`.
 
-### Task 8: OpenCode plugin `session.idle`
+### Task 8: OpenCode plugin `session.execution.succeeded`
 
 **Files:**
-- Modify: `scripts/opencode-hooked-rules/index.js` (`validEntry`/decode accept `block` for `stop`, `createHandlers` idle handler)
+- Modify: `scripts/opencode-hooked-rules/index.js` (`validEntry`/decode accept `block` for `stop`, `createHandlers` turn-end handler)
 - Test: `scripts/opencode-hooked-rules/index.test.mjs`
 
 **Interfaces:**
-- Consumes: the resuming call form, the abort/error event names and the parent-id field from Task 1's `spike.md`.
-- Produces: an idle handler that sends `{event: "stop", session, cwd}` for root sessions only, skips when an
-  abort or error event for that session arrived since its last prompt, sends a `block` text as a resuming
-  synthetic prompt, and on failure sends `void` with the stop entry's write id.
+- Consumes: the resuming call form and the event names from Task 1's `spike.md` (`session.execution.succeeded`,
+  `interrupted`, `failed`; child sessions carry `parentID`).
+- Produces: a turn-end handler that sends `{event: "stop", session, cwd}` for root sessions only, ignores
+  `interrupted`/`failed`, sends a `block` text as a resuming synthetic prompt
+  (`ctx.session.synthetic({sessionID, id, text, resume: true})`), and on failure sends `void` with the stop entry's
+  write id.
 
 - [ ] **Step 1: Write failing tests** (fake engine and fake host, injected `setTimer`/`clearTimer`):
-  `idle on root session sends stop and resumes with block text`, `idle on child session sends nothing`,
-  `idle after abort sends nothing`, `idle after error sends nothing`, `failed synthetic prompt voids the stop entry`,
-  `context response at idle is ignored`, `engine timeout at idle does nothing`, `missing python at idle does nothing`,
-  `block for a non-stop event is rejected as a malformed response`, `second idle after the first budget ended sends stop`.
+  `succeeded on root session sends stop and resumes with block text`, `succeeded on child session sends nothing`,
+  `interrupted sends nothing`, `failed sends nothing`, `failed synthetic prompt voids the stop entry`,
+  `context response at a stop moment is ignored`, `engine timeout at a stop moment does nothing`,
+  `missing python at a stop moment does nothing`, `block for a non-stop event is rejected as a malformed response`,
+  `second success after the first budget ended sends stop`.
 - [ ] **Step 2:** Run `node --test scripts/opencode-hooked-rules/index.test.mjs`. Expected: new tests FAIL.
-- [ ] **Step 3:** Implement within the existing 5-second budget helper (`startBudget`). The idle handler does not
-  await inside the event-stream loop: `onEvent` records abort/error flags synchronously and starts the idle work
-  detached (one in flight per session, the slot freed when that call's budget ends, at most 5 s, not when the
-  resume promise settles), so compaction and later events are not delayed. The per-session
-  abort/error flag is cleared in `prompt()`. `decode(bytes, kind)` gains the event kind and rejects `block` unless
+- [ ] **Step 3:** Implement within the existing 5-second budget helper (`startBudget`). The turn-end handler does not
+  await inside the event-stream loop: `onEvent` starts the work detached (one in flight per session, the slot freed
+  when that call's budget ends, at most 5 s, not when the resume promise settles), so compaction and later events are
+  not delayed. `decode(bytes, kind)` gains the event kind and rejects `block` unless
   `kind === "stop"`.
 - [ ] **Step 4:** Re-run. Expected: PASS.
-- [ ] **Step 5: Commit** `chore(agents): map OpenCode session idle to the stop gate`.
+- [ ] **Step 5: Commit** `chore(agents): map OpenCode session turn end to the stop gate`.
 
 ### Task 9: Move the rules and the root AGENTS.md
 
@@ -367,7 +370,7 @@ In the frontmatter string each `\` is doubled, as in `repo-commit-types.md`, e.g
 - [ ] **Step 2:** `openspec/config.yaml` `operations.apply.guidance` becomes a two-item list: the existing apply-stop
   sentence (repointed) and "When every task is done, run verify and then finalize in the same turn without asking: finalize pushes the branch and creates or readies the PR, as .agents/hooked-rules/repo-superspec-closeout.md states."
 - [ ] **Step 3:** `docs/hook-delivered-rules.md`: add `stops` to "Adding a rule"; a "Stop gate" section (predicate,
-  phases, records, `stop_hook_active`, OpenCode idle); a `void` of a merged entry removes it whole; per-trigger repeats in "Delivery"; state version 2; amended
+  phases, records, `stop_hook_active`, OpenCode `session.execution.succeeded`); a `void` of a merged entry removes it whole; per-trigger repeats in "Delivery"; state version 2; amended
   stale credit; stop fail-open in "Degraded modes"; `--separate-git-dir` unhandled.
 - [ ] **Step 4:** Run `openspec instructions apply --change hook-workflow-rules --json` and confirm the guidance shows
   both entries; run the greps:

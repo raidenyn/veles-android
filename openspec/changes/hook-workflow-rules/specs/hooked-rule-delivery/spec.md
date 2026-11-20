@@ -382,8 +382,8 @@ failure, cancellation or timeout after the engine's write.
 
 - The call or the stop MUST pass.
 - Where a channel exists, the agent MUST be told to read the hooked rules listed in `AGENTS.md` by hand. The
-  OpenCode plugin MUST send that notice itself when Python is missing or the engine times out, except at idle,
-  where it MUST do nothing.
+  OpenCode plugin MUST send that notice itself when Python is missing or the engine times out, except at a stop
+  moment, where it MUST do nothing.
 - At a Claude Code `Stop`, which has no model channel without blocking, the notice MUST go in `systemMessage` and to
   stderr.
 - In Claude Code, a missing Python MUST leave only the pointer, and this MUST be documented.
@@ -427,7 +427,7 @@ still carries exactly that write id.
 
 #### Scenario: Failed synthetic prompt
 - **WHEN** OpenCode's synthetic prompt for a `block` fails and the plugin sends `void` with the stop record's write id
-- **THEN** the stop record is removed, and the next root-session idle in that phase is blocked again
+- **THEN** the stop record is removed, and the next root-session stop moment in that phase is blocked again
 
 #### Scenario: Engine failure at a stop
 - **WHEN** the engine fails while handling a Claude Code `Stop`
@@ -456,13 +456,15 @@ The repository SHALL wire the engine into Claude Code and OpenCode.
 | `context.tool.hook('execute.after')` | `tool-after`, appending context to the tool output |
 | `context.session.hook('prompt')` | `prompt` |
 | `session.compaction.started` | `compacted` |
-| `session.idle` of a root session, not following a user abort or a session error | `stop`; a `block` is sent as a synthetic prompt that resumes the session |
+| `session.execution.succeeded` of a root session (never `failed` or `interrupted`) | `stop`; a `block` is sent as a synthetic prompt with `resume: true` that continues the session |
 
-The plugin MUST accept `block` only for a `stop` event and MUST ignore any other response at idle. It MUST NOT count
-a per-call `context.session.hook('context')` injection as delivery. Antigravity gets no adapter.
+The plugin MUST accept `block` only for a `stop` event and MUST ignore any other response at a stop moment. It MUST
+NOT count a per-call `context.session.hook('context')` injection as delivery. Antigravity gets no adapter.
 
-If the spike shows that OpenCode cannot resume a session from `session.idle`, the `session.idle` row is dropped only
-with the owner's decision, and OpenCode is then moments-only for the stop gate, documented as such.
+OpenCode 2.3.2 never emits `session.idle` (spike, `spike.md` §2A): its turn-end event is
+`session.execution.succeeded`, which this row uses. If the spike had shown that OpenCode cannot resume a session
+from its turn-end event, the row would be dropped only with the owner's decision, and OpenCode would be moments-only
+for the stop gate, documented as such.
 
 #### Scenario: Claude Code wiring
 - **WHEN** `.claude/settings.json` lacks one of the five hooks, omits the timeout, or wires `SubagentStop`
@@ -473,7 +475,7 @@ with the owner's decision, and OpenCode is then moments-only for the stop gate, 
 - **THEN** the agent-file check fails
 
 #### Scenario: OpenCode child or aborted session
-- **WHEN** a child session goes idle, or a root session goes idle after the user aborted it
+- **WHEN** a child session's execution succeeds, or a root session's execution ends as `interrupted` or `failed`
 - **THEN** the plugin sends no `stop` event
 
 ### Requirement: End-to-end verification and ship condition
@@ -508,9 +510,9 @@ outcome 7). All of these outcomes MUST then be run on the finished implementatio
    - On OpenCode, a forced injection failure sends `void`, and the next gated call is denied again.
 7. **Stop gate.**
    - The spike: a throwaway stop hook blocks once with a canary the model quotes and acts on; the next stop reports
-     `stop_hook_active`, and a user interrupt fires no `Stop` (Claude Code); a root-session idle resumes with a
-     synthetic prompt, and a child session's idle, an idle after a user abort and an idle after a session error are
-     told apart (OpenCode).
+     `stop_hook_active`, and a user interrupt fires no `Stop` (Claude Code); a root-session
+     `session.execution.succeeded` resumes with a synthetic prompt, and a child session's success, an interrupted
+     execution and a failed execution are told apart (OpenCode).
    - The final run: on a disposable change, a stop after apply and a stop after a passing verify are each blocked
      once; a second stop passes; a new apply iteration blocks once more; a FAIL from an earlier iteration blocks;
      a failing verify, a finalized or archived change and an unrelated session pass; receipts found only in a linked
@@ -528,7 +530,7 @@ final run.
 decide whether that tool is pointer-only (or, for the stop gate, moments-only) or the change is held.
 
 #### Scenario: Behaviour fails in one tool
-- **WHEN** OpenCode cannot resume a session from `session.idle` with text the model reads
+- **WHEN** OpenCode cannot resume a session from `session.execution.succeeded` with text the model reads
 - **THEN** implementation stops and the owner is asked before any further task
 
 #### Scenario: Evidence recorded

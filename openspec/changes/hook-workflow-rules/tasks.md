@@ -3,9 +3,9 @@ Every unit test injects its clock, `sleep` and timers: no real waits and no wall
 
 ## 1. Spike the stop gate (design §7)
 
-- [ ] 1.1 Claude Code: in a disposable clone, add a throwaway `Stop` hook that blocks with a canary reason; record that the model quotes and acts on it, that the next stop reports `stop_hook_active` true, that a second block sent then is obeyed, and that a user interrupt fires no `Stop`; record the version
-- [ ] 1.2 OpenCode: in a disposable clone, a throwaway plugin answers a root-session `session.idle` with a resuming synthetic prompt carrying a canary; record that the model continues in the same session, how a child session's idle, an idle after a user abort and an idle after a session error are told apart, and the resuming call form; record the version
-- [ ] 1.3 If either spike fails, stop and ask the owner (moments-only for that tool, or hold) before any further task
+- [x] 1.1 Claude Code: in a disposable clone, add a throwaway `Stop` hook that blocks with a canary reason; record that the model quotes and acts on it, that the next stop reports `stop_hook_active` true, that a second block sent then is obeyed, and that a user interrupt fires no `Stop`; record the version
+- [x] 1.2 OpenCode: in a disposable clone, a throwaway plugin answers a root session's turn-end event (`session.idle` is absent in 2.3.2; it uses `session.execution.succeeded`) with a resuming synthetic prompt carrying a canary; record that the model continues in the same session, how a child session's success, an `interrupted` execution and a `failed` execution are told apart, and the resuming call form; record the version
+- [x] 1.3 If either spike fails, stop and ask the owner (moments-only for that tool, or hold) before any further task
 
 ## 2. Engine: grammar, triggers and state (design §2, §3 grammar, §4)
 
@@ -27,7 +27,7 @@ Every unit test injects its clock, `sleep` and timers: no real waits and no wall
 ## 4. Hosts (design §3 OpenCode, hooked-rule-delivery Host adapters)
 
 - [ ] 4.1 `.claude/settings.json`: add the `Stop` hook with the engine command and `timeout: 5`; no `SubagentStop`
-- [ ] 4.2 OpenCode plugin: map root-session `session.idle` (not after an abort or a session error since the last prompt) to `stop`; send a `block` as a resuming synthetic prompt (the form task 1.2 found); `void` the stop entry when it fails; accept `block` only for `stop` and ignore any other response at idle; do nothing at idle when the engine times out or Python is missing; tests in `index.test.mjs` with injected timers
+- [ ] 4.2 OpenCode plugin: map a root session's `session.execution.succeeded` (`interrupted` and `failed` never map) to `stop`; send a `block` as a resuming synthetic prompt (the form task 1.2 found); `void` the stop entry when it fails; accept `block` only for `stop` and ignore any other response at a stop moment; do nothing at a stop moment when the engine times out or Python is missing; tests in `index.test.mjs` with injected timers
 
 ## 5. Move the rules (design §1, §8)
 
@@ -49,7 +49,7 @@ between.
 - [ ] 7.1 `openspec/config.yaml`: repoint the six artifact rules and the archive guidance; add the separate apply entry that runs verify and finalize without asking
 - [ ] 7.2 Repoint `openspec/schemas/superspec/schema.yaml` (three references) and `templates/verify.md`
 - [ ] 7.3 Docs: `docs/superspec-workflow.md` (opening paragraph with current paths; the "always-on rule" wording near the audit checklist), `docs/openspec-workflow.md`; `docs/dev/specs/real-device-testing.mdx` only imports the main spec, so no edit is expected there; read `docs/opencode-rules.md` and `docs/agent-guidance.md` and edit them only where they name a moved rule as always-on
-- [ ] 7.4 `docs/hook-delivered-rules.md`: `stops` and the registry, the `Stop` hook and `session.idle`, per-trigger repeats, the stop gate, state version 2, the amended stale credit, the stop fail-open; record `--separate-git-dir` checkouts as unhandled by the predicate
+- [ ] 7.4 `docs/hook-delivered-rules.md`: `stops` and the registry, the `Stop` hook and `session.execution.succeeded`, per-trigger repeats, the stop gate, state version 2, the amended stale credit, the stop fail-open; record `--separate-git-dir` checkouts as unhandled by the predicate
 - [ ] 7.5 Verification greps, each outside `openspec/changes/` and outside `openspec/specs/` (main specs change at sync): no roster model name outside the roster (including `.agents/hooked-rules/` and `docs/hook-delivered-rules.md`); no model or concrete project in `docs/superspec-workflow.md`; every procedure section a workflow rule cites exists; the closeout, review-gate and tracker-intake rules carry their read-the-section instruction at the opening (the closeout right after its lead paragraph); no reference to the old `.agents/rules/` paths of the moved files
 
 ## 8. Checks and live verification (design §10)

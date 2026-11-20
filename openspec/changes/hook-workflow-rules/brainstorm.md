@@ -26,7 +26,8 @@ reinforcement.
 1. **A stop gate (a new trigger kind).** When the main agent tries to end its turn while a change it worked on in
    this session has an apply receipt, no failing verify and no finalize receipt, the engine blocks the stop once per
    phase and shows the closeout rule with a line naming the change. Claude Code: a `Stop` hook returning
-   `decision: block`. OpenCode: the plugin answers `session.idle` with a synthetic prompt carrying the text; this
+   `decision: block`. OpenCode: the plugin answers the host's turn-end event (`session.idle` if emitted;
+   `session.execution.succeeded` in 2.3.2) with a synthetic prompt carrying the text; this
    is spiked first, and if it does not work the owner decides whether OpenCode is moments-only for the stop gate.
 2. **Earlier moments** for the closeout rule: the apply, verify, continue and archive skills and the
    `openspec instructions verify|finalize` commands.
@@ -87,7 +88,7 @@ residual.
 Main specs that name the moved paths or the engine's fixed lists, so this change carries deltas for them:
 
 - `hooked-rule-delivery`: the `stops` key, the `stop` event, the block-stop decision, the session change set, a
-  fifth Claude Code hook, the OpenCode `session.idle` mapping, the budget check and the stop-gate fail-open.
+  fifth Claude Code hook, the OpenCode turn-end (`session.execution.succeeded`) mapping, the budget check and the stop-gate fail-open.
 - `agent-guidance-layout`: the list of always-on `repo-*` rules shrinks to three. Every requirement and scenario
   that names a moved rule changes: the four superspec workflow rules, the procedure-pointer rule for the three
   workflow rules other than the roster, the pre-push rule without platform detail, "repo rules always present",
@@ -127,7 +128,7 @@ names) and the root `AGENTS.md`.
 
 Layers plus a stop gate (owner's choice): config guidance, earlier moments and a stop gate for the closeout rule;
 the four other rule files (review gate, roster, real-device, pre-push) move to hooks; the budget check keeps every
-moment within the cap. OpenCode gets the stop gate only if a spike shows a `session.idle` continuation works;
+moment within the cap. OpenCode gets the stop gate only if a spike shows a turn-end continuation works;
 otherwise the owner decides.
 
 ## Key Decisions
@@ -159,7 +160,7 @@ otherwise the owner decides.
   you to stop, say which and end the turn — the next stop is not blocked.
 - **My call — subagents are not stop-gated.** Only the main context's stop is gated (`Stop`, not
   `SubagentStop`); implementation subagents must not run finalize. The OpenCode spike checks how a child
-  session's idle event is told apart.
+  session's turn-end event is told apart.
 - **My call — the pointers carry the authorization and the outside-workflow rules.** The closeout pointer states
   that finalize pushes and creates the PR without asking; the real-device and pre-push pointers state their rules
   in one line.
@@ -201,7 +202,8 @@ blank line, saving one; five pointer lines are added. Net: 40 lines. Each pointe
 
 ## Open Questions
 
-- Whether OpenCode's `session.idle` can carry a synthetic prompt that the model acts on in the same session, and
-  how a child session's idle is told apart (the spike answers both).
+- Whether OpenCode's turn-end event can carry a synthetic prompt that the model acts on in the same session, and
+  how a child session's turn end is told apart (answered by the spike: `session.execution.succeeded`,
+  `resume: true`, `parentID`; the owner approved that event after `session.idle` proved absent).
 - Whether the agent acts on the new config apply guidance or reports it as conflicting with the skill's ending
   (the skill tells it to explain conflicting advice); the verification observes this.

@@ -152,19 +152,21 @@ could block a later stop.
 **Rendering.** Claude Code: `{"decision": "block", "reason": <text>}` on `Stop`. Plain: the usual
 `{"decision": "block", "text": …, "entries": [...]}`, where the one entry is the stop record's identity
 (`["stop", "<change>"]`) and write id, so the OpenCode plugin can `void` it when the synthetic prompt fails and the
-next idle can remind again. The plugin's plain-response parser accepts `block` only for a `stop` event, and at idle it ignores a `context`
-response (the plain format's engine-failure notice), so a failing engine does nothing at idle. `block` is valid only for `stop`; `deny` stays tool-before only.
+next stop moment can remind again. The plugin's plain-response parser accepts `block` only for a `stop` event, and
+at a stop moment it ignores a `context` response (the plain format's engine-failure notice), so a failing engine
+does nothing there. `block` is valid only for `stop`; `deny` stays tool-before only.
 
-**OpenCode.** The plugin maps `session.idle` for a root session to `stop`, but not an idle that follows a user
-abort or a session error (the plugin tracks `session.error` and abort events for that session since its last
-prompt). On `block` it sends the text as a synthetic prompt to the same session that resumes it (today's
-`ctx.session.synthetic` call uses `resume: false`; the spike finds the resuming form), so the agent continues. The spike (Decision 7) must show this; otherwise the
-owner decides.
+**OpenCode.** The plugin maps a root session's turn-end event, `session.execution.succeeded`, to `stop`;
+`session.execution.failed` and `session.execution.interrupted` never map to it. OpenCode 2.3.2 does not emit
+`session.idle` (spike §2A). The plugin identifies a child session by `parentID` and skips it. On `block` it sends
+the text as a synthetic prompt that resumes the same session:
+`ctx.session.synthetic({sessionID, id, text, resume: true})`, which the spike showed resolves in about 5 ms before
+the resumed run ends, so the 5-second budget is ample.
 
 **Fail open.** Any engine error, lock timeout or unreadable receipt: pass. A non-blocking Claude Code `Stop`
 output has no model channel; the read-by-hand notice goes in `systemMessage`, which reaches the user, and to
 stderr. Blocking to deliver the notice was rejected: a failing engine must never hold the agent. OpenCode: on
-an engine failure the plugin does nothing at idle.
+an engine failure the plugin does nothing at a stop moment.
 
 ### 4. State version 2
 
@@ -201,8 +203,9 @@ Before engine work, one spike in each tool, recorded in `spike.md`:
 - Claude Code: a throwaway `Stop` hook returning `decision: block` with a canary reason; the model continues and
   quotes the canary; on the next stop `stop_hook_active` is true, and a second block sent then is obeyed (the agent
   continues); a user interrupt fires no `Stop`.
-- OpenCode: on `session.idle` for a root session, send a synthetic prompt with a canary; the model continues in
-  the same session; a child session's idle, and an idle after a user abort or an error, can be told apart.
+- OpenCode: on a root session's `session.execution.succeeded`, send a synthetic prompt with a canary; the model
+  continues in the same session; a child session's success, an `interrupted` execution and a `failed` execution are
+  told apart.
 
 If either fails, stop and ask the owner (pointer and moments only for that tool, or hold).
 
@@ -219,13 +222,13 @@ in each node's `AGENTS.md`." The OpenCode paragraph follows without a blank line
   → `.agents/hooked-rules/` (`git mv`, then frontmatter). `.claude/rules` stays a symlink to `.agents/rules`.
 - Engine: `scripts/agent_rules.py` (grammar `stops`, triggers, `stop` event, block decision, change set, predicate,
   state v2); its tests.
-- OpenCode plugin: `scripts/opencode-hooked-rules/index.js` and `index.test.mjs` (`session.idle`).
+- OpenCode plugin: `scripts/opencode-hooked-rules/index.js` and `index.test.mjs` (`session.execution.succeeded`).
 - Wiring: `.claude/settings.json` (`Stop` hook).
 - Check: `docs/checks/check_agent_files.py` and `test_check_agent_files.py` (rule-name list, hook tuple, budget,
   registry).
 - Spec deltas: `hooked-rule-delivery` (grammar `stops`, Moments with per-trigger de-duplication, "Cap at a
   moment", the `stop` event and `block` decision, state v2, Stale credit, the five Claude Code hooks scenario, the
-  OpenCode `session.idle` mapping, the budget check, the stop-gate fail-open and the end-to-end outcomes);
+  OpenCode `session.execution.succeeded` mapping, the budget check, the stop-gate fail-open and the end-to-end outcomes);
   `agent-guidance-layout`; `real-device-testing`; `superspec-closeout`; `superspec-review-gate`.
 - References: `openspec/config.yaml`; `openspec/schemas/superspec/schema.yaml` (three references);
   `openspec/schemas/superspec/templates/verify.md`; `docs/superspec-workflow.md` (opening paragraph and the "always-on
@@ -255,7 +258,8 @@ Unit tests per decision (no sleeps, injected state). Then a live re-run in both 
   per-phase records bounding the blocks, armed only by the session's own `--change` calls.
 - [A stale or abandoned change in a linked worktree keeps the predicate true] → only changes the session named
   count, and only once per phase.
-- [OpenCode idle continuation does not work] → spike first; owner decides.
+- [OpenCode turn-end continuation does not work] → the spike verified it (`session.execution.succeeded`,
+  `resume: true`); the owner approved using that event when `session.idle` proved absent in 2.3.2.
 - [A command pattern matches text inside a heredoc or quoted string] → existing residual; with per-trigger
   de-duplication a false match costs one delivery per trigger, not one per call.
 - [The escape hatch writes no `finalize.md`, so the change stays pending] → at most one reminder per phase; the
@@ -273,4 +277,5 @@ engine fails open until it is pruned or the session ends.
 
 ## Open Questions
 
-- The spike's two answers (Decision 7).
+None. The spike answered Decision 7: Claude Code blocks and reports `stop_hook_active`; OpenCode resumes from
+`session.execution.succeeded`, and the owner approved that event in place of the absent `session.idle` (`spike.md`).

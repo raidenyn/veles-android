@@ -12,7 +12,8 @@ move, and a stop gate can put the closeout rule in front of the agent at the mom
   `superspec-finalize-pending` is true when a change this session named has an apply receipt, no finalize
   receipt, no archived copy and no failing verify at that iteration. Then the main agent's stop is blocked once
   per phase (after apply; after a passing verify) with a line naming the change and the closeout rule. Claude
-  Code: a new `Stop` hook. OpenCode: `session.idle` answered with a synthetic prompt. Both are spiked first; if
+  Code: a new `Stop` hook. OpenCode: the turn-end event (`session.execution.succeeded` in 2.3.2, where
+  `session.idle` is not emitted) answered with a synthetic prompt. Both are spiked first; if
   either fails, the owner decides.
 - **Per-trigger de-duplication.**
   - From: a moment re-sends a rule every time it matches.
@@ -42,7 +43,7 @@ None.
 - `hooked-rule-delivery`: `stops` grammar and registry, the `stop` event and `block` decision, the session change
   set and the `superspec-finalize-pending` predicate, per-trigger de-duplication (and the "cap at a moment" wording), the pointer-block requirement naming each
   moved rule's always-on fact (the closeout pointer's authorization among them), state version 2, the fifth
-  Claude Code hook, the OpenCode `session.idle` mapping, the budget check, stop-gate fail-open, amended stale
+  Claude Code hook, the OpenCode `session.execution.succeeded` mapping, the budget check, stop-gate fail-open, amended stale
   credit and end-to-end outcomes.
 - `agent-guidance-layout`: three always-on `repo-*` rules remain; the workflow, pre-push and real-device rules are
   hooked rules; the root `AGENTS.md` lists the three and carries six pointers.
