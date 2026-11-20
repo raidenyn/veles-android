@@ -103,6 +103,6 @@ the Claude Code `Stop` hook.
 
 ## Build & Release Documentation
 
-- Refer to [BUILD.md](https://github.com/raidenyn/veles-android/blob/master/BUILD.md) for local compile and test instructions.
+- Refer to [BUILD.md](https://github.com/raidenyn/veles-android/blob/master/BUILD.md) for local compile and test instructions, and its [Build caches](https://github.com/raidenyn/veles-android/blob/master/BUILD.md#build-caches) section for the configuration cache and the local build-cache opt-in.
 - Refer to [docs/ci.md](https://github.com/raidenyn/veles-android/blob/master/docs/ci.md) for continuous integration workflows.
 - Refer to [docs/releasing.md](https://github.com/raidenyn/veles-android/blob/master/docs/releasing.md) for versioning rules and release runbooks.

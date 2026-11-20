@@ -113,6 +113,65 @@ Refer to [docs/ci.md](https://github.com/raidenyn/veles-android/blob/master/docs
 
 ---
 
+## Build caches
+
+The configuration cache is on and strict in all three builds (the repository root, `android/` and
+`rust/`): every `gradle.properties` sets `org.gradle.configuration-cache=true` with
+`org.gradle.configuration-cache.problems=fail`, so a second run of the same command reuses the entry
+and a configuration-cache problem fails the build instead of warning.
+
+The build cache is **off by default** — no committed `gradle.properties` enables it. Opt in for one
+invocation:
+
+```bash
+./gradlew assembleDebug --build-cache
+```
+
+or for every build on the machine, in `~/.gradle/gradle.properties`:
+
+```properties
+org.gradle.caching=true
+```
+
+What is cached:
+
+- **Rust products** — only `rustJni` (the three Android JNI libraries) and `rustHostJni` (the test-only
+  host-JVM library) are cacheable. Their keys cover the Rust sources and lockfile, the pinned Rust
+  toolchain, the auxiliary CLI pins and the NDK version for `rustJni`, the host identity and
+  `cc --version` for `rustHostJni`, and hold no absolute path, so a second worktree at a different path
+  gets a hit. `rustWasm` (the browser package) is **not** cacheable: wasm-pack writes
+  `web-extension/rust-wasm/pkg/.gitignore`, Gradle drops that file from a cached directory output, and
+  a restored package would be incomplete; the task carries `doNotCacheIf` with that reason.
+- **AGP, Kotlin and Java tasks** keep the cacheability their plugins declare.
+- **Every other repository task** — installs, toolchain and version probes, test and verification
+  tasks, packaging, git state — is explicitly non-cacheable, so a hit never hides a download or a host
+  probe.
+
+Rust caching is refused (no load and no store) when the environment inherited by Gradle may change the
+output:
+
+- a non-empty `CARGO_ENCODED_RUSTFLAGS`, `CARGO_BUILD_RUSTFLAGS`, `CARGO_INCREMENTAL`, `RUSTC`,
+  `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `RUSTC_BOOTSTRAP`, `RUSTUP_TOOLCHAIN`,
+  `MACOSX_DEPLOYMENT_TARGET`, `SDKROOT`, `CC`, `CXX`, `AR`, `CFLAGS`, `CXXFLAGS` or `LDFLAGS`
+  variable;
+- a non-empty `CARGO_PROFILE_*`, `CARGO_BUILD_*`, `CC_*`, `CFLAGS_*`, `AR_*` or `CARGO_TARGET_*`
+  variable (`CARGO_TARGET_DIR` excepted);
+- a cargo configuration file: `config` or `config.toml` under `$CARGO_HOME` (default `~/.cargo`), or
+  `.cargo/config` or `.cargo/config.toml` in `rust/` or any of its ancestor directories.
+
+CI and release builds are unaffected: they always pass `--no-build-cache --no-configuration-cache`, so
+a machine-wide opt-in never reaches a release
+([docs/reproducible-builds.md](https://github.com/raidenyn/veles-android/blob/master/docs/reproducible-builds.md)
+lists the guarded files). A local **signed** `assembleRelease` adds `--no-configuration-cache` as well:
+the signing values are read while the build is configured, and they stay out of the
+configuration-cache entry:
+
+```bash
+./gradlew assembleRelease --no-configuration-cache
+```
+
+---
+
 ## Verifying Release Artifacts
 
 Each GitHub Release is built deterministically in CI and published with attestations and SHA-256 manifests. You can verify downloaded artifacts with the GitHub CLI:

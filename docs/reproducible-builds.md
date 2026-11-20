@@ -367,6 +367,85 @@ is what each verifier actually enforces:
   isolation. Static scanning alone is not accepted as evidence that packaging
   was offline.
 
+### Gradle caches
+
+Release and verification builds run with **both caches off**. The flags follow the
+task names, and `verify/test/workflow-contracts.test.mjs` fails when a guarded
+command loses either one:
+
+```bash
+./gradlew assembleRelease --no-build-cache --no-configuration-cache
+```
+
+- `--no-build-cache` disables the build cache for that invocation and is
+  equivalent to `-Dorg.gradle.caching=false`: it overrides a machine's
+  `~/.gradle/gradle.properties` `org.gradle.caching=true`, so a developer's local
+  opt-in cannot change a release artifact. Caching is off by default anyway;
+  [`BUILD.md`](../BUILD.md) documents the local opt-in and what is cached.
+- `--no-configuration-cache` turns the configuration cache off for that
+  invocation.
+
+The flags are explicit per step rather than a `GRADLE_OPTS` default: they
+override the user-level property and stay visible in the workflow, which makes
+them testable.
+
+Guarded files:
+
+- `.github/workflows/build-android.yml`, `build-rust.yml`,
+  `build-web-extension.yml`, `build-native-windows.yml`, `build-native-macos.yml`
+  and `build-supply-chain.yml` — every `./gradlew`/`.\gradlew.bat` call, including
+  the `$(./gradlew -q rustNdkVersion …)` substitutions;
+- the `installGitCliff` steps of `.github/workflows/release-build.yml` and
+  `.github/workflows/publish-release.yml`;
+- `verify/generate-sboms.sh` — its `verifyCargoCyclonedx` call.
+
+`verify/check-android-layout.sh` and `verify/check-root-aliases.sh` are layout
+checks and are not guarded.
+
+**Why.** A release or verification artifact must be the product of the commit
+being built with the pinned tools: every published asset is attested and
+checksummed, and a cache hit would ship or compare bytes another invocation
+produced. The guarded graphs are also the ones that are not rewritten for the
+configuration cache (below), so they run with it off.
+
+**Configuration-cache opt-outs.** The release/PR packaging pipeline is not
+rewritten for the configuration cache. Each of its tasks carries:
+
+```kotlin
+notCompatibleWithConfigurationCache(
+    "release/PR packaging pipeline; always run with --no-configuration-cache, see docs/reproducible-builds.md",
+)
+outputs.doNotCacheIf("release packaging") { true }
+```
+
+The opted-out tasks are:
+
+- the Tauri bridge chain: `bridgeBuild`, `bridgeBundle`, `bridgeManifests`,
+  `bridgePackage`;
+- every task `registerInstallerProducer` registers, for `bridgeInstallerUnsigned`
+  (production channel), `bridgeInstallerPackageFixture` (fixture channel) and
+  `bridgeInstallerDebug` (fixture channel, debug kind, slot a only): the producer
+  itself, then `Config`, `EngineA`/`EngineB`, `HostA`/`HostB`, `FrontendA`/`FrontendB`,
+  `UninstallerA`/`UninstallerB`, `StageA`/`StageB`, `AssembleA`/`AssembleB`,
+  `CarrierCheckA`/`CarrierCheckB`, `EngineEmbeddedA`/`EngineEmbeddedB`,
+  `StageEmbeddedA`/`StageEmbeddedB`, `AssembleFinalA`/`AssembleFinalB`,
+  `EmbedCarrierA`/`EmbedCarrierB` and `VerifyCarrierA`/`VerifyCarrierB` suffixes;
+  `bridgeInstallerDebugSymbols` is registered for the debug producer only.
+
+No other task of the repository is opted out; the complete set is what
+`./gradlew tasks --all` lists. The check-only bridge tasks
+(`bridgeInstallerFormat`, `bridgeInstallerLint`, `bridgeInstallerTest`,
+`bridgeInstallerScriptsTest`, `bridgeInstallerToolObservation`,
+`bridgeInstallerToolCheck`, the `bridgeHost*` and `bridge*` check tasks) stay
+configuration-cache clean and run unguarded.
+
+`notCompatibleWithConfigurationCache` does not by itself keep the pipeline out of
+the configuration-cache report: a run that includes an opted-out task still
+serialises it, reports "cannot serialize Gradle script object references" and
+discards the entry (the build still succeeds). CI therefore passes
+`--no-configuration-cache`, and with that flag the pipeline runs with no
+configuration-cache report at all.
+
 ### Clean contract
 
 Root `./gradlew clean` removes every declared generated product, verification,
@@ -601,7 +680,7 @@ selecting a default.
   tag carries the exact pins used to build it, so old releases stay verifiable
   after later toolchain upgrades.
 - The rebuild clones with full history: `versionCode`/`versionName` come from git
-  tags (`android-v*`) via the androidgitversion plugin.
+  tags (`android-v*`) by `android/git-version.gradle.kts`, the task named `:app:androidGitVersion`.
 - Dependencies are downloaded during the rebuild, so Android verification needs
   network access (its reference build clones and `./gradlew assembleRelease` with
   networking — see "Offline acquisition and package boundary" above). Web and

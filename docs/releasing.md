@@ -43,8 +43,8 @@ Versions are injected at build time, not read from a checked-in file:
 - the web extension reads `VELES_EXTENSION_VERSION`;
 - the installer reads `VELES_INSTALLER_VERSION`;
 - the native host reads `VELES_HOST_VERSION`;
-- the Android app's version name and code are computed by the `androidGitVersion` plugin
-  (`prefix = "android-v"`, `codeFormat = "MMNNPP"`).
+- the Android app's version name and code are derived by `android/git-version.gradle.kts`
+  (`prefix = "android-v"`, `codeFormat = "MMNNPP"`; the task is still `:app:androidGitVersion`).
 
 The combined release tag, recovery, rollback and one-time owner settings are in this file; the CI tree
 is in [`docs/ci.md`](ci.md).

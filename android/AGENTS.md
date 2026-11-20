@@ -30,7 +30,7 @@ Run from `android/`; root aliases cannot carry `--tests`.
 
 Clean assembly needs rustup/cargo and NDK r29; Node >= 22 is not needed for the APK alone. The OTP-02
 consumer is `:app:protocolJvmTest`, run by `./gradlew protocolCheck` (`protocol/AGENTS.md`). Version name
-and code: `docs/releasing.md` (the `androidGitVersion` format).
+and code: `android/git-version.gradle.kts` (`docs/releasing.md`).
 
 ## Rules
 

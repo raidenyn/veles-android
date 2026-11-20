@@ -146,5 +146,7 @@ cd android && ./gradlew --init-script config/android_keys/fixture-signing.gradle
 Keep the directory git-ignored; never commit key material or credentials. The signing policy itself lives
 in [`android/AGENTS.md`](../android/AGENTS.md) and `.agents/rules/repo-signing-keys.md`.
 
-Version name and code are injected at build time by the `androidGitVersion` plugin; see
-[`docs/releasing.md`](releasing.md) for its `prefix` and `codeFormat`.
+Version name and code are derived by [`android/git-version.gradle.kts`](../android/git-version.gradle.kts)
+(`prefix` `android-v`, code format `MMNNPP`); [`docs/releasing.md`](releasing.md) holds the rules.
+`bash android/scripts/check-git-version-parity.sh` is the re-proof — it diffs the derivation against the
+former plugin in throwaway repositories, and needs the plugin portal, so it is not a CI gate.
