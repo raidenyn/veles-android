@@ -30,6 +30,7 @@ STDLIB_ALLOWED = frozenset(
         "math",
         "os",
         "re",
+        "shlex",
         "shutil",
         "subprocess",
         "sys",

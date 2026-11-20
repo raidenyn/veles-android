@@ -4,8 +4,9 @@
 Checks the legacy files, the AGENTS.md notices and line caps, node-map parity, rule files, the
 three always-on `repo-*` rules, the hook-delivered rules and their pointer block, the stop-predicate
 registry, the delivery budget, the `.claude/` symlinks, skill set and hook wiring, `opencode.json`,
-`.github/CODEOWNERS`, the `opencode-rules` mentions and the component overrides.
-Stdlib only; Python 3.8 compatible; run from the `docs / agent-files` CI check.
+`.github/CODEOWNERS`, the `opencode-rules` mentions, the component overrides and the command-table
+drift check (`verify_table.py`). Stdlib only; Python 3.8 compatible; run from the `docs / agent-files`
+CI check.
 """
 import argparse
 import collections
@@ -15,6 +16,8 @@ import os
 import re
 import subprocess
 import sys
+
+import verify_table
 
 Finding = collections.namedtuple("Finding", "severity path message")
 
@@ -248,6 +251,7 @@ OVERRIDE_TARGETS.update(
         ".github/CODEOWNERS": ("docs",),
         ".github/components.json": ("tooling", "docs"),
         ".github/workflows/check-docs.yml": ("docs", "tooling"),
+        "scripts/verify-commands.json": ("docs", "tooling"),
     }
 )
 
@@ -561,9 +565,11 @@ def _check_overrides(root, tracked_nested):
     if problem is not None:
         findings.append(Finding("error", COMPONENTS_JSON, problem))
         overrides = {}
-    for path in tracked_nested:
-        if path in NESTED_EXCLUSIVE_DOCS:
-            continue
+    required = set(OVERRIDE_TARGETS)
+    required.update(
+        path for path in tracked_nested if path not in NESTED_EXCLUSIVE_DOCS
+    )
+    for path in sorted(required):
         if path not in overrides:
             findings.append(
                 Finding(
@@ -1911,6 +1917,10 @@ def check_repo(root, platform=sys.platform):
     findings.extend(_check_nested_files(root, tracked_nested))
     findings.extend(_check_node_map(root_text, tracked_nested))
     findings.extend(_check_overrides(root, tracked_nested))
+    findings.extend(
+        Finding(finding.severity, finding.path, finding.message)
+        for finding in verify_table.findings(root)
+    )
     findings.extend(check_rules(root, files))
     findings.extend(check_always_on_rules(root, files))
     findings.extend(check_moved_rules(root, files))

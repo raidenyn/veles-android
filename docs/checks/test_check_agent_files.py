@@ -154,6 +154,7 @@ EXPECTED_OVERRIDE_TARGETS = {
     ".github/CODEOWNERS": ["docs"],
     ".github/components.json": ["tooling", "docs"],
     ".github/workflows/check-docs.yml": ["docs", "tooling"],
+    "scripts/verify-commands.json": ["docs", "tooling"],
 }
 EXPECTED_CODEOWNER_PATTERNS = (
     "/opencode.json",
@@ -278,11 +279,19 @@ def skill_section(skills):
     return lines
 
 
-def nested_text(node, notice=EXPECTED_NOTICE_NESTED, rules=True, target_lines=None):
+def nested_text(
+    node, notice=EXPECTED_NOTICE_NESTED, rules=True, target_lines=None, commands=None
+):
     lines = ["# %s/AGENTS.md" % node, ""]
     if notice is not None:
         lines.extend([notice, ""])
-    lines.extend(["## Commands", "", "None.", ""])
+    lines.extend(["## Commands", ""])
+    if commands:
+        lines.extend(["Run from the repository root:", "", "```bash"])
+        lines.extend(commands)
+        lines.extend(["```", ""])
+    else:
+        lines.extend(["None.", ""])
     if rules:
         lines.extend(["## Rules", "", "Follow `.agents/rules/`."])
     else:
@@ -416,9 +425,39 @@ def default_overrides():
     return overrides
 
 
+FIXTURE_NODES = {"docs": {"paths": ["docs/"]}}
+# The smallest table the drift check accepts: one node, one documented command whose doc is
+# that node's AGENTS.md, named in the component map so the node sets agree.
+FIXTURE_TABLE = {
+    "version": 1,
+    "requirements": {},
+    "producers": [],
+    "nodes": {
+        "docs": {
+            "commands": [
+                {
+                    "id": "docs.offline-check",
+                    "kind": "check",
+                    "cwd": ".",
+                    "run": ["python3", "docs/checks/check_offline.py", "--root", "."],
+                    "doc": "docs/AGENTS.md",
+                    "requires": [],
+                    "inputs": [],
+                }
+            ],
+            "excluded": [],
+        }
+    },
+}
+
+
 def components_json(overrides=None):
     return json.dumps(
-        {"since": "0" * 40, "global-overrides": default_overrides() if overrides is None else overrides},
+        {
+            "since": "0" * 40,
+            "nodes": FIXTURE_NODES,
+            "global-overrides": default_overrides() if overrides is None else overrides,
+        },
         indent=2,
     ) + "\n"
 
@@ -482,6 +521,7 @@ def clean_files(skills=None):
         ".agents/skills/.openspec-target": "claude\n",
         LOCAL_PLUGIN_INDEX: "export default {}\n",
         ENGINE_FILE: ENGINE_TEXT,
+        "scripts/verify-commands.json": json.dumps(FIXTURE_TABLE, indent=2) + "\n",
     }
     for name, text in fixture_hooked_rules().items():
         files[HOOKED_DIR + name] = text
@@ -490,6 +530,9 @@ def clean_files(skills=None):
     for path in EXPECTED_NODE_FILES:
         node = path[: -len("/AGENTS.md")]
         files[path] = nested_text(node)
+    files["docs/AGENTS.md"] = nested_text(
+        "docs", commands=["python3 docs/checks/check_offline.py --root ."]
+    )
     files["docs/openspec-skills.md"] = "\n".join(skill_section(skills)) + "\n"
     files["docs/agent-guidance.md"] = "# Agent-file guidance\n\nThe 40-line policy.\n"
     files["docs/openspec-workflow.md"] = "# OpenSpec workflow\n\nThe update procedure.\n"
@@ -652,6 +695,11 @@ class AgentFileCheckTest(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             self.assertEqual(main(["--root", root]), 0)
         self.assertEqual(output.getvalue(), "")
+
+    def test_clean_fixture_has_no_findings(self):
+        # The fixture carries a minimal valid command table and the docs it references, so the
+        # drift check is clean on the same tree the other checks call clean.
+        self.assertEqual(check_repo(self.repo()), [])
 
     def test_nested_claude_md_fails(self):
         files = clean_files()
@@ -1795,6 +1843,31 @@ class AgentFileCheckTest(unittest.TestCase):
             [finding for finding in findings if finding.path == ".agents/skills/.openspec-target"],
             [],
             findings,
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_override_absent(self):
+        overrides = default_overrides()
+        del overrides["scripts/verify-commands.json"]
+        files = clean_files()
+        files[".github/components.json"] = components_json(overrides)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings,
+            "error",
+            "scripts/verify-commands.json",
+            "has no entry in .github/components.json global-overrides",
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_override_wrong_owners(self):
+        overrides = default_overrides()
+        overrides["scripts/verify-commands.json"] = ["docs"]
+        files = clean_files()
+        files[".github/components.json"] = components_json(overrides)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", "scripts/verify-commands.json", "expected exactly"
         )
         self.assertEqual(len(findings), 1, findings)
 

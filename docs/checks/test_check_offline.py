@@ -21,6 +21,7 @@ from check_offline import (  # noqa: E402
     GIT_FORBIDDEN_GLOBAL_EXACT,
     GIT_FORBIDDEN_GLOBAL_PREFIXES,
     GIT_FORBIDDEN_SUBCOMMANDS,
+    STDLIB_ALLOWED,
     Finding,
     main,
     scan,
@@ -255,6 +256,12 @@ class AcceptedFormTests(GuardTestCase):
             "\n"
             'subprocess.run(["git", "config", "core.autocrlf", "false"], shell=False)\n'
         )
+        self.assertEqual(self.findings({"docs/checks/check_x.py": source}), [])
+
+    def test_shlex_allowed(self):
+        # The drift check splits documented command lines with `shlex`, so the allowlist names it.
+        self.assertIn("shlex", STDLIB_ALLOWED)
+        source = 'import shlex\n\nshlex.split("./gradlew lintDebug")\n'
         self.assertEqual(self.findings({"docs/checks/check_x.py": source}), [])
 
 
