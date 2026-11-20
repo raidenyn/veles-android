@@ -1,8 +1,8 @@
 # scripts/AGENTS.md
 
 Release tooling, Conventional Commits checks and the component map. Stdlib-Python suites live in
-`scripts/tests/`; the pinned git-cliff is `scripts/release-tools.toml`. Workflow ownership and git
-hooks: `docs/ci.md`; versions, tags and the release runbook: `docs/releasing.md`.
+`scripts/tests/`; the pinned git-cliff and gitleaks live in `scripts/release-tools.toml`. Workflow ownership
+and git hooks: `docs/ci.md`; versions, tags and the release runbook: `docs/releasing.md`.
 
 ## Build & Test
 
@@ -10,6 +10,7 @@ Run from the repository root:
 
 ```bash
 ./gradlew installGitCliff      # pinned, SHA-256-verified git-cliff -> build/release-tools/
+./gradlew installGitleaks      # pinned, SHA-256-verified gitleaks -> build/release-tools/
 ./gradlew scriptsTest          # stdlib-Python suites in scripts/tests
 node --test scripts/check-mac-comparisons.test.mjs
 node --test scripts/opencode-hooked-rules/index.test.mjs
@@ -20,9 +21,9 @@ python3 -I scripts/last_green.py --pr <n> --head <sha> --head-repo <owner/name> 
 python3 -I scripts/project_flow.py --help   # check, sync, next, start, followup
 ```
 
-`scriptsTest` depends on `installGitCliff`. `project_flow.py` exits 0 on success, 2 on usage, 1 on a
-`gh` error and 3 on a named stop; setup and board work: `docs/github-project-setup.md` and the
-`github-project` skill.
+`scriptsTest` depends on `installGitCliff` and `installGitleaks`. `project_flow.py` exits 0 on success, 2
+on usage, 1 on a `gh` error and 3 on a named stop; setup and board work: `docs/github-project-setup.md`
+and the `github-project` skill.
 
 Guidance-only changes are typed `docs` so they do not bump a release component; the full commit type
 and bump table is in `docs/releasing.md`.
