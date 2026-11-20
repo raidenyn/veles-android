@@ -3689,29 +3689,42 @@ test('every pinned Android NDK install exports the installed path to $GITHUB_ENV
   }
 });
 
-function assertWebExtensionGuards(source) {
+function assertWebExtensionGuards(source, pairingScriptText) {
   const lint = workflowJobBlocks(executableYaml(source)).lint;
   const mac = stepContaining(lint, 'check-mac-comparisons');
   assert.equal(stepRunText(mac).trim(), 'node scripts/check-mac-comparisons.mjs --scan web-extension/src', 'web-extension lint must scan web-extension/src from the root');
   assert.equal(stepWorkingDirectory(mac), null, 'the MAC guard must run from the repository root');
-  const pairing = stepContaining(lint, 'web-extension/src/debug');
+  const pairing = stepContaining(lint, 'web-extension/scripts/check-pairing-code.sh');
+  assert.equal(stepRunText(pairing).trim(), 'web-extension/scripts/check-pairing-code.sh', 'the pairing-code guard must run its script');
   assert.equal(stepWorkingDirectory(pairing), null, 'the pairing-code guard must run from the repository root');
-  assert.match(stepRunText(pairing), /PairingCode/, 'the web-extension pairing-code guard must inspect code-bearing values');
+  assert.match(pairingScriptText, /web-extension\/src\/debug --include=\*\.ts/, 'the web-extension pairing-code guard must scan web-extension/src/debug');
+  assert.match(pairingScriptText, /PairingCode/, 'the web-extension pairing-code guard must inspect code-bearing values');
 }
 
 test('web-extension lint runs the MAC and pairing-code guards', async () => {
   const source = await workflow('check-web-extension.yml');
-  assertWebExtensionGuards(source);
+  const pairingScript = await readFile(new URL('web-extension/scripts/check-pairing-code.sh', root), 'utf8');
+  assertWebExtensionGuards(source, pairingScript);
   const mutations = {
     'root scan removed': (text) => text.replace('node scripts/check-mac-comparisons.mjs --scan web-extension/src', 'node scripts/check-mac-comparisons.mjs'),
     'android scan': (text) => text.replace('--scan web-extension/src', '--scan android/app/src/main'),
     'guard from the extension directory': (text) => text.replace('        run: node scripts/check-mac-comparisons.mjs --scan web-extension/src\n', '        working-directory: web-extension\n        run: node scripts/check-mac-comparisons.mjs --scan web-extension/src\n'),
-    'pairing guard dropped': (text) => text.replace(/      - name: Guard against pairing-code logging in the Chrome debug surface\n        run: \|\n(?:          [^\n]*\n|            [^\n]*\n)+/, ''),
+    'pairing step invocation changed': (text) => text.replace('        run: web-extension/scripts/check-pairing-code.sh\n', '        run: web-extension/scripts/other.sh\n'),
+    'pairing guard from the extension directory': (text) => text.replace('      - name: Guard against pairing-code logging in the Chrome debug surface\n        run: web-extension/scripts/check-pairing-code.sh\n', '      - name: Guard against pairing-code logging in the Chrome debug surface\n        working-directory: web-extension\n        run: web-extension/scripts/check-pairing-code.sh\n'),
   };
   for (const [label, mutate] of Object.entries(mutations)) {
     const mutated = mutate(source);
     assert.notEqual(mutated, source, `mutation "${label}" must change check-web-extension.yml`);
-    assert.throws(() => assertWebExtensionGuards(mutated), `the contract must reject "${label}"`);
+    assert.throws(() => assertWebExtensionGuards(mutated, pairingScript), `the contract must reject "${label}"`);
+  }
+  const scriptMutations = {
+    'pairing scan narrowed': (text) => text.replace('web-extension/src/debug --include=*.ts', 'web-extension/src --include=*.ts'),
+    'PairingCode dropped': (text) => text.replace('PairingCode|', ''),
+  };
+  for (const [label, mutate] of Object.entries(scriptMutations)) {
+    const mutated = mutate(pairingScript);
+    assert.notEqual(mutated, pairingScript, `mutation "${label}" must change the extension pairing-code script`);
+    assert.throws(() => assertWebExtensionGuards(source, mutated), `the contract must reject "${label}"`);
   }
 });
 
