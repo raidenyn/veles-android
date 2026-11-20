@@ -12,7 +12,7 @@ Every unit test injects its clock, `sleep` and timers: no real waits and no wall
 - [x] 2.1 Parser: add the `stops` key and the predicate registry (`superspec-finalize-pending`); unknown names are errors; a `stops`-only rule is valid; tests for each
 - [x] 2.2 State version 2: `triggers` on delivered entries, a session-wide change set (20 newest) and stop records (40 newest); load version 1 as version 2; re-arm leaves the change set and the stop records intact; tests
 - [x] 2.3 Canonical skill triggers (fixed `opsx:` table) and command triggers; per-trigger de-duplication at moments; a pending entry never suppresses; re-delivery adds triggers and keeps patterns; tests for every Moments scenario and for "Cap at a moment" (only rules the moment will send)
-- [ ] 2.4 Session change set: extract `--change <name>`, `--change=<name>` and quoted forms from successful shell calls matching `\bopenspec\b`, in any context; tests for each form, a 65-character name (ignored), the `grep` non-match and a subagent call
+- [x] 2.4 Session change set: extract `--change <name>`, `--change=<name>` and quoted forms from successful shell calls matching `\bopenspec\b`, in any context; tests for each form, a 65-character name (ignored), the `grep` non-match and a subagent call
 - [x] 2.5 Stale credit with triggers: under `VELES_AGENT_RULES_FAIL_AFTER_WRITE=1`, a later moment of the same trigger is skipped and a different trigger delivers; tests
 
 ## 3. Engine: the stop gate (design §3)
