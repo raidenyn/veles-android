@@ -144,9 +144,6 @@ val protocolDir = layout.projectDirectory.dir("protocol")
  * in this object and takes plain values.
  */
 object RootBuildHelpers {
-    /** The executable suffix for the host, used when probing for a command on PATH. */
-    fun executableSuffix(osName: String): String = if (osName.startsWith("Windows")) ".exe" else ""
-
     /** Reads one `name = "version"` pin out of a TOML file's text. */
     fun pinnedVersion(toml: String, name: String, file: String): String {
         val pattern = Regex("(?m)^${Regex.escape(name)}\\s*=\\s*\"([^\"]+)\"\\s*$")
@@ -165,21 +162,25 @@ object RootBuildHelpers {
         return providers.fileContents(file).asText.map { pinnedVersion(it, name, file.asFile.toString()) }
     }
 
-    /** Fails with the historical message when a required command is not executable on PATH. */
+    /**
+     * Fails with the historical message when a required command is not executable on PATH. The
+     * message always names the command as the user knows it (`npm`, `cargo`), never the launcher
+     * file that is searched for on Windows.
+     */
     fun requireOnPath(
         path: String,
-        name: String,
-        suffix: String,
+        command: ToolchainCommand,
+        windows: Boolean,
         versionHint: String,
         installHint: String,
         missingMessageFormat: String,
     ) {
         val found = path.split(File.pathSeparator).any { dir ->
-            File(dir, name + suffix).let { it.isFile && it.canExecute() }
+            File(dir, command.nameOn(windows)).let { it.isFile && it.canExecute() }
         }
         check(found) {
             missingMessageFormat
-                .replace("{name}", name)
+                .replace("{name}", command.name)
                 .replace("{installHint}", installHint)
                 .replace("{versionHint}", versionHint)
         }
@@ -199,19 +200,28 @@ object RootBuildHelpers {
     /**
      * Runs one host-toolchain probe: the required commands must be on PATH, the version output
      * must start with `expectedPrefix` (Rust) or reach the minimum major/minor (Node, Python),
-     * and a mismatch fails with the probe's own message.
+     * and a mismatch fails with the probe's own message. A probe with no `versionCommand` only
+     * checks PATH, which lets a task keep the former command-then-version check order.
      */
-    fun verifyToolchain(exec: ExecOperations, workingDir: File, pathEnv: String, spec: ToolchainProbe) {
-        val suffix = executableSuffix(System.getProperty("os.name"))
-        for (name in spec.requiredCommands) {
+    fun verifyToolchain(
+        exec: ExecOperations,
+        workingDir: File,
+        pathEnv: String,
+        windows: Boolean,
+        spec: ToolchainProbe,
+    ) {
+        for (command in spec.requiredCommands) {
             requireOnPath(
                 pathEnv,
-                name,
-                suffix,
+                command,
+                windows,
                 spec.versionHint,
                 spec.installHint,
                 spec.missingCommandMessageFormat,
             )
+        }
+        if (spec.versionCommand.isEmpty()) {
+            return
         }
         val detail = if (spec.describeCommand.isEmpty()) null else probe(exec, workingDir, spec.describeCommand)
         val version = probe(exec, workingDir, spec.versionCommand)
@@ -239,6 +249,13 @@ object RootBuildHelpers {
     }
 
     /**
+     * The cargo home: `CARGO_HOME` when set and non-blank, otherwise `$userHome/.cargo`. The single
+     * fallback, shared by the two remap prefixes below.
+     */
+    fun cargoHome(cargoHomeEnv: String?, userHome: String): File =
+        if (cargoHomeEnv.isNullOrBlank()) File(userHome, ".cargo") else File(cargoHomeEnv)
+
+    /**
      * The registry-path remap for a byte-reproducible build.
      *
      * rustc embeds the absolute source paths of panic locations (function, file, line) into release
@@ -255,13 +272,8 @@ object RootBuildHelpers {
      * set as a task environment (overriding any inherited RUSTFLAGS) so the remap is not optional: a
      * verification-relevant build must not silently pick up an ambient RUSTFLAGS that omits it.
      */
-    fun registryRemapRustFlags(cargoHome: String?, userHome: String): String {
-        val home: File = if (cargoHome.isNullOrBlank()) {
-            File(userHome, ".cargo")
-        } else {
-            File(cargoHome)
-        }
-        val registrySrc = File(home, "registry/src").absolutePath
+    fun registryRemapRustFlags(cargoHome: File): String {
+        val registrySrc = File(cargoHome, "registry/src").absolutePath
         return "--remap-path-prefix=$registrySrc=/cargo-registry/src"
     }
 
@@ -274,18 +286,31 @@ object RootBuildHelpers {
 }
 
 /**
+ * One command a probe looks for on PATH. The Windows name is a plain value because Node ships
+ * `npm.cmd` rather than `npm.exe`; every other command keeps the historical `name + ".exe"`.
+ */
+data class ToolchainCommand(
+    val name: String,
+    val windowsName: String = "$name.exe",
+) : java.io.Serializable {
+    /** The file to search for on this host: `windowsName` on Windows, `name` elsewhere. */
+    fun nameOn(windows: Boolean): String = if (windows) windowsName else name
+}
+
+/**
  * One host-toolchain probe. Serializable so the configuration cache can store it; the task action
- * resolves it and never touches the build script.
+ * resolves it and never touches the build script. An empty `versionCommand` makes the probe check
+ * PATH only, so a task can keep the former "every command first, then every version" order.
  */
 data class ToolchainProbe(
-    val requiredCommands: List<String>,
-    val versionCommand: List<String>,
+    val requiredCommands: List<ToolchainCommand> = emptyList(),
+    val versionCommand: List<String> = emptyList(),
     val expectedPrefix: String? = null,
     val minimumMajorVersion: Int? = null,
     val minimumMinorVersion: Int? = null,
     val describeCommand: List<String> = emptyList(),
-    val mismatchMessageFormat: String,
-    val versionHint: String,
+    val mismatchMessageFormat: String = "",
+    val versionHint: String = "",
     val installHint: String,
     val missingCommandMessageFormat: String =
         "Could not find '{name}' on PATH. {installHint}. Version hint: {versionHint}.",
@@ -303,6 +328,9 @@ abstract class ToolchainCheckTask : DefaultTask() {
     @get:Input
     abstract val pathEnv: Property<String>
 
+    @get:Input
+    abstract val windows: Property<Boolean>
+
     @get:Internal
     abstract val workingDir: DirectoryProperty
 
@@ -317,8 +345,9 @@ abstract class ToolchainCheckTask : DefaultTask() {
     fun checkToolchain() {
         val directory = workingDir.get().asFile
         val path = pathEnv.get()
+        val onWindows = windows.get()
         for (probe in probes.get()) {
-            RootBuildHelpers.verifyToolchain(execOps, directory, path, probe)
+            RootBuildHelpers.verifyToolchain(execOps, directory, path, onWindows, probe)
         }
     }
 }
@@ -387,9 +416,6 @@ abstract class VerifyToolVersionTask : DefaultTask() {
     fun verify() {
         val output = ByteArrayOutputStream()
         execOps.exec {
-            // cargo-cyclonedx and cargo-deny accept the CARGO variable harmlessly; keeping it
-            // unconditional matches the Rust build's verify shape.
-            environment("CARGO", "cargo")
             setCommandLine(listOf(binary.get().asFile.absolutePath) + versionArguments.get())
             standardOutput = output
         }
@@ -403,8 +429,9 @@ abstract class VerifyToolVersionTask : DefaultTask() {
 }
 
 /**
- * An `Exec` whose extra environment is resolved inside the action from a provider, replacing the
- * former `doFirst { environment(...) }` blocks. Never cacheable: these tasks only verify or test.
+ * An `Exec` whose extra environment is a provider resolved inside the action, replacing the
+ * configuration-time `environment("CARGO_TARGET_DIR", …get())` calls (the target directory is now
+ * resolved lazily, and no script lambda is needed). Never cacheable: these tasks only verify or test.
  */
 @DisableCachingByDefault(because = "verification or test-only build")
 abstract class CargoExecTask : Exec() {
@@ -692,20 +719,31 @@ val protocolNodeCheck = tasks.register<ToolchainCheckTask>("protocolNodeCheck") 
     group = "verification"
     workingDir.set(layout.projectDirectory)
     pathEnv.set(providers.environmentVariable("PATH").orElse(""))
+    windows.set(isWindows)
+    // The former doLast checked every command on PATH first (npm, then python3) and only then the
+    // Node and Python versions. Four probes keep that order; messages are the historical ones,
+    // including requireNpm's trailing period.
     probes.set(
         listOf(
             ToolchainProbe(
-                requiredCommands = listOf("npm"),
+                requiredCommands = listOf(ToolchainCommand("npm", "npm.cmd")),
+                installHint = "Install Node.js >=22.0.0 to run the OTP-02 contract checks.",
+                missingCommandMessageFormat = "Could not find '{name}' on PATH. {installHint}.",
+            ),
+            ToolchainProbe(
+                requiredCommands = listOf(ToolchainCommand("python3")),
+                versionHint = "Python 3.8+",
+                installHint = "Install Python 3.8 or newer",
+            ),
+            ToolchainProbe(
                 versionCommand = listOf("node", "--version"),
                 minimumMajorVersion = 22,
                 minimumMinorVersion = 0,
                 mismatchMessageFormat = "Node >=22.0.0 is required; found '{actual}'",
                 versionHint = "Node >=22.0.0",
                 installHint = "Install Node.js >=22.0.0 to run the OTP-02 contract checks.",
-                missingCommandMessageFormat = "Could not find '{name}' on PATH. {installHint}",
             ),
             ToolchainProbe(
-                requiredCommands = listOf("python3"),
                 versionCommand = listOf("python3", "--version"),
                 minimumMajorVersion = 3,
                 minimumMinorVersion = 8,
@@ -786,8 +824,9 @@ val rustHostJniDir = layout.buildDirectory.dir("rust/host-jni")
 /**
  * The cross-endpoint loopback. The classpath the Android build writes is a declared input, read
  * in the action; the child JVM's environment is resolved there too, so no `doFirst` captures the
- * script. The file is optional at validation time so a missing classpath keeps the historical
- * message instead of Gradle's "input file does not exist".
+ * script. The property is optional so a graph may register the task without the Android producer
+ * and still validate; when the producer has set it, Gradle checks the file exists before the
+ * action runs, so the `check` below only guards a file that disappears after snapshotting.
  */
 @DisableCachingByDefault(because = "verification only, runs the cross-endpoint loopback")
 abstract class SessionLoopbackTask : Exec() {
@@ -874,10 +913,11 @@ val bridgeNodeCheck = tasks.register<ToolchainCheckTask>("bridgeNodeCheck") {
     group = "native-bridge"
     workingDir.set(layout.projectDirectory)
     pathEnv.set(providers.environmentVariable("PATH").orElse(""))
+    windows.set(isWindows)
     probes.set(
         listOf(
             ToolchainProbe(
-                requiredCommands = listOf("npm"),
+                requiredCommands = listOf(ToolchainCommand("npm", "npm.cmd")),
                 versionCommand = listOf("node", "--version"),
                 minimumMajorVersion = 22,
                 minimumMinorVersion = 0,
@@ -886,7 +926,8 @@ val bridgeNodeCheck = tasks.register<ToolchainCheckTask>("bridgeNodeCheck") {
                 versionHint = "Node >=22.0.0",
                 installHint =
                     "Install Node.js >=22.0.0 (declared in native-bridge/package.json engines.node)",
-                missingCommandMessageFormat = "Could not find '{name}' on PATH. {installHint}",
+                // requireNpm ended the message with its own period.
+                missingCommandMessageFormat = "Could not find '{name}' on PATH. {installHint}.",
             ),
         ),
     )
@@ -953,11 +994,12 @@ val bridgeRustToolchainCheck = tasks.register<ToolchainCheckTask>("bridgeRustToo
     group = "native-bridge"
     workingDir.set(bridgeSrcTauriDir)
     pathEnv.set(providers.environmentVariable("PATH").orElse(""))
+    windows.set(isWindows)
     toolchainFile.set(bridgeSrcTauriDir.file("rust-toolchain.toml"))
     probes.set(
         listOf(
             ToolchainProbe(
-                requiredCommands = listOf("rustup", "cargo"),
+                requiredCommands = listOf(ToolchainCommand("rustup"), ToolchainCommand("cargo")),
                 versionCommand = listOf("rustc", "--version"),
                 expectedPrefix = "rustc 1.98.0 ",
                 mismatchMessageFormat =
@@ -1302,11 +1344,12 @@ val bridgeHostToolchainCheck = tasks.register<ToolchainCheckTask>("bridgeHostToo
     description = "Asserts the native-bridge/host crate resolves to its pinned Rust 1.98.0 toolchain."
     workingDir.set(productionHostDir)
     pathEnv.set(providers.environmentVariable("PATH").orElse(""))
+    windows.set(isWindows)
     toolchainFile.set(productionHostDir.file("rust-toolchain.toml"))
     probes.set(
         listOf(
             ToolchainProbe(
-                requiredCommands = listOf("rustup", "cargo"),
+                requiredCommands = listOf(ToolchainCommand("rustup"), ToolchainCommand("cargo")),
                 versionCommand = listOf("rustc", "--version"),
                 expectedPrefix = "rustc 1.98.0 ",
                 mismatchMessageFormat =
@@ -1552,11 +1595,11 @@ fun installerRustFlags(): String {
     val checkout = layout.projectDirectory.asFile.absolutePath
     check(checkout.none { it.isWhitespace() }) { "RUSTFLAGS cannot carry a checkout path containing whitespace: $checkout" }
     val userHome = System.getProperty("user.home")
-    val cargoHome = System.getenv("CARGO_HOME")?.takeIf { it.isNotBlank() } ?: "$userHome/.cargo"
+    val cargoHome = RootBuildHelpers.cargoHome(System.getenv("CARGO_HOME"), userHome)
     val flags = mutableListOf(
         "--remap-path-prefix=$checkout=/veles-src",
-        RootBuildHelpers.registryRemapRustFlags(cargoHome, userHome),
-        "--remap-path-prefix=$cargoHome/git/checkouts=/cargo-git",
+        RootBuildHelpers.registryRemapRustFlags(cargoHome),
+        "--remap-path-prefix=${cargoHome.path}/git/checkouts=/cargo-git",
     )
     if (installerPlatform == "windows") {
         // Self-contained binaries. A clean Windows has no vcruntime140.dll, and the
@@ -1610,11 +1653,12 @@ val bridgeInstallerToolchainCheck = tasks.register<ToolchainCheckTask>("bridgeIn
     description = "Asserts the native-bridge/installer crate resolves to its pinned Rust 1.98.0 toolchain."
     workingDir.set(installerDir)
     pathEnv.set(providers.environmentVariable("PATH").orElse(""))
+    windows.set(isWindows)
     toolchainFile.set(installerDir.file("rust-toolchain.toml"))
     probes.set(
         listOf(
             ToolchainProbe(
-                requiredCommands = listOf("rustup", "cargo"),
+                requiredCommands = listOf(ToolchainCommand("rustup"), ToolchainCommand("cargo")),
                 versionCommand = listOf("rustc", "--version"),
                 expectedPrefix = "rustc 1.98.0 ",
                 mismatchMessageFormat =

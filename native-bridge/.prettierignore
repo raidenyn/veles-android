@@ -8,3 +8,5 @@ installer/target/
 feasibility/
 # The production Rust host and its acceptance tooling have their own checks.
 host/
+# Cargo output of the installer script suites; written while `check` runs, beside bridgeFormat.
+installer/target/

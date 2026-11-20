@@ -67,10 +67,23 @@ the build successful under `problems=fail`.
 
 ### Tasks that stay configuration-cache clean (not opted out)
 
-For contrast, the check-only tasks of the same node are typed and CC-clean, per D5:
-`bridgeInstallerFormat`, `bridgeInstallerLint`, `bridgeInstallerTest`, `bridgeInstallerScriptsTest`,
-`bridgeInstallerToolObservation`, `bridgeInstallerToolCheck`, `bridgeInstallerToolchainCheck`,
-`bridgeInstallerSupplyChain`, `bridgeNodeCheck`, `bridgeInstall`, `bridgeFormat`, `bridgeLint`,
-`bridgeTypecheck`, `bridgeNpmTest`, `protocolBridgeTest`, `bridgeRustToolchainCheck`,
-`bridgeRustFormat`, `bridgeRustLint`, `bridgeRustTest`, `bridgeHostToolchainCheck`,
-`bridgeHostFormat`, `bridgeHostLint`, `bridgeHostTest`, `bridgeHostBuild`.
+For contrast, the check-only tasks are typed and CC-clean, per D5. Every claim below names the run that
+shows it: each command ran twice from the repository root with the configuration cache on, stored the
+entry on the first run, and printed `Reusing configuration cache.` / `Configuration cache entry reused.`
+on the second with no `Configuration cache problems` block (evidence: `cc-reuse.md`).
+
+| Task | Run that shows it |
+| --- | --- |
+| `bridgeInstallerFormat`, `bridgeInstallerLint`, `bridgeInstallerTest`, `bridgeInstallerScriptsTest`, `bridgeInstallerToolchainCheck` | `./gradlew bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest` (twice), and `./gradlew check` (twice) |
+| `bridgeInstallerToolObservation`, `bridgeInstallerToolCheck` | `./gradlew bridgeInstallerToolObservation` and `./gradlew bridgeInstallerToolCheck` (twice each); the action refuses Linux after the entry is stored, and no configuration-cache problem is reported |
+| `bridgeNodeCheck` | `./gradlew bridgeNodeCheck` (twice) |
+| `bridgeInstall`, `bridgeFormat`, `bridgeLint`, `bridgeTypecheck`, `bridgeNpmTest`, `protocolBridgeTest` | `./gradlew check` (twice) |
+| `bridgeRustToolchainCheck`, `bridgeRustFormat`, `bridgeRustLint`, `bridgeRustTest` | `./gradlew check` (twice) |
+| `bridgeHostToolchainCheck`, `bridgeHostFormat`, `bridgeHostLint`, `bridgeHostTest` | `./gradlew check` (twice) |
+| `bridgeHostBuild` | `./gradlew bridgeHostBuild` (twice) |
+| `protocolNodeCheck`, `protocolInstall`, `protocolContractCheck`, `protocolRustTest`, `protocolWebInstall`, `protocolWebTest`, `sessionLoopbackCheck`, `protocolCheck` | `./gradlew rustFormat rustLint rustTest scriptsTest protocolCheck` (twice) |
+| `installCargoCyclonedx`, `verifyCargoCyclonedx`, `installCargoDeny`, `verifyCargoDeny` | `./gradlew verifyCargoDeny verifyCargoCyclonedx` (twice) |
+
+`bridgeInstallerSupplyChain` is **not** claimed here: it is a plain `Exec` with no script capture, but it
+needs Node 26.8.1 / npm 11.19.0 and `npm ci --ignore-scripts --prefix verify`, which this Linux host does
+not satisfy, so nobody has run it with the configuration cache yet.
