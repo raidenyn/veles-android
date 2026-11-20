@@ -1134,3 +1134,18 @@ reserve), so a cold first stop in a fresh worktree is near the budget.
   any environment change, or the next `bridge.format` fails with `starting process 'command 'node''`.
 - `native-bridge/installer/tests/cli.rs:565` has a one-off pipe-race flake (not reproduced; master
   code, not this change).
+
+## Post-verify gate rerun: a second master-code flake
+
+The first `python3 -I scripts/verify.py --branch` run on the final tree (after apply.md, verify.md and
+retrospective.md) exited 1 on `bridgeHostTest`: `native-bridge/host/tests/runtime.rs:629`,
+`staged_stale_terminal_confirmed_by_the_synchronous_release`, assertion `left: 1, right: 0` on the
+cleanup count. This branch changes no file under `native-bridge/host` (`git diff --stat 597ee2c6..HEAD
+-- native-bridge/host` is empty) and the file's last commits are `f57200ef` and `2c7f0ce1` on master.
+
+Investigation: the test passed 3/3 in isolation (`cargo test --test runtime
+staged_stale_terminal_confirmed_by_the_synchronous_release`) and the whole `./gradlew bridgeHostTest`
+suite passed on one clean rerun (2 m 46 s). Recorded as a flaky, timing-sensitive master-code test
+under full-suite load — the second such flake seen (the first was
+`native-bridge/installer/tests/cli.rs:565`'s BrokenPipe). It is reported, not masked: no retry loop,
+no empty commit and no check was weakened. The final pre-push gate was re-run on the committed tree.
