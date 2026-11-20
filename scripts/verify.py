@@ -15,12 +15,23 @@ import json
 import os
 import re
 import shlex
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import time
 from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, List, Optional, Tuple
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+try:
+    import msvcrt
+except ImportError:  # POSIX
+    msvcrt = None
 
 SCRIPTS = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(SCRIPTS)
@@ -38,6 +49,22 @@ GRADLE_HOME_PREFIX = "{gradle_user_home}/"
 RESOLVER_SECONDS = 60
 # The last 45 seconds of a run are reserved for termination, settlement and the report (D9).
 DEADLINE_RESERVE_SECONDS = 45
+# Running (D9): the poll interval, the TERM-to-KILL grace, and the tail the report shows.
+POLL_SECONDS = 0.1
+TERM_GRACE_SECONDS = 10.0
+TAIL_LINES = 60
+TAIL_CHARS = 300
+# Orphan cleanup (D9): SIGKILL after the grace, contention when a group is still alive after 15 s.
+ORPHAN_GRACE_SECONDS = 10.0
+ORPHAN_CONFIRM_SECONDS = 15.0
+RUNNING_VERSION = 1
+# A short state lock (design D9): retried through the injected wait for at most 10 seconds.
+STATE_LOCK_SECONDS = 10.0
+# The report (D10) and the run directories it keeps.
+SUMMARY_CAP = 8192
+KEEP_RUNS = 10
+LAST_RUN_VERSION = 1
+LAST_RUN_POINTER = "build/verify/last-run.json"
 DEVICE_NOTE = "NOT RUN (device test; real-device rule)"
 BRANCH_ONLY_NOTE = "NOT RUN (branch gate only: %s)"
 NONE_RELATED_NOTE = "tests: none related (%s)"
@@ -96,6 +123,8 @@ class Outcome:
     stdout: Optional[List[str]] = None
     stderr: Optional[List[str]] = None
     elapsed_s: float = 0.0
+    # The step's log path, so the report can name it in a failure block (design D10).
+    log: Optional[str] = None
 
 
 def _quiet(line):
@@ -260,15 +289,572 @@ class Git:
                           ref + "^{commit}").decode("utf-8", "replace").strip()
 
 
-class Runner:
-    """One argv in its own process group under a deadline (design D9); the running step adds `run`."""
+class Processes:
+    """The operating-system process API the runner drives (design D9); tests inject a fake."""
 
-    def __init__(self, clock, wait):
+    def spawn(self, argv, cwd, env, stdout, stderr):
+        """`argv` in its own session (one process group) with stdin closed and open outputs."""
+        options = {}
+        if os.name == "posix":
+            options["start_new_session"] = True
+        else:  # Windows: one process group per call, as design D9 asks
+            options["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        return subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                                stdout=stdout, stderr=stderr, **options)
+
+    def signal_group(self, pgid, sig):
+        """Send `sig` to the whole group; a group that is already gone is not an error."""
+        try:
+            if os.name == "posix":
+                os.killpg(pgid, sig)
+            else:
+                os.kill(pgid, sig)
+        except ProcessLookupError:
+            pass
+
+    def group_alive(self, pgid):
+        """True while any process of the group exists (design D9's `killpg(pgid, 0)` check)."""
+        try:
+            if os.name == "posix":
+                os.killpg(pgid, 0)
+            else:
+                os.kill(pgid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+
+def _read_json(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
+
+
+def _write_json(path, document):
+    """Write `document` atomically: a temporary file in the same directory, then `os.replace`."""
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=".verify.", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(document, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def _running_path_for(log_path):
+    """`running.json` and the run id for a log at `<verify>/runs/<run id>/<step>.log` (D9)."""
+    run_dir = os.path.dirname(os.path.abspath(log_path))
+    verify_dir = os.path.dirname(os.path.dirname(run_dir))
+    return os.path.join(verify_dir, "running.json"), os.path.basename(run_dir)
+
+
+def _running_groups(path):
+    """Every `{"run": <id>, "pgid": <int>}` entry in `running.json`; anything else is ignored."""
+    document = _read_json(path)
+    if not isinstance(document, dict):
+        return []
+    entries = document.get("groups")
+    if not isinstance(entries, list):
+        return []
+    groups = []
+    for entry in entries:
+        if (isinstance(entry, dict) and isinstance(entry.get("run"), str)
+                and isinstance(entry.get("pgid"), int)
+                and not isinstance(entry.get("pgid"), bool)):
+            groups.append({"run": entry["run"], "pgid": entry["pgid"]})
+    return groups
+
+
+def _write_running(path, groups):
+    """Save the running groups; no entries means no file (D9: removed once every group is gone)."""
+    if not groups:
+        try:
+            os.unlink(path)
+        except OSError:
+            return
+        return
+    _write_json(path, {"version": RUNNING_VERSION, "groups": groups})
+
+
+def _record_running(log_path, pgid):
+    """Record one running group; a write that cannot complete is best-effort, never fatal."""
+    path, run_id = _running_path_for(log_path)
+    groups = [group for group in _running_groups(path)
+              if not (group["run"] == run_id and group["pgid"] == pgid)]
+    groups.append({"run": run_id, "pgid": pgid})
+    try:
+        _write_running(path, groups)
+    except OSError:
+        pass
+
+
+def _forget_running(log_path, pgid):
+    """Remove one reaped group from `running.json`; best-effort, like `_record_running`."""
+    path, run_id = _running_path_for(log_path)
+    groups = [group for group in _running_groups(path)
+              if not (group["run"] == run_id and group["pgid"] == pgid)]
+    try:
+        _write_running(path, groups)
+    except OSError:
+        pass
+
+
+def _stream_bytes(handle):
+    try:
+        handle.seek(0)
+        return handle.read()
+    except (OSError, ValueError, AttributeError):
+        return b""
+
+
+def _lines(data):
+    return data.decode("utf-8", "replace").splitlines() if data else []
+
+
+def _tail(log_path):
+    """The last `TAIL_LINES` lines of the log, each cut to `TAIL_CHARS` characters (design D9)."""
+    try:
+        with open(log_path, "rb") as handle:
+            data = handle.read()
+    except OSError:
+        return []
+    lines = data.decode("utf-8", "replace").splitlines()
+    return [line[:TAIL_CHARS] for line in lines[-TAIL_LINES:]]
+
+
+class Runner:
+    """One argv in its own process group under a deadline (design D9); the running step adds `run`.
+
+    `run` starts the argv in its own session with stdin closed, merges stdout and stderr into the
+    step's log (`capture=True` keeps the two streams apart in the returned `Outcome` for a
+    resolver or version command), polls through the injected wait, and at `cutoff` sends SIGTERM
+    to the group, waits the ten-second grace, sends SIGKILL and reaps: a `timeout`. The group is
+    recorded in `running.json` while it runs, so the next run-lock holder can clean up after a
+    dead run, and removed once it has been reaped.
+    """
+
+    def __init__(self, clock, wait, processes=None):
         self.clock = clock
         self.wait = wait
+        self.processes = processes or Processes()
 
     def run(self, argv, cwd, env, log_path, cutoff, capture):
-        raise NotImplementedError("Runner.run is added with the running step (design D9)")
+        started = self.clock.now()
+        if started >= cutoff:
+            return Outcome("not_reached",
+                           error="the deadline reserve was reached before the command ran",
+                           log=log_path)
+        os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
+        merged = out = err = None
+        try:
+            merged = open(log_path, "wb")
+            if capture:
+                out = tempfile.TemporaryFile()
+                err = tempfile.TemporaryFile()
+                stdout_target, stderr_target = out, err
+            else:
+                stdout_target, stderr_target = merged, subprocess.STDOUT
+            try:
+                process = self.processes.spawn(list(argv), cwd, env, stdout_target,
+                                               stderr_target)
+            except OSError as error:
+                return Outcome("not_run", log=log_path,
+                               error="cannot run %s: %s"
+                                     % (argv[0] if argv else "<empty argv>", error))
+            reaped = False
+            try:
+                _record_running(log_path, process.pid)
+                code, timed_out = self._wait(process, cutoff)
+                if timed_out:
+                    code = self._terminate(process)
+                reaped = True
+            finally:
+                if reaped:
+                    _forget_running(log_path, process.pid)
+            if capture:
+                stdout_data = _stream_bytes(out)
+                stderr_data = _stream_bytes(err)
+                merged.write(stdout_data)
+                merged.write(stderr_data)
+                merged.flush()
+            else:
+                stdout_data = stderr_data = b""
+            elapsed = self.clock.now() - started
+            tail = _tail(log_path)
+            if timed_out:
+                return Outcome("timeout", code=code, tail=tail, elapsed_s=elapsed,
+                               error="the step reached its cutoff", log=log_path,
+                               stdout=_lines(stdout_data) if capture else None,
+                               stderr=_lines(stderr_data) if capture else None)
+            return Outcome("ok" if code == 0 else "fail", code=code, tail=tail,
+                           elapsed_s=elapsed, log=log_path,
+                           stdout=_lines(stdout_data) if capture else None,
+                           stderr=_lines(stderr_data) if capture else None)
+        finally:
+            for handle in (merged, out, err):
+                if handle is not None:
+                    try:
+                        handle.close()
+                    except OSError:
+                        pass
+
+    def _wait(self, process, cutoff):
+        """Poll until the process exits (`(code, False)`) or the cutoff passes (`(None, True)`)."""
+        while True:
+            code = process.poll()
+            if code is not None:
+                return code, False
+            if self.clock.now() >= cutoff:
+                return None, True
+            self.wait.sleep(POLL_SECONDS)
+
+    def _terminate(self, process):
+        """SIGTERM, the ten-second grace, SIGKILL, reap (design D9); returns the reaped code."""
+        self.processes.signal_group(process.pid, signal.SIGTERM)
+        grace_end = self.clock.now() + TERM_GRACE_SECONDS
+        while process.poll() is None and self.clock.now() < grace_end:
+            self.wait.sleep(POLL_SECONDS)
+        if process.poll() is None:
+            self.processes.signal_group(process.pid, signal.SIGKILL)
+        return process.wait()
+
+
+def _lock_fd(fd):
+    """One non-blocking exclusive lock attempt on `fd`; an OSError means the lock is held."""
+    if fcntl is not None:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    elif msvcrt is not None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:  # pragma: no cover - no file locking on this platform
+        raise OSError("this platform has no file locking")
+
+
+def _unlock_fd(fd):
+    if fcntl is not None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    elif msvcrt is not None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+
+def _try_lock(path):
+    """A held descriptor for `path`, or None when the single non-blocking try failed (D9)."""
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        _lock_fd(fd)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def _release_fd(fd):
+    if fd is None:
+        return
+    try:
+        _unlock_fd(fd)
+    except OSError:
+        pass
+    os.close(fd)  # closing also drops a flock
+
+
+class RunLock:
+    """`build/verify/lock`: one non-blocking flock try; a held lock means contention (design D9)."""
+
+    def __init__(self, path):
+        self.path = path
+        self.fd = None
+
+    def try_acquire(self):
+        """True when this call holds the lock; a single try, so a holder is contention at once."""
+        if self.fd is not None:
+            return True
+        fd = _try_lock(self.path)
+        if fd is None:
+            return False
+        self.fd = fd
+        return True
+
+    def release(self):
+        fd, self.fd = self.fd, None
+        _release_fd(fd)
+
+
+class StateLock:
+    """A short state lock (`hook-state.json`, the machine config) retried through the wait (D9).
+
+    `acquire()` retries non-blocking tries through the injected wait for at most `seconds` (10)
+    and never past the run's deadline; failing that it returns False, which the caller reports
+    as an internal error.
+    """
+
+    def __init__(self, path, ctx, seconds=STATE_LOCK_SECONDS):
+        self.path = path
+        self.clock = ctx.clock
+        self.wait = ctx.wait
+        self.deadline = ctx.deadline
+        self.seconds = seconds
+        self.fd = None
+
+    def acquire(self):
+        if self.fd is not None:
+            return True
+        started = None
+        while True:
+            fd = _try_lock(self.path)
+            if fd is not None:
+                self.fd = fd
+                return True
+            now = self.clock.now()
+            if started is None:
+                started = now
+            limit = started + self.seconds
+            if self.deadline is not None:
+                limit = min(limit, self.deadline)
+            if now >= limit:
+                return False
+            self.wait.sleep(min(POLL_SECONDS, limit - now))
+
+    def release(self):
+        fd, self.fd = self.fd, None
+        _release_fd(fd)
+
+
+def _verify_dir(ctx):
+    """`build/verify`: the parent of this run's `runs/<run id>` directory (design D9/D10)."""
+    return os.path.dirname(os.path.dirname(os.path.abspath(ctx.run_dir)))
+
+
+def _processes(ctx):
+    return getattr(ctx.runner, "processes", None) or Processes()
+
+
+def cleanup_orphans(ctx, run_id):
+    """Kill the groups a dead run left behind; only the run-lock holder calls this (design D9).
+
+    Every group recorded in `running.json` under another run id belongs to a dead run: it gets
+    SIGTERM, then SIGKILL after the grace, and is confirmed gone when `killpg(pgid, 0)` raises
+    ProcessLookupError. Every recorded group gone clears those entries and returns True; a group
+    still alive after 15 seconds is contention and returns False, leaving its entry in place.
+    """
+    path = os.path.join(_verify_dir(ctx), "running.json")
+    groups = _running_groups(path)
+    own = [group for group in groups if group["run"] == run_id]
+    others = [group for group in groups if group["run"] != run_id]
+    if not others:
+        return True
+    processes = _processes(ctx)
+    started = ctx.clock.now()
+    for group in others:
+        processes.signal_group(group["pgid"], signal.SIGTERM)
+    grace_end = started + ORPHAN_GRACE_SECONDS
+    confirm_end = started + ORPHAN_CONFIRM_SECONDS
+    killed = False
+    while True:
+        alive = [group for group in others if processes.group_alive(group["pgid"])]
+        if not alive:
+            try:
+                _write_running(path, own)
+            except OSError:
+                pass
+            return True
+        now = ctx.clock.now()
+        if now >= confirm_end:
+            try:
+                _write_running(path, own + alive)
+            except OSError:
+                pass
+            return False
+        if now >= grace_end and not killed:
+            for group in alive:
+                processes.signal_group(group["pgid"], signal.SIGKILL)
+            killed = True
+        ctx.wait.sleep(POLL_SECONDS)
+
+
+@dataclass
+class NodeResult:
+    """One node's outcome for the report (design D10).
+
+    `failures` carries every `FAIL`, `timeout` and unexpected `NOT RUN` as
+    `(step id, outcome, the step's re-run command)`; an expected `NOT RUN` (device, platform,
+    branch-only, none related, nothing planned, not reached) is a note or the reason only, which
+    is how `exit_code` tells them apart.
+    """
+
+    status: str
+    reason: Optional[str] = None
+    notes: List[str] = field(default_factory=list)
+    failures: List[Tuple[str, Outcome, str]] = field(default_factory=list)
+
+
+def _utf8_len(text):
+    return len(text.encode("utf-8"))
+
+
+def _truncate_bytes(text, cap):
+    data = text.encode("utf-8")
+    if len(data) <= cap:
+        return text
+    return data[:cap].decode("utf-8", "ignore")
+
+
+def _status_line(node, result):
+    if result.reason:
+        return "%s: %s (%s)" % (node, result.status, result.reason)
+    return "%s: %s" % (node, result.status)
+
+
+OUTCOME_LABELS = {"fail": "FAIL", "timeout": "TIMEOUT", "not_run": "NOT RUN",
+                  "not_reached": "not reached", "ok": "OK"}
+
+
+def _outcome_label(kind):
+    return OUTCOME_LABELS.get(kind, kind.upper())
+
+
+def _failure_lines(step_id, outcome, rerun):
+    """One failure block (design D10): the step, its reason and fix, the re-run command, log, tail."""
+    lines = ["  %s: %s" % (step_id, _outcome_label(outcome.kind))]
+    if outcome.kind == "fail" and outcome.code is not None:
+        lines[0] += " (exit %d)" % outcome.code
+    detail = outcome.error or ""
+    for line in detail.splitlines():
+        lines.append("    " + line)
+    if outcome.fix and outcome.fix not in detail:
+        lines.append("    fix: %s" % outcome.fix)
+    if rerun:
+        lines.append("    rerun: %s" % rerun)
+    if outcome.log:
+        lines.append("    log: %s" % outcome.log)
+    tail = [line[:TAIL_CHARS] for line in outcome.tail[-TAIL_LINES:]]
+    if tail:
+        lines.append("    tail:")
+        lines.extend("      " + line for line in tail)
+    return lines
+
+
+def render(results, errors, cap=SUMMARY_CAP):
+    """The run summary (design D10): a status line per node, its notes, then the failure details.
+
+    The cap counts UTF-8 bytes. Every node keeps its status line and notes; failure details are
+    added in report order while they fit, and a line pointing at `last-run.json` replaces the
+    details that did not fit.
+    """
+    head = ["verify: %s" % error for error in errors]
+    nodes = sorted(results)
+    for node in nodes:
+        head.append(_status_line(node, results[node]))
+        head.extend("  " + note for note in results[node].notes)
+    blocks = []
+    for node in nodes:
+        for step_id, outcome, rerun in results[node].failures:
+            blocks.append("\n".join(_failure_lines(step_id, outcome, rerun)))
+    chosen = ["\n".join(head)]
+    for block in blocks:
+        candidate = "\n".join(chosen + [block])
+        if _utf8_len(candidate) > cap:
+            break
+        chosen.append(block)
+    if len(chosen) - 1 < len(blocks):
+        pointer = ("verify: the summary was capped at %d bytes; the full report is in %s"
+                   % (cap, LAST_RUN_POINTER))
+        while len(chosen) > 1 and _utf8_len("\n".join(chosen + [pointer])) > cap:
+            chosen.pop()
+        if _utf8_len("\n".join(chosen + [pointer])) <= cap:
+            chosen.append(pointer)
+    return _truncate_bytes("\n".join(chosen), cap)
+
+
+def exit_code(results, errors):
+    """D10's precedence: 1 for a failure or timeout, else 2 for an error or an unexpected NOT RUN."""
+    blocked = False
+    unexpected = False
+    for result in results.values():
+        if result.status == "FAIL":
+            blocked = True
+        for _step_id, outcome, _rerun in result.failures:
+            if outcome.kind in ("fail", "timeout"):
+                blocked = True
+            elif outcome.kind == "not_run":
+                unexpected = True
+    if blocked:
+        return 1
+    if errors or unexpected:
+        return 2
+    return 0
+
+
+def prune_runs(ctx):
+    """Keep the newest `KEEP_RUNS` run directories and this run's own (design D10)."""
+    runs_dir = os.path.join(_verify_dir(ctx), "runs")
+    try:
+        names = sorted(name for name in os.listdir(runs_dir)
+                       if os.path.isdir(os.path.join(runs_dir, name)))
+    except OSError:
+        return []
+    current = os.path.basename(os.path.normpath(ctx.run_dir))
+    keep = set(names[-KEEP_RUNS:]) if KEEP_RUNS > 0 else set()
+    keep.add(current)
+    removed = []
+    for name in names:
+        if name in keep:
+            continue
+        shutil.rmtree(os.path.join(runs_dir, name), ignore_errors=True)
+        removed.append(name)
+    return removed
+
+
+def write_last_run(ctx, results, steps):
+    """Write `build/verify/last-run.json` (design D10) and keep the newest ten run directories.
+
+    Version 1 holds the run id and directory, every node's status with its notes, and one record
+    per step with its own id, status, `elapsed_s`, re-run command and log path.
+    """
+    document = {
+        "version": LAST_RUN_VERSION,
+        "run": os.path.basename(os.path.normpath(ctx.run_dir)),
+        "run_dir": _relative(ctx, os.path.abspath(ctx.run_dir))
+                   or os.path.abspath(ctx.run_dir),
+        "nodes": {},
+        "steps": [],
+    }
+    for node in sorted(results):
+        result = results[node]
+        document["nodes"][node] = {
+            "status": result.status,
+            "reason": result.reason,
+            "notes": list(result.notes),
+            "failures": [step_id for step_id, _outcome, _rerun in result.failures],
+        }
+    for step in steps:
+        document["steps"].append({
+            "id": step.get("id"),
+            "status": step.get("status"),
+            "elapsed_s": float(step.get("elapsed_s") or 0.0),
+            "rerun": step.get("rerun"),
+            "log": step.get("log"),
+        })
+    _write_json(os.path.join(_verify_dir(ctx), "last-run.json"), document)
+    prune_runs(ctx)
+
 
 
 # --- the table (design D2) -------------------------------------------------------------------
@@ -845,11 +1431,16 @@ def _past_cutoff(ctx):
             and ctx.clock.now() >= ctx.deadline - DEADLINE_RESERVE_SECONDS)
 
 
-def _resolver_cutoff(ctx):
-    cutoff = ctx.clock.now() + RESOLVER_SECONDS
+def step_cutoff(ctx, limit):
+    """The earlier of the step's own limit and the run deadline's termination reserve (D9)."""
+    cutoff = ctx.clock.now() + limit
     if ctx.deadline is not None:
         cutoff = min(cutoff, ctx.deadline - DEADLINE_RESERVE_SECONDS)
     return cutoff
+
+
+def _resolver_cutoff(ctx):
+    return step_cutoff(ctx, RESOLVER_SECONDS)
 
 
 def _stem(relative):
