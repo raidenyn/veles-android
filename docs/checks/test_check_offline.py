@@ -115,6 +115,20 @@ class RejectedFormTests(GuardTestCase):
     def test_rejects_helper_with_constant_root(self):
         self.assertRejected('_git("/r", "clone")\n', "clone")
 
+    def test_rejects_os_through_an_allowed_module(self):
+        for source in (
+            'shutil.os.system("curl x")\n',
+            'os.path.os.system("curl x")\n',
+            'tempfile._os.popen("x")\n',
+        ):
+            with self.subTest(source=source):
+                self.assertRejected(source, "os")
+
+    def test_rejects_git_dir_equals(self):
+        self.assertRejected(
+            'subprocess.run(["git", "--git-dir=/x", "status"])\n', "--git-dir="
+        )
+
     def test_rejects_forbidden_git_global_option(self):
         self.assertRejected(
             'subprocess.run(["git", "-c", "core.sshCommand=x", "status"])\n', "-c"

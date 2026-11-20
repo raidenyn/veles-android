@@ -166,11 +166,10 @@ on a matrix job and on any shape it cannot derive.
 Because every workflow file is under `.github/`, a workflow edit selects every node unless a
 `global-overrides` entry names it. The two Android workflows select only `android`, `tooling` and
 `installer`, because the tooling workflow contract suite and the installer `scripts-tests` read them.
-`check-docs.yml` selects only `docs` and `tooling`: the tooling all-workflow release boundary and
-`assertDocsCheckWorkflow` own it, and the installer suite exempts it by exact name. Every other workflow,
-such as `ci.yml`, `check-rust.yml`, `build-rust.yml` and `publish-release.yml`, stays global and still
-selects every node, including `native-host / build-contract` and `installer / scripts-tests`, which own the
-two Python build-contract suites.
+`check-docs.yml` selects only `docs` and `tooling` for the reason above. Every other workflow, such as
+`ci.yml`, `check-rust.yml`, `build-rust.yml` and `publish-release.yml`, stays global and still selects
+every node, including `native-host / build-contract` and `installer / scripts-tests`, which own the two
+Python build-contract suites.
 
 Node jobs use `if: !cancelled() && needs.changes.outputs.<node> == 'true'`, so when `changes` writes its
 outputs and then fails (an unaccounted path), the selected nodes still run and `ci-ok` still fails.

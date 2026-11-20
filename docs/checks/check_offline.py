@@ -55,13 +55,44 @@ OS_PROCESS_PREFIXES = ("system", "popen", "exec", "spawn", "posix_spawn", "fork"
 # `git` global options that point a command at another configuration or program.
 GIT_FORBIDDEN_GLOBAL_EXACT = frozenset(("-c", "-C", "--config", "--exec-path", "--git-dir"))
 GIT_FORBIDDEN_GLOBAL_PREFIXES = frozenset(
-    ("--config=", "--config-env", "--exec-path=", "--upload-pack", "--receive-pack")
+    (
+        "--config=",
+        "--config-env",
+        "--exec-path=",
+        "--git-dir=",
+        "--upload-pack",
+        "--receive-pack",
+    )
 )
 
-# `git` subcommands that reach the network.
+# `git` subcommands that reach the network or run another program. The tree uses only ls-files,
+# status, config, init, add, commit and cat-file; anything that fetches, pushes, spawns a foreign
+# VCS or talks to a mail/imap server is named here.
 GIT_FORBIDDEN_SUBCOMMANDS = frozenset(
-    ("clone", "fetch", "pull", "push", "submodule", "ls-remote", "remote", "archive")
+    (
+        "clone",
+        "fetch",
+        "fetch-pack",
+        "pull",
+        "push",
+        "send-pack",
+        "http-fetch",
+        "http-push",
+        "submodule",
+        "ls-remote",
+        "remote",
+        "archive",
+        "maintenance",
+        "svn",
+        "p4",
+        "send-email",
+        "imap-send",
+    )
 )
+
+# Module names that must be imported directly, never reached through another module's attribute
+# (`shutil.os.system`, `tempfile._os.popen`). The direct name is handled by the rules below.
+MODULE_NAMES = ("os", "_os", "sys", "subprocess", "builtins")
 
 # (file basename, enclosing top-level function) pairs that may use `importlib`.
 IMPORTLIB_EXEMPT = (
@@ -122,7 +153,12 @@ def _constant_strings(nodes):
 
 
 class _Visitor(ast.NodeVisitor):
-    """Findings for one parsed ``docs/checks`` file."""
+    """Findings for one parsed ``docs/checks`` file.
+
+    The guard catches mistakes and obvious evasion, not a determined author: environment
+    variables (``GIT_EXEC_PATH``, ``GIT_CONFIG_PARAMETERS``, ``GIT_SSH_COMMAND``), ``git config``
+    keys and module rebinding are outside it, and review covers them.
+    """
 
     def __init__(self, path, siblings, called):
         self.path = path
@@ -198,6 +234,13 @@ class _Visitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Attribute(self, node):
+        if node.attr in MODULE_NAMES and not (
+            isinstance(node.value, ast.Name) and node.value.id == node.attr
+        ):
+            self.add(
+                node,
+                "re-exports the %s module through another module; import it directly" % node.attr,
+            )
         if isinstance(node.value, ast.Name):
             name = node.value.id
             if name == "os" and _os_process_name(node.attr):
