@@ -6,7 +6,7 @@
 
 **Change**: `decouple-docs-ci`
 **Iteration**: `1`
-**Applied at**: `2026-11-20 02:21`
+**Applied at**: `2026-11-20 02:29`
 **Executor**: `subagent-driven-development`
 
 ---
@@ -21,7 +21,7 @@
 ## Commits
 
 - **Range**: `165b2e0f..HEAD`
-- **Count**: 12 (this receipt's own commit follows)
+- **Count**: 14 (this receipt's own commit follows)
 
 ---
 
@@ -65,8 +65,8 @@ Historical commits re-run against the new map:
 - `python3 docs/checks/check_gate_b_matrix.py` — PASS (exit 0, prints its usual "not Gate B
   acceptance" note).
 - `python3 docs/checks/check_site.py --root .` — PASS (exit 0).
-- `python3 -m unittest discover -s docs/checks -p 'test_*.py' -v` — PASS (284 tests, OK).
-- Same suite under Python 3.8 (`uv run --python 3.8 …`) — PASS (284 tests, OK).
+- `python3 -m unittest discover -s docs/checks -p 'test_*.py' -v` — PASS (286 tests, OK).
+- Same suite under Python 3.8 (`uv run --python 3.8 …`) — PASS (286 tests, OK).
 
 ### tooling
 - `./gradlew installGitCliff installCargoDeny` — PASS.
@@ -108,6 +108,23 @@ Historical commits re-run against the new map:
 - `python3 -m unittest discover -s native-bridge/host/scripts -p 'test_build_contract.py' -v` —
   PASS (25 tests, OK).
 - Windows and macOS adapters — NOT RUN on Linux, as the node document states.
+
+### Final whole-branch review
+
+The final review (Opus) found one Important issue and four Minors. The fix wave (`3061b2e8`) closed
+them:
+
+- the guard now rejects an `os`/`sys`/`subprocess`/`builtins` module reached through another module
+  (`shutil.os.system`, `os.path.os.system`, `tempfile._os.popen`), with tests for the three forms;
+- `--git-dir=` joins the forbidden global-option prefixes;
+- the forbidden subcommand list gains `fetch-pack`, `send-pack`, `http-fetch`, `http-push`,
+  `maintenance`, `svn`, `p4`, `send-email` and `imap-send`;
+- the environment-variable gap (`GIT_EXEC_PATH`, `GIT_CONFIG_PARAMETERS`, `GIT_SSH_COMMAND`) is
+  named in the guard's own docstring as a stated limit covered by review;
+- the duplicated check-docs reasons in `docs/ci.md` are collapsed to a back-reference.
+
+After the fix: guard suite 41 tests, full docs suite 286 tests, both on the default Python and 3.8;
+`check_offline.py --root .` exits 0; `check_agent_files.py` and `check_site.py` exit 0.
 
 ---
 
