@@ -982,6 +982,18 @@
           "cwd": ".",
           "line": "python3 -I scripts/project_flow.py --help",
           "why": "Usage/help demo; the real project-flow commands need GitHub and are event-driven, not a gate."
+        },
+        {
+          "doc": "scripts/AGENTS.md",
+          "cwd": ".",
+          "line": "python3 -I scripts/verify.py",
+          "why": "The verifier's own task gate: it runs the table, so the table cannot gate on it."
+        },
+        {
+          "doc": "scripts/AGENTS.md",
+          "cwd": ".",
+          "line": "python3 -I scripts/verify.py --branch",
+          "why": "The verifier's own branch gate: the pre-push rule runs it, not the table."
         }
       ]
     },

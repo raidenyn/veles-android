@@ -1156,6 +1156,26 @@ class AgentFileCheckTest(unittest.TestCase):
         findings = check_repo(self.repo(files))
         self.assertEqual(findings, [])
 
+    def test_scripts_rule_scope(self):
+        # The shipped table rule loads for the table only, and points at its reference page.
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(CHECKS)),
+            ".agents",
+            "rules",
+            "scripts-verify-commands.md",
+        )
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+        frontmatter = parse_frontmatter(text)
+        self.assertEqual(frontmatter["trigger"], "glob")
+        for key in ("globs", "paths"):
+            self.assertEqual(frontmatter[key], ["scripts/verify-commands.json"])
+        pattern = frontmatter["globs"][0]
+        regex = re.compile("^" + re.escape(pattern).replace(r"\*", ".*") + "$")
+        self.assertTrue(regex.match("scripts/verify-commands.json"))
+        self.assertFalse(regex.match("scripts/verify.py"))
+        self.assertIn("docs/verify.md", text)
+
     def test_node_rule_rejects_parent_directory_traversal(self):
         text = rule_text(
             'trigger: glob\nglobs:\n  - "android/../rust/**"\n'
