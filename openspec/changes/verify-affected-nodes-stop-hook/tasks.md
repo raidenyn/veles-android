@@ -100,8 +100,8 @@ started is charged its measured time, whatever its outcome; contention cancels w
 
 ## 15. Verification and handoff
 
-- [ ] 15.1 Run `./gradlew scriptsTest`, `python3 -I scripts/components.py check`, `python3 docs/checks/check_agent_files.py --root .`, `python3 -m unittest discover -s docs/checks -p 'test_*.py'`, `node --test verify/test/*.test.mjs` and `python3 -I scripts/verify.py --branch`; all pass
-- [ ] 15.2 Acceptance on this machine: a branch touching only `web-extension/src/` selects exactly `web-extension`, `protocol`, `supply-chain`; a `rust/` change also selects `android` and says why; an absent toolchain gives `NOT RUN` with its fix and exit 2
-- [ ] 15.3 Real Claude Code session on the coding server with both `Stop` commands: a deliberately broken lint blocks with a readable summary and the fixed tree then passes; an absent tool blocks with its fix; a session moved into a linked worktree at a different revision runs that worktree's verifier; record the runs and measured hook times in `spike.md`
-- [ ] 15.4 PR notes: no product behaviour changed (tooling only), what ran in 15.1–15.3 and on what, the measured times, and the known limits
-- [ ] 15.5 Closeout handoff (not implementation): after the archive creates the main specs, add the site wrappers `docs/dev/specs/affected-node-verification.mdx` and `docs/dev/specs/verification-stop-hook.mdx` and their `docs.json` entries
+- [x] 15.1 Run `./gradlew scriptsTest`, `python3 -I scripts/components.py check`, `python3 docs/checks/check_agent_files.py --root .`, `python3 -m unittest discover -s docs/checks -p 'test_*.py'`, `node --test verify/test/*.test.mjs` and `python3 -I scripts/verify.py --branch`; all pass
+- [x] 15.2 Acceptance on this machine: a branch touching only `web-extension/src/` selects exactly `web-extension`, `protocol`, `supply-chain`; a `rust/` change also selects `android` and says why; an absent toolchain gives `NOT RUN` with its fix and exit 2
+- [x] 15.3 Real Claude Code session on the coding server with both `Stop` commands: a deliberately broken lint blocks with a readable summary and the fixed tree then passes; an absent tool blocks with its fix; a session moved into a linked worktree at a different revision runs that worktree's verifier; record the runs and measured hook times in `spike.md`
+- [x] 15.4 PR notes: no product behaviour changed (tooling only), what ran in 15.1–15.3 and on what, the measured times, and the known limits
+- [x] 15.5 Closeout handoff (not implementation): after the archive creates the main specs, add the site wrappers `docs/dev/specs/affected-node-verification.mdx` and `docs/dev/specs/verification-stop-hook.mdx` and their `docs.json` entries
