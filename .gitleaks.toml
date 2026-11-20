@@ -23,15 +23,21 @@ paths = ['''^protocol/v1/fixtures/crypto\.json$''']
 
 [[allowlists]]
 description = "Recorded feasibility evidence: the JSON and NDJSON files under native-bridge/feasibility/evidence/ snapshot local connector experiments and carry harness-generated synthetic tab tokens (17-character base-36 values built from Date.now().toString(36) plus Math.random()), macOS unified-log UUIDs and JSON field names, none of which are credentials."
-paths = ['''^native-bridge/feasibility/evidence/''']
+paths = ['''^native-bridge/feasibility/evidence/.*\.(?:json|ndjson)$''']
 
 [[allowlists]]
-description = "Chrome extension manifest of the recorded feasibility run: its 'key' field is the extension's public key that fixes the extension ID, public material rather than a private key or credential."
+description = "Chrome extension manifest of the recorded feasibility run: only the line holding its 'key' field is allowed; that field is the extension's public key that fixes the extension ID, public material rather than a private key or credential."
+condition = "AND"
+regexTarget = "line"
 paths = ['''^native-bridge/feasibility/extension/manifest\.json$''']
+regexes = ['''"key"\s*:''']
 
 [[allowlists]]
-description = "Chrome extension manifest of the acceptance driver: its 'key' field is the driver extension's public key that fixes its extension ID, public material rather than a private key or credential."
+description = "Chrome extension manifest of the acceptance driver: only the line holding its 'key' field is allowed; that field is the driver extension's public key that fixes its extension ID, public material rather than a private key or credential."
+condition = "AND"
+regexTarget = "line"
 paths = ['''^native-bridge/host/acceptance/driver-extension/manifest\.json$''']
+regexes = ['''"key"\s*:''']
 
 [[allowlists]]
 description = "Acceptance-driver source: only the line assigning the standard-library winreg.KEY_WOW64_64KEY registry access-rights constant is allowed; a registry permission value, not a credential."

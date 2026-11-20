@@ -15,6 +15,10 @@ PROJECT = Path(__file__).resolve().parents[2]
 HOOK = PROJECT / ".githooks" / "pre-commit"
 GITLEAKS = os.environ.get("VELES_GITLEAKS", "")
 REAL_GITLEAKS = bool(GITLEAKS) and Path(GITLEAKS).is_file() and os.access(GITLEAKS, os.X_OK)
+# The hook's default location, which is what contributors use after ./gradlew installGitleaks.
+PINNED_GITLEAKS = PROJECT / "build" / "release-tools" / "gitleaks" / "gitleaks"
+PINNED_USABLE = PINNED_GITLEAKS.is_file() and os.access(PINNED_GITLEAKS, os.X_OK)
+SCAN_BINARY = GITLEAKS if REAL_GITLEAKS else (str(PINNED_GITLEAKS) if PINNED_USABLE else "")
 WINDOWS = sys.platform == "win32"
 
 # Assembled from pieces at runtime so no credential-shaped literal is committed.
@@ -88,6 +92,32 @@ class PreCommitHookTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, "a clean staged change must pass")
 
+    @unittest.skipUnless(SCAN_BINARY, "needs the pinned gitleaks or VELES_GITLEAKS naming one")
+    def test_default_binary_path(self):
+        repo = self.make_repo()
+        default = repo / "build" / "release-tools" / "gitleaks" / "gitleaks"
+        default.parent.mkdir(parents=True)
+        try:
+            default.symlink_to(SCAN_BINARY)
+        except OSError:
+            shutil.copyfile(SCAN_BINARY, default)
+            default.chmod(0o755)
+        (repo / "hello.txt").write_text("hello\n")
+        self.git(repo, "add", "hello.txt")
+
+        result = self.run_hook(repo)
+
+        self.assertEqual(result.returncode, 0, "a clean staged change must pass through the default binary")
+
+        (repo / "config.ini").write_text("aws_access_key_id = %s\n" % FAKE_KEY)
+        self.git(repo, "add", "config.ini")
+
+        result = self.run_hook(repo)
+
+        self.assertEqual(result.returncode, 1, "the default binary must block a staged fake key")
+        output = result.stdout + result.stderr
+        self.assertFalse(FAKE_KEY in output, "the fake key must not appear in the hook output")
+
     @unittest.skipUnless(REAL_GITLEAKS, "needs VELES_GITLEAKS naming an executable gitleaks")
     def test_staged_deletion_passes(self):
         repo = self.make_repo()
@@ -115,17 +145,18 @@ class PreCommitHookTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, "a missing binary must warn and allow the commit")
         self.assertIn("./gradlew installGitleaks", result.stderr)
 
-        if WINDOWS:
-            return
-        noexec = self.tmp / "gitleaks-not-executable"
-        noexec.write_text("#!/bin/sh\nexit 3\n")
-        noexec.chmod(0o644)
-        self.assertFalse(os.access(noexec, os.X_OK))
+        with self.subTest("non-executable binary"):
+            if WINDOWS:
+                self.skipTest("needs POSIX execute bits")
+            noexec = self.tmp / "gitleaks-not-executable"
+            noexec.write_text("#!/bin/sh\nexit 3\n")
+            noexec.chmod(0o644)
+            self.assertFalse(os.access(noexec, os.X_OK))
 
-        result = self.run_hook(repo, noexec)
+            result = self.run_hook(repo, noexec)
 
-        self.assertEqual(result.returncode, 0, "a missing binary must warn and allow the commit")
-        self.assertIn("./gradlew installGitleaks", result.stderr)
+            self.assertEqual(result.returncode, 0, "a missing binary must warn and allow the commit")
+            self.assertIn("./gradlew installGitleaks", result.stderr)
 
     @unittest.skipIf(WINDOWS, "needs a POSIX shell stub")
     def test_tool_error_warns(self):

@@ -251,9 +251,16 @@ four outcomes:
 | The binary is missing or not executable | Warns naming `./gradlew installGitleaks` and exits 0, so the commit proceeds unscanned. |
 | The scanner fails for another reason | Warns that the scan did not run, naming the exit code, and exits 0. |
 
+Both scanners detect recognised token patterns, not everything secret-shaped: a binary keystore
+(`*.jks`, `*.keystore`, `*.p12`, `*.pfx`, `*.bks`) or a weak `storePassword=` in `keystore.properties` is
+not reported. Signing keys and their passwords stay protected by the `.gitignore` rules
+(`android/config/android_keys/`) and must never be committed.
+
 The enforcement model is GitHub push protection plus this hook, with no CI scan job. The hook is the fast,
 local gate and is deliberately advisory when it cannot scan; push protection is the server-side backstop
-that refuses a push containing a detected secret. `./gradlew scriptsTest` installs the pinned gitleaks
+that refuses a push containing a detected secret. Push protection covers supported provider token patterns
+only, and a pusher can bypass it with a stated reason, so the local hook and the `.gitignore` rules remain
+part of the defence. `./gradlew scriptsTest` installs the pinned gitleaks
 first and passes it to the hook tests through `VELES_GITLEAKS`, so the tooling check exercises the real
 scanner.
 
