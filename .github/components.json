@@ -31,9 +31,7 @@
     ],
     ".github/workflows/check-docs.yml": [
       "docs",
-      "tooling",
-      "installer",
-      "supply-chain"
+      "tooling"
     ],
     ".github/workflows/project-flow.yml": [
       "tooling"
@@ -305,7 +303,21 @@
     "supply-chain": {
       "release": false,
       "paths": [
-        "verify/",
+        "verify/lib/",
+        "verify/cargo-build-script-policy.json",
+        "verify/cargo-tools.toml",
+        "verify/check-android-layout.sh",
+        "verify/check-cargo-build-scripts.mjs",
+        "verify/check-npm-install-scripts.mjs",
+        "verify/check-npm-licenses.mjs",
+        "verify/check-remote-code.mjs",
+        "verify/check-root-aliases.sh",
+        "verify/check-vendored-patches.mjs",
+        "verify/generate-sboms.sh",
+        "verify/install-script-policy.json",
+        "verify/normalize-sbom-paths.mjs",
+        "verify/verify-sboms.mjs",
+        "verify/verify-supply-chain.sh",
         "licenses.toml",
         ".license-policy.json",
         "native-bridge/feasibility/Cargo.lock",
@@ -347,9 +359,6 @@
         "settings.gradle.kts",
         "gradle.properties"
       ],
-      "ci-paths": [
-        "docs/checks/"
-      ],
       "jobs": [
         "build"
       ]
@@ -366,7 +375,8 @@
         "gradle.properties"
       ],
       "ci-paths": [
-        "verify/check-root-aliases.sh"
+        "verify/check-root-aliases.sh",
+        "native-bridge/installer/scripts/test_build_contract.py"
       ],
       "jobs": [
         "unit-tests"

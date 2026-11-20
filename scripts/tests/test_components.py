@@ -29,6 +29,14 @@ CMAP = load_map(MAP_PATH)
 NODES = set(CMAP["nodes"])
 
 
+def tracked(path):
+    """Tracked files under ``path`` from git, so a new file cannot skip the map tests."""
+    return subprocess.run(
+        ["git", "ls-files", path],
+        cwd=REPO, check=True, stdout=subprocess.PIPE, universal_newlines=True,
+    ).stdout.split()
+
+
 def git(cwd, *args):
     return subprocess.run(
         ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
@@ -353,14 +361,50 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual({n for n, v in affected([codeowners], CMAP).items() if v}, {"docs"})
         self.assertEqual(unaccounted([codeowners], CMAP), [])
         workflow = ".github/workflows/check-docs.yml"
-        self.assertEqual(
-            sorted(CMAP["global-overrides"][workflow]),
-            ["docs", "installer", "supply-chain", "tooling"],
-        )
-        self.assertEqual(
-            owner_nodes(workflow, CMAP), {"docs", "installer", "supply-chain", "tooling"}
-        )
+        self.assertEqual(sorted(CMAP["global-overrides"][workflow]), ["docs", "tooling"])
+        self.assertEqual(owner_nodes(workflow, CMAP), {"docs", "tooling"})
+        self.assertEqual({n for n, v in affected([workflow], CMAP).items() if v}, {"docs", "tooling"})
         self.assertEqual(unaccounted([workflow], CMAP), [])
+
+    def test_docs_check_files_select_only_docs(self):
+        listing = tracked("docs/checks")
+        self.assertTrue(listing)
+        for path in listing:
+            with self.subTest(path=path):
+                self.assertEqual({n for n, v in affected([path], CMAP).items() if v}, {"docs"})
+                self.assertEqual(unaccounted([path], CMAP), [])
+
+    def test_verify_test_files_select_only_tooling(self):
+        listing = tracked("verify/test")
+        self.assertTrue(listing)
+        for path in listing:
+            with self.subTest(path=path):
+                self.assertEqual({n for n, v in affected([path], CMAP).items() if v}, {"tooling"})
+                self.assertEqual(unaccounted([path], CMAP), [])
+
+    def test_verify_files_select_supply_chain(self):
+        listing = [
+            path
+            for path in tracked("verify")
+            if not path.startswith("verify/test/") and path != "verify/AGENTS.md"
+        ]
+        self.assertTrue(listing)
+        for path in listing:
+            with self.subTest(path=path):
+                a = affected([path], CMAP)
+                self.assertTrue(a["supply-chain"], path)
+                self.assertEqual(unaccounted([path], CMAP), [])
+
+    def test_new_verify_file_is_unaccounted(self):
+        self.assertEqual(unaccounted(["verify/new-check.mjs"], CMAP), ["verify/new-check.mjs"])
+
+    def test_installer_boundary_suite_selects_tooling(self):
+        path = "native-bridge/installer/scripts/test_build_contract.py"
+        self.assertEqual(
+            {n for n, v in affected([path], CMAP).items() if v},
+            {"installer", "protocol", "supply-chain", "tooling"},
+        )
+        self.assertEqual(unaccounted([path], CMAP), [])
 
     def test_engine_only_selects_tooling_docs(self):
         path = "scripts/agent_rules.py"
