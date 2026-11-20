@@ -14,6 +14,7 @@ TESTS = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(TESTS)
 REPO = os.path.dirname(SCRIPTS)
 sys.path.insert(0, SCRIPTS)
+sys.path.insert(0, TESTS)
 
 import verify  # noqa: E402
 from verify import TableError, load_table, main  # noqa: E402
@@ -141,6 +142,11 @@ def write_raw(root, text):
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(text)
     return path
+
+
+def real_table():
+    cmap = verify.components.load_map(os.path.join(REPO, ".github", "components.json"))
+    return load_table(os.path.join(REPO, "scripts", "verify-commands.json"), cmap)
 
 
 class TableValidationTest(unittest.TestCase):
@@ -397,7 +403,7 @@ class CommandLineTest(unittest.TestCase):
 
     def test_real_table_valid(self):
         cmap = verify.components.load_map(os.path.join(REPO, ".github", "components.json"))
-        table = load_table(os.path.join(REPO, "scripts", "verify-commands.json"), cmap)
+        table = real_table()
         self.assertEqual(set(table.nodes), set(cmap["nodes"]))
         ids = [step.id for node in table.nodes.values() for step in node.commands]
         ids.extend(table.producers)
@@ -424,7 +430,24 @@ class CommandLineTest(unittest.TestCase):
         self.assertIn("web-extension.build", browser.requires)
         bridge = {step.id: step for step in table.nodes["bridge-scaffold"].commands}
         self.assertEqual(bridge["bridge.test"].kind, "test")
-        self.assertEqual(bridge["bridge.install"].kind, "check")
+        self.assertNotIn("bridge.install", bridge)
+
+    def test_narrowed_run_templates_support_many_targets(self):
+        """A related run must never put two targets into one flag or one positional name (D4)."""
+        table = real_table()
+        android = {step.id: step for step in table.nodes["android"].commands}
+        self.assertEqual(android["android.unit-tests"].related["run"],
+                         ["./gradlew", "testDebugUnitTest", "--tests={targets}"])
+        for node, step_id in (("tooling", "tooling.scripts-test"), ("docs", "docs.tests")):
+            steps = {step.id: step for step in table.nodes[node].commands}
+            self.assertEqual(steps[step_id].related["run"],
+                             ["python3", "-m", "unittest", "{targets}"])
+        for node in table.nodes.values():
+            for step in node.commands:
+                run = (step.related or {}).get("run") or []
+                for index, item in enumerate(run):
+                    if item == "{targets}" and index and run[index - 1] in ("--tests", "-p", "-k"):
+                        self.fail("%s passes every target into one %r flag" % (step.id, run[index - 1]))
 
 
 if __name__ == "__main__":

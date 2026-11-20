@@ -252,7 +252,7 @@
             "strategy": "name-map",
             "sources": "android/app/src/main/**/*.kt",
             "tests": "android/app/src/test/**/<stem>Test.kt",
-            "run": ["./gradlew", "testDebugUnitTest", "--tests", "{targets}"]
+            "run": ["./gradlew", "testDebugUnitTest", "--tests={targets}"]
           }
         },
         {
@@ -489,21 +489,6 @@
     "bridge-scaffold": {
       "commands": [
         {
-          "id": "bridge.install",
-          "kind": "check",
-          "cwd": ".",
-          "run": ["./gradlew", "bridgeInstall"],
-          "doc": "native-bridge/AGENTS.md",
-          "requires": ["java-home", "node", "npm"],
-          "inputs": [
-            {"path": "{gradle_user_home}/gradle.properties"},
-            {"path": "{gradle_user_home}/init.d/"},
-            {"path": "native-bridge/package.json"},
-            {"path": "native-bridge/package-lock.json"}
-          ],
-          "ci": "bridge-scaffold / lint"
-        },
-        {
           "id": "bridge.format",
           "kind": "check",
           "cwd": ".",
@@ -587,6 +572,12 @@
         }
       ],
       "excluded": [
+        {
+          "doc": "native-bridge/AGENTS.md",
+          "cwd": ".",
+          "line": "./gradlew bridgeInstall bridgeFormat bridgeLint bridgeTypecheck bridgeTest",
+          "why": "Setup, not a gate: ./gradlew bridgeInstall installs native-bridge/node_modules (the native-bridge.node-modules requirement) with npm ci --ignore-scripts and rewrites the stat-mode inputs bridge.format, .lint, .typecheck and .test hash, so running it as a check would defeat their remembered passes; the requirement's fix installs it once."
+        },
         {
           "doc": "native-bridge/AGENTS.md",
           "cwd": ".",
@@ -877,7 +868,7 @@
             "strategy": "name-map",
             "sources": "scripts/*.py",
             "tests": "scripts/tests/test_<stem>*.py",
-            "run": ["python3", "-I", "{targets}"]
+            "run": ["python3", "-m", "unittest", "{targets}"]
           }
         },
         {
@@ -1042,7 +1033,7 @@
             "strategy": "name-map",
             "sources": "docs/checks/*.py",
             "tests": "docs/checks/test_<stem>.py",
-            "run": ["python3", "{targets}"]
+            "run": ["python3", "-m", "unittest", "{targets}"]
           }
         }
       ],

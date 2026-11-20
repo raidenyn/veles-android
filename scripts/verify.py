@@ -41,6 +41,10 @@ RESOLVERS = (
     "playwright-chromium",
 )
 # A related strategy names exactly these fields (plus the optional `within`).
+# `related.run` expansion (design D4): a bare `{targets}` item becomes one argv item per resolved
+# target, and an item that contains `{targets}` is copied once per target with the placeholder
+# replaced -- so `--tests={targets}` produces one `--tests=<fqn>` flag per target, and
+# `python3 -m unittest {targets}` receives every target as its own argv item.
 STRATEGY_FIELDS = {
     "files-arg": ("match", "resolve", "run"),
     "name-map": ("sources", "tests", "run"),
