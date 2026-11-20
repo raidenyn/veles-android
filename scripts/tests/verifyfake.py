@@ -48,10 +48,14 @@ class FakeWait:
 
 
 class FakeGit:
-    """Injected git reads (design D3). `errors` maps a method name to an exception to raise."""
+    """Injected git reads (design D3). `errors` maps a method name to an exception to raise.
+
+    `index` is what `git ls-files -s -z` reports: path -> (mode, blob id), used by the
+    remembered-pass fingerprint (design D6).
+    """
 
     def __init__(self, diff=None, staged=None, unstaged=None, untracked=None, base=None,
-                 errors=None, commit=None):
+                 errors=None, commit=None, index=None):
         self.diff = list(diff or [])
         self.staged_paths = list(staged or [])
         self.unstaged_paths = list(unstaged or [])
@@ -59,6 +63,7 @@ class FakeGit:
         self.base = base or ZERO_SHA
         self.commit_sha = commit
         self.errors = dict(errors or {})
+        self.index = dict(index or {})
         self.calls = []
 
     def _maybe_raise(self, name):
@@ -95,6 +100,11 @@ class FakeGit:
         self.calls.append(("commit", ref))
         self._maybe_raise("commit")
         return self.commit_sha or ref
+
+    def ls_files(self):
+        self.calls.append(("ls_files",))
+        self._maybe_raise("ls_files")
+        return dict(self.index)
 
 
 class FakeRunner:
@@ -133,12 +143,13 @@ class FakeStat:
 
 
 class FakeFs:
-    """Injected filesystem: files as `path -> bytes`, plus modes and symlinks."""
+    """Injected filesystem: files as `path -> bytes`, plus modes, symlinks and stat overrides."""
 
-    def __init__(self, files=None, modes=None, links=None):
+    def __init__(self, files=None, modes=None, links=None, stats=None):
         self.files = dict(files or {})
         self.modes = dict(modes or {})
         self.links = dict(links or {})
+        self.stats = dict(stats or {})
 
     @staticmethod
     def _norm(path):
@@ -162,7 +173,7 @@ class FakeFs:
         path = self._norm(path).rstrip("/")
         prefix = path + "/"
         names = set()
-        for name in self.files:
+        for name in list(self.files) + list(self.links):
             if name.startswith(prefix):
                 names.add(name[len(prefix):].split("/", 1)[0])
         return sorted(names)
@@ -176,7 +187,7 @@ class FakeFs:
     def walk(self, top):
         top = self._norm(top).rstrip("/")
         directories = {top}
-        for name in self.files:
+        for name in list(self.files) + list(self.links):
             parts = name.split("/")
             for index in range(1, len(parts)):
                 candidate = "/".join(parts[:index])
@@ -194,11 +205,21 @@ class FakeFs:
 
     def stat(self, path):
         path = self._norm(path)
+        if path in self.stats:
+            return self.stats[path]
         if path in self.files:
             return FakeStat(mode=self.modes.get(path, 0o100644), size=len(self.files[path]))
         if self.isdir(path):
             return FakeStat(mode=self.modes.get(path, 0o40755), size=0)
         raise FileNotFoundError(path)
+
+    def lstat(self, path):
+        path = self._norm(path)
+        if path in self.stats:
+            return self.stats[path]
+        if path in self.links:
+            return FakeStat(mode=0o120777, size=len(self.links[path]))
+        return self.stat(path)
 
     def is_executable(self, path):
         """Fixture files are executable unless their recorded mode says otherwise."""

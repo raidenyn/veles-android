@@ -17,11 +17,12 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from typing import Callable, Dict, List, Optional, Tuple
 
 try:
@@ -73,6 +74,18 @@ SUMMARY_CAP = 8192
 KEEP_RUNS = 10
 LAST_RUN_VERSION = 1
 LAST_RUN_POINTER = "build/verify/last-run.json"
+# Remembered passes (design D6): the canonical document's version and the environment allowlist.
+FINGERPRINT_VERSION = 1
+PASSES_POINTER = "passes.json"
+ENV_VARS = frozenset((
+    "PATH", "HOME", "JAVA_HOME", "JAVA_OPTS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS",
+    "ANDROID_HOME", "ANDROID_SDK_ROOT", "ANDROID_NDK_HOME", "CI", "RUSTFLAGS", "RUSTC",
+))
+ENV_PREFIXES = (
+    "GRADLE_", "ORG_GRADLE_", "JAVA_TOOL_", "NODE_", "NPM_CONFIG_", "npm_config_",
+    "CARGO_", "RUSTUP_", "VELES_", "PLAYWRIGHT_",
+)
+GRADLE_USER_HOME_OPTION = "gradle.user.home"
 DEVICE_NOTE = "NOT RUN (device test; real-device rule)"
 BRANCH_ONLY_NOTE = "NOT RUN (branch gate only: %s)"
 NONE_RELATED_NOTE = "tests: none related (%s)"
@@ -117,6 +130,10 @@ class TableError(ValueError):
 
 class _DeadlineReached(Exception):
     """A filesystem walk stopped inside the run's reserved termination window (design D9)."""
+
+
+class _FingerprintUnreadable(Exception):
+    """A fingerprint read could not complete; the answer is "no hit", never an error (D6)."""
 
 
 @dataclass(frozen=True)
@@ -236,6 +253,12 @@ class Fs:
     def stat(self, path):
         return os.stat(path)
 
+    def lstat(self, path):
+        return os.lstat(path)
+
+    def islink(self, path):
+        return os.path.islink(path)
+
     def is_executable(self, path):
         return os.path.isfile(path) and os.access(path, os.X_OK)
 
@@ -295,6 +318,21 @@ class Git:
         """The full sha `ref` names, when it names a commit (design D3's base check)."""
         return self._read("rev-parse", "--verify", "--quiet",
                           ref + "^{commit}").decode("utf-8", "replace").strip()
+
+    def ls_files(self):
+        """Every index entry as path -> (mode, blob id), from `git ls-files -s -z` (design D6)."""
+        entries = {}
+        for record in self._read("ls-files", "-s", "-z").split(b"\0"):
+            if not record:
+                continue
+            meta, separator, path = record.partition(b"\t")
+            if not separator:
+                continue
+            parts = meta.decode("ascii", "replace").split()
+            if len(parts) != 3 or parts[2] != "0":
+                continue  # an unmerged entry has no stable index content
+            entries[path.decode("utf-8", "surrogateescape")] = (parts[0], parts[1])
+        return entries
 
 
 class Processes:
@@ -1083,14 +1121,499 @@ def _apply_sdk_warning(ctx, env, planned):
         node_plan.notes.append(warning)
 
 
-def run_gate(gate, base, ctx, table, cmap):
-    """One gate end to end, in the fixed order of design D1/D4/D5/D9/D10.
+# --- remembered passes (design D5, D6) -------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FingerprintInput:
+    """Everything that decided one node's result, ready to be hashed (design D6).
+
+    `generated` maps a consumed output directory (repository-relative) to its snapshot digest;
+    a `None` value means the snapshot could not be taken, which makes the node non-reusable.
+    """
+
+    gate: str
+    node: str
+    base: str
+    changed: List[str]
+    node_plan: NodePlan
+    entry_digest: str
+    env: Dict[str, str]
+    config_digest: Optional[str]
+    resolved: Dict[str, str]
+    local_properties: Optional[str]
+    generated: Dict[str, str]
+
+
+def _sha256(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def _digest_json(document):
+    """sha256 over canonical JSON: UTF-8, sorted keys, the separators design D6 names."""
+    encoded = json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _sha256(encoded)
+
+
+def _mode_text(mode):
+    return mode if isinstance(mode, str) else format(int(mode), "o")
+
+
+def _component_map(ctx):
+    """The component map the owner filter needs; an unreadable map is "no hit" (D6)."""
+    try:
+        return components.load_map(os.path.join(ctx.repo, ".github", "components.json"))
+    except (OSError, ValueError):
+        return None
+
+
+def _gradle_user_home(env):
+    """Gradle's user home, or None when `GRADLE_OPTS`/`JAVA_OPTS` redirect it (design D6)."""
+    for name in ("GRADLE_OPTS", "JAVA_OPTS"):
+        if GRADLE_USER_HOME_OPTION in (env.get(name) or ""):
+            return None
+    home = (env.get("GRADLE_USER_HOME") or "").strip()
+    if home:
+        return home
+    user = (env.get("HOME") or "").strip() or os.path.expanduser("~")
+    return os.path.join(user, ".gradle")
+
+
+def _env_vars(env):
+    """The allowlisted build-affecting variables, present ones only (design D6)."""
+    names = sorted(
+        name for name in env
+        if name in ENV_VARS or any(name.startswith(prefix) for prefix in ENV_PREFIXES)
+    )
+    return dict((name, env[name]) for name in names)
+
+
+def _optional_digest(ctx, path):
+    """sha256 of an optional file: None when absent, `_UNREADABLE` when it cannot be read."""
+    if not ctx.fs.exists(path):
+        return None
+    try:
+        return _sha256(ctx.fs.read_bytes(path))
+    except (OSError, KeyError):
+        return _UNREADABLE
+
+
+_UNREADABLE = object()
+
+
+def _files_digest(node, changed, ctx):
+    """sha256 of the sorted `[path, mode, id]` list for the paths that can select the node.
+
+    A tracked, unmodified file contributes its index mode and blob id (`git ls-files -s -z`); a
+    modified, staged or untracked one its working-tree mode and content sha256; a deleted one
+    `deleted` (design D6).
+    """
+    cmap = _component_map(ctx)
+    if cmap is None:
+        return None
+    try:
+        index = ctx.git.ls_files()
+    except (GitError, AttributeError):
+        return None
+    if not isinstance(index, dict):
+        return None
+    entries = []
+    try:
+        for path in sorted(set(index) | set(changed)):
+            owners = components.owner_nodes(path, cmap)
+            if owners is not None and node not in owners:
+                continue
+            full = _abs_path(ctx, path)
+            if path in changed:
+                if not ctx.fs.exists(full):
+                    entries.append([path, "deleted", None])
+                    continue
+                info = ctx.fs.lstat(full)
+                entries.append([path, _mode_text(info.st_mode),
+                                _sha256(ctx.fs.read_bytes(full))])
+            else:
+                mode, blob = index[path]
+                entries.append([path, mode, blob])
+    except (OSError, KeyError):
+        return None
+    return _digest_json(entries)
+
+
+def _stat_value(info):
+    """The stat-mode input digest: device, inode, mode, size and status-change time (D6)."""
+    return _digest_json([getattr(info, "st_dev", 0), getattr(info, "st_ino", 0),
+                         info.st_mode, info.st_size, getattr(info, "st_ctime_ns", 0)])
+
+
+def _input_walk(ctx, full, label):
+    """`(label, stat)` entries for every file and directory under one declared input."""
+    yield label, ctx.fs.lstat(full)
+    if not ctx.fs.isdir(full):
+        return
+    for dirpath, dirnames, filenames in ctx.fs.walk(full):
+        for name in dirnames:
+            item = os.path.join(dirpath, name)
+            yield _join_label(label, full, item), ctx.fs.lstat(item)
+        for name in filenames:
+            item = os.path.join(dirpath, name)
+            yield _join_label(label, full, item), ctx.fs.lstat(item)
+        if _past_cutoff(ctx):
+            raise _DeadlineReached()
+
+
+def _input_files(ctx, full, label):
+    """`(label, stat, bytes)` for every regular file under one declared content input."""
+    if not ctx.fs.isdir(full):
+        yield label, ctx.fs.stat(full), ctx.fs.read_bytes(full)
+        return
+    for dirpath, _dirnames, filenames in ctx.fs.walk(full):
+        for name in filenames:
+            item = os.path.join(dirpath, name)
+            if ctx.fs.islink(item):
+                raise _FingerprintUnreadable()
+            yield _join_label(label, full, item), ctx.fs.stat(item), ctx.fs.read_bytes(item)
+        if _past_cutoff(ctx):
+            raise _DeadlineReached()
+
+
+def _join_label(label, root, item):
+    relative = os.path.relpath(item, root).replace(os.sep, "/")
+    return label.rstrip("/") + "/" + relative if relative != "." else label
+
+
+def _inputs_digest(node_plan, env, ctx):
+    """sha256 of the sorted `[path, mode, size, digest]` input list (design D6)."""
+    entries = {}
+    home = _UNREADABLE
+    try:
+        for planned in node_plan.steps:
+            for entry in planned.step.inputs:
+                path = entry.get("path")
+                if not path:
+                    continue
+                mode = entry.get("mode", "content")
+                if path.startswith(GRADLE_HOME_PREFIX):
+                    if home is _UNREADABLE:
+                        home = _gradle_user_home(env)
+                    if home is None:
+                        return None  # gradle.user.home is redirected: not reusable this run
+                    rest = path[len(GRADLE_HOME_PREFIX):]
+                    full = os.path.normpath(os.path.join(home, rest))
+                    label = GRADLE_HOME_PREFIX + rest
+                else:
+                    full = _abs_path(ctx, path)
+                    label = os.path.normpath(path).replace(os.sep, "/")
+                if not ctx.fs.exists(full):
+                    continue
+                if mode == "stat":
+                    for item, info in _input_walk(ctx, full, label):
+                        entries[(item, "stat")] = [
+                            item, "stat", info.st_size, _stat_value(info)]
+                else:
+                    for item, info, data in _input_files(ctx, full, label):
+                        # Content mode covers the file's mode, size and content (design D6).
+                        entries[(item, "content")] = [
+                            item, "content", info.st_size,
+                            _digest_json([_mode_text(info.st_mode), _sha256(data)])]
+    except (_DeadlineReached, _FingerprintUnreadable, OSError, KeyError):
+        return None
+    return _digest_json([entries[key] for key in sorted(entries)])
+
+
+def _fingerprint_parts(fi, ctx):
+    """The hashed `files` and `inputs` parts, or None when the node is not reusable (D6)."""
+    if any(planned.step.reuse is False for planned in fi.node_plan.steps):
+        return None
+    if any(value is None for value in fi.generated.values()):
+        return None
+    files = _files_digest(fi.node, fi.changed, ctx)
+    if files is None:
+        return None
+    inputs = _inputs_digest(fi.node_plan, fi.env, ctx)
+    if inputs is None:
+        return None
+    return files, inputs
+
+
+def _fingerprint_document(fi, files, inputs):
+    document = {
+        "v": FINGERPRINT_VERSION,
+        "gate": fi.gate,
+        "node": fi.node,
+        "base": fi.base,
+        "plan": [[planned.step.id, planned.step.cwd, list(planned.argv)]
+                 for planned in fi.node_plan.steps],
+        "entry": fi.entry_digest,
+        "env": {
+            "vars": _env_vars(fi.env),
+            "config": fi.config_digest,
+            "resolved": dict(fi.resolved),
+            "local_properties": fi.local_properties,
+        },
+        "files": files,
+        "inputs": inputs,
+        "generated": dict(fi.generated),
+    }
+    return _digest_json(document)
+
+
+def fingerprint(fi, ctx):
+    """The remembered-pass key (design D6), or None when the node is not reusable this run."""
+    parts = _fingerprint_parts(fi, ctx)
+    if parts is None:
+        return None
+    return _fingerprint_document(fi, parts[0], parts[1])
+
+
+def snapshot_tree(path, ctx):
+    """sha256 over one generated output tree, or None for a link, special file or failed read.
+
+    The digest is over the sorted `[relative path, mode, sha256]` list of every regular file
+    (design D6); an absent directory is None, so a removed output never matches.
+    """
+    if not ctx.fs.exists(path) or not ctx.fs.isdir(path) or ctx.fs.islink(path):
+        return None
+    entries = []
+    try:
+        for dirpath, dirnames, filenames in ctx.fs.walk(path):
+            for name in list(dirnames) + list(filenames):
+                if ctx.fs.islink(os.path.join(dirpath, name)):
+                    return None
+            for name in filenames:
+                item = os.path.join(dirpath, name)
+                info = ctx.fs.stat(item)
+                if not stat.S_ISREG(info.st_mode):
+                    return None
+                relative = os.path.relpath(item, path).replace(os.sep, "/")
+                entries.append([relative, info.st_mode, _sha256(ctx.fs.read_bytes(item))])
+            if _past_cutoff(ctx):
+                raise _DeadlineReached()
+    except (_DeadlineReached, OSError, KeyError):
+        return None
+    entries.sort()
+    return _digest_json(entries)
+
+
+class Passes:
+    """`build/verify/passes.json`: `{"<gate>/<node>": "<digest>"}`, only the hook reads it (D6).
+
+    Every read that cannot complete is a miss; a failed write is best-effort and never turns a
+    pass into a failure.
+    """
+
+    def __init__(self, path):
+        self.path = path
+
+    def _read(self):
+        document = _read_json(self.path)
+        if not isinstance(document, dict):
+            return {}
+        return dict((key, value) for key, value in document.items()
+                    if isinstance(key, str) and isinstance(value, str))
+
+    @staticmethod
+    def _key(gate, node):
+        return "%s/%s" % (gate, node)
+
+    def get(self, gate, node):
+        return self._read().get(self._key(gate, node))
+
+    def put(self, gate, node, digest):
+        document = self._read()
+        document[self._key(gate, node)] = digest
+        try:
+            _write_json(self.path, document)
+        except OSError:
+            pass
+
+    def drop(self, gate, node):
+        document = self._read()
+        key = self._key(gate, node)
+        if key not in document:
+            return
+        del document[key]
+        try:
+            _write_json(self.path, document)
+        except OSError:
+            pass
+
+
+def entry_digest(table, node):
+    """sha256 of the canonical node entry with its producers and requirements (design D6)."""
+    entry = table.nodes.get(node)
+    if entry is None:
+        return None
+    requirements = {}
+    producers = {}
+
+    def add(step):
+        for req_id in step.requires:
+            if req_id in requirements:
+                continue
+            requirement = table.requirements.get(req_id)
+            if requirement is None:
+                return False
+            requirements[req_id] = requirement
+            if requirement.get("kind") == "generated":
+                producer = table.producers.get(requirement.get("producer"))
+                if producer is None:
+                    return False
+                if producer.id not in producers:
+                    producers[producer.id] = asdict(producer)
+                    if not add(producer):
+                        return False
+        return True
+
+    commands = []
+    for step in entry.commands:
+        commands.append(asdict(step))
+        if not add(step):
+            return None
+    return _digest_json({"node": node, "commands": commands,
+                         "producers": producers, "requirements": requirements})
+
+
+def _fingerprint_input(node, gate, sel, node_plan, table, ctx, env, resolved, generated):
+    """Build one `FingerprintInput`, or None when a file it needs cannot be read (D6)."""
+    config = _optional_digest(
+        ctx, os.path.join(os.path.realpath(ctx.common_dir), "veles-verify", "tools.json"))
+    if config is _UNREADABLE:
+        return None
+    local = _optional_digest(ctx, os.path.join(ctx.repo, "android", "local.properties"))
+    if local is _UNREADABLE:
+        return None
+    entry = entry_digest(table, node)
+    if entry is None:
+        return None
+    return FingerprintInput(
+        gate=gate,
+        node=node,
+        base=sel.base,
+        changed=list(sel.files),
+        node_plan=node_plan,
+        entry_digest=entry,
+        env=dict(env),
+        config_digest=config,
+        resolved=dict(resolved),
+        local_properties=local,
+        generated=dict(generated),
+    )
+
+
+def _probe_resolved(table, node_plan, ctx, env):
+    """`requirement id -> "<real path>@<version output>"` for every planned tool (D6/D7)."""
+    resolved = {}
+    for planned in node_plan.steps:
+        for req_id in planned.step.requires:
+            requirement = table.requirements.get(req_id)
+            if requirement is None or requirement.get("kind") != "tool":
+                continue
+            if req_id in resolved:
+                continue
+            outcome, value = probe(req_id, requirement, ctx, env, ctx.runner.run)
+            if outcome.kind != "ok":
+                return None
+            if value is not None:
+                resolved[req_id] = value
+    return resolved
+
+
+def _consumed_outputs(table, node_plan):
+    """The generated output directories the node's planned steps consume, in plan order."""
+    paths = []
+    for planned in node_plan.steps:
+        for req_id in planned.step.requires:
+            requirement = table.requirements.get(req_id) or {}
+            if requirement.get("kind") == "generated" and requirement["path"] not in paths:
+                paths.append(requirement["path"])
+    return paths
+
+
+def remembered(node, gate, sel, plan, table, ctx):
+    """The hook-only lookup (design D6): True when this node's stored pass still matches.
+
+    It re-probes the node's requirements, takes the generated digests from the outputs as they
+    are now and compares the rebuilt key with `Passes.get`. A probe the runner cut off returns
+    `(False, (<step id>, <timeout Outcome>))`; any other read that cannot finish is a plain miss.
+    """
+    node_plan = plan.nodes.get(node)
+    if node_plan is None:
+        return False, None
+    try:
+        env = _effective_environment(ctx)
+    except ConfigError:
+        return False, None
+    resolved = {}
+    probed = set()
+    for planned in node_plan.steps:
+        for req_id in planned.step.requires:
+            if req_id in probed:
+                continue
+            probed.add(req_id)
+            requirement = table.requirements.get(req_id)
+            if requirement is None:
+                return False, None
+            outcome, value = probe(req_id, requirement, ctx, env, ctx.runner.run)
+            if outcome.kind == "timeout":
+                return False, (planned.step.id, outcome)
+            if outcome.kind != "ok":
+                return False, None
+            if value is not None:
+                resolved[req_id] = value
+    generated = {}
+    for relative in _consumed_outputs(table, node_plan):
+        digest = snapshot_tree(_abs_path(ctx, relative), ctx)
+        if digest is None:
+            return False, None
+        generated[relative] = digest
+    fi = _fingerprint_input(node, gate, sel, node_plan, table, ctx, env, resolved, generated)
+    if fi is None:
+        return False, None
+    digest = fingerprint(fi, ctx)
+    if digest is None:
+        return False, None
+    stored = Passes(os.path.join(_verify_dir(ctx), PASSES_POINTER)).get(gate, node)
+    return (stored is not None and stored == digest), None
+
+
+def _record_pass(node, gate, base, ctx, cmap, node_plan, table, env, resolved, generated,
+                 pre_source):
+    """Write a pass only when fresh observations reproduce the pre-run source key (D6)."""
+    if pre_source is None or resolved is None:
+        return
+    if any(value is None for value in generated.values()):
+        return
+    try:
+        fresh = select(ctx.git, cmap, base)
+    except SelectionError:
+        return
+    fresh_input = _fingerprint_input(node, gate, fresh, node_plan, table, ctx, env,
+                                    resolved, {})
+    if fresh_input is None:
+        return
+    parts = _fingerprint_parts(fresh_input, ctx)
+    if parts is None:
+        return
+    if _fingerprint_document(fresh_input, parts[0], parts[1]) != pre_source:
+        return
+    digest = _fingerprint_document(replace(fresh_input, generated=dict(generated)),
+                                   parts[0], parts[1])
+    Passes(os.path.join(_verify_dir(ctx), PASSES_POINTER)).put(gate, node, digest)
+
+
+def run_gate(gate, base, ctx, table, cmap, use_passes=False):
+    """One gate end to end, in the fixed order of design D1/D4/D5/D6/D9/D10.
 
     Take the run lock (tried once; held is contention) -> `cleanup_orphans` -> `select` -> `plan`
     (resolvers) -> per node in table order, per step: probe, run, classify, stopping the node at
     a command `FAIL` -> `write_last_run` -> release the lock. Once `deadline - 45` has passed no
     step, probe or resolver starts: it and every later step are `not_reached`, which is reported
     and makes the run incomplete but is not a problem.
+
+    `use_passes` is true only in hook mode: a node whose stored key still matches is skipped as
+    `PASS (remembered)`. A task-gate pass may be recorded; `--branch` never writes, and a manual
+    task-gate run never reads. A record is written only when fresh observations after the run
+    reproduce the source-side key computed before it.
     """
     started = ctx.clock.now()
     outcome = RunOutcome()
@@ -1134,6 +1657,9 @@ def run_gate(gate, base, ctx, table, cmap):
             write_last_run(ctx, {}, [], elapsed_s=ctx.clock.now() - started)
             return outcome
 
+        passes = Passes(os.path.join(_verify_dir(ctx), PASSES_POINTER))
+        lookup = bool(use_passes) and gate == "task"
+        recordable = gate == "task"
         step_records = []
         number = {}
         for node, entry in table.nodes.items():
@@ -1145,6 +1671,50 @@ def run_gate(gate, base, ctx, table, cmap):
             ran = failed = unexpected = not_reached = stopped = False
             producer_outcomes = {}
             step_by_id = dict((command.id, command) for command in entry.commands)
+
+            if lookup:
+                hit, failure = remembered(node, gate, selection_result, planned, table, ctx)
+                if failure is not None:
+                    # A requirement probe the runner cut off is that step's blocking timeout
+                    # (design D6/D9/D12).
+                    step_id, failure_outcome = failure
+                    step = step_by_id.get(step_id) or table.producers.get(step_id)
+                    rerun = _step_rerun(step, step.run) if step is not None else None
+                    failed = True
+                    result.failures.append((step_id, failure_outcome, rerun))
+                    step_records.append({
+                        "id": step_id,
+                        "status": failure_outcome.kind,
+                        "elapsed_s": float(failure_outcome.elapsed_s or 0.0),
+                        "rerun": rerun,
+                        "log": failure_outcome.log,
+                    })
+                    outcome.results[node] = _finish_node(
+                        result, entry, failed, unexpected, not_reached, ran)
+                    passes.drop(gate, node)
+                    continue
+                if hit:
+                    result.status = "PASS (remembered)"
+                    outcome.results[node] = result
+                    continue
+
+            # The source side of a possible record is hashed before the run, then again from
+            # fresh observations after it (design D6's stability rule). A plan with any
+            # `"reuse": false` step is never recordable, so it needs no hashing at all.
+            record_node = recordable and all(
+                planned.step.reuse is not False for planned in node_plan.steps)
+            pre_source = None
+            resolved_pre = None
+            if record_node:
+                resolved_pre = _probe_resolved(table, node_plan, ctx, env)
+                if resolved_pre is not None:
+                    pre_input = _fingerprint_input(
+                        node, gate, selection_result, node_plan, table, ctx, env,
+                        resolved_pre, {})
+                    if pre_input is not None:
+                        pre_source = fingerprint(pre_input, ctx)
+            generated = {}
+            snapshots_bad = False
 
             # A resolver that did not complete is that test's result; the node keeps its other
             # steps (design D4). One the reserve stopped before it started is `not_reached`.
@@ -1194,6 +1764,21 @@ def run_gate(gate, base, ctx, table, cmap):
                         "rerun": rerun, "log": None})
                     continue
 
+                if record_node:
+                    for req_id in step.requires:
+                        requirement = table.requirements[req_id]
+                        if requirement.get("kind") != "generated":
+                            continue
+                        relative = requirement["path"]
+                        digest = snapshot_tree(_abs_path(ctx, relative), ctx)
+                        if digest is None:
+                            snapshots_bad = True
+                        elif relative in generated and generated[relative] != digest:
+                            # D5/D6: two consumers saw different output in one run.
+                            snapshots_bad = True
+                        else:
+                            generated[relative] = digest
+
                 blocked = _consumer_blocked(table, step, ctx, producer_outcomes)
                 if blocked is not None:
                     step_outcome = blocked
@@ -1231,6 +1816,14 @@ def run_gate(gate, base, ctx, table, cmap):
                 result, entry, failed, unexpected, not_reached, ran)
             if not_reached:
                 outcome.incomplete = True
+            if recordable:
+                status = outcome.results[node].status
+                if status == "PASS" and not snapshots_bad:
+                    _record_pass(node, gate, base, ctx, cmap, node_plan, table, env,
+                                 resolved_pre, generated, pre_source)
+                elif status in ("FAIL", "NOT RUN"):
+                    # D6: a node's record is deleted on its FAIL or NOT RUN.
+                    passes.drop(gate, node)
 
         for node in sorted(outcome.results):
             for step_id, step_outcome, _rerun in outcome.results[node].failures:
