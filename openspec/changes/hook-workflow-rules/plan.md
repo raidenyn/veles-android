@@ -70,7 +70,8 @@ OpenSpec CLI 2.x.
   with `stop_hook_active: true`) prints the same with `CANARY-2-<random>`, run 3 and later print nothing (pass).
 - [x] **Step 2:** Run a Claude Code session there with a trivial prompt. Expected: the model quotes canary 1,
   continues, then quotes canary 2 (a block with `stop_hook_active` true is obeyed). Reset the counter, start a
-  run and press Esc: `stop-log.jsonl` gains no line. Record version and transcript excerpts in `spike.md`.
+  run and interrupt it headless (SIGINT; Esc in the TUI stays unverified, `spike.md` §1.3): `stop-log.jsonl`
+  gains no line. Record version and transcript excerpts in `spike.md`.
 - [x] **Step 3:** In a disposable OpenCode setup, add a throwaway plugin that answers the session's turn-end event
   (`session.idle` is absent in 2.3.2; the run used `session.execution.succeeded`) for a session with no parent by
   calling the session's synthetic-prompt API with a canary and resume enabled. Find the resuming form and whether it
@@ -266,13 +267,15 @@ Change `{name}` has an apply receipt and no finalize receipt. Run verify if it h
 **Interfaces:**
 - Consumes: the resuming call form and the event names from Task 1's `spike.md` (`session.execution.succeeded`,
   `interrupted`, `failed`; child sessions carry `parentID`).
-- Produces: a turn-end handler that sends `{event: "stop", session, cwd}` for root sessions only, ignores
-  `interrupted`/`failed`, sends a `block` text as a resuming synthetic prompt
+- Produces: a turn-end handler that sends `{event: "stop", session, cwd}` for root sessions only (root/child is
+  tested with `ctx.session.get({sessionID}).parentID`; a failed or timed-out `session.get` sends nothing, fail
+  open), ignores `interrupted`/`failed`, sends a `block` text as a resuming synthetic prompt
   (`ctx.session.synthetic({sessionID, id, text, resume: true})`), and on failure sends `void` with the stop entry's
   write id.
 
 - [ ] **Step 1: Write failing tests** (fake engine and fake host, injected `setTimer`/`clearTimer`):
   `succeeded on root session sends stop and resumes with block text`, `succeeded on child session sends nothing`,
+  `session get failure sends nothing`, `second success while one is in flight sends nothing`,
   `interrupted sends nothing`, `failed sends nothing`, `failed synthetic prompt voids the stop entry`,
   `context response at a stop moment is ignored`, `engine timeout at a stop moment does nothing`,
   `missing python at a stop moment does nothing`, `block for a non-stop event is rejected as a malformed response`,
@@ -393,7 +396,8 @@ In the frontmatter string each `\` is doubled, as in `repo-commit-types.md`, e.g
   compaction keeps the record; `git push` denied once, not after `openspec instructions finalize`. Then an
   apply-to-finalize run on a tiny disposable change; record whether the agent finalized without asking, and its
   reaction to the config guidance.
-- [ ] **Step 4:** OpenCode, outcomes 1–7; record.
+- [ ] **Step 4:** OpenCode, outcomes 1–7, including an interactive TUI abort (Esc; record it unverified if the TUI
+  cannot produce the event); record.
 - [ ] **Step 5:** Any failure: stop and ask the owner before continuing.
 - [ ] **Step 6:** Update the verified versions in `docs/hook-delivered-rules.md`; commit
   `docs(agents): record hook-workflow-rules verification`; state tools, versions and results in the completion report and the PR.

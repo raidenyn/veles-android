@@ -3,8 +3,8 @@ Every unit test injects its clock, `sleep` and timers: no real waits and no wall
 
 ## 1. Spike the stop gate (design §7)
 
-- [x] 1.1 Claude Code: in a disposable clone, add a throwaway `Stop` hook that blocks with a canary reason; record that the model quotes and acts on it, that the next stop reports `stop_hook_active` true, that a second block sent then is obeyed, and that a user interrupt fires no `Stop`; record the version
-- [x] 1.2 OpenCode: in a disposable clone, a throwaway plugin answers a root session's turn-end event (`session.idle` is absent in 2.3.2; it uses `session.execution.succeeded`) with a resuming synthetic prompt carrying a canary; record that the model continues in the same session, how a child session's success, an `interrupted` execution and a `failed` execution are told apart, and the resuming call form; record the version
+- [x] 1.1 Claude Code: in a disposable repo, add a throwaway `Stop` hook that blocks with a canary reason; record that the model quotes and acts on it, that the next stop reports `stop_hook_active` true, that a second block sent then is obeyed, and that a headless interrupt (SIGINT; interactive Esc unverified) fires no `Stop`; record the version
+- [x] 1.2 OpenCode: in a disposable repo, a throwaway plugin answers a root session's turn-end event (`session.idle` is absent in 2.3.2; it uses `session.execution.succeeded`) with a resuming synthetic prompt carrying a canary; record that the model continues in the same session, how a child session's success, an `interrupted` execution and a `failed` execution are told apart, and the resuming call form; record the version
 - [x] 1.3 If either spike fails, stop and ask the owner (moments-only for that tool, or hold) before any further task
 
 ## 2. Engine: grammar, triggers and state (design §2, §3 grammar, §4)
@@ -27,7 +27,7 @@ Every unit test injects its clock, `sleep` and timers: no real waits and no wall
 ## 4. Hosts (design §3 OpenCode, hooked-rule-delivery Host adapters)
 
 - [ ] 4.1 `.claude/settings.json`: add the `Stop` hook with the engine command and `timeout: 5`; no `SubagentStop`
-- [ ] 4.2 OpenCode plugin: map a root session's `session.execution.succeeded` (`interrupted` and `failed` never map) to `stop`; send a `block` as a resuming synthetic prompt (the form task 1.2 found); `void` the stop entry when it fails; accept `block` only for `stop` and ignore any other response at a stop moment; do nothing at a stop moment when the engine times out or Python is missing; tests in `index.test.mjs` with injected timers
+- [ ] 4.2 OpenCode plugin: map a root session's `session.execution.succeeded` (`interrupted` and `failed` never map; a failed or timed-out `session.get` sends nothing) to `stop`; send a `block` as a resuming synthetic prompt (the form task 1.2 found); `void` the stop entry when it fails; accept `block` only for `stop` and ignore any other response at a stop moment; do nothing at a stop moment when the engine times out or Python is missing; tests in `index.test.mjs` with injected timers
 
 ## 5. Move the rules (design §1, §8)
 
@@ -57,6 +57,6 @@ between.
 - [ ] 8.1 Run the checks of every node `scripts/components.py changed` selects (at least `scripts` and `docs`: `./gradlew scriptsTest`, `node --test scripts/opencode-hooked-rules/index.test.mjs`, the agent-file check and its unit tests, `openspec validate --all`)
 - [ ] 8.2 Final live run in Claude Code of outcomes 1–6 of `hooked-rule-delivery`; record the version and results
 - [ ] 8.3 Final live run in Claude Code of outcome 7 (stop gate, push gate, apply-to-finalize) on a disposable change; record results
-- [ ] 8.4 Final live run in OpenCode of outcomes 1–7; record the version and results
+- [ ] 8.4 Final live run in OpenCode of outcomes 1–7, including an interactive TUI abort (Esc, recorded unverified if the TUI cannot produce the event); record the version and results
 - [ ] 8.5 If any outcome fails in a tool, stop and ask the owner (pointer-only or moments-only for that tool, or hold) before continuing
 - [ ] 8.6 Update the verified tools and versions in `docs/hook-delivered-rules.md`; state what ran, on which tool and version, in the completion report and the PR

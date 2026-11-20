@@ -1,7 +1,8 @@
 ## ADDED Requirements
 
 ### Requirement: Stop gate
-The engine SHALL support a third trigger kind, the **stop gate**, for the main context only.
+The engine SHALL support a third trigger kind, the **stop gate**, for the main context only. A **stop moment** means
+a `stop` event: Claude Code's `Stop`, or an OpenCode root session's `session.execution.succeeded`.
 
 **Grammar.** A hooked rule MAY declare `stops`: a flat list of double-quoted predicate names. Each name MUST be in
 the engine's predicate registry; an unknown name MUST be an error of the agent-file check. The registry SHALL hold
@@ -518,7 +519,9 @@ outcome 7). All of these outcomes MUST then be run on the finished implementatio
      a failing verify, a finalized or archived change and an unrelated session pass; receipts found only in a linked
      worktree block; a compaction does not reset a record; `git push` is denied once with the pre-push rule and not
      after `openspec instructions finalize`; in Claude Code, a stall after a passing verify within the same
-     continued turn (`stop_hook_active` true) is blocked and the agent continues.
+     continued turn (`stop_hook_active` true) is blocked and the agent continues; in OpenCode, an interactive abort
+     in the TUI (Esc) sends no `stop`, or is recorded unverified as an accepted residual if the TUI cannot produce
+     the interrupt event.
    - An apply-to-finalize run on a disposable change shows the agent going on to finalize without asking, or the
      stop gate catching it; whether the agent reports the config guidance as conflicting with the apply skill's
      ending is recorded.

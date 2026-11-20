@@ -26,8 +26,8 @@ reinforcement.
 1. **A stop gate (a new trigger kind).** When the main agent tries to end its turn while a change it worked on in
    this session has an apply receipt, no failing verify and no finalize receipt, the engine blocks the stop once per
    phase and shows the closeout rule with a line naming the change. Claude Code: a `Stop` hook returning
-   `decision: block`. OpenCode: the plugin answers the host's turn-end event (`session.idle` if emitted;
-   `session.execution.succeeded` in 2.3.2) with a synthetic prompt carrying the text; this
+   `decision: block`. OpenCode: the plugin uses the host's turn-end event, `session.execution.succeeded` (2.3.2
+   does not emit `session.idle`), with a synthetic prompt carrying the text; this
    is spiked first, and if it does not work the owner decides whether OpenCode is moments-only for the stop gate.
 2. **Earlier moments** for the closeout rule: the apply, verify, continue and archive skills and the
    `openspec instructions verify|finalize` commands.
