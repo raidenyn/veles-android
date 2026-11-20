@@ -1,7 +1,8 @@
 # Cacheability audit — every script-registered task
 
-Task 4.5/5.4, design D5. Audited files: `build.gradle.kts`, `rust/build.gradle.kts`,
-`android/build.gradle.kts`, `android/app/build.gradle.kts`, `android/git-version.gradle.kts`,
+Task 4.5/5.4, design D5; refreshed after Task 7 for the `rustWasm` fallback (`190ceaff`). Audited files:
+`build.gradle.kts`, `rust/build.gradle.kts`, `android/build.gradle.kts`,
+`android/app/build.gradle.kts`, `android/git-version.gradle.kts`,
 `.githooks/install-hooks.gradle.kts` (the last one is applied by both the root and the Android build;
 it registers one task).
 
@@ -20,10 +21,12 @@ Gradle 9.5.0, `BUILD SUCCESSFUL`, exit 0). The three expanded helpers are
 
 Mechanisms are one of:
 
-- **cacheable product** — `CargoBuildTask`, the only `@CacheableTask` in the repository. Exactly three
-  tasks use it: `rustHostJni`, `rustWasm`, `rustJni` (spec *Cacheable product builds*).
+- **cacheable product** — `CargoBuildTask`, the only `@CacheableTask` in the repository. Two tasks use it
+  as a product: `rustHostJni` and `rustJni` (spec *Only the Rust products are cacheable, with a
+  relocatable key*). `rustWasm` uses the same class but carries an always-true `doNotCacheIf` since the
+  relocation experiment failed (Task 7.3), so it is non-cacheable.
 - **typed, non-cacheable** — a task class annotated `@DisableCachingByDefault(because = …)`.
-- **`doNotCacheIf(<reason>)`** — an ad-hoc `Exec`/`DefaultTask` that declares the reason inline.
+- **`doNotCacheIf(<reason>)`** — a task that declares the reason inline.
 - **`Sync`/`Copy`/`Delete`** — a never-cached Gradle type.
 
 Plugin-provided tasks (AGP, Kotlin, Java, Spotless, `base` lifecycle) are not script-registered and keep
@@ -100,7 +103,7 @@ The full list matches `./gradlew tasks --all`.
 | Task | Mechanism | Reason |
 | --- | --- | --- |
 | `rustHostJni` | `CargoBuildTask` (`@CacheableTask`) | **cacheable product**: path-free key (sources RELATIVE, cargo args, rustc version, host identity, `cc --version`), outputs `build/rust/host-jni`; refused when the inherited environment or a cargo config can change the output, and on Windows where the MSVC linker is not probed |
-| `rustWasm` | `CargoBuildTask` (`@CacheableTask`) | **cacheable product**: path-free key (sources RELATIVE, wasm-pack args, rustc version, `toolchain-tools.toml`), outputs the WASM package; same inherited-environment/cargo-config refusal |
+| `rustWasm` | `doNotCacheIf` on `CargoBuildTask` | **non-cacheable** since `190ceaff`: wasm-pack's `pkg/.gitignore` is lost on cache restore, so a restored package lacks a file a fresh build writes; relocation experiment in `evidence/cache-experiments.md` (7.3) |
 | `rustJni` | `CargoBuildTask` (`@CacheableTask`) | **cacheable product**: path-free key (sources RELATIVE, cargo-ndk args, rustc version, NDK version, `toolchain-tools.toml`), outputs `build/rust/jniLibs`; same inherited-environment/cargo-config refusal |
 | `rustToolchainCheck` | `ToolchainCheckTask`, typed non-cacheable | probes the host toolchain |
 | `installCargoNdk`, `installWasmPack`, `installWasmBindgenCli` | `CargoInstallTask`, typed non-cacheable | downloads crates from the network |
@@ -148,9 +151,11 @@ declared cacheability; `connectedDebugAndroidTest` is device-bound and belongs t
 
 ## Result
 
-Every script-registered task is accounted for: the three `CargoBuildTask` products (`rustHostJni`,
-`rustWasm`, `rustJni`), a typed class or `doNotCacheIf` reason carrying its `because`/reason string, or a
-`Sync`/`Delete`. The only script-configured task without its own marker is the `base` lifecycle `check`,
-which has no action and no outputs and is not cacheable. Every `Test` the script registers
-(`protocolJvmTest`) is explicitly excluded from the build cache because it loads a native library Gradle
-cannot key. No task relies on the implicit "has outputs" default without a stated reason.
+Every script-registered task is accounted for: the two cacheable `CargoBuildTask` products (`rustHostJni`,
+`rustJni`), a typed class or `doNotCacheIf` reason carrying its `because`/reason string, or a
+`Sync`/`Delete`. `rustWasm` is a `CargoBuildTask` made non-cacheable by its `doNotCacheIf` after the
+relocation experiment (`evidence/cache-experiments.md` 7.3). The only script-configured task without its
+own marker is the `base` lifecycle `check`, which has no action and no outputs and is not cacheable.
+Every `Test` the script registers (`protocolJvmTest`) is explicitly excluded from the build cache because
+it loads a native library Gradle cannot key. No task relies on the implicit "has outputs" default without
+a stated reason.
