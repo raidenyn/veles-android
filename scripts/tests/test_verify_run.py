@@ -571,6 +571,37 @@ class ReportTest(RunFixture):
         self.assertTrue(any("build/verify/last-run.json" in line for line in lines))
         self.assertEqual(exit_code(results, []), 2)
 
+    def test_failure_details_win_the_budget_over_notes(self):
+        # Important 1: many small notes can fill the cap on their own. Failure details are what the
+        # spec requires, so the fix and the re-run command survive and the notes are dropped.
+        notes = ["tests: none related (path/%04d/source.py)" % number
+                 for number in range(1, 401)]
+        fix = "run `./gradlew installCargoDeny` and put its bin directory on PATH"
+        results = {
+            "android": NodeResult("PASS", None, notes, []),
+            "supply-chain": NodeResult("NOT RUN", "cargo-deny is required", [], [
+                failure("supply-chain.supply-chain",
+                        Outcome("not_run", fix=fix,
+                                log=self.log_path("supply-chain.supply-chain"),
+                                error="path-tool: cargo-deny is required (any version)\nfix: " + fix),
+                        "cd . && verify/verify-supply-chain.sh")]),
+            "web-extension": NodeResult("FAIL", None, [], [
+                failure("web-extension.lint",
+                        Outcome("fail", code=1, tail=["npm error lint"],
+                                log=self.log_path("web-extension.lint")),
+                        "cd web-extension && npm run lint")]),
+        }
+        text = render(results, [])
+        self.assertLessEqual(len(text.encode("utf-8")), 8192)
+        lines = text.splitlines()
+        for node in ("android", "supply-chain", "web-extension"):
+            self.assertTrue(any(line.startswith("%s:" % node) for line in lines), node)
+        self.assertIn(fix, text)
+        self.assertIn("cd web-extension && npm run lint", text)
+        self.assertTrue(any("build/verify/last-run.json" in line for line in lines))
+        self.assertNotIn(notes[-1], text)
+        self.assertEqual(exit_code(results, []), 1)
+
     def test_missing_tool_exit_2(self):
         # D10: an unexpected NOT RUN is exit 2, and its fix is in the summary.
         fix = "install a JDK 21 and run config set java_home"

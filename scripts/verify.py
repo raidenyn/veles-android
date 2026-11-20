@@ -814,10 +814,10 @@ def render(results, errors, cap=SUMMARY_CAP):
     """The run summary (design D10): a status line per node, its notes, then the failure details.
 
     The cap counts UTF-8 bytes. Every node keeps its status line and the pointer to `last-run.json`
-    always survives; notes are kept in node order while they fit. Failure blocks are added in
-    report order; the first block that does not fit keeps its header (step, error/fix, re-run
-    command, log path) and only its oldest tail lines are trimmed, and later blocks are dropped as
-    D10 says.
+    always survives. Failure blocks are added in report order next; the first block that does not
+    fit keeps its header (step, error/fix, re-run command, log path) and only its oldest tail lines
+    are trimmed, and later blocks are dropped as D10 says. Notes are optional and are kept in node
+    order only from the budget the failure details leave over.
     """
     head = ["verify: %s" % error for error in errors]
     nodes = sorted(results)
@@ -837,23 +837,11 @@ def render(results, errors, cap=SUMMARY_CAP):
         return complete
     pointer = ("verify: the summary was capped at %d bytes; the full report is in %s"
                % (cap, LAST_RUN_POINTER))
-    # The status lines and the pointer are mandatory; notes and failure details make room for them.
+    # The status lines and the pointer are mandatory; the failure details come next and notes last.
     mandatory = "\n".join(head + status)
     if _utf8_len(mandatory) + 1 + _utf8_len(pointer) > cap:
         return _truncate_bytes(mandatory, cap)
     budget = cap - _utf8_len(mandatory) - 1 - _utf8_len(pointer)
-    kept_notes = []
-    for group in notes:
-        kept = []
-        for note in group:
-            if _utf8_len(note) + 1 <= budget:
-                kept.append(note)
-                budget -= _utf8_len(note) + 1
-        kept_notes.append(kept)
-    lines = list(head)
-    for line, kept in zip(status, kept_notes):
-        lines.append(line)
-        lines.extend(kept)
     chosen = []
     used = 0
     for header, lead, tail in blocks:
@@ -875,7 +863,21 @@ def render(results, errors, cap=SUMMARY_CAP):
         candidate = "\n".join(block)
         if used + _utf8_len(candidate) + 1 <= budget:
             chosen.append(candidate)
+            used += _utf8_len(candidate) + 1
         break
+    budget -= used
+    kept_notes = []
+    for group in notes:
+        kept = []
+        for note in group:
+            if _utf8_len(note) + 1 <= budget:
+                kept.append(note)
+                budget -= _utf8_len(note) + 1
+        kept_notes.append(kept)
+    lines = list(head)
+    for line, kept in zip(status, kept_notes):
+        lines.append(line)
+        lines.extend(kept)
     return _truncate_bytes("\n".join(lines + chosen + [pointer]), cap)
 
 
