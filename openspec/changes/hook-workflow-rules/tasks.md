@@ -46,11 +46,11 @@ between.
 
 ## 7. References and docs (design §5, §9)
 
-- [ ] 7.1 `openspec/config.yaml`: repoint the six artifact rules and the archive guidance; add the separate apply entry that runs verify and finalize without asking
-- [ ] 7.2 Repoint `openspec/schemas/superspec/schema.yaml` (three references) and `templates/verify.md`
-- [ ] 7.3 Docs: `docs/superspec-workflow.md` (opening paragraph with current paths; the "always-on rule" wording near the audit checklist), `docs/openspec-workflow.md`; `docs/dev/specs/real-device-testing.mdx` only imports the main spec, so no edit is expected there; read `docs/opencode-rules.md` and `docs/agent-guidance.md` and edit them only where they name a moved rule as always-on
-- [ ] 7.4 `docs/hook-delivered-rules.md`: `stops` and the registry, the `Stop` hook and `session.execution.succeeded`, per-trigger repeats, the stop gate, state version 2, the amended stale credit, the stop fail-open; record `--separate-git-dir` checkouts as unhandled by the predicate
-- [ ] 7.5 Verification greps, each outside `openspec/changes/` and outside `openspec/specs/` (main specs change at sync): no roster model name outside the roster (including `.agents/hooked-rules/` and `docs/hook-delivered-rules.md`); no model or concrete project in `docs/superspec-workflow.md`; every procedure section a workflow rule cites exists; the closeout, review-gate and tracker-intake rules carry their read-the-section instruction at the opening (the closeout right after its lead paragraph); no reference to the old `.agents/rules/` paths of the moved files
+- [x] 7.1 `openspec/config.yaml`: repoint the six artifact rules and the archive guidance; add the separate apply entry that runs verify and finalize without asking
+- [x] 7.2 Repoint `openspec/schemas/superspec/schema.yaml` (three references) and `templates/verify.md`
+- [x] 7.3 Docs: `docs/superspec-workflow.md` (opening paragraph with current paths; the "always-on rule" wording near the audit checklist), `docs/openspec-workflow.md`; `docs/dev/specs/real-device-testing.mdx` only imports the main spec, so no edit is expected there; read `docs/opencode-rules.md` and `docs/agent-guidance.md` and edit them only where they name a moved rule as always-on
+- [x] 7.4 `docs/hook-delivered-rules.md`: `stops` and the registry, the `Stop` hook and `session.execution.succeeded`, per-trigger repeats, the stop gate, state version 2, the amended stale credit, the stop fail-open; record `--separate-git-dir` checkouts as unhandled by the predicate
+- [x] 7.5 Verification greps, each outside `openspec/changes/` and outside `openspec/specs/` (main specs change at sync): no roster model name outside the roster (including `.agents/hooked-rules/` and `docs/hook-delivered-rules.md`); no model or concrete project in `docs/superspec-workflow.md`; every procedure section a workflow rule cites exists; the closeout, review-gate and tracker-intake rules carry their read-the-section instruction at the opening (the closeout right after its lead paragraph); no reference to the old `.agents/rules/` paths of the moved files
 
 ## 8. Checks and live verification (design §10)
 
