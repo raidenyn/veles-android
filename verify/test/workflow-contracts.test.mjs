@@ -2138,7 +2138,7 @@ test('only the protected release workflow may reference signing credentials or s
     if (name === PUBLISH_FILE) continue;
     const executable = executableYaml(await workflow(name));
     assert.doesNotMatch(executable, SIGNING_PATTERN, `${name} must not reference signing credentials or tools`);
-    assert.doesNotMatch(executable, RELEASE_ENVIRONMENT_PATTERN, `${name} must not enter any environment`);
+    assert.doesNotMatch(executable, RELEASE_ENVIRONMENT_PATTERN, `${name} must not enter a release environment`);
   }
 });
 
