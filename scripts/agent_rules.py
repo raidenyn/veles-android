@@ -1422,6 +1422,265 @@ def record_changes(state, event):
         del state.changes[:len(state.changes) - KEEP_CHANGES]
 
 
+# Stop predicates
+#
+# A rule's `stops` entries name predicates the stop gate asks about the checkout. This section holds
+# the one the registry has, `superspec-finalize-pending`, which answers whether a named change has an
+# apply receipt and no finalize receipt. It reads receipts as plain files: no subprocess and no clock.
+
+CHANGES_DIR = ("openspec", "changes")  # where openspec keeps a change's receipts and its archive
+RECEIPT_LIMIT = 65536  # bytes read from one receipt; a larger receipt makes its change not pending
+WORKTREE_LIMIT = 32  # linked worktrees visited, in `gitdir` file-name order (sorted)
+ARCHIVE_PREFIX_RE = re.compile(r"\d{4}-\d{2}-\d{2}-")
+ITERATION_RE = re.compile(r"^\*\*Iteration\*\*:\s*`?(\d+)`?", re.M)
+FAIL_TICKED_RE = re.compile(r"^- \[[xX]\] ❌ FAIL", re.M)
+PASS_TICKED_RE = re.compile(r"^- \[[xX]\] (✅ PASS|⚠\ufe0f? PASS WITH WARNINGS)", re.M)
+
+# One change the session named that waits for finalize: the newest apply iteration and the verify
+# state at that iteration, `"none"` or `"pass"` (an entry of ``STOP_VERIFY_STATES``).
+PendingChange = collections.namedtuple("PendingChange", ["name", "iteration", "verify_state"])
+
+
+class _OversizedReceipt(Exception):
+    """A receipt larger than ``RECEIPT_LIMIT``: its change is not pending, silently."""
+
+
+def _core_bare(config_path):
+    """Whether the repository config at ``config_path`` sets ``bare`` true in its ``[core]`` section.
+
+    Git's config syntax is only skimmed for the one value: a ``bare`` key is true when it is written
+    as ``true``, ``yes``, ``on`` or ``1``, or with no value at all. An unreadable config counts as not
+    bare, which can only add a main-tree root that ``change_roots`` skips when it does not exist.
+    """
+    try:
+        with open(config_path, "r", encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+    except OSError:
+        return False
+    section = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and "]" in stripped:
+            header = stripped[1:stripped.index("]")].split(None, 1)
+            section = header[0].strip('"').lower() if header else None
+            continue
+        if section != "core":
+            continue
+        key, separator, value = stripped.partition("=")
+        if key.strip().lower() != "bare":
+            continue
+        if not separator:
+            return True
+        value = re.split(r"[#;]", value, maxsplit=1)[0].strip().strip('"').lower()
+        return value in ("true", "yes", "on", "1")
+    return False
+
+
+def _main_working_tree(common_dir):
+    """The main working tree that shares ``common_dir``; None for a bare repository or a non-``.git``.
+
+    A non-bare repository's common directory is its main working tree's ``.git`` directory, so the main
+    tree is its parent. A bare repository's common directory is the repository itself and has no tree.
+    """
+    if not isinstance(common_dir, str) or not common_dir:
+        return None
+    normalised = os.path.normpath(common_dir)
+    if os.path.basename(normalised) != ".git":
+        return None
+    if _core_bare(os.path.join(normalised, "config")):
+        return None
+    return os.path.dirname(normalised)
+
+
+def _linked_worktree_roots(common_dir):
+    """The linked worktrees of ``common_dir``, in ``gitdir`` file-name order, at most 32.
+
+    Git links a worktree by writing ``<common-dir>/worktrees/<name>/gitdir`` with the path of the
+    worktree's own ``.git`` file; the worktree root is the parent of that path. An entry without a
+    ``gitdir`` file is not a worktree and is skipped. A directory or link that cannot be read raises
+    ``StoreError``: the predicate cannot then answer, and the stop fails open with the notice.
+    """
+    directory = os.path.join(common_dir, "worktrees")
+    try:
+        names = sorted(os.listdir(directory))
+    except FileNotFoundError:
+        return []
+    except OSError as error:
+        raise StoreError("cannot read the worktree directory %s: %s" % (directory, error))
+    roots = []
+    for name in names[:WORKTREE_LIMIT]:
+        link = os.path.join(directory, name, "gitdir")
+        try:
+            with open(link, "r", encoding="utf-8") as handle:
+                target = handle.read().strip()
+        except FileNotFoundError:
+            continue
+        except (OSError, UnicodeDecodeError) as error:
+            raise StoreError("cannot read the worktree link %s: %s" % (link, error))
+        if not target:
+            continue
+        if not os.path.isabs(target):
+            target = os.path.join(os.path.dirname(link), target)
+        roots.append(os.path.dirname(target))
+    return roots
+
+
+def change_roots(toplevel, common_dir):
+    """The checkouts to search for a change's receipts, in visit order, as unique real paths.
+
+    The event's checkout (``toplevel``), then the main working tree of ``common_dir`` (unless the
+    repository is bare), then the common directory's linked worktrees, each root read from its
+    ``gitdir`` file (at most ``WORKTREE_LIMIT``). A candidate that is not an existing directory is
+    skipped, and one real path is visited once however many names reach it, so a plain checkout is
+    its ``toplevel`` alone.
+    """
+    candidates = [toplevel]
+    main = _main_working_tree(common_dir)
+    if main is not None:
+        candidates.append(main)
+    candidates.extend(_linked_worktree_roots(common_dir))
+    roots = []
+    seen = set()
+    for candidate in candidates:
+        if not isinstance(candidate, str) or not candidate:
+            continue
+        try:
+            real = os.path.realpath(candidate)
+            if not os.path.isdir(real):
+                continue
+        except (OSError, ValueError):
+            continue
+        if real not in seen:
+            seen.add(real)
+            roots.append(real)
+    return roots
+
+
+def _receipt_text(path):
+    """The text of the receipt at ``path``, or None when there is no such file.
+
+    At most ``RECEIPT_LIMIT`` + 1 bytes are read, opening non-blocking where the platform allows it so
+    a FIFO in a change directory cannot hold the hook. ``_OversizedReceipt`` for a larger file, and
+    ``StoreError`` when the file cannot be read as UTF-8 text, so a damaged checkout fails open.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise StoreError("cannot read the receipt %s: %s" % (path, error))
+    try:
+        chunks = []
+        size = 0
+        while size <= RECEIPT_LIMIT:
+            chunk = os.read(fd, RECEIPT_LIMIT + 1 - size)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+    except OSError as error:
+        raise StoreError("cannot read the receipt %s: %s" % (path, error))
+    finally:
+        os.close(fd)
+    if size > RECEIPT_LIMIT:
+        raise _OversizedReceipt(path)
+    try:
+        return b"".join(chunks).decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise StoreError("cannot read the receipt %s: %s" % (path, error))
+
+
+def _iteration(text):
+    """The ``**Iteration**`` number of a receipt; 0 when the line is missing or unparsable."""
+    match = ITERATION_RE.search(text) if text else None
+    if match is None:
+        return 0
+    try:
+        return int(match.group(1))
+    except ValueError:  # a digit run too long for int(), i.e. unparsable
+        return 0
+
+
+def _archived(root, name):
+    """Whether ``root`` holds the directory ``openspec/changes/archive/<YYYY-MM-DD>-<name>/``.
+
+    The name after the date must be exactly ``name``, so archiving `hook-stop-gate` does not clear
+    `stop-gate`.
+    """
+    directory = os.path.join(root, *(CHANGES_DIR + ("archive",)))
+    try:
+        entries = os.listdir(directory)
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise StoreError("cannot read the change archive %s: %s" % (directory, error))
+    for entry in entries:
+        prefix = ARCHIVE_PREFIX_RE.match(entry)
+        if prefix is not None and entry[prefix.end():] == name:
+            if os.path.isdir(os.path.join(directory, entry)):
+                return True
+    return False
+
+
+def _change_pending(roots, name):
+    """The ``PendingChange`` for one change, or None when it is not pending.
+
+    Every root is searched, because a finalize receipt or an archived copy anywhere clears the change:
+    the event's checkout may see a change another worktree finalized. The newest apply receipt is the
+    highest iteration, the first root on a tie, and only its neighbouring ``verify.md`` decides
+    whether the change failed verification. ``_OversizedReceipt`` propagates, and the caller reads it
+    as "not pending".
+    """
+    newest = None  # (iteration, root) of the newest apply receipt seen
+    for root in roots:
+        if _archived(root, name):
+            return None
+        directory = os.path.join(root, *(CHANGES_DIR + (name,)))
+        if _receipt_text(os.path.join(directory, "finalize.md")) is not None:
+            return None
+        text = _receipt_text(os.path.join(directory, "apply.md"))
+        if text is None:
+            continue
+        iteration = _iteration(text)
+        if newest is None or iteration > newest[0]:
+            newest = (iteration, root)
+    if newest is None:
+        return None
+    iteration, root = newest
+    verify = _receipt_text(os.path.join(root, *(CHANGES_DIR + (name, "verify.md"))))
+    verify_state = "none"
+    if verify is not None and _iteration(verify) == iteration:
+        if FAIL_TICKED_RE.search(verify):
+            return None
+        if PASS_TICKED_RE.search(verify):
+            verify_state = "pass"
+    return PendingChange(name, iteration, verify_state)
+
+
+def finalize_pending(roots, changes):
+    """The ``changes`` that need finalize, as ``PendingChange`` sorted by name.
+
+    ``roots`` is a ``change_roots`` list and ``changes`` the session change set. A change is pending
+    when some copy in some root has ``apply.md``, no copy has ``finalize.md``, no root has an archived
+    copy, and the ``verify.md`` beside the newest ``apply.md`` is missing, records another iteration,
+    or has no FAIL box ticked. A receipt over ``RECEIPT_LIMIT`` bytes makes only its own change not
+    pending, silently; a name that is not a valid change name is ignored. ``StoreError`` (a recoverable
+    engine failure) propagates, so the caller fails open rather than blocking on a damaged checkout.
+    """
+    pending = []
+    for name in changes:
+        if not isinstance(name, str) or CHANGE_NAME_RE.fullmatch(name) is None:
+            continue
+        try:
+            found = _change_pending(roots, name)
+        except _OversizedReceipt:
+            continue
+        if found is not None:
+            pending.append(found)
+    return sorted(pending, key=lambda change: change.name)
+
+
 def decide(rules, state, key, event):
     """The ``Decision`` for ``event`` in context ``key``; records it in ``state`` (one transaction).
 

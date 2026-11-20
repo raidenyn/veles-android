@@ -21,13 +21,16 @@ from agent_rules import (  # noqa: E402
     FAIL_AFTER_WRITE,
     FileLock,
     LockTimeout,
+    PendingChange,
     RuleError,
     Store,
     StoreError,
     CheckoutError,
     canonical_skill,
+    change_roots,
     checkout_for,
     discover_checkout,
+    finalize_pending,
     hook_main,
     context_key,
     decide,
@@ -1759,6 +1762,330 @@ class ChangeSetTest(EngineTest):
         # A name already in the set moves to the newest end, so the oldest one after it is dropped.
         self.run_event(bash_after("openspec status --change %s" % names[0]))
         self.assertEqual(self.changes(), names[2:] + [names[0]])
+
+
+class PredicateTest(unittest.TestCase):
+    """The finalize-pending stop predicate, over a fake ``.git`` layout in a temporary directory.
+
+    No git process runs: a checkout is a directory with a ``.git`` file-tree whose ``config`` and
+    ``worktrees/*/gitdir`` files are written by hand, as ``git rev-parse`` would report them.
+    """
+
+    VERIFY_DECISIONS = (
+        "- [ ] ✅ PASS — ready to proceed",
+        "- [ ] ⚠️ PASS WITH WARNINGS — can proceed with notes",
+        "- [ ] ❌ FAIL — return to the failed artifact, fix, then re-run verify",
+    )
+    TICKED = {"pass": 0, "warnings": 1, "fail": 2}
+
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="veles-predicate-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def path(self, *parts):
+        return os.path.join(self.tmp, *parts)
+
+    def write(self, path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+
+    def write_bytes(self, path, data):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as handle:
+            handle.write(data)
+
+    def checkout(self, name, bare=False):
+        """A root with the common directory ``<root>/.git`` and the config git would write there."""
+        root = self.path(name)
+        os.makedirs(root, exist_ok=True)
+        self.write(
+            os.path.join(root, ".git", "config"),
+            "[core]\n\tbare = %s\n" % ("true" if bare else "false"),
+        )
+        return root
+
+    def link_worktree(self, common_dir, name, root):
+        """Register ``root`` under ``common_dir`` as ``worktrees/<name>``, as git links a worktree."""
+        os.makedirs(root, exist_ok=True)
+        self.write(os.path.join(common_dir, "worktrees", name, "gitdir"), os.path.join(root, ".git") + "\n")
+        return root
+
+    def common(self, root):
+        return os.path.join(root, ".git")
+
+    def apply_text(self, name, iteration):
+        return "\n".join([
+            "# Apply Receipt",
+            "",
+            "**Change**: `%s`" % name,
+            "**Iteration**: `%s`" % iteration,
+            "",
+            "## Workspace",
+            "",
+            "- **Branch**: `demo`",
+            "",
+        ])
+
+    def verify_text(self, name, iteration, decision):
+        decisions = list(self.VERIFY_DECISIONS)
+        ticked = self.TICKED.get(decision)
+        if ticked is not None:
+            decisions[ticked] = decisions[ticked].replace("- [ ]", "- [x]", 1)
+        elif decision == "warnings-plain":  # the variation selector after ⚠ is optional
+            decisions[1] = "- [x] ⚠ PASS WITH WARNINGS — can proceed with notes"
+        return "\n".join([
+            "# Verify Receipt",
+            "",
+            "**Change**: `%s`" % name,
+            "**Iteration**: `%s`" % iteration,
+            "",
+            "## Overall Decision",
+            "",
+        ] + decisions + [""])
+
+    def make_change(self, root, name, apply_iter=None, verify=None, finalize=False):
+        """Write a change's receipts under ``root``; ``verify`` is ``(iteration, decision)``."""
+        directory = os.path.join(root, "openspec", "changes", name)
+        os.makedirs(directory, exist_ok=True)
+        if apply_iter is not None:
+            self.write(os.path.join(directory, "apply.md"), self.apply_text(name, apply_iter))
+        if verify is not None:
+            self.write(
+                os.path.join(directory, "verify.md"),
+                self.verify_text(name, verify[0], verify[1]),
+            )
+        if finalize:
+            self.write(os.path.join(directory, "finalize.md"), "# Finalize Receipt\n\nPushed.\n")
+        return directory
+
+    def pending(self, toplevel, common_dir, changes=("demo",)):
+        return finalize_pending(change_roots(toplevel, common_dir), list(changes))
+
+    def test_pending_after_apply(self):
+        root = self.checkout("repo")
+        # An applied change with no verify and no finalize receipt is pending, sorted by name.
+        self.make_change(root, "zeta", apply_iter=1)
+        self.make_change(root, "demo", apply_iter=1)
+        self.assertEqual(
+            self.pending(root, self.common(root), ["zeta", "demo"]),
+            [PendingChange("demo", 1, "none"), PendingChange("zeta", 1, "none")],
+        )
+
+    def test_no_apply_receipt_not_pending(self):
+        root = self.checkout("repo")
+        directory = self.make_change(root, "demo")
+        self.write(os.path.join(directory, "tasks.md"), "## Tasks\n\n- [ ] 1.1 one\n")
+        self.assertEqual(self.pending(root, self.common(root)), [])
+
+    def test_finalize_anywhere_clears(self):
+        main = self.checkout("main")
+        linked = self.link_worktree(self.common(main), "wt", self.path("linked"))
+        self.make_change(linked, "demo", apply_iter=1)
+        self.make_change(main, "demo", finalize=True)
+        self.assertEqual(self.pending(linked, self.common(main)), [])
+
+    def test_archived_copy_clears(self):
+        main = self.checkout("main")
+        linked = self.link_worktree(self.common(main), "wt", self.path("linked"))
+        self.make_change(linked, "demo", apply_iter=1)
+        os.makedirs(os.path.join(main, "openspec", "changes", "archive", "2026-01-01-demo"))
+        self.assertEqual(self.pending(linked, self.common(main)), [])
+
+    def test_archive_suffix_does_not_clear(self):
+        # The archive name carries a date prefix plus the *exact* change name; a longer name that
+        # merely ends with this one is another change and must not clear it.
+        root = self.checkout("repo")
+        self.make_change(root, "stop-gate", apply_iter=1)
+        archive = os.path.join(root, "openspec", "changes", "archive")
+        os.makedirs(os.path.join(archive, "2026-01-01-hook-stop-gate"))
+        os.makedirs(os.path.join(archive, "2026-01-02-stop-gate-extra"))
+        self.assertEqual(
+            self.pending(root, self.common(root), ["stop-gate"]),
+            [PendingChange("stop-gate", 1, "none")],
+        )
+
+    def test_fail_same_iteration_clears(self):
+        root = self.checkout("repo")
+        self.make_change(root, "demo", apply_iter=1, verify=(1, "fail"))
+        self.assertEqual(self.pending(root, self.common(root)), [])
+
+    def test_earlier_fail_is_pending(self):
+        # A failing verify of an earlier iteration does not hide a re-apply.
+        root = self.checkout("repo")
+        self.make_change(root, "demo", apply_iter=2, verify=(1, "fail"))
+        self.assertEqual(
+            self.pending(root, self.common(root)), [PendingChange("demo", 2, "none")]
+        )
+
+    def test_verify_pass_state(self):
+        for decision in ("pass", "warnings", "warnings-plain"):
+            with self.subTest(decision=decision):
+                root = self.checkout("repo-" + decision)
+                self.make_change(root, "demo", apply_iter=1, verify=(1, decision))
+                self.assertEqual(
+                    self.pending(root, self.common(root)),
+                    [PendingChange("demo", 1, "pass")],
+                )
+
+    def test_undecided_verify_is_none(self):
+        root = self.checkout("repo")
+        self.make_change(root, "demo", apply_iter=1, verify=(1, "undecided"))
+        self.assertEqual(
+            self.pending(root, self.common(root)), [PendingChange("demo", 1, "none")]
+        )
+
+    def test_missing_iteration_is_zero(self):
+        root = self.checkout("repo")
+        self.write(
+            os.path.join(root, "openspec", "changes", "demo", "apply.md"),
+            "# Apply Receipt\n\n**Change**: `demo`\n\nNo iteration line.\n",
+        )
+        self.make_change(root, "other", apply_iter="many")  # unparsable
+        # A verify that also records no iteration reads as iteration 0, so it decides this apply.
+        self.write(
+            os.path.join(root, "openspec", "changes", "both-zero", "apply.md"),
+            "# Apply Receipt\n\n**Change**: `both-zero`\n\nNo iteration line.\n",
+        )
+        self.write(
+            os.path.join(root, "openspec", "changes", "both-zero", "verify.md"),
+            "# Verify Receipt\n\n## Overall Decision\n\n- [x] ❌ FAIL — return\n",
+        )
+        self.assertEqual(
+            self.pending(root, self.common(root), ["demo", "other", "both-zero"]),
+            [PendingChange("demo", 0, "none"), PendingChange("other", 0, "none")],
+        )
+
+    def test_receipts_in_linked_worktree(self):
+        main = self.checkout("main")
+        common = self.common(main)
+        self.link_worktree(common, "wt-a", self.path("wt-a"))
+        linked = self.link_worktree(common, "wt-b", self.path("wt-b"))
+        self.make_change(linked, "demo", apply_iter=1, verify=(1, "pass"))
+        self.assertEqual(
+            self.pending(main, common), [PendingChange("demo", 1, "pass")]
+        )
+
+    def test_main_tree_searched_from_worktree(self):
+        main = self.checkout("main")
+        common = self.common(main)
+        linked = self.link_worktree(common, "wt", self.path("linked"))
+        self.make_change(main, "demo", apply_iter=1, verify=(1, "pass"))
+        self.assertEqual(change_roots(linked, common), [linked, main])
+        self.assertEqual(
+            self.pending(linked, common), [PendingChange("demo", 1, "pass")]
+        )
+
+    def test_bare_repo_has_no_main_tree(self):
+        bare = self.checkout("bare", bare=True)
+        event = self.path("event")
+        os.makedirs(event)
+        self.make_change(bare, "demo", apply_iter=1)
+        self.assertEqual(change_roots(event, self.common(bare)), [event])
+        self.assertEqual(self.pending(event, self.common(bare)), [])
+
+    def test_32_worktree_cap(self):
+        main = self.checkout("main")
+        common = self.common(main)
+        for index in range(40):
+            self.link_worktree(common, "wt-%02d" % index, self.path("wt-%02d" % index))
+        # Sorted `gitdir` file names, first 32 visited: wt-31 is the last one read, wt-32 the first
+        # one dropped.
+        self.make_change(self.path("wt-31"), "demo", apply_iter=1)
+        self.make_change(self.path("wt-32"), "other", apply_iter=1)
+        self.assertEqual(len(change_roots(main, common)), 1 + 32)
+        self.assertEqual(
+            self.pending(main, common, ["demo", "other"]),
+            [PendingChange("demo", 1, "none")],
+        )
+
+    def test_oversized_receipt_not_pending(self):
+        root = self.checkout("repo")
+        directory = self.make_change(root, "apply", apply_iter=1)
+        oversized = self.apply_text("apply", 1).ljust(65537, "#")
+        self.write(os.path.join(directory, "apply.md"), oversized)
+        self.assertEqual(os.path.getsize(os.path.join(directory, "apply.md")), 65537)
+        directory = self.make_change(root, "verify", apply_iter=1)
+        self.write(os.path.join(directory, "verify.md"), "#" * 65537)
+        # The bound is "larger than 65,536 bytes": a receipt of exactly that size still reads.
+        directory = self.make_change(root, "boundary", apply_iter=1)
+        self.write(os.path.join(directory, "apply.md"), self.apply_text("boundary", 1).ljust(65536, "#"))
+        self.assertEqual(os.path.getsize(os.path.join(directory, "apply.md")), 65536)
+        self.assertEqual(
+            self.pending(root, self.common(root), ["apply", "verify", "boundary"]),
+            [PendingChange("boundary", 1, "none")],
+        )
+
+    def test_crlf_receipts(self):
+        root = self.checkout("repo")
+
+        def crlf(directory, name, apply_iteration, verify_iteration=None, decision=None):
+            self.write(
+                os.path.join(directory, "apply.md"),
+                self.apply_text(name, apply_iteration).replace("\n", "\r\n"),
+            )
+            if decision is not None:
+                self.write(
+                    os.path.join(directory, "verify.md"),
+                    self.verify_text(name, verify_iteration, decision).replace("\n", "\r\n"),
+                )
+
+        crlf(self.make_change(root, "demo", verify=(1, "fail")), "demo", 1, 1, "fail")
+        crlf(self.make_change(root, "later", verify=(1, "fail")), "later", 2, 1, "fail")
+        crlf(self.make_change(root, "passing", verify=(1, "pass")), "passing", 1, 1, "pass")
+        self.assertEqual(
+            self.pending(root, self.common(root), ["demo", "later", "passing"]),
+            [PendingChange("later", 2, "none"), PendingChange("passing", 1, "pass")],
+        )
+
+    def test_stale_worktree_gitdir_skipped(self):
+        main = self.checkout("main")
+        common = self.common(main)
+        # A worktree whose `.git` path was deleted: its root is not visited, and it is not an error.
+        self.write(
+            os.path.join(common, "worktrees", "gone", "gitdir"),
+            os.path.join(self.path("gone"), ".git") + "\n",
+        )
+        self.make_change(main, "demo", apply_iter=1)
+        self.assertEqual(change_roots(main, common), [main])
+        self.assertEqual(
+            self.pending(main, common), [PendingChange("demo", 1, "none")]
+        )
+
+    def test_verify_from_other_change_counts(self):
+        # Accepted residual: the predicate reads only the iteration and the decision, not `**Change**`,
+        # so a verify receipt copied from another change still decides this one.
+        root = self.checkout("repo")
+        directory = self.make_change(root, "demo", apply_iter=1)
+        self.write(os.path.join(directory, "verify.md"), self.verify_text("other", 1, "fail"))
+        self.assertEqual(self.pending(root, self.common(root)), [])
+
+    def test_tie_takes_first_in_checkout_order(self):
+        # Two copies at the same iteration: the event checkout is read first, so its verify decides.
+        for label, event_decision, main_decision, expected in (
+            ("event-pass", "pass", "fail", [PendingChange("demo", 1, "pass")]),
+            ("event-fail", "fail", "pass", []),
+        ):
+            with self.subTest(order=label):
+                main = self.checkout("main-" + label)
+                common = self.common(main)
+                linked = self.link_worktree(common, "wt", self.path("linked-" + label))
+                self.make_change(linked, "demo", apply_iter=1, verify=(1, event_decision))
+                self.make_change(main, "demo", apply_iter=1, verify=(1, main_decision))
+                self.assertEqual(self.pending(linked, common), expected)
+
+    def test_unreadable_receipt_raises_store_error(self):
+        # A receipt that cannot be read as UTF-8 text is a recoverable engine failure: the caller
+        # fails open (a stop passes with the notice) rather than blocking on a damaged checkout.
+        root = self.checkout("repo")
+        directory = self.make_change(root, "demo", apply_iter=1)
+        os.makedirs(os.path.join(directory, "verify.md"))
+        with self.assertRaises(StoreError):
+            self.pending(root, self.common(root))
+        os.rmdir(os.path.join(directory, "verify.md"))
+        self.write_bytes(os.path.join(directory, "verify.md"), b"\xff\xfe not utf-8\n")
+        with self.assertRaises(StoreError):
+            self.pending(root, self.common(root))
 
 
 class MomentTest(EngineTest):
