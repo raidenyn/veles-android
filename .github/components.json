@@ -98,6 +98,8 @@
     "LICENSE",
     ".gitignore",
     ".dockerignore",
+    ".semble-weights",
+    ".sembleignore",
     ".idea/",
     ".superpowers/",
     "native-bridge/feasibility/"
