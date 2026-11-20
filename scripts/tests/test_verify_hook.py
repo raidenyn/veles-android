@@ -990,11 +990,18 @@ class HookOutputTest(GateFixture):
         self.assertIn("boom", lines[0])
 
     def test_stop_hook_active_ignored(self):
-        remembered = verify.NodeResult("PASS (remembered)")
+        # Spec "Hook output contract": `stop_hook_active` MUST NOT be consulted, so a blocking
+        # gate still blocks (and prints nothing for an implementation that honours the flag).
+        failed = verify.NodeResult("FAIL", None, [], [
+            ("web-extension.lint", verify.Outcome("fail", code=1), "cd . && npm run lint")])
         code, out, _err = self.run_with(
-            self.outcome({"web-extension": remembered}),
+            self.outcome({"web-extension": failed},
+                         problems=[("web-extension", "web-extension.lint", "fail")]),
             event={"session_id": SESSION, "cwd": self.repo, "stop_hook_active": True})
-        self.assertEqual((code, out), (0, ""))
+        self.assertEqual(code, 0)
+        document = json.loads(out)
+        self.assertEqual(document["decision"], "block")
+        self.assertIn("web-extension.lint: FAIL (exit 1)", document["reason"])
 
     def test_all_remembered_stop_silent(self):
         # Spec "Unchanged node is skipped": every selected node remembered is a silent clean pass.
