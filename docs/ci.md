@@ -62,7 +62,7 @@ What each check runs:
 | `bridge-scaffold / unit-tests` | `bridgeNpmTest`, `bridgeRustTest` |
 | `supply-chain / build` | `verify/verify-supply-chain.sh` and the report upload (`build-supply-chain.yml`, shared with `publish-release.yml`) |
 | `tooling / unit-tests` | `node --test verify/test/workflow-contracts.test.mjs`, `./gradlew scriptsTest` |
-| `docs / agent-files` | `python3 docs/checks/check_agent_files.py --root .`, `python3 docs/checks/check_site.py --root .` |
+| `docs / agent-files` | `python3 docs/checks/check_offline.py --root .`, `python3 docs/checks/check_agent_files.py --root .`, `python3 docs/checks/check_site.py --root .` |
 | `docs / unit-tests` | `python3 -m unittest discover -s docs/checks -p 'test_*.py'` |
 
 The extension jobs import the generated WASM package, so each one activates the pinned
@@ -138,15 +138,22 @@ use Gradle.
 
 Current overrides: `.github/components.json` selects `tooling` and `docs`;
 `.github/workflows/check-android.yml` and `.github/workflows/build-android.yml` select `android`,
-`tooling` and `installer`; `.github/workflows/check-docs.yml` selects `docs`, `tooling`, `installer` and
-`supply-chain`, because the installer contract suite reads every workflow and the remote-code scanner
-scans it; `.github/CODEOWNERS` selects `docs`; every nested node `AGENTS.md` selects `docs`, so a
-guidance edit normally selects only `docs`. The exception is `native-bridge/host/AGENTS.md`, which
-also selects `native-host` because the host build-contract suite reads that file. `docs/AGENTS.md` and
-`native-bridge/AGENTS.md` need no override because `docs` owns them through its `paths`.
+`tooling` and `installer`; `.github/workflows/check-docs.yml` selects `docs` and `tooling`, because the
+tooling all-workflow release boundary and `assertDocsCheckWorkflow` own it, the installer suite exempts
+it by name, and the remote-code scanner does not scan it; `.github/CODEOWNERS` selects `docs`; every
+nested node `AGENTS.md` selects `docs`, so a guidance edit normally selects only `docs`. The exception
+is `native-bridge/host/AGENTS.md`, which also selects `native-host` because the host build-contract suite
+reads that file. `docs/AGENTS.md` and `native-bridge/AGENTS.md` need no override because `docs` owns them
+through its `paths`.
 
 `basename-owners` maps `AGENTS.md`, `CLAUDE.md` and `CLAUDE.local.md` to `docs`, so a new nested guidance
 file or a `/init` output selects the docs check on its pull request even when no override exists yet.
+
+`docs/checks/` is guarded by the docs node's offline guard, not the remote-code scan: the guard allows
+only standard-library imports and `git` subprocesses. `supply-chain` lists `verify/lib/` and every
+tracked top-level `verify/` file except `AGENTS.md` in its `paths`, while `verify/test/` belongs to
+`tooling` alone; other nodes read some of those files through their own `paths` or `ci-paths`. The file
+lists are exact, so a new top-level `verify/` file is unaccounted until the map names it.
 
 A path that a gate reads from a `docs`-owned file is added to the reading node's `ci-paths`, so a
 documentation-only edit cannot pass pull request CI and fail on `master`: `docs/reproducible-builds.md`
@@ -159,10 +166,10 @@ on a matrix job and on any shape it cannot derive.
 Because every workflow file is under `.github/`, a workflow edit selects every node unless a
 `global-overrides` entry names it. The two Android workflows select only `android`, `tooling` and
 `installer`, because the tooling workflow contract suite and the installer `scripts-tests` read them.
-`check-docs.yml` selects `docs`, `tooling`, `installer` and `supply-chain` for the same reason. Every
-other workflow, such as `ci.yml`, `check-rust.yml`, `build-rust.yml` and `publish-release.yml`, stays
-global and still selects every node, including `native-host / build-contract` and
-`installer / scripts-tests`, which own the two Python build-contract suites.
+`check-docs.yml` selects only `docs` and `tooling` for the reason above. Every other workflow, such as
+`ci.yml`, `check-rust.yml`, `build-rust.yml` and `publish-release.yml`, stays global and still selects
+every node, including `native-host / build-contract` and `installer / scripts-tests`, which own the two
+Python build-contract suites.
 
 Node jobs use `if: !cancelled() && needs.changes.outputs.<node> == 'true'`, so when `changes` writes its
 outputs and then fails (an unaccounted path), the selected nodes still run and `ci-ok` still fails.

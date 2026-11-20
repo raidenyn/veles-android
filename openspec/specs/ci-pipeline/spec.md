@@ -34,15 +34,42 @@ TBD - created by archiving change component-releases-and-conventional-commits. U
 
 #### Scenario: Docs node
 - **WHEN** the `docs` node runs
-- **THEN** it reports `docs / agent-files` (the agent-file layout check, then the documentation site guard `python3 docs/checks/check_site.py --root .`) and `docs / unit-tests` (the tests of both checks), and it reports no release or build job
+- **THEN** it reports `docs / agent-files` (the offline guard `python3 docs/checks/check_offline.py --root .`, then the agent-file layout check, then the documentation site guard `python3 docs/checks/check_site.py --root .`) and `docs / unit-tests` (the tests of every check in `docs/checks/`), and it reports no release or build job
 
 #### Scenario: Site guard step in the workflow contract
 - **WHEN** the `agent-files` job of `check-docs.yml` drops the site guard step or runs it with other arguments
 - **THEN** the workflow contract suite fails
 
+#### Scenario: Offline guard step in the workflow contract
+- **WHEN** the `agent-files` job of `check-docs.yml` drops the offline guard step, runs it with other arguments, or runs it after the agent-file layout check
+- **THEN** the workflow contract suite fails
+
 #### Scenario: Declared checks drift
 - **WHEN** a check workflow adds, removes or renames a job without updating the node's declared check names
 - **THEN** the workflow contract suite fails
+
+### Requirement: Docs check scripts stay offline
+The `docs` node SHALL run `python3 docs/checks/check_offline.py --root .` as the first `run:` step of `docs / agent-files`, and the guard MUST fail when a tracked file in `docs/checks/` is neither a `*.py` file nor `AGENTS.md`, when a `*.py` file there does not parse, imports a module that is neither on the guard's standard-library allow-list nor a sibling module in `docs/checks/`, starts a process other than `git`, uses `shell=` with any value other than `False`, passes a forbidden global option or network subcommand to `git`, references an `os` process function, or uses `importlib` outside the guard's named exemptions. The guard MUST use only the Python 3.8 standard library, and its tests MUST run it in-process under the existing `docs / unit-tests` step.
+
+#### Scenario: Real tree passes
+- **WHEN** the guard runs on the repository's `docs/checks/`
+- **THEN** it exits 0
+
+#### Scenario: Network import
+- **WHEN** a file in `docs/checks/` imports `urllib.request`
+- **THEN** the guard reports the file and line and exits 1
+
+#### Scenario: Non-git process
+- **WHEN** a file in `docs/checks/` calls `subprocess.run(["curl", url])`, or `subprocess.run(cmd, shell=True)`
+- **THEN** the guard exits 1
+
+#### Scenario: Forbidden git option or subcommand
+- **WHEN** a file in `docs/checks/` runs `["git", "-c", "core.sshCommand=x", "status"]` or `_git(root, "clone", url)`
+- **THEN** the guard exits 1, while `_git(root, "ls-files", "-z", "-c", "-i")` passes because `-c` follows the subcommand
+
+#### Scenario: Shell script in docs checks
+- **WHEN** a tracked `docs/checks/run.sh` is added
+- **THEN** the guard exits 1
 
 ### Requirement: No existing check is lost
 Every command run by `ci.yml` and `build-native-host.yml` before this change SHALL still run in exactly one CI node, and the clean contract MUST keep its order: build JNI and extension outputs, clean, assert clean, rebuild and re-verify the APK, in one job.
@@ -54,16 +81,26 @@ Every command run by `ci.yml` and `build-native-host.yml` before this change SHA
 #### Scenario: Clean contract order
 - **WHEN** `rust / jni-integration` runs
 - **THEN** `assembleDebug` and the extension build precede `./gradlew clean`, which precedes `assert-clean.sh`, which precedes the second `assembleDebug` and JNI verification
+
 ### Requirement: Workflow contract suites move with the workflows
-Every change that adds, moves, renames or deletes a workflow SHALL update, in the same commit, `verify/test/workflow-contracts.test.mjs`, both `test_build_contract.py` suites and the workflow scopes of `verify/check-remote-code.mjs`, preserving their negative tests.
+Every change that adds, moves, renames or deletes a workflow SHALL update, in the same commit, `verify/test/workflow-contracts.test.mjs`, both `test_build_contract.py` suites and the workflow scopes of `verify/check-remote-code.mjs`, preserving their negative tests. The exception is a workflow listed in the installer suite's `TOOLING_OWNED_WORKFLOWS` tuple: today only `check-docs.yml`, a workflow that `workflow-contracts.test.mjs` pins to a closed command allow-list. Selection by `tooling` alone, as for `project-flow.yml`, does not put a workflow on that list. It MUST be covered by `workflow-contracts.test.mjs` and its all-workflow release boundary, and it MUST be exempt by exact name from the installer suite's all-workflows release boundary and absent from the scanner's scopes. The tooling all-workflow release boundary MUST reject every signing name, release environment and publishing command that the installer suite's all-workflows boundary rejects, and a tooling test MUST read those terms from the installer suite's source, failing when it cannot extract them.
 
 #### Scenario: Retired workflow name
 - **WHEN** `build-native-host.yml` is deleted
 - **THEN** no suite or scanner scope refers to it and the equivalent checks target `check-native-host.yml` and `check-installer.yml`
 
 #### Scenario: New docs workflow
-- **WHEN** `check-docs.yml` is added
-- **THEN** `verify/test/workflow-contracts.test.mjs` and the workflow scopes of `verify/check-remote-code.mjs` cover it, with a negative test that fails when the workflow installs any package from a registry at run time (including the OpenSpec CLI), and the checker script under `docs/checks/` is inside the scanner's scopes
+- **WHEN** `check-docs.yml` is added or changed
+- **THEN** `verify/test/workflow-contracts.test.mjs` covers it, with negative tests that fail when the workflow installs any package from a registry at run time (including the OpenSpec CLI), declares any `environment:`, or runs `git push`, and neither `check-docs.yml` nor `docs/checks/` is a scope of `verify/check-remote-code.mjs`
+
+#### Scenario: Docs workflow outside the installer boundary
+- **WHEN** the installer suite's all-workflows release boundary runs
+- **THEN** it skips `check-docs.yml` by exact name and still rejects a signing credential added to any other workflow except `publish-release.yml`
+
+#### Scenario: Installer boundary gains a term
+- **WHEN** the installer suite's all-workflows boundary gains a signing name that the tooling signing check does not reject, or its publishing pattern stops matching the tooling one
+- **THEN** the tooling suite fails
+
 ### Requirement: Change-based node selection
 A `changes` job SHALL run the component map check on every run and compute affected nodes with `scripts/components.py`, without rename detection. For the first run of a pull request it MUST diff against the merge base with the base branch; for later runs of a pull request it MUST select each node as the `pr-last-green-selection` capability defines; for a push to `master` it MUST select every node. Ownership validation of the full changed-path set MUST run in every mode, and the node outputs MUST be written before a validation failure fails the job. Each node MUST run only when selected. A changed path MUST select, in CI: every node whose `paths` or `ci-paths` contain it; every node when it is `global` or `ci-global`, unless `global-overrides` lists the nodes it selects instead; and, for an exact file name listed in `global-overrides` whether or not it is also global, exactly the listed nodes, taking precedence over every node whose `paths` contain it; plus, for every node that a `basename-owners` entry lists for the changed file's basename, that node in addition to all of the above; the nodes its `retired-paths` entry lists; and no node when it is `unowned`. A changed `AGENTS.md` that `global-overrides` lists MUST select exactly the nodes the entry names: `docs` for every nested `AGENTS.md`, and `docs` plus `native-host` for `native-bridge/host/AGENTS.md`, whose content the `native-host / build-contract` check reads. Every node MUST be selected when a global path without an override changed, when a changed path is not accounted for, or when the base is missing or all zeros. The path scenarios below state the nodes a path selects on the first run of a pull request, except the two that name a push; later pull request runs additionally skip nodes that have green evidence, as `pr-last-green-selection` defines, and a push to `master` selects every node whatever the paths.
 
@@ -153,7 +190,23 @@ A `changes` job SHALL run the component map check on every run and compute affec
 
 #### Scenario: Docs workflow edit
 - **WHEN** a PR changes only `.github/workflows/check-docs.yml`
-- **THEN** `docs`, `tooling`, `installer` and `supply-chain` run and the other nodes do not, because the installer contract suite reads every workflow and the scanner scans it
+- **THEN** exactly `docs` and `tooling` run, and `installer` and `supply-chain` do not, because the tooling contract owns the workflow's release boundary and the scanner does not scan it
+
+#### Scenario: Docs check script edit
+- **WHEN** a PR changes only files under `docs/checks/`
+- **THEN** only `docs` runs, because the docs offline guard, not the remote-code scan, checks those scripts
+
+#### Scenario: Workflow contract test edit
+- **WHEN** a PR changes only `verify/test/workflow-contracts.test.mjs`, or any other file under `verify/test/` that is not a guidance file such as `AGENTS.md`
+- **THEN** only `tooling` runs, because `supply-chain` owns only `verify/lib/` and the exact top-level `verify/` files the component map lists
+
+#### Scenario: Verifier file selects supply-chain
+- **WHEN** a PR changes a tracked `verify/` file outside `verify/test/`, other than `verify/AGENTS.md`
+- **THEN** `supply-chain` runs
+
+#### Scenario: Installer boundary edit selects tooling too
+- **WHEN** a PR changes `native-bridge/installer/scripts/test_build_contract.py`
+- **THEN** exactly `installer`, `protocol`, `supply-chain` and `tooling` run: the first three own the file through their paths, and `tooling` runs because its boundary test reads the file
 
 #### Scenario: CODEOWNERS edit
 - **WHEN** a PR changes only `.github/CODEOWNERS`
@@ -213,6 +266,7 @@ A `changes` job SHALL run the component map check on every run and compute affec
 #### Scenario: Changes job fails
 - **WHEN** `changes` fails so every node is skipped
 - **THEN** `ci-ok` fails
+
 ### Requirement: Label-driven PR builds
 PR builds SHALL be selected only by labels, re-evaluated on `opened`, `reopened`, `synchronize`, `labeled` and `unlabeled`: `build-android` builds the unsigned release APK, `build-web-extension` the extension zip, and `build-windows-installer` / `build-macos-installer` the debug installers including the native host behind the `native-installer-debug` approval. A PR without a build label MUST NOT build or upload any component artifact.
 
@@ -227,12 +281,14 @@ PR builds SHALL be selected only by labels, re-evaluated on `opened`, `reopened`
 #### Scenario: Installer label
 - **WHEN** `build-windows-installer` is added to a non-draft PR and the owner approves `native-installer-debug`
 - **THEN** a debug Windows installer containing the host built from the PR head is uploaded
+
 ### Requirement: Legacy build labels retired
 The labels `release-build`, `windows-installer-build` and `mac-installer-build` SHALL NOT trigger any workflow. `build-watch` MUST be documented as reserved.
 
 #### Scenario: Old label
 - **WHEN** `release-build` is added to a PR
 - **THEN** no build starts
+
 ### Requirement: Changed-only master builds
 On a push to `master`, `release-build.yml` SHALL build unsigned artifacts only for affected release components, plus the Rust JNI/WASM package when `rust` is affected, and MUST NOT build installers or unaffected components. Its change selection MUST NOT be altered by `ci.yml` selecting every node on `master` pushes.
 
@@ -247,6 +303,7 @@ On a push to `master`, `release-build.yml` SHALL build unsigned artifacts only f
 #### Scenario: CI runs everything, builds stay changed-only
 - **WHEN** a merged PR changed only `web-extension/`
 - **THEN** `ci.yml` runs every node on the master push and `release-build.yml` builds the extension only
+
 ### Requirement: Missing lint coverage is tracked
 Nodes without lint or format checks SHALL be listed as future work in `docs/ci.md`; adding them MUST NOT be part of this change.
 

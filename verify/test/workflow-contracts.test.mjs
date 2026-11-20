@@ -1352,11 +1352,10 @@ test('the remote-code scan scopes exist and cover the CI, tooling and hook sourc
   const { REMOTE_CODE_SCOPES, missingScopes } = await import(new URL('verify/check-remote-code.mjs', root));
   assert.deepEqual(await missingScopes(repository, REMOTE_CODE_SCOPES), [], 'every remote-code scope must exist');
   assert.deepEqual(await missingScopes(repository, ['web-extension/manifest.json']), ['web-extension/manifest.json'], 'a missing scope must be reported');
-  for (const scope of ['.github/workflows/check-native-host.yml', '.github/workflows/check-installer.yml', '.github/workflows/check-docs.yml', '.github/workflows/ci.yml', '.github/workflows/pr-title.yml', '.github/workflows/project-flow.yml', 'scripts', 'scripts/project_flow.py', '.githooks', 'web-extension/vite.config.ts']) {
+  for (const scope of ['.github/workflows/check-native-host.yml', '.github/workflows/check-installer.yml', '.github/workflows/ci.yml', '.github/workflows/pr-title.yml', '.github/workflows/project-flow.yml', 'scripts', 'scripts/project_flow.py', '.githooks', 'web-extension/vite.config.ts']) {
     assert.ok(REMOTE_CODE_SCOPES.includes(scope), `the remote-code scan must cover ${scope}`);
   }
-  assert.ok(REMOTE_CODE_SCOPES.includes('docs/checks/'), 'the remote-code scan must cover the docs node check scripts');
-  for (const scope of ['.github/workflows/build-native-host.yml', 'web-extension/manifest.json']) {
+  for (const scope of ['.github/workflows/build-native-host.yml', 'web-extension/manifest.json', 'docs/checks/', '.github/workflows/check-docs.yml']) {
     assert.ok(!REMOTE_CODE_SCOPES.includes(scope), `the remote-code scan must not list ${scope}`);
   }
 });
@@ -2095,12 +2094,80 @@ function assertPublishReleaseCaller(source) {
   assert.match(publish, /if \[ "\$remote" != "\$GITHUB_SHA" \]; then\n\s+echo "::error::the release tag \$TAG resolves to/, 'publish must verify the date tag resolves to github.sha');
 }
 
+// The release boundary of every workflow except the publisher. The installer suite enforces the
+// same boundary on the same workflows, so these constants are also the superset its patterns must
+// stay inside: the test below reads the three literals from the installer suite's loop and fails
+// when extraction does not find exactly those three.
+const SIGNING_PATTERN = /VELES_WIN_|VELES_MAC_|VELES_NOTARY_|VELES_APPROVED_|native-release|signtool|notarytool|codesign|KEYSTORE_|apksigner|VELES_ANDROID_CERT/;
+const RELEASE_ENVIRONMENT_PATTERN = /^\s*environment:\s*(?:android-release|release-publish)\s*$/m;
+const PUBLISHING_PATTERN = /gh release (?:create|edit|upload|delete)|git push[^\n]*(?:--tags|refs\/tags)|git push --atomic/;
+
+function installerBoundaryPatterns(source) {
+  const anchor = '    for name, source in workflows.items():';
+  const lines = source.split('\n');
+  const start = lines.indexOf(anchor);
+  if (start === -1) throw new Error('the installer boundary loop anchor is missing');
+  const body = [];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.trim() !== '' && !/^ {5,}/.test(line)) break;
+    body.push(line);
+  }
+  const literals = [...body.join('\n').matchAll(/(?<![\w"])r"((?:[^"\\]|\\.)*)"/g)].map((match) => match[1]);
+  assert.equal(literals.length, 3, 'the installer boundary loop must hold exactly the signing, environment and publishing patterns');
+  return { signing: literals[0], environment: literals[1], publishing: literals[2] };
+}
+
+function assertBoundarySuperset(source) {
+  const installer = installerBoundaryPatterns(source);
+  for (const term of installer.signing.split('|')) {
+    assert.match(term, SIGNING_PATTERN, `the tooling signing check must reject the installer term "${term}"`);
+  }
+  const environmentGroup = installer.environment.match(/\(\?:([^)]*)\)/);
+  assert.ok(environmentGroup, 'the installer environment pattern must name its environments in a group');
+  for (const environment of environmentGroup[1].split('|')) {
+    const line = `environment: ${environment}`;
+    assert.match(line, new RegExp(installer.environment.replace('(?m)', ''), 'm'), `the installer environment must accept ${line}`);
+    assert.match(line, RELEASE_ENVIRONMENT_PATTERN, `the tooling environment check must accept ${line}`);
+  }
+  assert.equal(PUBLISHING_PATTERN.source.replaceAll('\\/', '/'), installer.publishing, 'the tooling publishing check must match the installer publishing pattern');
+}
+
 test('only the protected release workflow may reference signing credentials or sign anything', async () => {
   for (const name of await workflowFiles()) {
     if (name === PUBLISH_FILE) continue;
     const executable = executableYaml(await workflow(name));
-    assert.doesNotMatch(executable, /VELES_WIN_|VELES_MAC_|VELES_NOTARY_|VELES_APPROVED_|native-release|signtool|notarytool|codesign|KEYSTORE_|apksigner|VELES_ANDROID_CERT/, `${name} must not reference signing credentials or tools`);
-    assert.doesNotMatch(executable, /^\s*environment:\s*(?:android-release|release-publish)\s*$/m, `${name} must not enter a release environment`);
+    assert.doesNotMatch(executable, SIGNING_PATTERN, `${name} must not reference signing credentials or tools`);
+    assert.doesNotMatch(executable, RELEASE_ENVIRONMENT_PATTERN, `${name} must not enter a release environment`);
+  }
+});
+
+test('the all-workflow release boundary covers the installer boundary', async () => {
+  const source = await readFile(new URL('native-bridge/installer/scripts/test_build_contract.py', root), 'utf8');
+  assertBoundarySuperset(source);
+
+  const lines = source.split('\n');
+  const anchorIndex = lines.indexOf('    for name, source in workflows.items():');
+  assert.notEqual(anchorIndex, -1, 'the installer boundary loop anchor must be findable');
+  const environmentIndex = lines.findIndex((line, index) => index > anchorIndex && line.includes('r"(?m)^\\s*environment'));
+  assert.notEqual(environmentIndex, -1, 'the installer environment literal must be findable');
+  const removedLiteral = [...lines.slice(0, environmentIndex), ...lines.slice(environmentIndex + 1)].join('\n');
+  const addedLiteral = [...lines.slice(0, environmentIndex + 1), '        if re.search(r"extra", other):', ...lines.slice(environmentIndex + 1)].join('\n');
+  const environmentLine = lines[environmentIndex];
+  const changedEnvironment = environmentLine.replace('release-publish)', 'release-publish|mac-release)');
+  assert.notEqual(changedEnvironment, environmentLine, 'the environment mutation must change the installer environment literal');
+  const extraEnvironment = [...lines.slice(0, environmentIndex), changedEnvironment, ...lines.slice(environmentIndex + 1)].join('\n');
+  const mutations = {
+    'an added signing term': { source: source.replace('KEYSTORE_|apksigner', 'KEYSTORE_|apksigner|VELES_NEW_'), error: /must reject the installer term/ },
+    'a changed publishing term': { source: source.replace('git push --atomic', 'git push --force'), error: /publishing pattern/ },
+    'a renamed anchor': { source: source.replace('    for name, source in workflows.items():', '    for name, source in workflow_items():'), error: /anchor is missing/ },
+    'a removed literal': { source: removedLiteral, error: /exactly the signing, environment and publishing/ },
+    'an added literal': { source: addedLiteral, error: /exactly the signing, environment and publishing/ },
+    'an added release environment': { source: extraEnvironment, error: /must accept environment: mac-release/ },
+  };
+  for (const [label, mutation] of Object.entries(mutations)) {
+    assert.notEqual(mutation.source, source, `mutation "${label}" must change the installer suite`);
+    assert.throws(() => assertBoundarySuperset(mutation.source), mutation.error, `the superset check must reject ${label}`);
   }
 });
 
@@ -2110,7 +2177,7 @@ test('no workflow but publish-release creates releases or pushes tags, and the l
   for (const retired of ['release.yml', 'release-native-installers.yml']) {
     assert.ok(!files.includes(retired), `${retired} must be retired`);
   }
-  const publishing = /gh release (?:create|edit|upload|delete)|git push[^\n]*(?:--tags|refs\/tags)|git push --atomic/;
+  const publishing = PUBLISHING_PATTERN;
   for (const name of files) {
     if (name === PUBLISH_FILE) continue;
     assert.doesNotMatch(executableYaml(await workflow(name)), publishing, `${name} must not create releases or push tags`);
@@ -3698,9 +3765,17 @@ function assertDocsCheckWorkflow(source, name = 'check-docs.yml') {
   for (const run of runs) {
     assert.ok(DOCS_RUN_ALLOWLIST.some((prefix) => run.startsWith(prefix)), `${name} run command "${run}" must start with python3 docs/checks/ or python3 -m unittest`);
   }
-  assert.equal(runs.length, 3, `${name} must run exactly the agent-file check, the site guard and their tests`);
-  assert.match(jobs['agent-files'], /^      - run: python3 docs\/checks\/check_agent_files\.py --root \.$/m, `${name} must run the agent-file check from the repository root`);
-  assert.match(jobs['agent-files'], /^      - run: python3 docs\/checks\/check_site\.py --root \.$/m, `${name} must run the documentation site guard from the repository root`);
+  assert.doesNotMatch(source, /^\s*environment:/m, `${name} must not enter any environment`);
+  assert.doesNotMatch(executable, /\bgit push\b/, `${name} must not push`);
+  assert.equal(runs.length, 4, `${name} must run exactly the offline guard, the agent-file check, the site guard and their tests`);
+  const agentFiles = jobs['agent-files'];
+  assert.match(agentFiles, /^      - run: python3 docs\/checks\/check_offline\.py --root \.$/m, `${name} must run the offline guard from the repository root`);
+  assert.match(agentFiles, /^      - run: python3 docs\/checks\/check_agent_files\.py --root \.$/m, `${name} must run the agent-file check from the repository root`);
+  const offlineGuard = agentFiles.indexOf('      - run: python3 docs/checks/check_offline.py --root .');
+  const agentFileCheck = agentFiles.indexOf('      - run: python3 docs/checks/check_agent_files.py --root .');
+  assert.ok(offlineGuard !== -1 && agentFileCheck !== -1, `${name} must define both the offline guard and the agent-file check`);
+  assert.ok(offlineGuard < agentFileCheck, `${name} must run the offline guard before the agent-file check`);
+  assert.match(agentFiles, /^      - run: python3 docs\/checks\/check_site\.py --root \.$/m, `${name} must run the documentation site guard from the repository root`);
   assert.match(jobs['unit-tests'], /^      - run: python3 -m unittest discover -s docs\/checks -p 'test_\*\.py' -v$/m, `${name} must run the agent-file check suite`);
 
   for (const forbidden of [/\bnpm\b/, /\bnpx\b/, /\bpip\b/, /\bcurl\b/, /\bwget\b/, /setup-node/, /setup-java/, /setup-gradle/]) {
@@ -3708,7 +3783,7 @@ function assertDocsCheckWorkflow(source, name = 'check-docs.yml') {
   }
 }
 
-test('docs workflow runs only the agent-file check, the site guard and their tests from the allow-list', async () => {
+test('docs workflow runs only the offline guard, the agent-file check, the site guard and their tests from the allow-list', async () => {
   const source = await workflow('check-docs.yml');
   assertDocsCheckWorkflow(source);
 
@@ -3731,7 +3806,7 @@ test('docs workflow runs only the agent-file check, the site guard and their tes
   // YAML block scalar: either the command no longer matches the allow-list or the count changes.
   const chained = `${source}\n      - run: python3 docs/checks/check_agent_files.py --root . ; npm ci\n`;
   assert.notEqual(chained, source, 'the chained-install mutation must change check-docs.yml');
-  assert.throws(() => assertDocsCheckWorkflow(chained), /exactly the agent-file check, the site guard/, 'the contract must reject a chained install');
+  assert.throws(() => assertDocsCheckWorkflow(chained), /exactly the offline guard, the agent-file check, the site guard/, 'the contract must reject a chained install');
 
   const blockScalar = `${source}\n      - run: |\n          python3 docs/checks/check_agent_files.py --root .\n          npm ci\n`;
   assert.notEqual(blockScalar, source, 'the block-scalar mutation must change check-docs.yml');
@@ -3742,13 +3817,30 @@ test('docs workflow runs only the agent-file check, the site guard and their tes
   assert.throws(() => assertDocsCheckWorkflow(renamed), /must start with python3/);
   const dropped = source.replace(/^ *- run: python3 -m unittest discover -s docs\/checks -p 'test_\*\.py' -v\n/m, '');
   assert.notEqual(dropped, source, 'the dropped-tests mutation must change check-docs.yml');
-  assert.throws(() => assertDocsCheckWorkflow(dropped), /exactly the agent-file check, the site guard/);
+  assert.throws(() => assertDocsCheckWorkflow(dropped), /exactly the offline guard, the agent-file check, the site guard/);
   const droppedGuard = source.replace(/^ *- run: python3 docs\/checks\/check_site\.py --root \.\n/m, '');
   assert.notEqual(droppedGuard, source, 'the dropped-guard mutation must change check-docs.yml');
-  assert.throws(() => assertDocsCheckWorkflow(droppedGuard), /exactly the agent-file check, the site guard/);
+  assert.throws(() => assertDocsCheckWorkflow(droppedGuard), /exactly the offline guard, the agent-file check, the site guard/);
   const guardArgs = source.replace('python3 docs/checks/check_site.py --root .', 'python3 docs/checks/check_site.py --root docs');
   assert.notEqual(guardArgs, source, 'the guard-arguments mutation must change check-docs.yml');
   assert.throws(() => assertDocsCheckWorkflow(guardArgs), /must run the documentation site guard/);
+  const droppedOfflineGuard = source.replace(/^ *- run: python3 docs\/checks\/check_offline\.py --root \.\n/m, '');
+  assert.notEqual(droppedOfflineGuard, source, 'the dropped-offline-guard mutation must change check-docs.yml');
+  assert.throws(() => assertDocsCheckWorkflow(droppedOfflineGuard), /exactly the offline guard, the agent-file check, the site guard/);
+  const offlineLine = '      - run: python3 docs/checks/check_offline.py --root .\n';
+  const agentFileLine = '      - run: python3 docs/checks/check_agent_files.py --root .\n';
+  const reorderedGuard = source.replace(offlineLine + agentFileLine, agentFileLine + offlineLine);
+  assert.notEqual(reorderedGuard, source, 'the reordered-offline-guard mutation must change check-docs.yml');
+  assert.throws(() => assertDocsCheckWorkflow(reorderedGuard), /before the agent-file check/);
+  const offlineGuardArgs = source.replace('python3 docs/checks/check_offline.py --root .', 'python3 docs/checks/check_offline.py --root docs');
+  assert.notEqual(offlineGuardArgs, source, 'the offline-guard-arguments mutation must change check-docs.yml');
+  assert.throws(() => assertDocsCheckWorkflow(offlineGuardArgs), /offline guard from the repository root/);
+  const environment = source.replace('  agent-files:\n', '  agent-files:\n    environment: docs\n');
+  assert.notEqual(environment, source, 'the environment mutation must change check-docs.yml');
+  assert.throws(() => assertDocsCheckWorkflow(environment), /must not enter any environment/);
+  const pushed = source.replace('python3 docs/checks/check_site.py --root .', 'python3 docs/checks/check_site.py --root . ; git push');
+  assert.notEqual(pushed, source, 'the git-push mutation must change check-docs.yml');
+  assert.throws(() => assertDocsCheckWorkflow(pushed), /must not push/);
 });
 
 function assertBuildAndroidArtifacts(source) {

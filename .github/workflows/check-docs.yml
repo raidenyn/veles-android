@@ -1,11 +1,12 @@
 name: check-docs
 
 # Docs node of the CI component tree (ci.yml -> `docs / agent-files`, `docs / unit-tests`): the
-# structural agent-file check, the documentation site guard (what the Mintlify site publishes) and
-# their stdlib-only Python suite. The node runs plain Python on the
-# runner's system interpreter: it installs nothing (no npm, pip, Node, Java or Gradle) and downloads
-# nothing, so the workflow contract allow-lists every command here. Any workflow edit is a global
-# path, so the nodes that read this file run too.
+# offline guard over `docs/checks/`, the structural agent-file check, the documentation site guard
+# (what the Mintlify site publishes) and their stdlib-only Python suite. The node runs plain Python
+# on the runner's system interpreter: it installs nothing (no npm, pip, Node, Java or Gradle) and
+# downloads nothing, so the workflow contract allow-lists every command here. This file selects the
+# `docs` and `tooling` nodes only: the tooling all-workflow boundary owns its release safety, and the
+# offline guard keeps `docs/checks/` free of network and process use.
 
 on:
   workflow_call:
@@ -25,6 +26,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.commit-sha }}
+      - run: python3 docs/checks/check_offline.py --root .
       - run: python3 docs/checks/check_agent_files.py --root .
       - run: python3 docs/checks/check_site.py --root .
 

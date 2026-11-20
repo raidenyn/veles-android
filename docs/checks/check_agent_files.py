@@ -247,7 +247,7 @@ OVERRIDE_TARGETS.update(
         "native-bridge/host/AGENTS.md": ("docs", "native-host"),
         ".github/CODEOWNERS": ("docs",),
         ".github/components.json": ("tooling", "docs"),
-        ".github/workflows/check-docs.yml": ("docs", "tooling", "installer", "supply-chain"),
+        ".github/workflows/check-docs.yml": ("docs", "tooling"),
     }
 )
 

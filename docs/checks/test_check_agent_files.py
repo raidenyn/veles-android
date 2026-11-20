@@ -153,7 +153,7 @@ EXPECTED_OVERRIDE_TARGETS = {
     "scripts/AGENTS.md": ["docs"],
     ".github/CODEOWNERS": ["docs"],
     ".github/components.json": ["tooling", "docs"],
-    ".github/workflows/check-docs.yml": ["docs", "tooling", "installer", "supply-chain"],
+    ".github/workflows/check-docs.yml": ["docs", "tooling"],
 }
 EXPECTED_CODEOWNER_PATTERNS = (
     "/opencode.json",
@@ -1804,9 +1804,9 @@ class AgentFileCheckTest(unittest.TestCase):
             ("android/AGENTS.md", ["android"], "android/AGENTS.md", "expected exactly"),
             (
                 ".github/workflows/check-docs.yml",
-                ["docs", "tooling"],
+                ["docs"],
                 ".github/workflows/check-docs.yml",
-                "supply-chain",
+                "tooling",
             ),
             (".github/components.json", ["tooling"], ".github/components.json", "expected exactly"),
         )
