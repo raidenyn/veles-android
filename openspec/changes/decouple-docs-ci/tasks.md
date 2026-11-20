@@ -48,13 +48,13 @@
 
 ## 5. Documentation and selection evidence
 
-- [ ] 5.1 Update `docs/ci.md`:
+- [x] 5.1 Update `docs/ci.md`:
   - the `docs / agent-files` row of the command table;
   - the override paragraph (around lines 139–146) and the workflow paragraph (around line 162): `check-docs.yml` selects `docs` and `tooling`, and why;
   - a sentence that `docs/checks/` is guarded by the docs node, not the remote-code scan;
   - supply-chain's `verify/` ownership, with `verify/test/` belonging to `tooling`
-- [ ] 5.2 Add the guard command to the Commands block of `docs/AGENTS.md` (keep it at 40 lines or fewer) and to the command list in `docs/agent-guidance.md`, with one sentence on what the guard enforces. Run `python3 docs/checks/check_agent_files.py --root .` and `python3 docs/checks/check_site.py --root .`
-- [ ] 5.3 Record the selection evidence. Run `python3 -I scripts/components.py changed` against the merge base for synthetic commits on a scratch branch that is deleted afterwards:
+- [x] 5.2 Add the guard command to the Commands block of `docs/AGENTS.md` (keep it at 40 lines or fewer) and to the command list in `docs/agent-guidance.md`, with one sentence on what the guard enforces. Run `python3 docs/checks/check_agent_files.py --root .` and `python3 docs/checks/check_site.py --root .`
+- [x] 5.3 Record the selection evidence. Run `python3 -I scripts/components.py changed` against the merge base for synthetic commits on a scratch branch that is deleted afterwards:
   - only `docs/checks/check_site.py`;
   - only `.github/workflows/check-docs.yml`;
   - only `verify/test/workflow-contracts.test.mjs`.
@@ -63,7 +63,7 @@
 
 ## 6. Pre-push checks and CI
 
-- [ ] 6.1 Find the touched nodes with `python3 -I scripts/components.py changed --base $(git merge-base origin/master HEAD)` (expected: docs, tooling, supply-chain, installer, protocol, native-host). Run **every** command in the `AGENTS.md` of each selected node that can run on Linux; the lists below are a floor, not the whole set:
+- [x] 6.1 Find the touched nodes with `python3 -I scripts/components.py changed --base $(git merge-base origin/master HEAD)` (expected: docs, tooling, supply-chain, installer, protocol, native-host). Run **every** command in the `AGENTS.md` of each selected node that can run on Linux; the lists below are a floor, not the whole set:
   - docs: the offline guard, the agent-file check, `check_gate_b_matrix.py`, `check_site.py` and the unit tests;
   - tooling: everything `scripts/AGENTS.md` lists, including `python3 -I scripts/components.py check` and its `node --test` suites, plus `node --test verify/test/workflow-contracts.test.mjs` and `./gradlew scriptsTest`;
   - supply-chain: `node --test verify/test/*.test.mjs` and `verify/verify-supply-chain.sh`, after `npm ci --ignore-scripts --prefix verify` and `./gradlew installCargoDeny`;
