@@ -40,9 +40,9 @@ between.
 
 ## 6. Agent-file check (design §6)
 
-- [ ] 6.1 Wiring check: the five hooks with the matchers the `hooked-rule-delivery` Host adapters requirement lists, no `SubagentStop`; stop predicate names against the engine registry; positive and negative tests
-- [ ] 6.2 Delivery budget check over the listed triggers and the stop text, failing above 9,000 bytes; boundary tests at 9,000 and 9,001; the check passes on the tree after section 5
-- [ ] 6.3 Layout checks: exactly three always-on `repo-*` rules in `.agents/rules/`, the moved files absent there (add the five to the check's `MOVED_RULES` map), the root listing of the three; update the rule-name list and the hook tuple in `test_check_agent_files.py`; tests; the check passes on the real tree
+- [x] 6.1 Wiring check: the five hooks with the matchers the `hooked-rule-delivery` Host adapters requirement lists, no `SubagentStop`; stop predicate names against the engine registry; positive and negative tests
+- [x] 6.2 Delivery budget check over the listed triggers and the stop text, failing above 9,000 bytes; boundary tests at 9,000 and 9,001; the check passes on the tree after section 5
+- [x] 6.3 Layout checks: exactly three always-on `repo-*` rules in `.agents/rules/`, the moved files absent there (add the five to the check's `MOVED_RULES` map), the root listing of the three; update the rule-name list and the hook tuple in `test_check_agent_files.py`; tests; the check passes on the real tree
 
 ## 7. References and docs (design §5, §9)
 
