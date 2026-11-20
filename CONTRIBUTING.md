@@ -49,13 +49,18 @@ Pull requests are squash-merged, so your PR title and description become the fin
 
 ### Git Hooks
 
-Install the local `commit-msg` hook to validate commit messages before committing:
+Install the local hooks and the pinned gitleaks once per clone or worktree:
 
 ```bash
 ./gradlew installGitHooks
+./gradlew installGitleaks
 ```
 
-*(This hook also runs automatically as part of `:app:preBuild`, and pull request titles are verified by the required `pr-title` CI check).*
+`installGitHooks` enables the `commit-msg` check and the `pre-commit` secret scan; `installGitleaks`
+downloads the pinned, SHA-256-verified gitleaks binary the scan uses. Until it is installed the pre-commit
+scan only warns and the commit proceeds unscanned.
+
+*(`installGitHooks` also runs automatically as part of `:app:preBuild`, and pull request titles are verified by the required `pr-title` CI check).*
 
 ---
 

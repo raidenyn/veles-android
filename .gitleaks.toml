@@ -1,0 +1,75 @@
+# Secret-scan configuration for the Veles repository.
+#
+# It extends the pinned gitleaks default rules. Every allowlist entry below
+# covers a finding that the full-history scan flagged and that has been triaged
+# as test data, not a secret. Each entry is narrowed to the one path or
+# directory that needs it.
+#
+# Entries for pure test-data files allowlist the path only. Entries for prose,
+# source and maintained test files use condition = "AND" with a line-scoped
+# regex, so only the known-benign line is allowed and a new secret anywhere else
+# in the same file still fires.
+#
+# History-only findings of the same kind are listed in .gitleaksignore by
+# fingerprint: their paths no longer exist in the tree, so a path allowlist
+# cannot cover them.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "SPAKE2/P-256 conformance vectors: protocol/v1/fixtures/crypto.json holds fixed synthetic inputs and published RFC 9382 Appendix B anchors produced by protocol/tools/generate-vectors.mjs; its key and ciphertext fields are test data, not credentials."
+paths = ['''^protocol/v1/fixtures/crypto\.json$''']
+
+[[allowlists]]
+description = "Recorded feasibility evidence: the JSON and NDJSON files under native-bridge/feasibility/evidence/ snapshot local connector experiments and carry harness-generated synthetic tab tokens (17-character base-36 values built from Date.now().toString(36) plus Math.random()), macOS unified-log UUIDs and JSON field names, none of which are credentials."
+paths = ['''^native-bridge/feasibility/evidence/.*\.(?:json|ndjson)$''']
+
+[[allowlists]]
+description = "Chrome extension manifest of the recorded feasibility run: only the line holding its 'key' field is allowed; that field is the extension's public key that fixes the extension ID, public material rather than a private key or credential."
+condition = "AND"
+regexTarget = "line"
+paths = ['''^native-bridge/feasibility/extension/manifest\.json$''']
+regexes = ['''"key"\s*:''']
+
+[[allowlists]]
+description = "Chrome extension manifest of the acceptance driver: only the line holding its 'key' field is allowed; that field is the driver extension's public key that fixes its extension ID, public material rather than a private key or credential."
+condition = "AND"
+regexTarget = "line"
+paths = ['''^native-bridge/host/acceptance/driver-extension/manifest\.json$''']
+regexes = ['''"key"\s*:''']
+
+[[allowlists]]
+description = "Acceptance-driver source: only the line assigning the standard-library winreg.KEY_WOW64_64KEY registry access-rights constant is allowed; a registry permission value, not a credential."
+condition = "AND"
+regexTarget = "line"
+paths = ['''^native-bridge/host/scripts/accdrv/registration\.py$''']
+regexes = ['''winreg\.KEY_WOW64_64KEY''']
+
+[[allowlists]]
+description = "Archived OpenSpec plan prose: only the line containing the English phrase 'AES-256-GCM-protected' is allowed; it describes authenticated sessions and is not a credential."
+condition = "AND"
+regexTarget = "line"
+paths = ['''^openspec/changes/archive/2026-11-11-otp-09-authenticated-reconnect/plan\.md$''']
+regexes = ['''AES-256-GCM-protected''']
+
+[[allowlists]]
+description = "Plan document with a Kotlin sample: only the line declaring the synthetic SECRET_PROBE_TEXT probe marker is allowed; it exists to test notification redaction and is not a secret."
+condition = "AND"
+regexTarget = "line"
+paths = ['''^docs/superpowers/plans/2026-06-30-sensitive-notification-redaction\.md$''']
+regexes = ['''SECRET_PROBE_TEXT''']
+
+[[allowlists]]
+description = "Workflow contract test: only the line holding the harness command substitution token=$(openssl rand -hex 16) is allowed; it is test fixture text asserting a random stop-commands token, not a credential."
+condition = "AND"
+regexTarget = "line"
+paths = ['''^verify/test/workflow-contracts\.test\.mjs$''']
+regexes = ['''token=\$\(openssl rand -hex 16\)''']
+
+[[allowlists]]
+description = "Web-extension test harness: only the line referencing the P-256 key-prefix accessor keys.p2cPrefix is allowed; it is a property name in the harness, not key material."
+condition = "AND"
+regexTarget = "line"
+paths = ['''^web-extension/test/session/client-harness\.ts$''']
+regexes = ['''keys\.p2cPrefix''']

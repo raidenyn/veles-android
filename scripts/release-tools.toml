@@ -1,11 +1,21 @@
-# Pinned release tooling, installed by `./gradlew installGitCliff` into build/release-tools/.
-# Archives come from https://github.com/orhun/git-cliff/releases/download/v<version>/ and are
-# verified against these SHA-256 digests before extraction. Each digest was cross-checked
+# Pinned release tooling, installed by `./gradlew installGitCliff installGitleaks` into
+# build/release-tools/. git-cliff archives come from
+# https://github.com/orhun/git-cliff/releases/download/v<version>/ and gitleaks archives from
+# https://github.com/gitleaks/gitleaks/releases/download/v<version>/. Every archive is verified
+# against these SHA-256 digests before extraction. Each git-cliff digest was cross-checked
 # (2026-11-09) against the GitHub release asset digest API and, where upstream publishes one,
-# the archive's .sha512 sidecar (the Windows zip has no sidecar).
+# the archive's .sha512 sidecar (the Windows zip has no sidecar). Each gitleaks digest was
+# cross-checked (2026-11-20) against the GitHub release asset digest API and the release's
+# gitleaks_<version>_checksums.txt.
 git-cliff = "2.14.2"
 git-cliff-x86_64-unknown-linux-gnu = "24f397c733add5390fdceee3a2088588ab0d5f944ce00d34cb7029b888cf2db4"
 git-cliff-aarch64-unknown-linux-gnu = "69e208f6e4baef3a0f9b759d5f44223aa9336b86c691072a3d0c98d35a816e69"
 git-cliff-aarch64-apple-darwin = "a0be97e237d440d34c5e508ec21d070b2c85cbb8be48a46a56f9a4e8bd247f05"
 git-cliff-x86_64-apple-darwin = "4e647d2deb152aca1e987f225cf42b080b991dd98f3bce4027ef95446d982ac3"
 git-cliff-x86_64-pc-windows-msvc = "6ece2112b3f4af462190ecbea4aeb1315fff6af415629b597f84319073c31131"
+gitleaks = "8.30.1"
+gitleaks-linux_x64 = "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+gitleaks-linux_arm64 = "e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080"
+gitleaks-darwin_arm64 = "b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5"
+gitleaks-darwin_x64 = "dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709"
+gitleaks-windows_x64 = "d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e"

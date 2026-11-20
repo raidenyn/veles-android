@@ -232,10 +232,40 @@ commits.
 
 ## Git hooks
 
-`./gradlew installGitHooks` sets `git core.hooksPath=.githooks`, whose `commit-msg` hook runs
-`scripts/commitlint.py`. It is also wired into `:app:preBuild`, acts only when `core.hooksPath` is unset
-(otherwise it warns and leaves the existing value alone, so the hook is not active) and is skipped when
-`CI=true`. The same task is shared by the root and the independent Android build.
+`./gradlew installGitHooks` sets `git core.hooksPath=.githooks`, which activates two hook scripts. It is
+also wired into `:app:preBuild`, acts only when `core.hooksPath` is unset (otherwise it warns and leaves
+the existing value alone, so the hooks are not active) and is skipped when `CI=true`. The same task is
+shared by the root and the independent Android build.
+
+`commit-msg` runs `scripts/commitlint.py` and rejects a message that is not a Conventional Commit.
+`pre-commit` scans the staged changes for secrets with gitleaks and the repository's `.gitleaks.toml`,
+redacting every value it reports. The binary is the gitleaks version pinned in
+`scripts/release-tools.toml`; `./gradlew installGitleaks` installs it into `build/release-tools/gitleaks/`
+after checking the archive's SHA-256, and a non-empty `VELES_GITLEAKS` overrides the path. The scan has
+four outcomes:
+
+| Outcome | What the hook does |
+|---|---|
+| A staged value matches a rule | Blocks the commit and names the rule and the file, never the value. Remove the value; if it is a false positive, add the narrowest allowlist entry to `.gitleaks.toml` (or a fingerprint to `.gitleaksignore`) with the reason. `git commit --no-verify` bypasses the scan deliberately. |
+| Nothing matches | Exits 0 and the commit proceeds. |
+| The binary is missing or not executable | Warns naming `./gradlew installGitleaks` and exits 0, so the commit proceeds unscanned. |
+| The scanner fails for another reason | Warns that the scan did not run, naming the exit code, and exits 0. |
+
+Both scanners detect recognised token patterns, not everything secret-shaped: a binary keystore
+(`*.jks`, `*.keystore`, `*.p12`, `*.pfx`, `*.bks`) or a weak `storePassword=` in `keystore.properties` is
+not reported. Signing keys and their passwords stay protected by the `.gitignore` rules
+(`android/config/android_keys/`) and must never be committed.
+
+The enforcement model is GitHub push protection plus this hook, with no CI scan job. The hook is the fast,
+local gate and is deliberately advisory when it cannot scan; push protection is the server-side backstop
+that refuses a push containing a detected secret. Push protection covers supported provider token patterns
+only, and a pusher can bypass it with a stated reason, so the local hook and the `.gitignore` rules remain
+part of the defence. `./gradlew scriptsTest` installs the pinned gitleaks
+first and passes it to the hook tests through `VELES_GITLEAKS`, so the tooling check exercises the real
+scanner.
+
+Follow-ups: cover `.gitleaks.toml` and `.gitleaksignore` in `CODEOWNERS` so the scanner configuration
+needs a reviewer, and add an always-run CI scan job, since this model has none.
 
 ## Future work
 
