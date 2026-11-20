@@ -7,7 +7,7 @@
 - Upstream:
   - brainstorm.md sha256 490e0eb287dc4ef2ae56fad35981b90928aedf37321deaf1384f75a4aeac9705
   - proposal.md sha256 3526ef09aa9b5255a6dd1671f1c846592ed925dfed6e68906e3e6db44c1bbfc5
-  - design.md sha256 0eafbff0ece7e06778f6768499513d052421fa5d3201a388ea244fc65661e2b3 — re-pointed from da883c49… after design pass 2 (see design record) and the consistency check below
+  - design.md sha256 de5c0515eb63d0a294e482895f2340a5e07c3a0b6bae881813585f87fec1f536 — re-pointed from 0eafbff0… after design pass 3 (line-scoped allowlist amendment, see design record)
 
 ## Pass 1
 
@@ -79,3 +79,29 @@ Judged against design 33875a3a…; spec content unchanged.
 | low | Spec's `CONTRIBUTING.md` "only warns" sentence missing from D8. | fixed in design D8. |
 
 Approved content: specs/secret-scanning/spec.md sha256 10205abe6d82140f2318f7a712c740ee372f08cbd20dc3fcf3b52323ed5bde8c — consistent with design 0eafbff0….
+
+## Pass 3 — consistency revalidation after the line-scoped allowlist amendment
+
+### specs/secret-scanning/spec.md
+
+#### Round 1 — changes-required
+
+Judged against design 3fac9b83…; spec content af9831f7… (first amendment).
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| medium | "reviewers check this policy, since no test can" contradicts the testable line-scope scenario, and the form of evidence is unstated. | fixed: classification and reasons are reviewer checks; the line-scope guarantee is checked by the apply-time negative control. |
+| medium | The boundary between "tracked test data" and a "maintained test file" is undefined; `protocol_fixtures.rs` is both a test source file and an expected path entry. | fixed: test data defined by content (fixture, conformance-vector or recorded-evidence), including such content in a test source file, with `protocol_fixtures.rs` named. |
+| medium | "Path allowlist entry" is undefined while line-scoped entries also carry `paths`. | fixed: a path-only entry is one with `paths` and no `regexes` or `condition`. |
+| medium | Nothing requires the line regex to be narrow; `.*` would satisfy the wording. | fixed: the regex must be a literal or anchored expression, never a wildcard over the line or file; scenario added. |
+| low | "anywhere else in that file" overstates the guarantee for a secret on the same line. | fixed: "on any other line"; one entry per benign token. |
+
+#### Round 2 — approve
+
+Judged against design de5c0515…; amended spec content e2662b89….
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| low | The closing "since the classification…" clause follows the negative-control half. | no change: meaning is correct and unambiguous; reviewer approved. |
+
+Approved content: specs/secret-scanning/spec.md sha256 e2662b890d09368bcf369ff076f9e4b393aa0012f533c6a84044e197bf080871 — amendment for the line-scoped non-test-data category, defined test data, and a specific line regex.

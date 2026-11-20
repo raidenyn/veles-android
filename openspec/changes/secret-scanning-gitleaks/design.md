@@ -129,20 +129,43 @@ description = "<what the data is and why it is not a secret>"
 paths = ['''<narrowest regex covering the flagged test data>''']
 ```
 
-Path allowlists are added only for paths the full-history scan (D6, `gitleaks git`) flags as test data in
-files that are still tracked. The three issue
-paths are the expected ones; any other flagged test-data path is allowlisted the same way, narrowed to the
-smallest path, and listed in the PR. The allowlist syntax (`[[allowlists]]` versus the older
-`[allowlist]`) is the one the pinned version documents. History-only false positives (paths no longer in the
+Path-only entries are added only for paths the full-history scan (D6, `gitleaks git`) flags as test data in
+files that are still tracked. A path-only entry is one with `paths` and no `regexes` or `condition`. Test data
+means fixture, conformance-vector or recorded-evidence content, including such content inside a test source
+file; `protocol/v1/fixtures/crypto.json` and `rust/veles-crypto/tests/protocol_fixtures.rs` are the examples.
+The three issue paths are the expected ones; any other flagged test-data path is allowlisted the same way,
+narrowed to the smallest path, and listed in the PR.
+
+A flagged line in a file that is not test data — prose in a plan, a source file with logic or a maintained test
+harness — is not allowlisted by path alone. Its entry sets `condition = "AND"`, `regexTarget = "line"`, the
+file's exact path and a regex for the benign token, so a flagged secret on any other line of that file is still
+detected. The regex must match only the benign token — a literal or anchored expression, never a wildcard over
+the line or the file — and one entry covers the one benign token it names. `condition` and `regexTarget` are
+supported by the pinned version and are exercised by the apply-time negative control that puts a different
+flagged line into a covered file and confirms it still fires:
+
+```toml
+[[allowlists]]
+description = "<the benign line and why it is not a secret>"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^<exact file path>$''']
+regexes = ['''<the benign token>''']
+```
+
+The allowlist syntax (`[[allowlists]]` versus the older
+`[allowlist]`) and those fields are the ones the pinned version documents. History-only
+false positives (paths no longer in the
 tree) go to `.gitleaksignore` by fingerprint; fingerprints are commit-bound and gitleaks also reads the file in
 staged scans, which is harmless because a commit-bound fingerprint never matches a staged finding.
 
 ### D6. Full-history scan first
 
 Before the config is final, run the pinned binary over the whole history with `--redact` and triage every
-finding as test data, history-only false positive, or real secret. A real secret stops the work: report it
-(path and rule only, never the value) to the owner for rotation; never allowlist it. Record counts only
-(total, per category) in the PR. After the config lands, a repeat full scan reports no finding.
+finding as (a) tracked test data, (b) a history-only path, (c) a real secret, or (d) a tracked non-test-data
+false positive. (a) gets a path-only entry, (d) a line-scoped entry, (b) a fingerprint, and (c) stops the work:
+report it (path and rule only, never the value) to the owner for rotation; never allowlist it. Record counts
+only (total, per category a–d) in the PR. After the config lands, a repeat full scan reports no finding.
 
 ### D7. Tests: `scripts/tests/test_pre_commit_hook.py`
 

@@ -70,3 +70,27 @@ Reviewed content sha256 33875a3a5eeab54503d221be4a62abe9689a9bfbae6fa6d0b6bcd83b
 | low | D8 `CONTRIBUTING.md` bullet omits "only warns until installed" which the spec requires. | fixed. |
 
 Approved content: design sha256 0eafbff0ece7e06778f6768499513d052421fa5d3201a388ea244fc65661e2b3 — re-pointed from 33875a3a… after two non-triggering minor fixes from pass 2 round 2 (`--no-verify` assertion, `CONTRIBUTING.md` warn note).
+
+## Pass 3 — consistency review after the line-scoped allowlist amendment
+
+### Round 1 — changes-required
+
+Reviewed content sha256 3fac9b83abc55e797ef24b7552bafb1f68db12a56cc8d6fc84d503349d490435.
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| medium | D5 does not define "path-only entry", so a line-scoped entry with `paths` can still read as a path allowlist on non-test data. | fixed: path-only defined as `paths` without `regexes`/`condition`. |
+| medium | D5 does not define the test-data boundary; `protocol_fixtures.rs` is a maintained test source file. | fixed: test data defined by content, example named. |
+| medium | D5 does not require the line regex to be narrow. | fixed: literal or anchored, never a wildcard; one entry per benign token. |
+| medium | D6 triage has three categories and no slot or count for a tracked non-test-data false positive. | fixed: four categories a–d with counts. |
+| low | "apply confirms them" is unverified. | fixed: the fields are supported by the pinned version and exercised by the apply-time negative control. |
+
+### Round 2 — approve
+
+Reviewed content sha256 de5c0515eb63d0a294e482895f2340a5e07c3a0b6bae881813585f87fec1f536.
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| low | None. | — |
+
+Approved content: design sha256 de5c0515eb63d0a294e482895f2340a5e07c3a0b6bae881813585f87fec1f536 — line-scoped allowlist amendment, four triage categories, apply-time negative control.

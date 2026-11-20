@@ -56,7 +56,7 @@ The hook SHALL scan only the staged changes, with the repository's `.gitleaks.to
 - **THEN** the hook prints a warning that the scan did not run, naming the exit code, and exits 0
 
 ### Requirement: Scan configuration and allowlist policy
-The repository SHALL ship `.gitleaks.toml`, which extends the scanner's default rules. Every path allowlist entry MUST cover only tracked test data that a full-history scan flagged, MUST be the narrowest path that covers it, and MUST say what the data is and why it is not a secret. History-only false positives MUST be suppressed by fingerprint in `.gitleaksignore`. A real secret MUST never be allowlisted or suppressed; reviewers check this policy, since no test can.
+The repository SHALL ship `.gitleaks.toml`, which extends the scanner's default rules. Every allowlist entry MUST say what the flagged text is and why it is not a secret. A path-only entry (one that matches by path alone, with no `regexes` or `condition`) MUST cover only tracked test data that a full-history scan flagged, MUST be the narrowest path that covers it, and MUST NOT cover a file whose flagged content is prose, source logic or harness code. Test data means fixture, conformance-vector or recorded-evidence content, including such content inside a test source file (for example `rust/veles-crypto/tests/protocol_fixtures.rs`). A tracked false positive in any other file MUST be allowlisted only by a line-scoped entry that requires both that file's exact path and a regex for the benign token (`condition = "AND"`, `regexTarget = "line"`); the regex MUST match only that benign token — a literal or anchored expression, never a wildcard covering the line or the file — so a flagged secret on any other line of the same file is still detected. History-only false positives MUST be suppressed by fingerprint in `.gitleaksignore`. A real secret MUST never be allowlisted or suppressed. Reviewers check the test-data classification and each entry's reason; the line-scope guarantee is checked by the apply-time negative control, since the classification itself is a judgement no test can settle.
 
 #### Scenario: Full-history scan is clean after triage
 - **WHEN** the pinned gitleaks scans the full git history with `--redact` and the repository config
@@ -64,7 +64,15 @@ The repository SHALL ship `.gitleaks.toml`, which extends the scanner's default 
 
 #### Scenario: Allowlist entries are justified
 - **WHEN** a reviewer reads `.gitleaks.toml`
-- **THEN** every allowlist entry names a test-data path and states why its content is not a secret
+- **THEN** every allowlist entry names either a test-data path or the line-scoped benign token in its named file, and states why its content is not a secret
+
+#### Scenario: A non-test-data false positive is line-scoped
+- **WHEN** a tracked non-test-data file has one benign line that the rules flag
+- **THEN** its allowlist entry requires both the exact path and a line regex for the benign token, and a different flagged line in the same file still blocks a commit
+
+#### Scenario: A line-scoped regex is specific
+- **WHEN** a reviewer reads a line-scoped allowlist entry
+- **THEN** its regex matches only the benign token (a literal or anchored expression), not a wildcard covering the line or the file
 
 ### Requirement: Offline hook tests
 `scripts/tests/test_pre_commit_hook.py` SHALL test the hook with the standard library only, without network access, sleeps or the wall clock, in temporary git repositories with an isolated `HOME` and `PATH`. It MUST cover a refused staged secret, a clean staged file, a missing binary and a scanner error. Cases that need the real binary MUST skip individually when it is unavailable.

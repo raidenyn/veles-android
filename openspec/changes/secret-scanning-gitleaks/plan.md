@@ -87,10 +87,10 @@ Covers tasks.md 4.1–4.4; design D5, D6. Runs before the hook tests, because th
 - Produces: `.gitleaks.toml` at the repository root, loaded by the hook with `--config`.
 
 - [ ] **Step 1: Scan the full history.** Run `build/release-tools/gitleaks/gitleaks git --redact --no-banner --report-format json --report-path <scratchpad>/history.json .`. Count the findings and group them by `File` and `RuleID`. Never print or copy `Secret` or `Match`; they are redacted, and they stay out of every recorded output.
-- [ ] **Step 2: Triage every finding.** Sort each one into (a) tracked test data, (b) a history-only path (`git ls-files --error-unmatch <file>` fails), or (c) a real secret. **On any (c): stop. Report the path and rule to the owner for rotation and do nothing else in this task.**
-- [ ] **Step 3: Write `.gitleaks.toml`.** Start it with `[extend]` and `useDefault = true`. Add one `[[allowlists]]` block per group (a) path, each with a `description` that says what the data is and why it is not secret, and `paths = ['''<narrowest regex>''']`. Use the syntax the pinned README documents.
+- [ ] **Step 2: Triage every finding.** Sort each one into (a) tracked test data, (b) a history-only path (`git ls-files --error-unmatch <file>` fails), (c) a real secret, or (d) a tracked non-test-data false positive (prose, source logic or harness code). **On any (c): stop. Report the path and rule to the owner for rotation and do nothing else in this task.**
+- [ ] **Step 3: Write `.gitleaks.toml`.** Start it with `[extend]` and `useDefault = true`. Add one path-only `[[allowlists]]` block per group (a) path, each with a `description` that says what the data is and why it is not secret, and `paths = ['''<narrowest regex>''']`. For each group (d) file, add an entry with `condition = "AND"`, `regexTarget = "line"`, the exact path and a literal or anchored regex for the benign token (never a wildcard), so a flagged secret on any other line is still detected. Use the syntax the pinned README documents, and record that the pinned binary accepts `condition` and `regexTarget`. Then run the negative control for each (d) file: add a runtime-generated flagged line to that file itself, stage it, run the hook (or `gitleaks git --staged --redact --config .gitleaks.toml`), confirm the report names the new line; restore with `git restore --staged --worktree <file>` and confirm `git status --porcelain <file>` is empty; record the result. If triage finds no (d) entry, record the control as not applicable.
 - [ ] **Step 4: Write `.gitleaksignore`, if needed.** For each (b) finding, add its `Fingerprint` line, under a `#` comment that gives the reason.
-- [ ] **Step 5: Re-run the scan.** Run the Step 1 command with `--config .gitleaks.toml`. Expected: `no leaks found`, exit 0. Record the counts in `apply.md`: the total and categories (a), (b) and (c).
+- [ ] **Step 5: Re-run the scan.** Run the Step 1 command with `--config .gitleaks.toml`. Expected: `no leaks found`, exit 0. Record the counts in `apply.md`: the total and categories (a), (b), (c) and (d).
 - [ ] **Step 6: Register the files.** Add both files to `nodes.tooling.paths` in `.github/components.json`. Run `python3 -I scripts/components.py check`. Expected: exit 0.
 - [ ] **Step 7: Commit.** `git add .gitleaks.toml .github/components.json` (and `.gitleaksignore` if it exists), then `git commit -m "build(tooling): add gitleaks config with justified test-data allowlist"`.
 
@@ -171,9 +171,9 @@ Covers tasks.md 1.1–1.2, 7.1–7.2 and 8.1–8.2; design D1, D9.
 - [ ] **Step 3: Run the pre-push checks.** Run `python3 -I scripts/components.py changed --base "$(git merge-base origin/master HEAD)"`, then every selected node's checks. That includes at least `./gradlew scriptsTest`, `node --test verify/test/workflow-contracts.test.mjs`, `python3 -I scripts/components.py check` and the docs checks. Expected: all pass.
 - [ ] **Step 4: Open the draft PR.** The title is `build(tooling): add gitleaks pre-commit secret scanning`. The body records:
   - the owner's answer (and the user's decision, if the owner declined);
-  - the history-scan counts;
-  - any allowlisted path beyond `protocol/` conformance fixtures, `rust/veles-crypto/tests/protocol_fixtures.rs` and `native-bridge/feasibility/evidence/**`;
-  - the digest- and version-mismatch results;
+  - the history-scan counts by category a–d;
+  - any allowlisted path beyond `protocol/` conformance fixtures, `rust/veles-crypto/tests/protocol_fixtures.rs` and `native-bridge/feasibility/evidence/**`, and for each line-scoped entry the file and the entry's `description` (not the token text);
+  - the digest- and version-mismatch results and the line-scope negative control;
   - the real-checkout run;
   - `Refs <owner>/<repo>#<n>`.
 
