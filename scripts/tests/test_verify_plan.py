@@ -66,6 +66,22 @@ def planned_ids(node_plan):
     return [planned.step.id for planned in node_plan.steps]
 
 
+class StepClock:
+    """An injected clock whose every read advances, to cross the reserve inside a walk."""
+
+    def __init__(self, start, step):
+        self.value = float(start)
+        self.step = float(step)
+
+    def now(self):
+        self.value += self.step
+        return self.value
+
+    def advance(self, seconds):
+        self.value += seconds
+        return self.value
+
+
 class FixturePlanTest(unittest.TestCase):
     """A plan over a fixture table written into a temporary repository."""
 
@@ -98,16 +114,17 @@ class FixturePlanTest(unittest.TestCase):
                        "nodes": {node: {"release": False,
                                         "paths": list(paths or [node + "/"])}}}, handle)
 
-    def context(self, files=(), runner=None, deadline=None, fs_files=None):
+    def context(self, files=(), runner=None, deadline=None, fs_files=None, clock=None):
         entries = dict((self.abs(name), content)
                        for name, content in (fs_files or {}).items())
         for name in files:
             entries.setdefault(self.abs(name), b"")
         fs = FakeFs(files=entries)
         lines = []
+        overrides = {"clock": clock} if clock is not None else {}
         context = make_context(repo=self.repo, fs=fs,
                                runner=runner or FakeRunner(), deadline=deadline,
-                               log=lines.append)
+                               log=lines.append, **overrides)
         self.lines = lines
         return context
 
@@ -336,6 +353,89 @@ class StrategyTest(FixturePlanTest):
         for test_id in ("web-extension.unit", "web-extension.bundle", "web-extension.browser"):
             self.assertNotIn(test_id, planned)
         self.assertEqual(node.unresolved, [])
+
+    def test_within_failure_unresolved(self):
+        # D4/spec: a `within` allowlist that cannot be read is an unexpected NOT RUN, never a
+        # `none related` note that would hide the test's targets forever.
+        cases = {
+            "missing": (None, "the file does not exist"),
+            "invalid json": (b"{", "invalid JSON"),
+            "missing key": (b'{"scripts": {"test:browser": "node x.mjs"}}',
+                            "scripts.test is missing"),
+            "not a script": (b'{"scripts": {"test": 7}}',
+                             "scripts.test is not a script string or list"),
+        }
+        for name, (content, reason) in cases.items():
+            with self.subTest(case=name):
+                table = self.write_table(
+                    [
+                        command("tooling.unit", kind="test", cwd="web-extension",
+                                run=("cmd",),
+                                related={"strategy": "name-map",
+                                         "sources": "web-extension/src/*.ts",
+                                         "tests": "web-extension/test/<stem>.test.ts",
+                                         "within": "package.json:scripts.test",
+                                         "run": ["cmd", "{targets}"]}),
+                    ]
+                )
+                fs_files = {} if content is None else {
+                    "web-extension/package.json": content}
+                context = self.context(
+                    files=["web-extension/src/a.ts", "web-extension/test/a.test.ts"],
+                    fs_files=fs_files)
+                result = plan(table, selection(["web-extension/src/a.ts"], ["tooling"]),
+                              "task", context, context.runner.run)
+                node = result.nodes["tooling"]
+                self.assertEqual(node.steps, [])
+                self.assertEqual([step_id for step_id, _ in node.unresolved], ["tooling.unit"])
+                outcome = node.unresolved[0][1]
+                self.assertEqual(outcome.kind, "not_run")
+                self.assertIn("within web-extension/package.json:scripts.test", outcome.error)
+                self.assertIn(reason, outcome.error)
+                self.assertFalse(any("none related" in note for note in node.notes))
+
+    def test_deadline_before_resolution_is_unresolved(self):
+        # D9/D4: inside the reserve no resolution starts, and that is a timeout, not a note.
+        table = self.write_table(
+            [
+                command("tooling.unit", kind="test", run=("cmd",),
+                        related={"strategy": "name-map", "sources": "src/*.ts",
+                                 "tests": "test/<stem>.test.ts",
+                                 "run": ["cmd", "{targets}"]}),
+            ]
+        )
+        context = self.context(files=["src/a.ts", "test/a.test.ts"], deadline=1000.0)
+        context.clock.value = 1000.0 - 45.0
+        result = plan(table, selection(["src/a.ts"], ["tooling"]), "task", context,
+                      context.runner.run)
+        node = result.nodes["tooling"]
+        self.assertEqual(node.steps, [])
+        outcome = node.unresolved[0][1]
+        self.assertEqual(outcome.kind, "timeout")
+        self.assertEqual(outcome.error, "target resolution reached the deadline reserve")
+        self.assertFalse(any("none related" in note for note in node.notes))
+
+    def test_deadline_during_walk_is_unresolved(self):
+        # D9: a walk that crosses the reserve stops with a timeout, never a "no hit" note.
+        table = self.write_table(
+            [
+                command("tooling.unit", kind="test", run=("cmd",),
+                        related={"strategy": "name-map", "sources": "src/*.ts",
+                                 "tests": "test/**/<stem>.test.ts",
+                                 "run": ["cmd", "{targets}"]}),
+            ]
+        )
+        clock = StepClock(54.0, 0.5)  # deadline 100 -> the reserve starts at 55
+        context = self.context(files=["src/a.ts", "test/a.test.ts"], deadline=100.0,
+                               clock=clock)
+        result = plan(table, selection(["src/a.ts"], ["tooling"]), "task", context,
+                      context.runner.run)
+        node = result.nodes["tooling"]
+        self.assertEqual(node.steps, [])
+        outcome = node.unresolved[0][1]
+        self.assertEqual(outcome.kind, "timeout")
+        self.assertEqual(outcome.error, "target resolution reached the deadline reserve")
+        self.assertFalse(any("none related" in note for note in node.notes))
 
     def test_targets_flag_expands_per_target(self):
         # R8: an item holding {targets} repeats once per target with the placeholder replaced;

@@ -39,6 +39,7 @@ DEADLINE_RESERVE_SECONDS = 45
 DEVICE_NOTE = "NOT RUN (device test; real-device rule)"
 BRANCH_ONLY_NOTE = "NOT RUN (branch gate only: %s)"
 NONE_RELATED_NOTE = "tests: none related (%s)"
+TARGET_RESOLUTION_TIMEOUT = "target resolution reached the deadline reserve"
 STEP_KINDS = ("check", "test", "device", "platform")
 REQUIREMENT_KINDS = ("tool", "path", "generated")
 RESOLVERS = (
@@ -75,6 +76,10 @@ PROGRAM_REQUIREMENTS = {
 
 class TableError(ValueError):
     """The command table is invalid; the message names the problem and the offending id."""
+
+
+class _DeadlineReached(Exception):
+    """A filesystem walk stopped inside the run's reserved termination window (design D9)."""
 
 
 @dataclass(frozen=True)
@@ -868,7 +873,12 @@ def _glob_regex(pattern):
 
 
 def _walk(ctx, root):
-    """Every regular file under `root`, repository-relative; no hit once the reserve is reached."""
+    """Every regular file under `root`, repository-relative.
+
+    Checking the deadline per directory matters more than finishing the walk, so a cut-off walk
+    raises `_DeadlineReached`; the caller reports an unresolved test instead of a `none related`
+    note, which would claim nothing is related when resolution simply did not finish (D4/D9).
+    """
     if not root:
         return []
     found = []
@@ -876,7 +886,7 @@ def _walk(ctx, root):
         for name in filenames:
             found.append(_relative(ctx, os.path.join(dirpath, name)))
         if _past_cutoff(ctx):
-            return []
+            raise _DeadlineReached()
     return sorted(name for name in found if name)
 
 
@@ -1019,14 +1029,15 @@ def _files_arg_targets(test, changed, ctx, resolve):
 
 
 def _within_allowlist(test, ctx):
-    """The files named by `<file>:<key>` (design D4's `within`), or None when absent.
+    """The files named by `<file>:<key>` (design D4's `within`).
 
-    An unreadable allowlist yields an empty set: no target may run without it, and the caller
-    turns that into a `tests: none related` note rather than guessing.
+    Returns `(allowlist, None)`, `(None, None)` when the strategy has no `within`, and
+    `(None, outcome)` when the allowlist cannot be read: it is an unexpected `not_run`, never an
+    empty allowlist that would silently drop the tests behind a `tests: none related` note.
     """
     within = (test.related or {}).get("within")
     if not within:
-        return None
+        return None, None
     file_part, _separator, key = within.partition(":")
     candidates = []
     if test.cwd not in (".", ""):
@@ -1037,16 +1048,25 @@ def _within_allowlist(test, ctx):
         if _exists(ctx, candidate):
             relative = candidate
             break
+    label = "%s:%s" % (relative or candidates[0], key)
+
+    def failure(reason):
+        return None, Outcome("not_run", error="within %s: %s" % (label, reason))
+
     if relative is None:
-        return set()
+        return failure("the file does not exist")
     try:
-        data = json.loads(ctx.fs.read_text(_abs_path(ctx, relative)))
-    except (OSError, KeyError, ValueError):
-        return set()
+        text = ctx.fs.read_text(_abs_path(ctx, relative))
+    except (OSError, KeyError) as error:
+        return failure("cannot be read: %s" % error)
+    try:
+        data = json.loads(text)
+    except ValueError as error:
+        return failure("invalid JSON: %s" % error)
     value = data
     for name in key.split("."):
         if not isinstance(value, dict) or name not in value:
-            return set()
+            return failure("%s is missing" % key)
         value = value[name]
     if isinstance(value, str):
         try:
@@ -1056,14 +1076,14 @@ def _within_allowlist(test, ctx):
     elif isinstance(value, list):
         tokens = [str(item) for item in value]
     else:
-        return set()
+        return failure("%s is not a script string or list" % key)
     base = relative.rsplit("/", 1)[0] if "/" in relative else ""
     allowed = set()
     for token in tokens:
         allowed.add(_norm_target(token))
         if base:
             allowed.add(_norm_target(base + "/" + token))
-    return allowed
+    return allowed, None
 
 
 def _relative_to_cwd(test, target):
@@ -1081,26 +1101,35 @@ def _relative_to_cwd(test, target):
 def resolve_targets(test, changed, ctx, resolve):
     """An explicit list of existing test targets (design D4), or the resolver's failure.
 
-    Returns `(targets, None)` on success and `([], outcome)` when a list-only resolver did not
-    complete: `timeout` when it was cut off, `not_run` for any other failure (design D4/D9).
-    A `crate` strategy returns the matched crate prefixes, which `plan` maps through
-    `related.crates` (it is the one strategy with no `run` template).
+    Returns `(targets, None)` on success and `([], outcome)` when resolution did not complete:
+    `timeout` when a resolver or the filesystem walk was cut off (and when the run is already
+    inside the deadline reserve), `not_run` for a failed resolver or an unreadable `within`
+    allowlist (design D4/D9). An unreadable allowlist is never an empty one: that would drop the
+    tests behind a `tests: none related` note. A `crate` strategy returns the matched crate
+    prefixes, which `plan` maps through `related.crates` (it has no `run` template).
     """
     related = test.related or {}
     strategy = related.get("strategy")
-    if strategy == "files-arg":
-        targets, failure = _files_arg_targets(test, changed, ctx, resolve)
-        if failure is not None:
-            return [], failure
-    elif strategy == "name-map":
-        targets = _name_map_targets(test, changed, ctx)
-    elif strategy == "self":
-        targets = _self_targets(test, changed, ctx)
-    elif strategy == "crate":
-        targets = _crate_targets(test, changed, ctx)
-    else:
-        raise ValueError("unknown related strategy %r" % (strategy,))
-    allow = _within_allowlist(test, ctx)
+    if _past_cutoff(ctx):
+        return [], Outcome("timeout", error=TARGET_RESOLUTION_TIMEOUT)
+    try:
+        if strategy == "files-arg":
+            targets, failure = _files_arg_targets(test, changed, ctx, resolve)
+            if failure is not None:
+                return [], failure
+        elif strategy == "name-map":
+            targets = _name_map_targets(test, changed, ctx)
+        elif strategy == "self":
+            targets = _self_targets(test, changed, ctx)
+        elif strategy == "crate":
+            targets = _crate_targets(test, changed, ctx)
+        else:
+            raise ValueError("unknown related strategy %r" % (strategy,))
+    except _DeadlineReached:
+        return [], Outcome("timeout", error=TARGET_RESOLUTION_TIMEOUT)
+    allow, failure = _within_allowlist(test, ctx)
+    if failure is not None:
+        return [], failure
     if allow is not None:
         targets = [target for target in targets if _norm_target(target) in allow]
     if strategy == "crate":
