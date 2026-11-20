@@ -1799,7 +1799,8 @@ def decide(rules, state, key, event, roots=None):
     """The ``Decision`` for ``event`` in context ``key``; records it in ``state`` (one transaction).
 
     Moments (``tool-after``, ``prompt``) add the matched rules as context and mark them delivered, and
-    an apply-skill moment also sets the session-wide apply flag that arms the stop gate. A
+    an apply-skill invocation (a Skill call or a ``/<skill>`` prompt) also sets the session-wide
+    apply flag that arms the stop gate. A
     rule is skipped when its entry is delivered in this context's current generation and already holds
     every trigger the event matched; a different trigger delivers it again, and a pending entry never
     suppresses. Gates (``tool-before`` with a command) deny a call matching a rule not delivered in
