@@ -160,7 +160,7 @@ OpenSpec CLI 2.x.
   `--change "demo"`, `--change 'demo'` → `state.changes == ["demo"]`), `test_long_name_ignored` (65 chars),
   `test_non_openspec_command_ignored` (`grep -- "--change demo" notes.txt`), `test_failed_command_ignored`,
   `test_subagent_call_counts` (event with `agent` set → session set), `test_keeps_20_newest` (21 names → first dropped; re-naming moves to newest),
-  `test_apply_skill_arms_the_session` (a Skill event for `openspec-apply-change`, and a `/opsx:apply` prompt, and a read of its `SKILL.md` → `state.applied` true), `test_named_change_without_apply_is_not_armed` (`openspec status --change demo` and `openspec instructions apply --change demo` → `applied` false).
+  `test_apply_skill_arms_the_session` (a Skill event for `openspec-apply-change` and a `/opsx:apply` prompt → `state.applied` true; a read of its `SKILL.md` → false), `test_named_change_without_apply_is_not_armed` (`openspec status --change demo` and `openspec instructions apply --change demo` → `applied` false).
 - [ ] **Step 2:** Run `-k ChangeSet`. Expected: FAIL.
 - [ ] **Step 3:** Implement; call `record_changes` at the start of the `tool-after` path of `decide`, before the
   "no matching rule → pass" return, so `openspec status --change demo` (which matches no rule) is recorded; the

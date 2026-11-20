@@ -13,10 +13,12 @@ command matches `\bopenspec\b`, the engine MUST add to a session-wide change set
 `--change <name>` or `--change=<name>`, quoted or not, that matches `[a-z0-9][a-z0-9-]{0,63}`. The set MUST keep
 the 20 most recently named changes.
 
-The stop gate MUST consider a change only when the same session invoked the apply skill — a Skill call for
-`openspec-apply-change`, its `/opsx:apply` form, or a read of its `SKILL.md` — recorded as a session-wide flag.
-A session that only named the change, such as a delegated verify or review session, MUST pass: the reminder
-belongs to the session that will finalize, which is normally the parent that applied.
+The stop gate MUST consider the session's change set only when the same session invoked the apply skill — a Skill call
+for `openspec-apply-change` or its `/opsx:apply` form — recorded as a session-wide flag. The flag is session-wide: a
+session that applied one change is armed for every change it later names. A session that only named the change, such
+as a delegated verify or review session, MUST pass: the reminder belongs to the session that will finalize, which is
+normally the parent that applied. Reading the apply `SKILL.md` MUST NOT arm a session, so a review that opens it
+stays unarmed.
 
 **Predicate `superspec-finalize-pending`.** For each change in the set, the copies are
 `openspec/changes/<name>/` in the event's checkout, then in the main working tree (the parent of the git common
@@ -55,6 +57,9 @@ earlier block (Claude Code reports `stop_hook_active` true) is still blocked whe
 **Rendering.** Claude Code: `{"decision": "block", "reason": <text>}`. Plain: `decision` `block`, the text, and one
 entry carrying the identity `["stop", <change>]` and the stop record's write id. `block` MUST be valid only for a
 `stop` event. `void` MUST also remove a stop record whose write id matches.
+
+Every scenario below that expects a block assumes the session invoked the apply skill; a session that only names the
+change passes (see "Delegated verify or review session").
 
 #### Scenario: New apply iteration
 - **WHEN** the stop was blocked in both phases of iteration 1 and apply writes iteration 2
@@ -351,7 +356,7 @@ set and stop records and an unset apply flag, and is written back as version 2.
 
 **Re-arm.** A `compacted` event (Claude Code `PreCompact`; OpenCode `session.compaction.started`) MUST increment
 the generation of the compacting key only. When the host does not identify a compacting subagent, it MUST increment
-every key of the session. Re-arm MUST NOT clear the change set or the stop records.
+every key of the session. Re-arm MUST NOT clear the change set, the stop records or the apply flag.
 
 **Pruning.**
 

@@ -109,9 +109,10 @@ the engine's registry is an error (agent-file check). A rule must still have at 
 **Session change set and arming.** On every successful `tool-after` shell event (any context key of the session) whose
 command matches `\bopenspec\b`, the engine extracts change names from `--change <name>`, `--change=<name>` and their quoted forms, with names
 matching `[a-z0-9][a-z0-9-]{0,63}` (longer names are ignored), and adds them to a session-wide `changes` set in the state file.
-A session-wide `applied` flag is set when the session invokes the apply skill; without it, the stop gate passes. This keeps
+A session-wide `applied` flag is set when the session invokes the apply skill (a Skill call or its `/opsx:apply`
+prompt, never a `SKILL.md` read); without it, the stop gate passes. This keeps
 the reminder in the session that applied and will finalize, never in a delegated verify or review session that only names
-the change.
+the change. The flag is session-wide and survives compaction.
 
 **Event.** A new engine event `stop` (Claude Code `Stop`; plain `{"event":"stop", …}` with an optional
 `stop_hook_active`). `SubagentStop` is not wired; in OpenCode the plugin sends `stop` only for a root session (no
@@ -149,8 +150,8 @@ the user told you to stop, say which and end your turn; the next stop is not blo
 in the same transaction. A recorded phase or no pending change: pass. `stop_hook_active` does not suppress a block in a new phase:
 after an earlier block the agent may continue in the same turn, run verify and stall again, and that is the
 post-verify stall the second phase exists for. The per-phase records bound the blocks, so no loop is possible. The
-gate is armed only in a session that invoked the apply skill (a Skill call, `/opsx:apply`, or a read of its
-`SKILL.md`), so a delegated verify or review session that merely names the change is never reminded; the
+gate is armed only in a session that invoked the apply skill (a Skill call or `/opsx:apply`, never a `SKILL.md`
+read), so a delegated verify or review session that merely names the change is never reminded; the
 session-wide flag lives in the state file. The block does not mark the rule delivered. Several pending changes: the first by name is named; the record is per change, so another
 could block a later stop.
 
@@ -247,11 +248,11 @@ Unit tests per decision (no sleeps, injected state). Then a live re-run in both 
 
 1. A planning skill delivers review gate and roster once; a repeat of the same skill delivers nothing; a
    different planning command delivers again.
-2. A disposable change with `apply.md` and no `finalize.md`, recorded through an `openspec status --change <name>`
-   call: the first stop is blocked with the engine line; the second stop passes; a passing `verify.md` blocks once
-   more; a new `apply.md` iteration blocks once more; a ticked FAIL at the same iteration and an archived copy do
-   not block; a FAIL from an earlier iteration does block; a session that never named the change is not blocked;
-   a delegated verify or review session that only names the change is not blocked.
+2. A disposable change with `apply.md` and no `finalize.md`, named through an `openspec status --change <name>`
+   call in a session that invoked the apply skill: the first stop is blocked with the engine line; the second stop
+   passes; a passing `verify.md` blocks once more; a new `apply.md` iteration blocks once more; a ticked FAIL at the
+   same iteration and an archived copy do not block; a FAIL from an earlier iteration does block; a session that never
+   named the change is not blocked; a delegated verify or review session that only names the change is not blocked.
 3. `git push` is denied once with the pre-push rule; after `openspec instructions finalize` it is not.
 4. A stale delivery (the after-write failure switch) suppresses the same trigger and not a different one.
 5. An end-to-end apply-to-finalize run on a disposable change shows the agent going on to finalize without asking,
@@ -265,6 +266,8 @@ Unit tests per decision (no sleeps, injected state). Then a live re-run in both 
 - [A session that resumes a change without invoking apply is not reminded] → accepted: the pointer carries the
   authorization, and the reminder belongs to the session that applied and will finalize.
 - [A delegated verify or review session is not reminded] → by design; it is not the session that finalizes.
+- [A delegated coder session that itself invokes the apply skill is armed] → delegated coder briefs must not invoke
+  the apply skill (they receive task text); if one does, the per-phase records bound the reminder to two.
 - [OpenCode turn-end continuation does not work] → the spike verified it (`session.execution.succeeded`,
   `resume: true`); the owner approved using that event when `session.idle` proved absent in 2.3.2.
 - [A command pattern matches text inside a heredoc or quoted string] → existing residual; with per-trigger
