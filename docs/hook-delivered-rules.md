@@ -43,7 +43,10 @@ stale block. Each rule adds one line to the root, which is capped at 40 lines; s
 - The text shown is the body with its line endings normalised to LF and its leading and trailing
   blank lines removed; indentation and all other Markdown are kept. Several rules are joined in
   file-name order with one blank line between them, up to 9,000 UTF-8 bytes of the emitted text
-  (separators included); a rule that does not fit is left for its next moment or gate.
+  (separators included); a rule that does not fit is left for its next moment or gate. The agent-file
+  check applies the same selection and byte count to each declared trigger form separately — every
+  skill name as a rule writes it, every listed command, and each stop predicate's line — so it does
+  not merge a rule's `opsx:` and canonical skill names into one trigger.
 - Delivery is recorded per session and per agent context (a subagent and its parent never share
   credit) under the git common directory (`agent-rules/`) of the checkout the session works in: in
   OpenCode the session's `location.directory`, else its root session's, else the plugin's. A rule's
@@ -52,8 +55,10 @@ stale block. Each rule adds one line to the root, which is capped at 40 lines; s
   trigger the event matched; a different trigger delivers it again. The entry keeps the triggers and
   gate patterns it has gained, and a `void` of it removes it whole, earlier triggers included, so the
   duplicate delivery that follows is the safe side of the lost credit.
-- The state file is version 2: entries carry their triggers, and the session carries a change set and
-  the stop records. A version 1 file loads with those fields empty and is written back as version 2.
+- The state file is version 2: entries carry their triggers, and the session carries a change set,
+  the stop records and the apply flag that arms the stop gate. A version 1 file loads with those
+  fields empty and the flag unset, and is written back as version 2; a version 2 file written before
+  the flag existed also loads it unset.
 - The store keeps the newest 50 sessions by write order. Pruning runs after an event that wrote
   state, never removes the current session or one of the newest 50, skips a busy session, and also
   removes stale lock files.
@@ -76,8 +81,14 @@ stale block. Each rule adds one line to the root, which is capped at 40 lines; s
 - A `stops` entry names a predicate the engine answers about the checkout; the registry has one,
   `superspec-finalize-pending`, and an unknown name is an error.
 - **Session change set:** every successful shell call whose command matches `\bopenspec\b` adds the
-  names of its `--change <name>` and `--change=<name>` arguments, keeping the 20 newest. The set is
-  session-wide, so a subagent's call counts too.
+  names of its `--change <name>` and `--change=<name>` arguments, quoted forms included, keeping the
+  20 newest. A name matches `[a-z0-9][a-z0-9-]{0,63}` — at most 64 characters; a longer one is
+  ignored. The set is session-wide, so a subagent's call counts too.
+- **Arming:** only a session that invoked the apply skill is armed — a Skill call for
+  `openspec-apply-change` (its `opsx:apply` form included), a `/opsx:apply` prompt, or a read of its
+  `SKILL.md`. A session that only named the change, such as a delegated verify or review session, is
+  never reminded: the reminder belongs to the session that will finalize, normally the parent that
+  applied. If the session never invoked apply, its stop passes without writing a record.
 - **Predicate:** a change is pending when some copy has `apply.md`, no copy has `finalize.md`, no
   checkout has `openspec/changes/archive/<YYYY-MM-DD>-<name>/`, and the copy with the newest apply
   iteration has no `verify.md`, a `verify.md` of another iteration, or one with no FAIL box ticked. A
@@ -85,17 +96,27 @@ stale block. Each rule adds one line to the root, which is capped at 40 lines; s
 - **Checkouts:** the event's checkout, the main working tree and each linked worktree (at most 32) of
   the same common directory, one real path each. A `--separate-git-dir` checkout's main working tree
   is not resolved, so a receipt that exists only there is not seen from a linked worktree; the
-  event's own checkout is always searched.
+  event's own checkout is always searched. A stray non-directory entry under
+  `<common-dir>/worktrees/` (such as a `.DS_Store` file) is skipped, never an error.
 - **Block once per phase:** a stop in the main context asks every rule naming the predicate. The
   first pending change by name whose phase — the newest apply iteration plus its verify state,
   `none` or `pass` — has no stop record is blocked, with one engine line naming the change and then
   the rule text under the cap. The record `{change, iteration, verify_state, write_id}` is written in
   the same transaction (the 40 newest kept), and the rules are not marked delivered. A subagent stop,
-  no rule with the predicate, a recorded phase and no pending change pass. A `void` carrying a stop
-  record's write id removes that record, so the same phase can remind again.
+  an unarmed session, no rule with the predicate, a recorded phase and no pending change pass. A
+  `void` carrying a stop record's write id removes that record, so the same phase can remind again.
+  At most two reminders per apply iteration: one in the `none` phase after apply and one in the
+  `pass` phase after a passing verify.
 - **`stop_hook_active` is not consulted:** after a block the agent may continue in the same turn, run
   verify and stall again, and that post-verify phase must block once; the per-phase records bound the
   blocks, so no loop is possible.
+- **Failed delivery:** a block whose record was written but whose delivery failed (a host timeout or
+  error after the write) does not remind again in that phase, because the record stands; Claude
+  Code's `Stop` has no `void`. OpenCode sends its `void` when the synthetic prompt fails, so there the
+  same phase can remind again.
+- **Claude Code wiring:** the engine runs from the `Stop` hook in `.claude/settings.json`, with the
+  same command and 5-second timeout as the other hooks. `SubagentStop` is never wired, so a subagent's
+  turn end is not a stop moment.
 - **OpenCode:** the plugin sends `stop` for a root session's `session.execution.succeeded` only; a
   child session, `session.execution.failed` and `session.execution.interrupted` are not stop moments.
   The event name is that of the verified OpenCode 2.3.2 and may change in a later version. A `block`
