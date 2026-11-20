@@ -34,7 +34,7 @@ TBD - created by archiving change component-releases-and-conventional-commits. U
 
 #### Scenario: Docs node
 - **WHEN** the `docs` node runs
-- **THEN** it reports `docs / agent-files` (the offline guard `python3 docs/checks/check_offline.py --root .`, then the agent-file layout check, then the documentation site guard `python3 docs/checks/check_site.py --root .`) and `docs / unit-tests` (the tests of all three checks), and it reports no release or build job
+- **THEN** it reports `docs / agent-files` (the offline guard `python3 docs/checks/check_offline.py --root .`, then the agent-file layout check, then the documentation site guard `python3 docs/checks/check_site.py --root .`) and `docs / unit-tests` (the tests of every check in `docs/checks/`), and it reports no release or build job
 
 #### Scenario: Site guard step in the workflow contract
 - **WHEN** the `agent-files` job of `check-docs.yml` drops the site guard step or runs it with other arguments
