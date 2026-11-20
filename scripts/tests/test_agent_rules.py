@@ -1828,21 +1828,18 @@ class ChangeSetTest(EngineTest):
         self.assertEqual(self.changes(), names[2:] + [names[0]])
 
     def test_apply_skill_arms_the_session(self):
-        # The three forms of the apply skill moment all arm the session, and each gets its own
-        # session so one form cannot mask another.
+        # The invocation forms arm the session — the Skill call, its `opsx:apply` spelling, and the
+        # `/opsx:apply` prompt — and each gets its own session so one form cannot mask another. A
+        # `SKILL.md` read is not an invocation: it delivers the moment as before but does not arm
+        # (StopGateTest.test_apply_skill_read_does_not_arm).
         forms = (
             event("tool-after", tool="Skill", skill="openspec-apply-change", session="f0"),
-            event("prompt", prompt="/opsx:apply hook-workflow-rules", session="f1"),
-            event("tool-after", tool="Read", session="f2",
-                  path="/work/repo/.agents/skills/openspec-apply-change/SKILL.md"),
+            event("tool-after", tool="Skill", skill="opsx:apply", session="f1"),
+            event("prompt", prompt="/opsx:apply hook-workflow-rules", session="f2"),
         )
         for ev in forms:
             self.run_event(ev)
             self.assertTrue(self.applied(ev.session), ev)
-        # The namespaced Skill call is the same skill, so it arms the same session.
-        namespaced = event("tool-after", tool="Skill", skill="opsx:apply", session="f3")
-        self.run_event(namespaced)
-        self.assertTrue(self.applied("f3"))
 
     def test_named_change_without_apply_is_not_armed(self):
         # A delegated verify or review session may name the change; only the apply skill arms it.
@@ -2342,6 +2339,25 @@ class StopGateTest(EngineTest):
                 Decision("pass", "", []),
             )
         self.assertFalse(state.wrote)  # an unarmed gate writes no record
+        self.assertEqual(self.stops(), [])
+
+    def test_apply_skill_read_does_not_arm(self):
+        # Reading the apply skill's SKILL.md is a moment (it delivers the rule), not an invocation:
+        # a reviewer that opens the file while reviewing agent tooling is not armed, so its stop
+        # with a named pending change passes and writes no record.
+        self.run_event(event("tool-after", tool="Read", path=(
+            "/work/repo/.agents/skills/openspec-apply-change/SKILL.md")))
+        with self.store.transaction("s1") as state:
+            self.assertIs(state.applied, False)
+        self.name_change("demo")
+        self.make_change("demo", apply_iter=1)
+        ev = event("stop")
+        with self.store.transaction(ev.session) as state:
+            self.assertEqual(
+                decide(self.rules, state, context_key(ev), ev, list(self.roots)),
+                Decision("pass", "", []),
+            )
+        self.assertFalse(state.wrote)
         self.assertEqual(self.stops(), [])
 
     def test_first_unrecorded_change_named(self):

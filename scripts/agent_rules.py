@@ -1395,31 +1395,30 @@ def _moment_rules(rules, event):
     return matched
 
 
-# The apply skill's canonical name and the trigger a moment for it records; the stop gate is armed
-# only by the session that invoked this skill, never by one that merely named a change.
+# The apply skill's canonical name and the trigger its invocation records; the stop gate is armed
+# only by the session that invoked this skill, never by one that merely named a change or read the
+# skill's file.
 APPLY_SKILL = "openspec-apply-change"
 APPLY_TRIGGER = "skill:" + APPLY_SKILL
 
 
 def _skill_triggers(event):
-    """The ``skill:`` triggers ``event`` matches, whether or not any rule lists that skill.
+    """The ``skill:`` triggers an invocation in ``event`` matches, whether or not a rule lists it.
 
-    The three forms of a skill moment — a Skill tool call, a ``/<skill>`` prompt and a ``SKILL.md``
-    read — normalise here exactly as ``_moment_rules`` normalises them for the rules it matches. The
-    event's own skill is counted even when no rule lists it, which is what lets ``decide`` arm the
-    session on the apply skill alone.
+    Only the two invocation forms of a skill count — a Skill tool call and a ``/<skill>`` prompt —
+    normalised exactly as ``_moment_rules`` normalises them. A ``SKILL.md`` read is a moment that
+    delivers the rule, but it is not an invocation: a reviewer opening the apply skill's file is not
+    armed, so the read contributes no trigger here. The event's own skill is counted even when no rule
+    lists it, which is what lets ``decide`` arm the session on the apply skill alone.
     """
     if event.kind == "prompt":
         skill = _prompt_skill(event.prompt)
         return set() if skill is None else set(["skill:" + canonical_skill(skill)])
     if event.kind != "tool-after":
         return set()
-    triggers = set()
-    if event.skill is not None:
-        triggers.add("skill:" + canonical_skill(event.skill))
-    if event.path:
-        triggers.update("skill:" + directory for directory in _read_skill_dirs(event))
-    return triggers
+    if event.skill is None:
+        return set()
+    return set(["skill:" + canonical_skill(event.skill)])
 
 
 def _utf8_size(text):

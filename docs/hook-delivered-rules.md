@@ -85,9 +85,10 @@ stale block. Each rule adds one line to the root, which is capped at 40 lines; s
   20 newest. A name matches `[a-z0-9][a-z0-9-]{0,63}` — at most 64 characters; a longer one is
   ignored. The set is session-wide, so a subagent's call counts too.
 - **Arming:** only a session that invoked the apply skill is armed — a Skill call for
-  `openspec-apply-change` (its `opsx:apply` form included), a `/opsx:apply` prompt, or a read of its
-  `SKILL.md`. A session that only named the change, such as a delegated verify or review session, is
-  never reminded: the reminder belongs to the session that will finalize, normally the parent that
+  `openspec-apply-change` (its `opsx:apply` form included) or a `/opsx:apply` prompt. Reading the
+  skill's `SKILL.md` delivers the rule as a moment like any other, but it is not an invocation and
+  arms nothing. A session that only named the change, such as a delegated verify or review session,
+  is never reminded: the reminder belongs to the session that will finalize, normally the parent that
   applied. If the session never invoked apply, its stop passes without writing a record.
 - **Predicate:** a change is pending when some copy has `apply.md`, no copy has `finalize.md`, no
   checkout has `openspec/changes/archive/<YYYY-MM-DD>-<name>/`, and the copy with the newest apply
