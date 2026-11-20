@@ -61,3 +61,18 @@ Approved content: design sha256 637c44d3a14899e9a840f92ecc6b244b9d63bc1e57c909d7
 Upstream re-point: brainstorm sha256 b62296bb5de9aeb9c3029e7326b6550ade0baec69505af32d54d8fe63c31185d — re-pointed after a non-triggering minor fix from the plan review (round 2, medium 1: the archive directory name is anchored to <YYYY-MM-DD>-<name>)
 
 Approved content: design sha256 ca3761903ad863813d9ca9c239f314e4e070cd8414d5eee90dd963db850fbb9d — re-pointed after a non-triggering minor fix from the plan review (round 2, medium 1: the archive directory name is anchored to <YYYY-MM-DD>-<name>)
+
+## Pass — turn-end amendment (2026-11-20)
+
+Owner-approved normative change: OpenCode 2.3.2 never emits `session.idle`; the stop gate uses
+`session.execution.succeeded` (`spike.md` §2A). Amendment commits `654bf8f1` and `2cd8cfa4`.
+
+Upstream hashes for this pass: brainstorm sha256 5039765682f6a99acc07db91825def99937d9ae65de38cb7846896775cdfdabd
+
+### Round 1 — approve
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| low | §3 names `parentID` but not its source (`session.get`) or the fail-open when that call fails. | Deferred: the plugin's general fail-open rule covers it; `docs/hook-delivered-rules.md` (Task 11) records the detail. |
+
+Approved content: design sha256 0ca6076e0be0a98b98fbef9a89bb5ebe39a157201a267302de9d71c1977704da

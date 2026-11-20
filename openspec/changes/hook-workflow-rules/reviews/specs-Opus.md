@@ -56,3 +56,24 @@ Approved content: specs/superspec-review-gate/spec.md sha256 881683095bb0707a095
 Upstream re-point: brainstorm sha256 b62296bb5de9aeb9c3029e7326b6550ade0baec69505af32d54d8fe63c31185d; design sha256 ca3761903ad863813d9ca9c239f314e4e070cd8414d5eee90dd963db850fbb9d — re-pointed after a non-triggering minor fix from the plan review (round 2, medium 1: the archive directory name is anchored to <YYYY-MM-DD>-<name>)
 
 Approved content: specs/hooked-rule-delivery/spec.md sha256 bf61182c3825dff69875c03e40bae04986c91f005f8efd0e80b61cd386877f17 — re-pointed after a non-triggering minor fix from the plan review (round 2, medium 1: the archive directory name is anchored to <YYYY-MM-DD>-<name>)
+
+## Pass — turn-end amendment (2026-11-20)
+
+Owner-approved normative change: OpenCode 2.3.2 never emits `session.idle`; the stop gate uses
+`session.execution.succeeded` (`spike.md` §2A). Amendment commits `654bf8f1` and `2cd8cfa4`.
+
+Upstream hashes for this pass: brainstorm sha256 5039765682f6a99acc07db91825def99937d9ae65de38cb7846896775cdfdabd; design sha256 0ca6076e0be0a98b98fbef9a89bb5ebe39a157201a267302de9d71c1977704da; proposal sha256 7b49970f3a2828fea7be10679a7476652c2bbe5e6cac42b0a3a49f72440a3bb2
+
+### Round 1 — approve
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| medium | M3: the final run does not check an interactive OpenCode abort. | Fixed: outcome 7, tasks 8.4 and plan Task 12 Step 4 add it, with an unverified-record fallback. |
+| low | L4: the note under the Host adapters table cites `spike.md` and pins 2.3.2. | Deferred: it is factual, sets no requirement, and the durable rationale goes in `docs/hook-delivered-rules.md`. |
+| low | L5: "stop moment" used without a definition. | Fixed: defined in the Stop gate requirement. |
+
+Approved content: specs/hooked-rule-delivery/spec.md sha256 00af153571247080ce2e25317843ac53a1db07eba563bb4314052744c816be4e
+Approved content: specs/agent-guidance-layout/spec.md sha256 3f7a81bb1aea06018990e639633a701fe4c8a44bc2f468769ff4cdd2ded772df
+Approved content: specs/real-device-testing/spec.md sha256 b8716a68bb192a8e770570ee1931679798a6db6cdb45bf3fa389b66e828f721a
+Approved content: specs/superspec-closeout/spec.md sha256 ee5e4641db075e9ee0515f294ed2d100e874e2e694f477f63ab8370772b9a993
+Approved content: specs/superspec-review-gate/spec.md sha256 881683095bb0707a09580191479b7913c2b3fcb4a2cc5277a79d56634d01bd33

@@ -36,3 +36,20 @@ Approved content: tasks sha256 7577f63696e85a3079f383404ff49e93a096f250bcbbc8864
 Upstream re-point: brainstorm sha256 b62296bb5de9aeb9c3029e7326b6550ade0baec69505af32d54d8fe63c31185d; design sha256 ca3761903ad863813d9ca9c239f314e4e070cd8414d5eee90dd963db850fbb9d; specs/hooked-rule-delivery/spec.md sha256 bf61182c3825dff69875c03e40bae04986c91f005f8efd0e80b61cd386877f17 — re-pointed after a non-triggering minor fix from the plan review (round 2, medium 1: the archive directory name is anchored to <YYYY-MM-DD>-<name>) (no tasks text changed)
 
 Approved content: tasks sha256 7577f63696e85a3079f383404ff49e93a096f250bcbbc88644a37c53003bc275
+
+## Pass — turn-end amendment (2026-11-20)
+
+Owner-approved normative change: OpenCode 2.3.2 never emits `session.idle`; the stop gate uses
+`session.execution.succeeded` (`spike.md` §2A). Amendment commits `654bf8f1` and `2cd8cfa4`.
+
+Upstream hashes for this pass: brainstorm sha256 5039765682f6a99acc07db91825def99937d9ae65de38cb7846896775cdfdabd; design sha256 0ca6076e0be0a98b98fbef9a89bb5ebe39a157201a267302de9d71c1977704da; proposal sha256 7b49970f3a2828fea7be10679a7476652c2bbe5e6cac42b0a3a49f72440a3bb2; specs/agent-guidance-layout/spec.md sha256 3f7a81bb1aea06018990e639633a701fe4c8a44bc2f468769ff4cdd2ded772df; specs/hooked-rule-delivery/spec.md sha256 00af153571247080ce2e25317843ac53a1db07eba563bb4314052744c816be4e; specs/real-device-testing/spec.md sha256 b8716a68bb192a8e770570ee1931679798a6db6cdb45bf3fa389b66e828f721a; specs/superspec-closeout/spec.md sha256 ee5e4641db075e9ee0515f294ed2d100e874e2e694f477f63ab8370772b9a993; specs/superspec-review-gate/spec.md sha256 881683095bb0707a09580191479b7913c2b3fcb4a2cc5277a79d56634d01bd33
+
+### Round 1 — approve
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| medium | M1: the checked spike items said "clone" and "press Esc", which the spike did not do. | Fixed: "disposable repo", headless SIGINT, Esc noted unverified. |
+| medium | M2: the plugin's `parentID` source and its fail-open were unstated. | Fixed: 4.2 names both. |
+| medium | M3: the final OpenCode run lacked an interactive abort case. | Fixed: 8.4 adds it. |
+
+Approved content: tasks sha256 58e8ebe7103c182e550163fedd4305fdd0503e6765b8a1dac284d782c96e4ff8

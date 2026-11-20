@@ -98,3 +98,19 @@ Combined consistency review of brainstorm, design and specs.
 Approved content: brainstorm sha256 723f9a98311b928eba1f7fc9df6279d19adbb8dcc7b8a5c6ab59589837df5276 — re-pointed after one cosmetic fix (the round 1 low finding)
 
 Approved content: brainstorm sha256 b62296bb5de9aeb9c3029e7326b6550ade0baec69505af32d54d8fe63c31185d — re-pointed after a non-triggering minor fix from the plan review (round 2, medium 1: the archive directory name is anchored to <YYYY-MM-DD>-<name>)
+
+## Pass — turn-end amendment (2026-11-20)
+
+Owner-approved normative change: OpenCode 2.3.2 never emits `session.idle`; the stop gate uses
+`session.execution.succeeded` (`spike.md` §2A). Amendment commits `654bf8f1` and `2cd8cfa4`.
+
+Upstream hashes for this pass: none (brainstorm is the first planning file).
+
+### Round 1 — approve
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| low | L1: "if emitted" reads as if the plugin should listen to both events. | Fixed: the plugin uses `session.execution.succeeded`. |
+| low | L2: "carrying the text" wording, future tense after the spike. | Deferred: the brainstorming record is historical; the wording is accurate. |
+
+Approved content: brainstorm sha256 5039765682f6a99acc07db91825def99937d9ae65de38cb7846896775cdfdabd

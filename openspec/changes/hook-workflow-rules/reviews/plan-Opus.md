@@ -45,3 +45,21 @@ More than five minor fixes: re-review.
 | low | Task 1 Step 4 omits the resolve timing Step 3 measures. | Fixed (cosmetic). |
 
 Approved content: plan sha256 d649790393d7b431f145c694249782759b18e7a3bad6e11d19f36aa49289aa22 — re-pointed after one cosmetic fix (the round 3 low finding)
+
+## Pass — turn-end amendment (2026-11-20)
+
+Owner-approved normative change: OpenCode 2.3.2 never emits `session.idle`; the stop gate uses
+`session.execution.succeeded` (`spike.md` §2A). Amendment commits `654bf8f1` and `2cd8cfa4`.
+
+Upstream hashes for this pass: brainstorm sha256 5039765682f6a99acc07db91825def99937d9ae65de38cb7846896775cdfdabd; proposal sha256 7b49970f3a2828fea7be10679a7476652c2bbe5e6cac42b0a3a49f72440a3bb2; design sha256 0ca6076e0be0a98b98fbef9a89bb5ebe39a157201a267302de9d71c1977704da; specs/agent-guidance-layout/spec.md sha256 3f7a81bb1aea06018990e639633a701fe4c8a44bc2f468769ff4cdd2ded772df; specs/hooked-rule-delivery/spec.md sha256 00af153571247080ce2e25317843ac53a1db07eba563bb4314052744c816be4e; specs/real-device-testing/spec.md sha256 b8716a68bb192a8e770570ee1931679798a6db6cdb45bf3fa389b66e828f721a; specs/superspec-closeout/spec.md sha256 ee5e4641db075e9ee0515f294ed2d100e874e2e694f477f63ab8370772b9a993; specs/superspec-review-gate/spec.md sha256 881683095bb0707a09580191479b7913c2b3fcb4a2cc5277a79d56634d01bd33; tasks sha256 58e8ebe7103c182e550163fedd4305fdd0503e6765b8a1dac284d782c96e4ff8
+
+### Round 1 — approve
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| medium | M1: Task 1 Step 2 said "press Esc", which the spike did not do. | Fixed: headless SIGINT recorded; Esc unverified. |
+| medium | M2: Task 8 did not say where `parentID` comes from or what a failed `session.get` does. | Fixed: named and fail-open; test added. |
+| medium | M3: the final run lacked the interactive OpenCode abort. | Fixed in Task 12 Step 4. |
+| low | L2: no test for a second success while one is in flight. | Fixed: test added. |
+
+Approved content: plan sha256 3a73504bdc4167ae2620d44d8e8f7401c481120b7b1255590a1fe3dd531f6d4b
