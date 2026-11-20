@@ -122,7 +122,7 @@ jobs:
           java-version-file: .java-version
       - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
       - name: Install the pinned git-cliff
-        run: ./gradlew installGitCliff
+        run: ./gradlew installGitCliff --no-build-cache --no-configuration-cache
       - name: Write the release plan to the job summary
         run: |
           gh release list --limit 100 --json tagName,isDraft,isPrerelease,publishedAt > releases.json

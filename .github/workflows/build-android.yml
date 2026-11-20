@@ -37,7 +37,7 @@ jobs:
       - name: Install pinned Android NDK
         working-directory: android
         run: |
-          NDK_VERSION="$(./gradlew -q rustNdkVersion)"
+          NDK_VERSION="$(./gradlew -q rustNdkVersion --no-build-cache --no-configuration-cache)"
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
       # Optional local-only tag so the derived version matches a planned
@@ -51,7 +51,7 @@ jobs:
           git tag "$VERSION_TAG" "$COMMIT"
       - name: Build unsigned release APK
         working-directory: android
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleRelease --no-build-cache --no-configuration-cache
       - name: Assert derived version matches the version tag
         if: inputs.version-tag != ''
         working-directory: android
@@ -59,7 +59,7 @@ jobs:
           VERSION_TAG: ${{ inputs.version-tag }}
         run: |
           EXPECTED="${VERSION_TAG#android-v}"
-          ACTUAL="$(./gradlew -q :app:androidGitVersion | awk -F'\t' '/androidGitVersion.name/ {print $2}')"
+          ACTUAL="$(./gradlew -q :app:androidGitVersion --no-build-cache --no-configuration-cache | awk -F'\t' '/androidGitVersion.name/ {print $2}')"
           if [ "$ACTUAL" != "$EXPECTED" ]; then
             echo "::error::androidGitVersion name '$ACTUAL' does not match tag version '$EXPECTED'"
             exit 1

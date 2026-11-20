@@ -17,7 +17,7 @@ generate_npm() {
 generate_cargo() {
   local manifest="$1" package_directory="$2" destination="$3" prefix
   prefix=".${destination}.$$"
-  "$root/gradlew" verifyCargoCyclonedx >/dev/null
+  "$root/gradlew" verifyCargoCyclonedx --no-build-cache --no-configuration-cache >/dev/null
   "$root/build/verify-tools/cargo-cyclonedx/bin/cargo-cyclonedx" cyclonedx --manifest-path "$root/$manifest" --format json --target all --all-features --override-filename "$prefix"
   mv -f "$root/$package_directory/$prefix.json" "$output/$destination"
   # Strip the local checkout path (path-package bom-refs such as the vendored bluest).

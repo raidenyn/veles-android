@@ -401,8 +401,8 @@ test('web extension workflows build the WASM package before the TS client', asyn
   assert.notEqual(dropped, check);
   assert.throws(() => assertWasmToolchain(workflowJobBlocks(executableYaml(dropped)).lint, 'mutated lint'), /rustWasm/);
   const moved = build.replace(
-    '      # The extension imports the generated WASM package (build, typecheck and tests).\n      - run: ./gradlew rustWasm\n      - run: npm ci --ignore-scripts\n        working-directory: web-extension\n',
-    '      - run: npm ci --ignore-scripts\n        working-directory: web-extension\n      - run: ./gradlew rustWasm\n',
+    '      # The extension imports the generated WASM package (build, typecheck and tests).\n      - run: ./gradlew rustWasm --no-build-cache --no-configuration-cache\n      - run: npm ci --ignore-scripts\n        working-directory: web-extension\n',
+    '      - run: npm ci --ignore-scripts\n        working-directory: web-extension\n      - run: ./gradlew rustWasm --no-build-cache --no-configuration-cache\n',
   );
   assert.notEqual(moved, build);
   assert.throws(() => assertWasmToolchain(workflowJobBlocks(executableYaml(moved)).build, 'mutated build'), /before npm/);
@@ -3921,4 +3921,85 @@ test('build-android reads the relocated APK', async () => {
     assert.notEqual(mutated, source, `mutation "${label}" must change build-android.yml`);
     assert.throws(() => assertBuildAndroidArtifacts(mutated), `the contract must reject "${label}"`);
   }
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// The release and verification guard (gradle-cache-safe design D6): every Gradle invocation of a release
+// producer or the supply-chain verifier opts out of both caches, because the build cache only holds the
+// three Rust tasks and the configuration cache is strict there. A local gradle.properties cannot opt out,
+// so the flags are per command and this contract keeps them there.
+
+const GUARDED = [
+  'build-android.yml',
+  'build-rust.yml',
+  'build-web-extension.yml',
+  'build-native-windows.yml',
+  'build-native-macos.yml',
+  'build-supply-chain.yml',
+];
+const GUARDED_STEPS = { 'release-build.yml': /installGitCliff/, 'publish-release.yml': /installGitCliff/ };
+
+const GRADLEW = /(?:\.\/|\.\\|\$root\/|"\$root"\/)gradlew(?:\.bat)?\b/g;
+
+// Every `gradlew`/`gradlew.bat` command in a run block or script, including one inside `$(…)`. A command
+// ends at the first unquoted `|`, `)`, `;`, `&&`, `||` or a newline that is not continued with `\`. Quote
+// state starts fresh at the match; a `"` immediately after the match closes the quote that opened before
+// it, as in `"$root/gradlew"`.
+function gradleCommands(text) {
+  const commands = [];
+  for (const match of text.matchAll(GRADLEW)) {
+    const start = match.index;
+    const end = start + match[0].length;
+    let quote = text[end] === '"' ? '"' : null;
+    let stop = end;
+    for (; stop < text.length; stop += 1) {
+      const character = text[stop];
+      if (quote) {
+        if (character === quote) quote = null;
+        continue;
+      }
+      if (character === '"' || character === "'") {
+        quote = character;
+        continue;
+      }
+      if (character === '|' || character === ')' || character === ';') break;
+      if (character === '&' && text[stop + 1] === '&') break;
+      if (character === '\n' && text[stop - 1] !== '\\') break;
+    }
+    commands.push(text.slice(start, stop).trim());
+  }
+  return commands;
+}
+
+function assertCacheGuard(name, commands) {
+  assert.ok(commands.length > 0, `${name}: expected at least one Gradle command`);
+  for (const command of commands) {
+    assert.match(command, /--no-build-cache\b/, `${name}: ${command} must pass --no-build-cache`);
+    assert.match(command, /--no-configuration-cache\b/, `${name}: ${command} must pass --no-configuration-cache`);
+  }
+}
+
+function stepGradleCommands(source) {
+  return steps(source).flatMap((step) => gradleCommands(runCommands(step.join('\n')).join('\n')));
+}
+
+test('release and verification Gradle invocations bypass both caches', async () => {
+  for (const name of GUARDED) assertCacheGuard(name, stepGradleCommands(await workflow(name)));
+  for (const [name, stepPattern] of Object.entries(GUARDED_STEPS)) {
+    const selected = steps(await workflow(name)).filter((step) => stepPattern.test(step.join('\n')));
+    assert.ok(selected.length > 0, `${name}: expected an installGitCliff step`);
+    assertCacheGuard(name, selected.flatMap((step) => gradleCommands(runCommands(step.join('\n')).join('\n'))));
+  }
+  assertCacheGuard('verify/generate-sboms.sh', gradleCommands(await readFile(new URL('verify/generate-sboms.sh', root), 'utf8')));
+
+  // Negative: a dropped flag on the rustPackage step and on a `$(…)` substitution must both fail.
+  const rust = await workflow('build-rust.yml');
+  assert.throws(
+    () => assertCacheGuard('build-rust.yml', gradleCommands(rust.replace('rustPackage --no-build-cache', 'rustPackage'))),
+    /build-rust\.yml/,
+  );
+  assert.throws(() => assertCacheGuard('x', gradleCommands('NDK_VERSION="$(./gradlew -q rustNdkVersion)"')), /--no-build-cache/);
+
+  // The scanner stops at the shell operators that separate commands.
+  assert.ok(gradleCommands('X="$(./gradlew -q rustNdkVersion | tail -1)"')[0] === './gradlew -q rustNdkVersion');
 });

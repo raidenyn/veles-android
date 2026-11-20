@@ -44,7 +44,7 @@ jobs:
           path: build/rust-tools
           key: rust-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/toolchain-tools.toml', 'rust/Cargo.lock') }}
       # The extension imports the generated WASM package (build, typecheck and tests).
-      - run: ./gradlew rustWasm
+      - run: ./gradlew rustWasm --no-build-cache --no-configuration-cache
       - run: npm ci --ignore-scripts
         working-directory: web-extension
       - run: npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:bundle && npm run package

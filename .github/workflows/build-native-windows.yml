@@ -113,7 +113,7 @@ jobs:
         if: inputs.build-kind == 'release'
         env:
           VELES_INSTALLER_VERSION: ${{ inputs.version }}
-        run: .\gradlew.bat bridgeInstallerUnsigned
+        run: .\gradlew.bat bridgeInstallerUnsigned --no-build-cache --no-configuration-cache
       # The debug build compiles Rust without --release and Swift in debug, enables the
       # compile-time fixture trust adapter (build.rs refuses it for release/production) and packages
       # the finished setup.exe with metadata and symbols.
@@ -121,7 +121,7 @@ jobs:
         if: inputs.build-kind == 'debug'
         env:
           VELES_WORKFLOW_RUN_ID: ${{ github.run_id }}
-        run: .\gradlew.bat bridgeInstallerDebug
+        run: .\gradlew.bat bridgeInstallerDebug --no-build-cache --no-configuration-cache
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: inputs.build-kind == 'release'
         with:
