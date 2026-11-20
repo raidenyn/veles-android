@@ -748,7 +748,12 @@ def check_rules(root, files):
 
 
 def check_moved_rules(root, files):
-    """Reject a moved rule still present in `.agents/rules/` or listed by a scope's AGENTS.md."""
+    """Reject a moved rule left in `.agents/rules/` or missing from `.agents/hooked-rules/`.
+
+    A moved rule has exactly one home: its `.agents/hooked-rules/` target. A copy in `.agents/rules/`
+    or a mention of that old path is the stale location; a target absent from the tree means the rule
+    has vanished, which no listing or pointer check can catch on its own.
+    """
     findings = []
     known = set(files)
     references = _rule_references(root)
@@ -757,6 +762,10 @@ def check_moved_rules(root, files):
         message = "the rule moved: it now lives at `%s`" % target
         if path in known:
             findings.append(Finding("error", path, "must not exist; %s" % message))
+        if target not in known:
+            findings.append(
+                Finding("error", target, "is missing; the moved rule must exist at its new path")
+            )
         for agents_path in sorted(references):
             if path in references[agents_path]:
                 findings.append(Finding("error", agents_path, "lists `%s`; %s" % (path, message)))

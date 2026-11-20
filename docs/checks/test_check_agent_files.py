@@ -224,6 +224,10 @@ HOOKED_DIR = ".agents/hooked-rules/"
 HOOKED_NAME = "repo-commit-types.md"
 HOOKED_PATH = HOOKED_DIR + HOOKED_NAME
 HOOKED_POINTER = "Fixture commit types: read before `git commit`."
+# Every hooked rule the clean fixture carries: one per moved rule's new path, so a deleted target
+# is a missing rule and not an otherwise empty directory.
+HOOKED_TARGETS = tuple(sorted(set(EXPECTED_MOVED_RULES.values())))
+HOOKED_POINTER_OTHER = "Fixture workflow rule: read before acting."
 ENGINE_FILE = "scripts/agent_rules.py"
 
 
@@ -233,6 +237,15 @@ def hooked_rule_text(pointer=HOOKED_POINTER, lines=None, body="Fixture body.\n")
         lines = ["gates:", '  - "\\\\bgit\\\\b[^;&|\\\\n]*?\\\\scommit\\\\b"']
     head = ['pointer: "%s"' % pointer] if pointer is not None else []
     return "---\n" + "\n".join(head + list(lines)) + "\n---\n" + body
+
+
+def fixture_hooked_rules():
+    """The clean fixture's ``{file name: text}`` for every moved rule's target."""
+    texts = {}
+    for name in HOOKED_TARGETS:
+        pointer = HOOKED_POINTER if name == HOOKED_NAME else HOOKED_POINTER_OTHER
+        texts[name] = hooked_rule_text(pointer=pointer)
+    return texts
 
 
 def budget_rule_text(skills=(), stops=(), size=0):
@@ -252,9 +265,9 @@ def budget_rule_text(skills=(), stops=(), size=0):
 
 
 def pointer_block(rule_texts=None):
-    """The engine's pointer block over ``{name: text}`` (the fixture rule by default)."""
+    """The engine's pointer block over ``{name: text}`` (the fixture rules by default)."""
     if rule_texts is None:
-        rule_texts = {HOOKED_NAME: hooked_rule_text()}
+        rule_texts = fixture_hooked_rules()
     rules = [ENGINE.parse_rule(name, text) for name, text in sorted(rule_texts.items())]
     return ENGINE.render_pointer_block(rules)
 
@@ -469,8 +482,9 @@ def clean_files(skills=None):
         ".agents/skills/.openspec-target": "claude\n",
         LOCAL_PLUGIN_INDEX: "export default {}\n",
         ENGINE_FILE: ENGINE_TEXT,
-        HOOKED_PATH: hooked_rule_text(),
     }
+    for name, text in fixture_hooked_rules().items():
+        files[HOOKED_DIR + name] = text
     for name in EXPECTED_REPO_RULES:
         files[".agents/rules/" + name] = repo_rule_text()
     for path in EXPECTED_NODE_FILES:
@@ -1365,33 +1379,45 @@ class AgentFileCheckTest(unittest.TestCase):
                 files[ENGINE_FILE] = text
                 self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "cannot be imported")
 
-    def test_retained_block_with_missing_engine_is_one_finding(self):
+    def test_retained_block_with_missing_engine_reports_it_once(self):
         files = clean_files()
         del files[HOOKED_PATH]
         del files[ENGINE_FILE]
-        self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "cannot be imported")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ENGINE_FILE, "cannot be imported")
+        self.assert_finding(findings, "error", HOOKED_PATH, "the moved rule must exist")
+        self.assertEqual(len(findings), 2, findings)
 
-    def test_lone_marker_with_missing_engine_is_one_finding(self):
+    def test_lone_marker_with_missing_engine_reports_it_once(self):
         files = clean_files()
         del files[HOOKED_PATH]
         del files[ENGINE_FILE]
         files["AGENTS.md"] = root_text(block=False) + "\n<!-- hooked-rules:end -->\n"
-        self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "cannot be imported")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ENGINE_FILE, "cannot be imported")
+        self.assert_finding(findings, "error", HOOKED_PATH, "the moved rule must exist")
+        self.assertEqual(len(findings), 2, findings)
 
-    def test_on_disk_hooked_file_with_missing_engine_is_one_finding(self):
+    def test_on_disk_hooked_file_with_missing_engine_reports_it_once(self):
         files = clean_files()
         del files[ENGINE_FILE]
         files["AGENTS.md"] = root_text(block=False)
-        del files[HOOKED_PATH]
         files[".gitignore"] = ".agents/hooked-rules/\n"
         root = self.repo(files)
         write_text(root, HOOKED_PATH, hooked_rule_text())
-        self.assert_single(check_repo(root), ENGINE_FILE, "cannot be imported")
+        findings = check_repo(root)
+        self.assert_finding(findings, "error", ENGINE_FILE, "cannot be imported")
+        for name in HOOKED_TARGETS:
+            self.assert_finding(findings, "error", HOOKED_DIR + name, "the moved rule must exist")
+        self.assertEqual(len(findings), len(HOOKED_TARGETS) + 1, findings)
 
-    def test_retained_block_with_zero_rules_is_stale(self):
+    def test_retained_block_with_a_vanished_rule_is_stale(self):
         files = clean_files()
         del files[HOOKED_PATH]
-        self.assert_single(check_repo(self.repo(files)), "AGENTS.md", "stale")
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", "AGENTS.md", "stale")
+        self.assert_finding(findings, "error", HOOKED_PATH, "the moved rule must exist")
+        self.assertEqual(len(findings), 2, findings)
 
     def test_ignored_hooked_file_rejected_by_loader_is_one_finding(self):
         files = clean_files()
@@ -1407,34 +1433,37 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assert_single(findings, HOOKED_PATH, "invalid regex")
 
     def test_marker_found_in_a_damaged_root_agents_md(self):
-        # With a marker the hooked-rule check needs the engine; without one only the configured
-        # Claude Code hooks do, which is reported as such.
-        for block, fragment in ((None, "cannot be imported"), (False, "the Claude Code hooks")):
-            with self.subTest(block=block):
-                files = clean_files()
-                del files[HOOKED_PATH]
-                del files[ENGINE_FILE]
-                files["AGENTS.md"] = root_text(block=block)
-                root = self.repo(files)
-                with open(os.path.join(root, "AGENTS.md"), "ab") as handle:
-                    handle.write(b"A damaged byte: \xff\n")
-                self.assert_single(check_repo(root), ENGINE_FILE, fragment)
-
-    def test_no_hooked_rules_and_no_block_passes(self):
+        # A damaged byte elsewhere in the root cannot hide a retained marker: the hooked-rule check
+        # still needs the engine and reports it, next to the vanished rule's missing target.
         files = clean_files()
         del files[HOOKED_PATH]
-        files["AGENTS.md"] = root_text(block=False)
-        # Hooks with zero hooked rules are valid: the engine passes silently.
-        self.assertEqual(check_repo(self.repo(files)), [])
-        # The configured Claude Code hooks still run the engine, so it must exist.
         del files[ENGINE_FILE]
-        self.assert_single(check_repo(self.repo(files)), ENGINE_FILE, "the Claude Code hooks")
+        files["AGENTS.md"] = root_text(block=False) + "\n<!-- hooked-rules:begin -->\n"
+        root = self.repo(files)
+        with open(os.path.join(root, "AGENTS.md"), "ab") as handle:
+            handle.write(b"A damaged byte: \xff\n")
+        findings = check_repo(root)
+        self.assert_finding(findings, "error", ENGINE_FILE, "cannot be imported")
+        self.assert_finding(findings, "error", HOOKED_PATH, "the moved rule must exist")
+        self.assertEqual(len(findings), 2, findings)
+
+    def test_no_pointer_block_with_missing_engine_is_still_reported(self):
+        # Six required hooked rules need the engine even with no pointer block, so the configured
+        # hooks never run an absent parser.
+        files = clean_files()
+        del files[ENGINE_FILE]
+        files["AGENTS.md"] = root_text(block=False)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ENGINE_FILE, "cannot be imported")
+        self.assertEqual(len(findings), 1, findings)
 
     def test_pointer_block_stale(self):
         files = clean_files()
         files[HOOKED_PATH] = hooked_rule_text(pointer="A changed pointer.")
         self.assert_single(check_repo(self.repo(files)), "AGENTS.md", "stale")
-        files["AGENTS.md"] = root_text(block=pointer_block({HOOKED_NAME: files[HOOKED_PATH]}))
+        texts = fixture_hooked_rules()
+        texts[HOOKED_NAME] = files[HOOKED_PATH]
+        files["AGENTS.md"] = root_text(block=pointer_block(texts))
         self.assertEqual(check_repo(self.repo(files)), [])
 
     def test_pointer_block_stale_for_a_new_rule(self):
@@ -1458,8 +1487,8 @@ class AgentFileCheckTest(unittest.TestCase):
             ),
             ("no end marker", root_text().replace(ENGINE.POINTER_END + "\n", ""), "begin line"),
             (
-                "two blocks",
-                root_text() + "\n" + pointer_block() + "\n",
+                "second begin marker",
+                root_text() + ENGINE.POINTER_BEGIN + "\n",
                 "begin line",
             ),
         )
@@ -1506,6 +1535,23 @@ class AgentFileCheckTest(unittest.TestCase):
                     "error",
                     ".agents/rules/" + name,
                     ".agents/hooked-rules/" + target,
+                )
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_moved_rule_target_missing(self):
+        # A moved rule has one home: its `.agents/hooked-rules/` target. Deleting it must fail even
+        # when the pointer block is regenerated over the remaining rules, as it then matches again
+        # and no listing or pointer check would notice the vanished rule.
+        for name, target in sorted(EXPECTED_MOVED_RULES.items()):
+            with self.subTest(name=name):
+                files = clean_files()
+                del files[HOOKED_DIR + target]
+                texts = fixture_hooked_rules()
+                del texts[target]
+                files["AGENTS.md"] = root_text(block=pointer_block(texts))
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings, "error", HOOKED_DIR + target, "the moved rule must exist"
                 )
                 self.assertEqual(len(findings), 1, findings)
 
