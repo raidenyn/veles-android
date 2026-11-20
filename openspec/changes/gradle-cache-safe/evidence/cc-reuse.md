@@ -339,8 +339,9 @@ Tasks 8.1–8.3, 2026-11-20, at commit `28745ebf`. Every invocation below ran tw
 configuration cache on. The runs pass `--configuration-cache` explicitly and the three builds also set
 `org.gradle.configuration-cache.problems=fail`, so an exit-0 build is a build with no configuration-cache
 problem; the problem count in every captured log is 0. `-q` is omitted in both runs (several workflow call
-sites use it) so the reuse line stays visible. Logs are in `/tmp/opencode/t8/` as `<label>-run{1,2}.log`;
-the lines quoted below are verbatim.
+sites use it) so the reuse line stays visible. The runs' logs were captured under `/tmp` for the probing
+session only: they are ephemeral, are not committed and are not expected to survive; the lines quoted
+below are verbatim from that capture.
 
 Hosts:
 
@@ -378,6 +379,17 @@ has changed` is a stale entry stored before Task 7's commit.
 | `./gradlew bridgeInstallerScriptsTest` | `… JVM has changed.` · `Configuration cache entry stored.` (2m 19s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (59s) |
 | `./gradlew clean` (before `assert-clean.sh`) | `Reusing configuration cache.` · `Configuration cache entry reused.` (9s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (1s) |
 
+The Linux lint and unit-test jobs of `check-native-host.yml` and `check-installer.yml` request subsets of
+the rows above, but each subset is a separate configuration-cache entry, so each was probed as its own
+invocation:
+
+| Workflow job (Linux) | Command | Run 1 | Run 2 |
+| --- | --- | --- | --- |
+| `check-native-host.yml:42` (lint) | `./gradlew bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint` | `Calculating task graph as no cached configuration is available for tasks: bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint` · `Configuration cache entry stored.` (19s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (2s) |
+| `check-native-host.yml:59` (unit-tests-linux) | `./gradlew bridgeHostTest` | `Calculating task graph as no cached configuration is available for tasks: bridgeHostTest` · `Configuration cache entry stored.` (2m 13s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (1m 51s) |
+| `check-installer.yml:40` (lint) | `./gradlew bridgeInstallerFormat bridgeInstallerLint` | `Calculating task graph as no cached configuration is available for tasks: bridgeInstallerFormat bridgeInstallerLint` · `Configuration cache entry stored.` (19s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (2s) |
+| `check-installer.yml:60` (unit-tests-linux) | `./gradlew bridgeInstallerTest` | `Calculating task graph as no cached configuration is available for tasks: bridgeInstallerTest` · `Configuration cache entry stored.` (1m 24s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (38s) |
+
 The scripts, run twice each:
 
 - `rust/scripts/test-jni-conformance.sh 864a3db0` — both embedded invocations
@@ -389,8 +401,9 @@ The scripts, run twice each:
   package me.nagaev.veles.debug signatures do not match newer version` (that phone carries the
   repository-fixture-signed package); the same script ran cleanly on `864a3db0`, which had no Veles
   package installed. No app was uninstalled and no key was generated.
-- `./gradlew clean` then `rust/scripts/assert-clean.sh` — exit 0 twice (storing run above). The script
-  itself has no Gradle invocation; the clean's reuse is quoted in the last row of the table.
+- `./gradlew clean` then `rust/scripts/assert-clean.sh` — exit 0 twice. The script itself has no Gradle
+  invocation; its `clean` entry was stored by the `./gradlew clean` row above, which printed
+  `Configuration cache entry stored.`
 - `verify/check-root-aliases.sh` — `PASS: every root alias resolves with --dry-run (…)` twice. Its
   `--dry-run` invocation was captured separately (`E1b`, and `E4` with `spotlessApply`/`clean`): both pairs
   printed `Reusing configuration cache.` and `Configuration cache entry reused.` with no problem. Its
@@ -423,18 +436,21 @@ The scripts, run twice each:
 | --- | --- | --- |
 | `./gradlew assembleRelease` | `Calculating task graph as no cached configuration is available for tasks: assembleRelease` · `Configuration cache entry stored.` (5m 46s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (6s) |
 | `./gradlew rustPackage` | `Calculating task graph as no cached configuration is available for tasks: rustPackage` · `Configuration cache entry stored.` (4m 53s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (2s) |
-| `./gradlew rustWasm` | see 8.1 (`Configuration cache entry stored.`) | `Reusing configuration cache.` (1s) |
+| `./gradlew rustWasm` | see 8.1 (`Calculating task graph as no cached configuration is available for tasks: rustWasm` · `Configuration cache entry stored.`) | `Reusing configuration cache.` · `Configuration cache entry reused.` (1s) |
 | `./gradlew installCargoDeny` | `Calculating task graph as no cached configuration is available for tasks: installCargoDeny` · `Configuration cache entry stored.` (3m 55s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (2s) |
 | `./gradlew installGitCliff` | `… JVM has changed.` · `Configuration cache entry stored.` (4s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (1s) |
 
 ### 8.3 Windows PC and MacBook: `check-native-host.yml` and `check-installer.yml`
 
 The branch was copied without a push: `git bundle create` of `HEAD` (11 MiB, all history reachable from
-it, no tags), `scp` to the PC and `git clone` there into `C:\Users\yuriy\homepc\work\t8-veles`; for the Mac,
+it, no tags), `scp` to the PC and `git clone` there into `%USERPROFILE%\homepc\work\t8-veles`; for the Mac,
 a local `git clone` of the same bundle into `/tmp/opencode/t8/mac-tree`, then
 `homepc --host mac sync /tmp/opencode/t8/mac-tree t8-veles` (its rsync excludes `.git/`). Both copies are at
-`28745ebf`; `git tag -l 'android-v9*'` printed nothing in the worktree, the local clone (0) and the PC
-clone (empty). Windows used `.\gradlew.bat` and PowerShell; the Mac used `./gradlew` over ssh.
+`28745ebf`. `git tag -l 'android-v*'` in the worktree prints the pre-existing release tag `android-v0.1.0`
+(created 2026-11-10 on `b6169e79`, an ancestor of `HEAD`, before this change); the same command prints
+nothing in the local clone and in the PC clone, and the bundle records only the `HEAD` ref, so no tag can
+travel to the repository from the synced copies. Windows used `.\gradlew.bat` and PowerShell; the Mac used
+`./gradlew` over ssh.
 
 Windows PC (Windows 11, Gradle 9.5.0, Zulu 21.0.7):
 
@@ -452,6 +468,7 @@ MacBook (macOS 26.5.2 arm64, Gradle 9.5.0, Zulu 21.0.6, Xcode 26.6):
 | native-host compile (macos) | `./gradlew bridgeHostBuild` | `Calculating task graph as no cached configuration is available for tasks: bridgeHostBuild` · `Configuration cache entry stored.` (14s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (450ms) |
 | installer (macos) | `./gradlew bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest` | `Calculating task graph as no cached configuration is available for tasks: …` · `Configuration cache entry stored.` (4m 38s) | `Reusing configuration cache.` · `Configuration cache entry reused.` (4m 6s) |
 
-The Linux jobs of both workflows run the same invocations as the 8.1 rows and are covered there;
+The Linux lint and unit-test jobs of both workflows are probed as their own rows in 8.1, because each
+split task set is a separate configuration-cache entry and is not covered by the combined rows;
 `scripts-tests` is Linux-only. No configuration-cache problem appeared on any platform, no fix or opt-out
 was needed, and no source file changed for this task (`cc-optouts.md` is unchanged).
