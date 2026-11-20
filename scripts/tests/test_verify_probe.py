@@ -207,6 +207,34 @@ class JavaHomeTest(FixtureRepo):
         self.assertNotIn("config set java_home " + JDK21, outcome.error)
         self.assertEqual(outcome.fix, JAVA_FIX)
 
+    def test_java_version_banner_wins_over_picked_up_options(self):
+        # A container JVM prints `Picked up …` lines, often with numbers (`-Xmx2g`), before the
+        # banner. The version must come from the `version "…"` banner, never those numbers.
+        req = tool("java-home", fix=JAVA_FIX)
+        jdk = self.abs("jdk21")
+        context = self.context(
+            repo_files={".java-version": JAVA_PIN.encode("utf-8"),
+                        "jdk21/bin/java": b""},
+            env={"PATH": "", "HOME": HOME, "JAVA_HOME": jdk},
+        )
+        lines = ["Picked up JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8 -Xmx2g",
+                 "Picked up _JAVA_OPTIONS: -Xss4m",
+                 'openjdk version "21.0.13" 2026-11-17',
+                 "OpenJDK Runtime Environment (build 21.0.13+1-Ubuntu-0ubuntu1)"]
+        context.runner = FakeRunner(script={(jdk + "/bin/java", "-version"):
+                                            Outcome("ok", code=0, stderr=list(lines))})
+        outcome, fingerprint = probe("java-home", req, context, context.env,
+                                     context.runner.run)
+        self.assertEqual(outcome.kind, "ok", outcome.error)
+        self.assertEqual(fingerprint, os.path.realpath(jdk) + "@" + "\n".join(lines))
+
+        # The same parse reads the pin, a release value and a Java 8 banner.
+        self.assertEqual(verify._java_major(JAVA_PIN), 21)
+        self.assertEqual(verify._java_major("21.0.13.1"), 21)
+        self.assertEqual(verify._java_major('java version "1.8.0_392"'), 8)
+        self.assertEqual(verify._java_major("Picked up _JAVA_OPTIONS: -Xmx2g\n"
+                                            'openjdk version "21.0.13"'), 21)
+
     def test_probe_timeout_outcome(self):
         # D9: a probe cut off by the deadline is a `timeout`, not a missing-tool `not_run`,
         # and one that would start inside the reserve never starts at all.

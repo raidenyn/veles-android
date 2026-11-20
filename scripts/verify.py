@@ -1615,15 +1615,45 @@ def _resolved_description(fs, key, value):
     return "directory"
 
 
+JAVA_VERSION_BANNER = re.compile(r'\bversion\s+"([^"]+)"')
+JAVA_BANNER_LINE = re.compile(r"^(?:openjdk|java)\b", re.IGNORECASE)
+JAVA_VERSION_NUMBER = re.compile(r"\d+(?:[._]\d+)*")
+
+
+def _java_version_text(text):
+    """The version a JDK reports or is pinned to.
+
+    A JVM may print `Picked up JAVA_TOOL_OPTIONS: …` (often holding numbers such as `-Xmx2g`)
+    before the banner, so the banner's quoted version wins; a bare pin or `release` value such as
+    `21.0.12` is taken as it is (design D7).
+    """
+    lines = (text or "").splitlines()
+    for line in lines:
+        match = JAVA_VERSION_BANNER.search(line)
+        if match:
+            return match.group(1)
+    for line in lines:
+        stripped = line.strip()
+        if JAVA_BANNER_LINE.match(stripped):
+            build = re.search(r"\bbuild\s+(\S+)", stripped)
+            match = JAVA_VERSION_NUMBER.search(build.group(1) if build else stripped)
+            if match:
+                return match.group(0)
+    match = JAVA_VERSION_NUMBER.search(text or "")
+    return match.group(0) if match else None
+
+
 def _java_major(text):
     """The major of a JDK version or of a `java -version` line (1.8 is 8, 21.0.12 is 21)."""
-    match = re.search(r"\d+(?:\.\d+)*", text or "")
-    if not match:
+    version = _java_version_text(text)
+    if not version:
         return None
-    parts = match.group(0).split(".")
+    parts = version.split(".")
     if parts[0] == "1" and len(parts) > 1:
-        return int(parts[1])
-    return int(parts[0])
+        major = re.match(r"\d+", parts[1])
+    else:
+        major = re.match(r"\d+", parts[0])
+    return int(major.group(0)) if major else None
 
 
 def _first_version(text):
