@@ -69,15 +69,32 @@ def write_json(path, document):
         json.dump(document, handle)
 
 
+class FakeMember:
+    """A process in a group that is not its leader: its lifetime does not end the group."""
+
+    def __init__(self, ignore=()):
+        self.ignore = set(ignore)
+        self.alive = True
+        self.signals = []
+
+    def signal(self, sig):
+        self.signals.append(sig)
+        if not self.alive or sig in self.ignore:
+            return
+        self.alive = False
+
+
 class FakeProcess:
     """One fake process-group leader the runner can poll, signal and reap.
 
     `auto_exit` (the default) makes it finish by itself on the first poll, like a command that
     succeeds; `auto_exit=False` keeps it alive until a signal that is not in `ignore` arrives.
+    `members` are the other processes of the group: they keep the group alive after the leader
+    exits, and each has its own signals to ignore.
     """
 
     def __init__(self, pid=4242, code=0, output=b"", stderr_output=b"", ignore=(),
-                 on_poll=None, auto_exit=True):
+                 on_poll=None, auto_exit=True, members=()):
         self.pid = pid
         self.code = code
         self.output = output
@@ -85,6 +102,7 @@ class FakeProcess:
         self.ignore = set(ignore)
         self.on_poll = on_poll
         self.auto_exit = auto_exit
+        self.members = list(members)
         self.running = True
         self.reaped = False
         self.signals = []
@@ -101,9 +119,15 @@ class FakeProcess:
         self.running = False
         return self.code
 
+    def group_alive(self):
+        """The leader or any member still exists: what `killpg(pgid, 0)` would say."""
+        return self.running or any(member.alive for member in self.members)
+
     def signal(self, sig):
         self.signals.append(sig)
-        if sig in self.ignore:
+        for member in self.members:
+            member.signal(sig)
+        if not self.running or sig in self.ignore:
             return
         self.running = False
         self.code = -int(sig)
@@ -122,6 +146,7 @@ class FakeProcesses:
         self.signals = []
         self.at = []
         self.alive_checks = []
+        self.on_signal = None
 
     @staticmethod
     def _emit(handle, data):
@@ -150,11 +175,13 @@ class FakeProcesses:
         process = self.by_pid.get(pgid)
         if process is not None:
             process.signal(sig)
+        if self.on_signal is not None:
+            self.on_signal(pgid, sig)
 
     def group_alive(self, pgid):
         self.alive_checks.append(pgid)
         process = self.by_pid.get(pgid)
-        return bool(process is not None and process.poll() is None)
+        return bool(process is not None and process.group_alive())
 
 
 class RunFixture(unittest.TestCase):
@@ -240,6 +267,57 @@ class TerminateTest(RunFixture):
         self.assertEqual(processes.at, [5.0, 15.0])
         self.assertTrue(process.reaped)
         self.assertEqual(outcome.code, -int(signal.SIGKILL))
+
+
+class GroupLifetimeTest(RunFixture):
+    def test_leader_exit_keeps_the_group_until_the_kill(self):
+        # Important 1: the grace and the SIGKILL belong to the whole group. A leader that exits
+        # on SIGTERM must not end the grace while a member ignores it, and the running.json entry
+        # stays until the group is confirmed gone.
+        member = FakeMember(ignore={signal.SIGTERM})
+        process = FakeProcess(pid=810, auto_exit=False, members=[member])
+        processes = FakeProcesses(spawn=[process], clock=self.clock, wait=self.wait)
+        seen = []
+        processes.on_signal = lambda pgid, sig: seen.append((sig, read_json(self.running_path)))
+        outcome = self.runner(processes).run(["slow"], self.repo, {"PATH": ""},
+                                             self.log_path(), 1.0, False)
+        self.assertEqual(outcome.kind, "timeout")
+        self.assertEqual(outcome.code, -int(signal.SIGTERM))  # the leader itself died on TERM
+        self.assertEqual(processes.signals, [(810, signal.SIGTERM), (810, signal.SIGKILL)])
+        self.assertEqual(processes.at, [1.0, 11.0])
+        self.assertFalse(member.alive)
+        self.assertEqual(member.signals, [signal.SIGTERM, signal.SIGKILL])
+        self.assertTrue(process.reaped)
+        self.assertEqual([entry[1]["groups"] for entry in seen],
+                         [[{"run": RUN, "pgid": 810}], [{"run": RUN, "pgid": 810}]])
+        self.assertIsNone(read_json(self.running_path))
+
+    def test_surviving_member_keeps_the_running_entry(self):
+        # D9: an entry is forgotten only once the group is confirmed gone; a member that survives
+        # the SIGKILL keeps the record so the next lock holder can clean it up.
+        member = FakeMember(ignore={signal.SIGTERM, signal.SIGKILL})
+        process = FakeProcess(pid=811, auto_exit=False, members=[member])
+        processes = FakeProcesses(spawn=[process], clock=self.clock, wait=self.wait)
+        outcome = self.runner(processes).run(["slow"], self.repo, {"PATH": ""},
+                                             self.log_path(), 1.0, False)
+        self.assertEqual(outcome.kind, "timeout")
+        self.assertEqual(processes.signals, [(811, signal.SIGTERM), (811, signal.SIGKILL)])
+        self.assertTrue(member.alive)
+        self.assertEqual(read_json(self.running_path)["groups"],
+                         [{"run": RUN, "pgid": 811}])
+
+    def test_normal_exit_with_a_live_member_keeps_the_entry(self):
+        # The same rule after a normal exit: the leader is reaped but the group is not gone.
+        member = FakeMember()
+        process = FakeProcess(pid=812, members=[member])
+        processes = FakeProcesses(spawn=[process], clock=self.clock, wait=self.wait)
+        outcome = self.runner(processes).run(["/bin/true"], self.repo, {"PATH": ""},
+                                             self.log_path(), 100.0, False)
+        self.assertEqual(outcome.kind, "ok")
+        self.assertEqual(outcome.code, 0)
+        self.assertTrue(member.alive)
+        self.assertEqual(read_json(self.running_path)["groups"],
+                         [{"run": RUN, "pgid": 812}])
 
 
 class SpawnTest(RunFixture):
@@ -381,6 +459,26 @@ class ReportTest(RunFixture):
         self.assertIn("npm error line 500", text)
         self.assertIn("npm error line 441", text)
         self.assertNotIn("npm error line 440", text)
+        self.assertEqual(exit_code(results, []), 1)
+
+    def test_failure_summary_trims_a_long_tail(self):
+        # Important 2: one failure with 60 × 300-character lines must keep the step, the re-run
+        # command, the log path and the newest tail line inside the 8 KiB cap.
+        tail = [("%03d " % number) + "y" * 296 for number in range(1, 61)]
+        log = self.log_path()
+        results = {"web-extension": NodeResult("FAIL", None, [], [
+            failure("web-extension.lint",
+                    Outcome("fail", code=1, tail=tail, log=log),
+                    "cd web-extension && npm run lint")])}
+        text = render(results, [])
+        self.assertLessEqual(len(text.encode("utf-8")), 8192)
+        self.assertIn("web-extension.lint: FAIL (exit 1)", text)
+        self.assertIn("cd web-extension && npm run lint", text)
+        self.assertIn(log, text)
+        self.assertIn(tail[-1], text)
+        self.assertNotIn(tail[0], text)
+        self.assertTrue(any("build/verify/last-run.json" in line
+                            for line in text.splitlines()))
         self.assertEqual(exit_code(results, []), 1)
 
     def test_summary_overflow_keeps_status_lines(self):

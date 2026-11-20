@@ -52,6 +52,8 @@ DEADLINE_RESERVE_SECONDS = 45
 # Running (D9): the poll interval, the TERM-to-KILL grace, and the tail the report shows.
 POLL_SECONDS = 0.1
 TERM_GRACE_SECONDS = 10.0
+# A killed group can still hold a zombie grandchild for a moment; give it this long to settle.
+KILL_SETTLE_SECONDS = 1.0
 TAIL_LINES = 60
 TAIL_CHARS = 300
 # Orphan cleanup (D9): SIGKILL after the grace, contention when a group is still alive after 15 s.
@@ -482,7 +484,10 @@ class Runner:
                     code = self._terminate(process)
                 reaped = True
             finally:
-                if reaped:
+                # D9: the record goes only once the group is gone, not merely its leader. A
+                # surviving member (or a daemon) stays recorded so the next lock holder can clean
+                # it up, and nothing signals a group from a live run.
+                if reaped and not self.processes.group_alive(process.pid):
                     _forget_running(log_path, process.pid)
             if capture:
                 stdout_data = _stream_bytes(out)
@@ -522,14 +527,25 @@ class Runner:
             self.wait.sleep(POLL_SECONDS)
 
     def _terminate(self, process):
-        """SIGTERM, the ten-second grace, SIGKILL, reap (design D9); returns the reaped code."""
+        """SIGTERM, the ten-second grace, SIGKILL, reap (design D9); returns the reaped code.
+
+        The grace and the SIGKILL decision belong to the whole process group, not to the leader:
+        a leader that exits on SIGTERM must not cut the grace short while a member that ignored
+        it is still alive.
+        """
         self.processes.signal_group(process.pid, signal.SIGTERM)
         grace_end = self.clock.now() + TERM_GRACE_SECONDS
-        while process.poll() is None and self.clock.now() < grace_end:
+        while self.processes.group_alive(process.pid) and self.clock.now() < grace_end:
             self.wait.sleep(POLL_SECONDS)
-        if process.poll() is None:
+        if self.processes.group_alive(process.pid):
             self.processes.signal_group(process.pid, signal.SIGKILL)
-        return process.wait()
+        code = process.wait()
+        # SIGKILL is immediate for live members, but an orphaned grandchild can still be a
+        # zombie for a moment; give the group a bounded moment to settle before it is forgotten.
+        settle_end = self.clock.now() + KILL_SETTLE_SECONDS
+        while self.processes.group_alive(process.pid) and self.clock.now() < settle_end:
+            self.wait.sleep(POLL_SECONDS)
+        return code
 
 
 def _lock_fd(fd):
@@ -730,33 +746,40 @@ def _outcome_label(kind):
     return OUTCOME_LABELS.get(kind, kind.upper())
 
 
-def _failure_lines(step_id, outcome, rerun):
-    """One failure block (design D10): the step, its reason and fix, the re-run command, log, tail."""
-    lines = ["  %s: %s" % (step_id, _outcome_label(outcome.kind))]
+def _failure_block(step_id, outcome, rerun):
+    """One failure block (design D10): its header lines, the `tail:` lead and the tail lines.
+
+    The header carries the step id, the outcome's error and fix, the re-run command and the log
+    path; the tail is the outcome's last lines, already capped. Keeping the two apart lets the
+    summary trim the oldest tail lines when the block does not fit, instead of losing the header.
+    """
+    header = ["  %s: %s" % (step_id, _outcome_label(outcome.kind))]
     if outcome.kind == "fail" and outcome.code is not None:
-        lines[0] += " (exit %d)" % outcome.code
+        header[0] += " (exit %d)" % outcome.code
     detail = outcome.error or ""
     for line in detail.splitlines():
-        lines.append("    " + line)
+        header.append("    " + line)
     if outcome.fix and outcome.fix not in detail:
-        lines.append("    fix: %s" % outcome.fix)
+        header.append("    fix: %s" % outcome.fix)
     if rerun:
-        lines.append("    rerun: %s" % rerun)
+        header.append("    rerun: %s" % rerun)
     if outcome.log:
-        lines.append("    log: %s" % outcome.log)
+        header.append("    log: %s" % outcome.log)
     tail = [line[:TAIL_CHARS] for line in outcome.tail[-TAIL_LINES:]]
-    if tail:
-        lines.append("    tail:")
-        lines.extend("      " + line for line in tail)
-    return lines
+    return header, ("    tail:" if tail else ""), ["      " + line for line in tail]
+
+
+def _block_lines(header, lead, tail):
+    return header + ([lead] + tail if tail else [])
 
 
 def render(results, errors, cap=SUMMARY_CAP):
     """The run summary (design D10): a status line per node, its notes, then the failure details.
 
-    The cap counts UTF-8 bytes. Every node keeps its status line and notes; failure details are
-    added in report order while they fit, and a line pointing at `last-run.json` replaces the
-    details that did not fit.
+    The cap counts UTF-8 bytes. Every node keeps its status line and notes. Failure blocks are
+    added in report order; the first block that does not fit keeps its header (step, error/fix,
+    re-run command, log path) and only its oldest tail lines are trimmed, and later blocks are
+    dropped as D10 says, with a line pointing at `last-run.json`.
     """
     head = ["verify: %s" % error for error in errors]
     nodes = sorted(results)
@@ -766,21 +789,40 @@ def render(results, errors, cap=SUMMARY_CAP):
     blocks = []
     for node in nodes:
         for step_id, outcome, rerun in results[node].failures:
-            blocks.append("\n".join(_failure_lines(step_id, outcome, rerun)))
-    chosen = ["\n".join(head)]
-    for block in blocks:
-        candidate = "\n".join(chosen + [block])
-        if _utf8_len(candidate) > cap:
-            break
-        chosen.append(block)
-    if len(chosen) - 1 < len(blocks):
-        pointer = ("verify: the summary was capped at %d bytes; the full report is in %s"
-                   % (cap, LAST_RUN_POINTER))
-        while len(chosen) > 1 and _utf8_len("\n".join(chosen + [pointer])) > cap:
-            chosen.pop()
-        if _utf8_len("\n".join(chosen + [pointer])) <= cap:
-            chosen.append(pointer)
-    return _truncate_bytes("\n".join(chosen), cap)
+            blocks.append(_failure_block(step_id, outcome, rerun))
+    text = "\n".join(head)
+    complete = "\n".join([text] + ["\n".join(_block_lines(*block)) for block in blocks])
+    if _utf8_len(complete) <= cap:
+        return complete
+    if not blocks:
+        return _truncate_bytes(text, cap)
+    pointer = ("verify: the summary was capped at %d bytes; the full report is in %s"
+               % (cap, LAST_RUN_POINTER))
+    # Reserve the pointer's bytes first: it must survive the trimming that makes room for it.
+    budget = cap - _utf8_len(text) - 1 - _utf8_len(pointer)
+    chosen = []
+    used = 0
+    for header, lead, tail in blocks:
+        whole = "\n".join(_block_lines(header, lead, tail))
+        if used + _utf8_len(whole) + 1 <= budget:
+            chosen.append(whole)
+            used += _utf8_len(whole) + 1
+            continue
+        block = list(header)
+        if tail:
+            kept = []
+            for line in reversed(tail):
+                candidate = "\n".join(header + [lead] + [line] + kept)
+                if used + _utf8_len(candidate) + 1 > budget:
+                    break
+                kept.insert(0, line)
+            if kept:
+                block = header + [lead] + kept
+        candidate = "\n".join(block)
+        if used + _utf8_len(candidate) + 1 <= budget:
+            chosen.append(candidate)
+        break
+    return _truncate_bytes("\n".join([text] + chosen + [pointer]), cap)
 
 
 def exit_code(results, errors):
