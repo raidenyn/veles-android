@@ -54,9 +54,9 @@ between.
 
 ## 8. Checks and live verification (design §10)
 
-- [ ] 8.1 Run the checks of every node `scripts/components.py changed` selects (at least `scripts` and `docs`: `./gradlew scriptsTest`, `node --test scripts/opencode-hooked-rules/index.test.mjs`, the agent-file check and its unit tests, `openspec validate --all`)
-- [ ] 8.2 Final live run in Claude Code of outcomes 1–6 of `hooked-rule-delivery`; record the version and results
-- [ ] 8.3 Final live run in Claude Code of outcome 7 (stop gate, push gate, apply-to-finalize) on a disposable change; record results
-- [ ] 8.4 Final live run in OpenCode of outcomes 1–7, including an interactive TUI abort (Esc, recorded unverified if the TUI cannot produce the event); record the version and results
-- [ ] 8.5 If any outcome fails in a tool, stop and ask the owner (pointer-only or moments-only for that tool, or hold) before continuing
-- [ ] 8.6 Update the verified tools and versions in `docs/hook-delivered-rules.md`; state what ran, on which tool and version, in the completion report and the PR
+- [x] 8.1 Run the checks of every node `scripts/components.py changed` selects (at least `scripts` and `docs`: `./gradlew scriptsTest`, `node --test scripts/opencode-hooked-rules/index.test.mjs`, the agent-file check and its unit tests, `openspec validate --all`)
+- [x] 8.2 Final live run in Claude Code of outcomes 1–6 of `hooked-rule-delivery`; record the version and results
+- [x] 8.3 Final live run in Claude Code of outcome 7 (stop gate, push gate, apply-to-finalize) on a disposable change; record results
+- [x] 8.4 Final live run in OpenCode of outcomes 1–7, including an interactive TUI abort (Esc, recorded unverified if the TUI cannot produce the event); record the version and results
+- [x] 8.5 If any outcome fails in a tool, stop and ask the owner (pointer-only or moments-only for that tool, or hold) before continuing
+- [x] 8.6 Update the verified tools and versions in `docs/hook-delivered-rules.md`; state what ran, on which tool and version, in the completion report and the PR
