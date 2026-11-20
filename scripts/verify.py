@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import datetime
 import hashlib
+import io
 import json
 import os
 import re
+import selectors
 import shlex
 import shutil
 import signal
@@ -22,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from dataclasses import asdict, dataclass, field, replace
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -123,6 +127,29 @@ PROGRAM_REQUIREMENTS = {
     "python3": "path-tool",
 }
 
+# The Stop hook (design D11/D12): the outer deadline, the watchdog's grace, the event cap, the
+# per-session backstop, the reservation grace, the repeat bound and the state-file caps.
+HOOK_RUN_BUDGET_SECONDS = 1740.0
+HOOK_OUTER_SECONDS = 1740.0
+HOOK_KILL_GRACE_SECONDS = 30.0
+EVENT_CAP = 1048576
+HOOK_STATE_VERSION = 1
+HOOK_STATE_POINTER = "hook-state.json"
+MAX_SESSION_SECONDS = 3600.0
+MAX_SESSION_BLOCKS = 5
+MIN_RUN_SECONDS = 60.0
+MAX_REPEATS = 3
+RESERVATION_GRACE_SECONDS = 120.0
+KEEP_SESSIONS = 50
+SYNOPSIS_CAP = 2048
+HOOK_CONTENTION = "verification already running; nothing was checked"
+HOOK_LIMIT_NOTICE = "verify: this session's hook limits were reached; not running the task gate"
+HOOK_INCOMPLETE_NOTICE = "verify: the task gate stopped at its deadline; nothing was blocked"
+HOOK_BLOCK_LEAD = ("verify: the task gate found problems; fix them and stop again "
+                   "(attempt %d of %d)")
+HOOK_REPEAT_LEAD = ("verify: the task gate still has problems; not blocking again "
+                    "(attempt %d of %d)")
+
 
 class TableError(ValueError):
     """The command table is invalid; the message names the problem and the offending id."""
@@ -171,6 +198,8 @@ class Context:
     run_dir: str
     deadline: Optional[float] = None
     log: Callable[[str], None] = _quiet
+    # The launcher's checkout discovery (design D11); injected so tests never run git.
+    discover: Callable[[str], Optional[Tuple[str, str]]] = agent_rules.discover_checkout
 
 
 Run = Callable[[List[str], str, Dict[str, str], str, float, bool], Outcome]
@@ -794,6 +823,9 @@ class RunOutcome:
     contended: bool = False
     problems: List[tuple] = field(default_factory=list)
     incomplete: bool = False
+    # The step records `last-run.json` holds, for the hook's "what finished, what was cut off,
+    # what was not reached" summary (design D9/D12).
+    steps: List[dict] = field(default_factory=list)
 
 
 def _utf8_len(text):
@@ -1828,6 +1860,7 @@ def run_gate(gate, base, ctx, table, cmap, use_passes=False):
         for node in sorted(outcome.results):
             for step_id, step_outcome, _rerun in outcome.results[node].failures:
                 outcome.problems.append((node, step_id, step_outcome.kind))
+        outcome.steps = step_records
         write_last_run(ctx, outcome.results, step_records,
                        elapsed_s=ctx.clock.now() - started)
         return outcome
@@ -3842,6 +3875,653 @@ def classify_env_failure(step, outcome, log_path):
     return outcome
 
 
+# --- the Stop hook (design D11/D12) ----------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class HookAnswer:
+    """What the hook tells Claude Code: keep working, pass with a notice, or pass silently."""
+
+    kind: str
+    text: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class Admission:
+    """One admitted run's reservation and deadline, or the notice that stood in for a run."""
+
+    ok: bool
+    reservation: Optional[str] = None
+    deadline: Optional[float] = None
+    notice: Optional[str] = None
+
+
+class HookStateError(Exception):
+    """The hook's session state cannot be locked; the hook fails open (design D12)."""
+
+
+def _iso(seconds):
+    """A state timestamp from the injected clock (design D12); no wall-clock read."""
+    moment = datetime.datetime.fromtimestamp(float(seconds), datetime.timezone.utc)
+    return moment.replace(tzinfo=None).isoformat()
+
+
+def _epoch(text):
+    """The seconds behind a state timestamp; a malformed one is 0, never an exception."""
+    try:
+        moment = datetime.datetime.fromisoformat(str(text))
+    except (TypeError, ValueError):
+        return 0.0
+    return moment.replace(tzinfo=datetime.timezone.utc).timestamp()
+
+
+def read_event(stream, cap=EVENT_CAP):
+    """The hook's stdin event, or None to fail open (design D11).
+
+    At most `cap + 1` bytes are read, so an oversized stream is recognised without buffering it;
+    invalid JSON, a non-object and an event without a non-empty `session_id` and `cwd` are all
+    None, and every caller lets the stop through.
+    """
+    try:
+        data = stream.read(cap + 1)
+    except (OSError, ValueError):
+        return None
+    if data is None or len(data) > cap:
+        return None
+    try:
+        event = json.loads(data)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(event, dict):
+        return None
+    for key in ("session_id", "cwd"):
+        value = event.get(key)
+        if not isinstance(value, str) or not value:
+            return None
+    return event
+
+
+class _LockView:
+    """The `clock`/`wait`/`deadline` seam `StateLock` needs, injected into `HookState`."""
+
+    def __init__(self, clock, wait, deadline):
+        self.clock = clock
+        self.wait = wait
+        self.deadline = deadline
+
+
+class HookState:
+    """`<git-common-dir>/veles-verify/hook-state.json`, version 1, under its own lock (D12).
+
+    One document is shared by every worktree, keyed by session id. `admit` expires stale
+    reservations, checks the session's remaining time and block slots and reserves a run's
+    budget and one slot atomically; `settle` removes the reservation, charges the measured time
+    and applies the outcome table. Every read that cannot complete starts from an empty state,
+    so a damaged file never traps the agent; a write that cannot complete is an internal error
+    the caller fails open on.
+    """
+
+    def __init__(self, common_dir, clock, wait=None, deadline=None):
+        self.clock = clock
+        self.wait = wait if wait is not None else time.sleep
+        self.deadline = deadline
+        self.directory = os.path.join(os.path.realpath(common_dir), "veles-verify")
+        self.path = os.path.join(self.directory, HOOK_STATE_POINTER)
+        self.lock_path = self.path + ".lock"
+
+    # -- the locked document -----------------------------------------------------------
+
+    def _lock(self):
+        lock = StateLock(self.lock_path, _LockView(self.clock, self.wait, self.deadline))
+        if not lock.acquire():
+            raise HookStateError("cannot lock %s" % self.lock_path)
+        return lock
+
+    def _read(self):
+        document = _read_json(self.path)
+        if not isinstance(document, dict) or document.get("v") != HOOK_STATE_VERSION:
+            return {"v": HOOK_STATE_VERSION, "sessions": {}}
+        sessions = document.get("sessions")
+        document["sessions"] = dict(
+            (key, value) for key, value in (sessions or {}).items()
+            if isinstance(key, str) and isinstance(value, dict))
+        return document
+
+    def _save(self, document):
+        _prune_sessions(document)
+        _write_json(self.path, document)
+
+    def _session(self, document, session_id, now):
+        session = document["sessions"].get(session_id)
+        if not isinstance(session, dict):
+            session = {}
+            document["sessions"][session_id] = session
+        session.setdefault("blocks", 0)
+        session.setdefault("spent_s", 0.0)
+        session.setdefault("reserved", [])
+        session.setdefault("repeat", {"id": None, "n": 0})
+        session.setdefault("synopsis", None)
+        session.setdefault("last_write", _iso(now))
+        if not isinstance(session["reserved"], list):
+            session["reserved"] = []
+        if not isinstance(session["repeat"], dict):
+            session["repeat"] = {"id": None, "n": 0}
+        return session
+
+    # -- admission (design D12) --------------------------------------------------------
+
+    def admit(self, session_id, outer_deadline):
+        """Expire first, then check the allowance and reserve a run's budget and block slot."""
+        lock = self._lock()
+        try:
+            document = self._read()
+            now = self.clock.now()
+            session = self._session(document, session_id, now)
+            self._expire(session, now)
+            live = session["reserved"]
+            spent = float(session.get("spent_s") or 0.0)
+            left = MAX_SESSION_SECONDS - spent - sum(
+                _number(entry.get("budget_s")) for entry in live)
+            slots = (MAX_SESSION_BLOCKS - int(session.get("blocks") or 0) - len(live))
+            if slots < 1 or left < MIN_RUN_SECONDS:
+                session["last_write"] = _iso(now)
+                self._save(document)
+                return Admission(False, notice=_limit_notice(session))
+            seconds = HOOK_RUN_BUDGET_SECONDS
+            if outer_deadline is not None:
+                seconds = min(seconds, _number(outer_deadline) - now)
+            budget = max(0.0, min(HOOK_RUN_BUDGET_SECONDS, left, seconds))
+            reservation = {
+                "id": uuid.uuid4().hex,
+                "budget_s": budget,
+                "started": _iso(now),
+                "pid": os.getpid(),
+            }
+            live.append(reservation)
+            session["reserved"] = live
+            session["last_write"] = _iso(now)
+            self._save(document)
+            return Admission(True, reservation=reservation["id"],
+                             deadline=now + budget)
+        finally:
+            lock.release()
+
+    @staticmethod
+    def _expire(session, now):
+        """Charge `budget + 120 s` to a reservation past its start + budget + 120 s (D12)."""
+        kept = []
+        for entry in session.get("reserved") or []:
+            if not isinstance(entry, dict):
+                continue
+            budget = _number(entry.get("budget_s"))
+            if now >= _epoch(entry.get("started")) + budget + RESERVATION_GRACE_SECONDS:
+                session["spent_s"] = float(session.get("spent_s") or 0.0) \
+                    + budget + RESERVATION_GRACE_SECONDS
+            else:
+                kept.append(entry)
+        session["reserved"] = kept
+
+    # -- settlement (design D12) -------------------------------------------------------
+
+    def settle(self, session_id, reservation, outcome, elapsed_s, identity, summary):
+        """Remove the reservation, charge its measured time and apply the outcome table."""
+        lock = self._lock()
+        try:
+            document = self._read()
+            now = self.clock.now()
+            session = self._session(document, session_id, now)
+            held = [entry for entry in session["reserved"]
+                    if isinstance(entry, dict) and entry.get("id") == reservation]
+            session["reserved"] = [
+                entry for entry in session["reserved"]
+                if not (isinstance(entry, dict) and entry.get("id") == reservation)]
+            # Spec (tasks.md §13): every admitted run that started is charged its measured
+            # time; contention cancels without a charge. An expired reservation was charged
+            # budget + 120 s at admission, so a late settle never charges it twice.
+            if held and outcome != "contention":
+                session["spent_s"] = (float(session.get("spent_s") or 0.0)
+                                      + max(0.0, float(elapsed_s or 0.0)))
+            answer = self._answer(session, outcome, identity, summary)
+            session["last_write"] = _iso(now)
+            self._save(document)
+            return answer
+        finally:
+            lock.release()
+
+    def _answer(self, session, outcome, identity, summary):
+        if outcome == "contention":
+            return HookAnswer("notice", HOOK_CONTENTION)
+        if outcome == "block":
+            attempt = self._repeat(session, identity)
+            text = _hook_text(HOOK_BLOCK_LEAD % (attempt, MAX_REPEATS), summary)
+            session["synopsis"] = _truncate_bytes(summary or "", SYNOPSIS_CAP) or None
+            if attempt <= MAX_REPEATS:
+                session["blocks"] = int(session.get("blocks") or 0) + 1
+                return HookAnswer("block", text)
+            return HookAnswer("notice", _hook_text(
+                HOOK_REPEAT_LEAD % (attempt, MAX_REPEATS), summary))
+        if outcome == "clean":
+            session["blocks"] = 0
+            session["spent_s"] = 0.0
+            session["repeat"] = {"id": None, "n": 0}
+            session["synopsis"] = None
+            return HookAnswer("silent")
+        if outcome == "incomplete":
+            return HookAnswer("notice", _hook_text(HOOK_INCOMPLETE_NOTICE, summary))
+        # `no_work`, `internal_error` and an unknown outcome leave the counters as they are.
+        return HookAnswer("silent")
+
+    @staticmethod
+    def _repeat(session, identity):
+        """The repeat identity's next attempt: the same identity increments, another resets (D12)."""
+        stored = session.get("repeat") or {}
+        previous = int(_number(stored.get("n")))
+        same = (identity is not None and stored.get("id") is not None
+                and list(identity) == list(stored.get("id") or []))
+        attempt = previous + 1 if same else 1
+        session["repeat"] = {
+            "id": list(identity) if identity is not None else None,
+            "n": attempt,
+        }
+        return attempt
+
+
+def _number(value):
+    """A float from a JSON number, or 0.0; a malformed state value never raises."""
+    if isinstance(value, bool):
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _limit_notice(session):
+    synopsis = session.get("synopsis")
+    return _hook_text(HOOK_LIMIT_NOTICE, synopsis)
+
+
+def _hook_text(lead, summary):
+    """The one formatter for a block's reason and a notice: the lead, then the summary."""
+    if summary:
+        return lead + "\n\n" + summary
+    return lead
+
+
+def _prune_sessions(document):
+    """Keep the newest 50 sessions by `last_write`, plus every session with a live reservation."""
+    sessions = document.get("sessions") or {}
+    if len(sessions) <= KEEP_SESSIONS:
+        return
+    live = set(key for key, value in sessions.items() if value.get("reserved"))
+    others = sorted((key for key in sessions if key not in live),
+                    key=lambda key: _epoch(sessions[key].get("last_write")), reverse=True)
+    keep = live | set(others[:KEEP_SESSIONS])
+    document["sessions"] = dict(
+        (key, value) for key, value in sessions.items() if key in keep)
+
+
+# The hook's step labels for the "what finished, what was cut off, what was not reached" line.
+HOOK_STEP_LABELS = {
+    "ok": "OK",
+    "fail": "FAIL",
+    "timeout": "TIMEOUT",
+    "not_run": "NOT RUN",
+    "not_reached": "not reached",
+    "skipped": "skipped",
+}
+
+
+def _step_progress(steps):
+    """One line naming every planned step's status, so a deadline names what was not reached."""
+    if not steps:
+        return ""
+    parts = []
+    for step in steps:
+        status = step.get("status")
+        parts.append("%s %s" % (step.get("id"), HOOK_STEP_LABELS.get(status, status)))
+    return "steps: " + "; ".join(parts)
+
+
+def _problem_summary(run):
+    """The block reason or notice body: the D10 report, then the step progress line."""
+    text = render(run.results, run.errors)
+    progress = _step_progress(run.steps)
+    if progress:
+        text = (text + "\n" + progress) if text else progress
+    return _truncate_bytes(text, SUMMARY_CAP)
+
+
+def _hook_error(error):
+    """One stderr line for an internal failure; the hook's output contract is one line."""
+    if isinstance(error, BaseException):
+        detail = str(error).strip().splitlines()
+        first = detail[0].strip() if detail else ""
+        text = "%s: %s" % (type(error).__name__, first) if first else type(error).__name__
+    else:
+        detail = str(error).strip().splitlines()
+        text = detail[0].strip() if detail else "unknown error"
+    return " ".join(("verify: the hook failed: " + text).splitlines())
+
+
+def _close_fd(fd):
+    if fd is None:
+        return
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def _report_deadline(report_fd, admission):
+    """Write the admitted deadline (and nothing else) to the watchdog's pipe, then close it."""
+    if report_fd is None:
+        return
+    try:
+        if admission.ok and admission.deadline is not None:
+            os.write(report_fd, ("%r\n" % float(admission.deadline)).encode("ascii"))
+    except OSError:
+        pass
+    finally:
+        _close_fd(report_fd)
+
+
+def gate(event, deadline, report_fd, ctx):
+    """The gate owner: admission, the reported deadline, the task gate and settlement (D11/D12)."""
+    session_id = event["session_id"]
+    started = ctx.clock.now()
+    state = HookState(ctx.common_dir, ctx.clock, wait=ctx.wait, deadline=deadline)
+    try:
+        admission = state.admit(session_id, deadline)
+    except Exception:
+        _close_fd(report_fd)
+        raise
+    _report_deadline(report_fd, admission)
+    if not admission.ok:
+        if admission.notice:
+            return HookAnswer("notice", admission.notice)
+        return HookAnswer("silent")
+    try:
+        ctx.deadline = admission.deadline
+        cmap = components.load_map(os.path.join(ctx.repo, ".github", "components.json"))
+        table = load_table(os.path.join(ctx.repo, "scripts", "verify-commands.json"), cmap)
+        run = run_gate("task", None, ctx, table, cmap, use_passes=True)
+    except Exception as error:
+        _stderr(_hook_error(error))
+        return state.settle(session_id, admission.reservation, "internal_error",
+                            ctx.clock.now() - started, None, None)
+    elapsed = max(0.0, ctx.clock.now() - started)
+    if run.contended:
+        return state.settle(session_id, admission.reservation, "contention", elapsed,
+                            None, None)
+    if run.problems:
+        return state.settle(session_id, admission.reservation, "block", elapsed,
+                            run.problems[0], _problem_summary(run))
+    if run.errors:
+        _stderr(_hook_error(run.errors[0]))
+        return state.settle(session_id, admission.reservation, "internal_error", elapsed,
+                            None, None)
+    selection = run.selection
+    if selection is not None and (not selection.files or selection.only_unowned):
+        return state.settle(session_id, admission.reservation, "no_work", elapsed, None, None)
+    if run.incomplete:
+        return state.settle(session_id, admission.reservation, "incomplete", elapsed,
+                            None, _problem_summary(run))
+    return state.settle(session_id, admission.reservation, "clean", elapsed, None, None)
+
+
+def _emit_answer(answer):
+    """The hook's stdout: block JSON, notice JSON, or nothing for a pass."""
+    if answer.kind == "block":
+        document = {"decision": "block", "reason": answer.text or ""}
+    elif answer.kind == "notice":
+        document = {"systemMessage": answer.text or ""}
+    else:
+        return
+    _write_stdout(json.dumps(document) + "\n")
+
+
+def _write_stdout(data):
+    """Write text or bytes to the process's stdout without ever raising into the hook."""
+    text = data if isinstance(data, str) else data.decode("utf-8", "replace")
+    try:
+        stream = getattr(sys.stdout, "buffer", None)
+        if stream is not None:
+            stream.write(text.encode("utf-8"))
+            stream.flush()
+        else:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+
+
+def _fd_of(handle):
+    try:
+        return handle.fileno()
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+def _make_nonblocking(fd):
+    try:
+        os.set_blocking(fd, False)
+    except (AttributeError, OSError):
+        pass
+
+
+def _read_ready(fd):
+    """`(data, eof)` from a non-blocking read; `(None, False)` means "nothing yet"."""
+    try:
+        data = os.read(fd, 65536)
+    except (BlockingIOError, InterruptedError):
+        return None, False
+    except OSError:
+        return b"", True
+    return data, data == b""
+
+
+def _write_ready(fd, data):
+    """`(written, dead)` for a non-blocking write; a closed pipe means "stop writing"."""
+    try:
+        return os.write(fd, data), False
+    except (BlockingIOError, InterruptedError):
+        return 0, False
+    except OSError:
+        return 0, True
+
+
+def _unregister(selector, fd):
+    try:
+        selector.unregister(fd)
+    except (KeyError, ValueError, OSError):
+        pass
+
+
+def _close_handle(handle):
+    if handle is None:
+        return
+    try:
+        handle.close()
+    except (OSError, ValueError):
+        pass
+
+
+def _stop_child(child):
+    """Kill and reap only this launcher's own direct child (design D11)."""
+    try:
+        child.kill()
+    except (OSError, AttributeError):
+        pass
+    try:
+        child.wait()
+    except (OSError, AttributeError):
+        pass
+
+
+def _watch(child, report_fd, event_bytes, ctx, outer):
+    """Relay the child's stdout and write the event to it without ever blocking (D11).
+
+    The report pipe, the child's stdout and the child's stdin are all non-blocking and driven
+    from one selector, so a child that never reads its event or never stops writing cannot stall
+    the launcher before its kill time. The kill time is the reported admitted deadline plus 30
+    seconds, or the outer hook deadline plus 30 seconds (1,770) before one is reported.
+    """
+    selector = selectors.DefaultSelector()
+    stdin_handle = getattr(child, "stdin", None)
+    stdout_handle = getattr(child, "stdout", None)
+    stdin_fd = _fd_of(stdin_handle)
+    stdout_fd = _fd_of(stdout_handle)
+    pending = event_bytes if stdin_fd is not None else b""
+    report = b""
+    reported = None
+    stdin_closed = False
+    stdout_closed = False
+    stdout_done = stdout_fd is None
+    _make_nonblocking(report_fd)
+    selector.register(report_fd, selectors.EVENT_READ, "report")
+    if stdout_fd is not None:
+        _make_nonblocking(stdout_fd)
+        selector.register(stdout_fd, selectors.EVENT_READ, "stdout")
+    if stdin_fd is not None:
+        _make_nonblocking(stdin_fd)
+        if pending:
+            selector.register(stdin_fd, selectors.EVENT_WRITE, "event")
+        else:
+            _close_handle(stdin_handle)
+            stdin_closed = True
+    try:
+        while True:
+            for key, mask in selector.select(0):
+                if key.data == "report":
+                    data, eof = _read_ready(report_fd)
+                    if data:
+                        report += data
+                        if reported is None and b"\n" in report:
+                            line = report.split(b"\n", 1)[0].strip()
+                            try:
+                                reported = float(line)
+                            except ValueError:
+                                reported = None
+                    if eof:
+                        _unregister(selector, report_fd)
+                elif key.data == "stdout":
+                    data, eof = _read_ready(stdout_fd)
+                    if data:
+                        _write_stdout(data)
+                    if eof:
+                        _unregister(selector, stdout_fd)
+                        _close_handle(stdout_handle)
+                        stdout_closed = True
+                        stdout_done = True
+                elif key.data == "event":
+                    written, dead = _write_ready(stdin_fd, pending)
+                    if written:
+                        pending = pending[written:]
+                    if dead or not pending:
+                        # EOF on the child's stdin, so a child that does read can finish.
+                        _unregister(selector, stdin_fd)
+                        _close_handle(stdin_handle)
+                        stdin_closed = True
+            # A child that has exited cannot produce more stdout; once the relay is drained the
+            # launcher is done, and a pipe another process still holds cannot stall it.
+            if child.poll() is not None and stdout_done:
+                break
+            limit = ((reported if reported is not None else outer)
+                     + HOOK_KILL_GRACE_SECONDS)
+            if ctx.clock.now() >= limit:
+                _stop_child(child)
+                break
+            ctx.wait.sleep(POLL_SECONDS)
+    finally:
+        try:
+            selector.close()
+        except OSError:
+            pass
+        if not stdin_closed:
+            _close_handle(stdin_handle)
+        if not stdout_closed:
+            _close_handle(stdout_handle)
+
+
+def launcher(event_bytes, ctx, spawn):
+    """The watchdog (design D11): dispatch the active checkout's verifier, relay, enforce time.
+
+    Always returns 0 and never writes to stdout itself. A separate clone, another repository, a
+    non-checkout `cwd` and a checkout without `scripts/verify.py` let the stop through silently;
+    an internal failure does too, with one line on stderr.
+    """
+    event = read_event(io.BytesIO(event_bytes))
+    if event is None:
+        return 0
+    try:
+        outer = ctx.clock.now() + HOOK_OUTER_SECONDS
+        own = ctx.discover(ctx.repo)
+        target = ctx.discover(event["cwd"])
+        if not own or not target:
+            return 0
+        if os.path.realpath(own[1]) != os.path.realpath(target[1]):
+            return 0
+        target_repo = os.path.realpath(target[0])
+        script = os.path.join(target_repo, "scripts", "verify.py")
+        if not ctx.fs.exists(script):
+            return 0
+        read_fd, write_fd = os.pipe()
+        argv = [sys.executable, "-I", script, "--hook", "claude", "--dispatched",
+                "--deadline", str(outer), "--report-fd", str(write_fd)]
+        try:
+            child = spawn(argv, cwd=target_repo, start_new_session=True,
+                          pass_fds=(write_fd,), stdin=subprocess.PIPE,
+                          stdout=subprocess.PIPE)
+        except Exception:
+            _close_fd(read_fd)
+            _close_fd(write_fd)
+            raise
+        # The child owns the write end now; our copy must go or the pipe never sees EOF.
+        _close_fd(write_fd)
+        try:
+            _watch(child, read_fd, event_bytes, ctx, outer)
+        except Exception:
+            # A launcher failure still fails open, but this child is ours alone: stop it.
+            _stop_child(child)
+            raise
+        finally:
+            _close_fd(read_fd)
+    except Exception as error:
+        _stderr(_hook_error(error))
+        return 0
+    return 0
+
+
+def _stdin_bytes():
+    """The hook's stdin as bytes, at most one byte over the cap so `read_event` can reject it."""
+    stream = getattr(sys.stdin, "buffer", sys.stdin)
+    data = stream.read(EVENT_CAP + 1)
+    if isinstance(data, str):
+        return data.encode("utf-8")
+    return data or b""
+
+
+def _hook_mode(args, ctx):
+    """The hook's entry point: dispatch, or run the gate when `--dispatched` (design D11)."""
+    try:
+        raw = _stdin_bytes()
+        event = read_event(io.BytesIO(raw))
+        if event is None:
+            return 0
+        if args.dispatched:
+            deadline = args.deadline if args.deadline is not None else ctx.deadline
+            if deadline is None:
+                deadline = ctx.clock.now() + HOOK_OUTER_SECONDS
+            answer = gate(event, deadline, args.report_fd, ctx)
+            _emit_answer(answer)
+            return 0
+        return launcher(raw, ctx, subprocess.Popen)
+    except Exception as error:
+        _stderr(_hook_error(error))
+        return 0
+
+
 # --- the CLI ------------------------------------------------------------------------------
 
 
@@ -3883,22 +4563,6 @@ def make_parser():
     return parser
 
 
-def _mode_name(args):
-    if args.hook:
-        return "hook"
-    if args.list_only:
-        return "list"
-    if args.branch:
-        return "branch"
-    return "task"
-
-
-def _unwired(args, ctx):
-    """The Claude Code Stop hook is Phase B (design D11/D12); the gate modes are wired."""
-    ctx.log("verify: the %s mode is not built yet" % _mode_name(args))
-    return 2
-
-
 def _config_mode(args, ctx):
     """`config set|show` over the machine config (design D8); validation happens before a write."""
     config = Config(ctx.common_dir, repo=ctx.repo, wait=ctx.wait.sleep)
@@ -3937,6 +4601,8 @@ def main(argv, ctx):
         return 2
     if args.deadline is not None:
         ctx.deadline = args.deadline
+    if args.hook:
+        return _hook_mode(args, ctx)
     try:
         cmap = components.load_map(os.path.join(ctx.repo, ".github", "components.json"))
         table = load_table(os.path.join(ctx.repo, "scripts", "verify-commands.json"), cmap)
@@ -3948,8 +4614,6 @@ def main(argv, ctx):
         return 2
     if args.list_only:
         return _list_mode(args, ctx, cmap, table)
-    if args.hook:
-        return _unwired(args, ctx)
     result = run_gate("branch" if args.branch else "task", args.base, ctx, table, cmap)
     if result.contended:
         for error in result.errors:
