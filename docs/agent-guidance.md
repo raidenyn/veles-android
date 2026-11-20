@@ -21,16 +21,18 @@ and the cap are stated in [`docs/AGENTS.md`](AGENTS.md#hook-delivered-rules).
 ## The agent-file check
 
 `docs/checks/check_agent_files.py` is a standard-library Python check (Python 3.8+) run by the `docs`
-node. Run it and its tests from the repository root:
+node. Run the checks and their tests from the repository root:
 
 ```bash
+python3 docs/checks/check_offline.py --root .
 python3 docs/checks/check_agent_files.py --root .
 python3 -m unittest discover -s docs/checks -p 'test_*.py' -v
 ```
 
-It prints one finding per violation (`severity path: message`), exits non-zero on errors and zero with
-warnings, and is structural: it never runs `openspec update` or compares generated skill text. The Gate B
-matrix command stays in [`docs/AGENTS.md`](AGENTS.md).
+The offline guard allows only standard-library imports and `git` subprocesses in `docs/checks/`. The
+agent-file check prints one finding per violation (`severity path: message`), exits non-zero on errors
+and zero with warnings, and is structural: it never runs `openspec update` or compares generated skill
+text. The Gate B matrix command stays in [`docs/AGENTS.md`](AGENTS.md).
 
 ## Adding a rule
 

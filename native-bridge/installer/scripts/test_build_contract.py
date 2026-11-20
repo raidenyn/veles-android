@@ -704,6 +704,10 @@ def check_release_build(source):
 
 
 PUBLISH_WORKFLOW = "publish-release.yml"
+# Workflows whose release boundary the tooling all-workflow tests own
+# (`verify/test/workflow-contracts.test.mjs`: `assertDocsCheckWorkflow` and the all-workflow
+# boundary test). They are exempt here by exact name only.
+TOOLING_OWNED_WORKFLOWS = ("check-docs.yml",)
 # The only credentialed jobs of the publisher, and the protected environment each one runs in.
 SIGNING_JOBS = {"sign-windows": "native-release", "sign-macos": "native-release", "sign-android": "android-release"}
 INSTALLER_JOBS = ("build-windows", "build-macos", "verify-windows", "verify-macos", "sign-windows", "sign-macos", "gate-installer")
@@ -808,7 +812,7 @@ def check_gate_boundary(workflows):
     if not required <= declared:
         errors.append("the gate does not directly depend on every job whose result it reads: %s" % sorted(required - declared))
     for name, source in workflows.items():
-        if name == PUBLISH_WORKFLOW:
+        if name == PUBLISH_WORKFLOW or name in TOOLING_OWNED_WORKFLOWS:
             continue
         other = strip_yaml_comments(source)
         if re.search(r"VELES_WIN_|VELES_MAC_|VELES_NOTARY_|native-release|VELES_APPROVED_|KEYSTORE_|apksigner", other):
@@ -1461,6 +1465,25 @@ class Callers(unittest.TestCase):
 
     def test_signed_candidates_never_come_from_pull_request_artifacts(self):
         self.assertEqual(check_gate_boundary(self.workflows()), [])
+
+    def test_tooling_owned_workflows_are_exactly_check_docs(self):
+        self.assertEqual(TOOLING_OWNED_WORKFLOWS, ("check-docs.yml",))
+
+    def test_tooling_owned_workflow_skipped_others_still_checked(self):
+        workflows = self.workflows()
+        credential = "          KEYSTORE_PASSWORD: x\n"
+        docs = check_gate_boundary(
+            {**workflows, "check-docs.yml": workflows["check-docs.yml"] + credential}
+        )
+        self.assertFalse(
+            [error for error in docs if error.startswith("check-docs.yml ")], docs
+        )
+        pr_title = check_gate_boundary(
+            {**workflows, "pr-title.yml": workflows["pr-title.yml"] + credential}
+        )
+        self.assertTrue(
+            any(error.startswith("pr-title.yml ") for error in pr_title), pr_title
+        )
 
     def test_project_flow_stays_outside_the_release_boundary(self):
         # project-flow.yml holds the PROJECT_TOKEN secret on pull_request_target; as an enumerated workflow
