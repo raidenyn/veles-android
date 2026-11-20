@@ -45,8 +45,11 @@ POINTER_BEGIN = "<!-- hooked-rules:begin -->"
 POINTER_END = "<!-- hooked-rules:end -->"
 
 SCALAR_KEYS = ("pointer",)
-LIST_KEYS = ("skills", "commands", "gates")
+LIST_KEYS = ("skills", "commands", "gates", "stops")
 RULE_KEYS = SCALAR_KEYS + LIST_KEYS
+
+# The predicates a rule may name under `stops`; the stop gate implements each one.
+STOP_PREDICATES = ("superspec-finalize-pending",)
 
 FRONTMATTER_KEY_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):(?: (.*))?$")
 FRONTMATTER_ITEM = r'"(?:[^"\\]|\\.)*"'
@@ -62,9 +65,9 @@ class RuleError(Exception):
 
 
 # identity is (file name, sha256 hex of the raw file bytes); skills is a list of strings,
-# commands and gates are lists of compiled regexes.
+# commands and gates are lists of compiled regexes, and stops is a tuple of predicate names.
 Rule = collections.namedtuple(
-    "Rule", ["name", "identity", "pointer", "skills", "commands", "gates", "body"]
+    "Rule", ["name", "identity", "pointer", "skills", "commands", "gates", "stops", "body"]
 )
 
 
@@ -197,7 +200,7 @@ def parse_rule(name, text):
 
     The identity hash covers the text as given (the raw file, before newline normalisation). A body
     with no text (empty or only blank lines) is an error: a gate would deny with no reason and a moment
-    would credit a rule it never showed.
+    would credit a rule it never showed. Every `stops` entry must name one of ``STOP_PREDICATES``.
     """
     values, body, original_body = _split(text)
     pointer = values.get("pointer")
@@ -208,15 +211,21 @@ def parse_rule(name, text):
     skills = values.get("skills", [])
     commands = _regexes("commands", values.get("commands", []))
     gates = _regexes("gates", values.get("gates", []))
-    if not (skills or commands or gates):
-        raise RuleError("a rule needs at least one entry in `skills`, `commands` or `gates`")
+    stops = tuple(values.get("stops", []))
+    for stop in stops:
+        if stop not in STOP_PREDICATES:
+            raise RuleError("unknown stop predicate %r" % (stop,))
+    if not (skills or commands or gates or stops):
+        raise RuleError(
+            "a rule needs at least one entry in `skills`, `commands`, `gates` or `stops`"
+        )
     size = len(original_body.encode("utf-8", "surrogatepass"))
     if size > BODY_LIMIT:
         raise RuleError("the body is %d bytes, over the %d byte limit" % (size, BODY_LIMIT))
     if not rule_text(body):
         raise RuleError("the body is empty; a rule needs text to show at its moments and gates")
     digest = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
-    return Rule(name, (name, digest), pointer, skills, commands, gates, body)
+    return Rule(name, (name, digest), pointer, skills, commands, gates, stops, body)
 
 
 def _read_rule_file(path):

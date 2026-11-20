@@ -44,6 +44,7 @@ POINTER = "Commit and PR types: read before choosing a commit or PR type."
 SKILLS_LINE = 'skills: ["opsx:apply"]'
 COMMANDS_LINE = 'commands: ["\\\\bopenspec\\\\s+instructions\\\\s+finalize\\\\b"]'
 GATES_LINE = 'gates: ["\\\\bgit\\\\b[^;&|\\\\n]*?\\\\scommit\\\\b"]'
+STOPS_LINE = 'stops: ["superspec-finalize-pending"]'
 
 
 def rule_text(pointer=POINTER, extra=None, body="Body.\n", lines=None):
@@ -64,6 +65,7 @@ class ParseRuleTest(unittest.TestCase):
             [r.pattern for r in rule.commands], ["\\bopenspec\\s+instructions\\s+finalize\\b"]
         )
         self.assertEqual([r.pattern for r in rule.gates], ["\\bgit\\b[^;&|\\n]*?\\scommit\\b"])
+        self.assertEqual(rule.stops, ())
         self.assertEqual(rule.body, "Body.\n")
         self.assertEqual(
             rule.identity,
@@ -115,9 +117,26 @@ class ParseRuleTest(unittest.TestCase):
         with self.assertRaises(RuleError):
             parse_rule("x.md", rule_text(lines=['pointer: "p"', 'commands: ["%s"]' % pattern]))
 
+    def test_stops_parsed(self):
+        rule = parse_rule("x.md", rule_text(extra=[STOPS_LINE]))
+        self.assertEqual(rule.stops, ("superspec-finalize-pending",))
+
+    def test_unknown_stop_predicate(self):
+        with self.assertRaises(RuleError) as caught:
+            parse_rule("x.md", rule_text(lines=['pointer: "p"', 'stops: ["not-a-predicate"]']))
+        self.assertIn("unknown stop predicate", str(caught.exception))
+
+    def test_stops_only_rule_is_valid(self):
+        rule = parse_rule("x.md", rule_text(lines=['pointer: "p"', STOPS_LINE]))
+        self.assertEqual(rule.stops, ("superspec-finalize-pending",))
+        self.assertEqual(rule.skills, [])
+        self.assertEqual(rule.commands, [])
+        self.assertEqual(rule.gates, [])
+
     def test_no_trigger(self):
-        with self.assertRaises(RuleError):
+        with self.assertRaises(RuleError) as caught:
             parse_rule("x.md", rule_text(lines=['pointer: "p"']))
+        self.assertIn("stops", str(caught.exception))
 
     def test_missing_pointer(self):
         with self.assertRaises(RuleError):
