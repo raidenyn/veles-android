@@ -153,7 +153,8 @@ values appear for clarity:
 - `producer` — outside the command kinds: the argv is not a gate command; it becomes a `producers[]`
   entry referenced by a `generated` requirement (design D2, D5). Calling it `excluded` would be wrong.
 - `—` — outside the command kinds: a non-command row (a `cd` line, or a CI-only step with nothing
-  local to run).
+  local to run). In `Local argv` it means there is no local command (a CI-only step); in `Doc` or
+  `CI job` it means no table entry or no CI step.
 - `excluded` — in the vocabulary: a documented line or CI step with no table entry; the Reason column
   says why.
 
@@ -184,12 +185,14 @@ below.
 
 **Requirements named below.** R1 `java-home` (JDK 21, `.java-version`); R2 `android-sdk`; R3
 `android-ndk` (the `rust/ndk-version` pin); R4 `rustup-toolchain` (the channel in each
-`rust-toolchain.toml`); R5 `node` (>= 22 for the extension and most nodes; exact 26.8.1 where CI pins it);
-R6 `npm` (exact 11.19.0 inside `verify/verify-supply-chain.sh`); R7 `python` (>= 3.8); R8
-`playwright-chromium`; R9 `web-extension/node_modules` (`stat`); R10 `native-bridge/node_modules`
-(`stat`); R11 `verify/node_modules`; R12 `cargo-deny` and `cargo-cyclonedx` (from
-`build/verify-tools`). The canonical fix text for each is in "Setup requirements" below; a setup row
-names the requirement and its short fix.
+`rust-toolchain.toml`); R5 `path-tool` — `node` (`version_cmd: node --version`, `min: 22`, `exact: 26.8.1`
+where CI pins it); R6 `path-tool` — `npm` record-only (the supply-chain script's `env_exit` carries the
+11.19.0 pin); R7 `path-tool` — `python` (`min: 3.8`); R8 `playwright-chromium`; R9 `path` requirement —
+`web-extension/node_modules`, plus a declared `inputs` entry of `mode: stat` (D6); R10 `path` —
+`native-bridge/node_modules`, `inputs` `mode: stat`; R11 `path` — `verify/node_modules`; R12
+`path-tool` — `cargo-deny` and `cargo-cyclonedx`, resolved from `build/verify-tools/*/bin` through the
+step's environment/`path_prepend`. The canonical fix text for each is in "Setup requirements" below; a
+setup row names the requirement and its short fix.
 
 ### Node: root
 
@@ -210,17 +213,17 @@ Fences: `android/AGENTS.md` `## Build & Test` runs from `android/`; rule
 | `android/AGENTS.md:25` | excluded | `./gradlew testDebugUnitTest --tests "me.nagaev.veles.otp.handlers.RegexMessageHandlerTest"` (`android/`) | `android/AGENTS.md` | — | example of a focused run; the `related` strategy generates this argv from changed sources |
 | `android/AGENTS.md:26`; `check-android.yml:166 (instrumented-tests)` | device | `./gradlew connectedDebugAndroidTest` (`android/`) | `android/AGENTS.md` | `android / instrumented-tests` | device/emulator test; both gates report `NOT RUN (device test; real-device rule)` |
 | `android/AGENTS.md:27` | excluded | `./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.nagaev.permissions.ui.VelesPermissionsAppTests` (`android/`) | `android/AGENTS.md` | — | example of a focused device run; the `device` entry covers the suite |
-| `.agents/rules/android-lint-before-push.md:9` (fence it in 2.3); `check-android.yml:32 (lint)` | check | `./gradlew spotlessCheck` (`android/`) | `.agents/rules/android-lint-before-push.md` | `android / lint` | format check; the rule's inline prose becomes a fenced block under "Run from `android/`" (2.3) |
+| `.agents/rules/android-lint-before-push.md:9` (the inline lint command; fence it in 2.3); `check-android.yml:32 (lint)` | check | `./gradlew spotlessCheck` (`android/`) | `.agents/rules/android-lint-before-push.md` | `android / lint` | format check; 2.3 moves this inline line into a fenced block under "Run from `android/`" — the rule's existing fence is the raw-`Log` guard, not this line |
 | `.agents/rules/android-lint-before-push.md:9`; `check-android.yml:34 (lint)` | check | `./gradlew detekt` (`android/`) | `.agents/rules/android-lint-before-push.md` | `android / lint` | static analysis |
 | `.agents/rules/android-lint-before-push.md:9`; `check-android.yml:64 (lint)` | check | `./gradlew lintDebug` (`android/`) | `.agents/rules/android-lint-before-push.md` | `android / lint` | Android lint; needs R1, R2 (and R3 only if the task graph reaches the NDK) |
-| `check-android.yml:39 (lint)`; rule fence (2.3) | check | `android/scripts/check-raw-log.sh` (`.`) | `.agents/rules/android-lint-before-push.md` | `android / lint` | raw `android.util.Log` guard: Linux static check; the script holds today's inline greps, `::error::` lines and exit status (2.2); **joins the table** |
+| `.agents/rules/android-lint-before-push.md:14-27` (existing fence); `check-android.yml:39 (lint)` | check | `android/scripts/check-raw-log.sh` (`.`) | `.agents/rules/android-lint-before-push.md` | `android / lint` | raw `android.util.Log` guard: Linux static check; the script holds the fence's greps, `::error::` lines and exit status verbatim (2.2); 2.3 replaces that inline block with a call to the script; **joins the table** |
 | `check-android.yml:37 (lint)` | check | `node scripts/check-mac-comparisons.mjs --scan android/app/src/main` (`.`) | `.agents/rules/android-lint-before-push.md` (add; 2.1) | `android / lint` | constant-time MAC comparison guard: Linux static check, missing from the node docs; **joins the table**; needs R5 |
 | `check-android.yml:53 (lint)` | check | `android/scripts/check-pairing-code.sh` (`.`) | `.agents/rules/android-lint-before-push.md` (add; 2.1/2.3) | `android / lint` | pairing-code logging guard: Linux static check; the script holds today's inline grep (2.1 documents it); **joins the table** |
 | `check-android.yml:122 (release-hook-guard)` | check | `./gradlew :app:releaseHookGuard` (`android/`) | `android/AGENTS.md` (add; 2.1) | `android / release-hook-guard` | scans the assembled unsigned release APK's DEX, manifest and resources for debug hooks: Linux static check, must map; missing from the docs |
 | `check-android.yml:81,111,139` | excluded | `rustup show active-toolchain` (`rust/`) | — | `android / unit-tests`, `android / release-hook-guard`, `android / instrumented-tests` | CI only — setup: R4; fix: run `rustup show active-toolchain` in `rust/` so the pinned channel is installed |
 | `check-android.yml:114,142` | excluded | `${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager "ndk;<version>"` (`android/`) | — | `android / release-hook-guard`, `android / instrumented-tests` | CI only — setup: R3 (`./gradlew -q rustNdkVersion` gives the pin); fix: install that NDK and set `ANDROID_NDK_HOME`, or `config set android_ndk <dir>` |
-| all `check-android.yml` jobs | excluded | `java` from R1 (`.`) | — | `android / lint`, `android / unit-tests`, `android / release-hook-guard`, `android / instrumented-tests` | CI only — setup: R1; fix: install JDK 21 and `config set java_home <jdk>` |
-| `check-android.yml:151 (instrumented-tests)` | excluded | udev rule + `ls -l /dev/kvm` (`.`) | — | `android / instrumented-tests` | CI only — device: KVM/emulator provisioning for the `device` entry; no local entry |
+| all `check-android.yml` jobs | excluded | — | — | `android / lint`, `android / unit-tests`, `android / release-hook-guard`, `android / instrumented-tests` | CI only — setup: R1; fix: install JDK 21 and `config set java_home <jdk>` |
+| `check-android.yml:151 (instrumented-tests)` | excluded | — | — | `android / instrumented-tests` | CI only — device: KVM/emulator provisioning for the `device` entry; no local entry |
 
 The four `uses: actions/upload-artifact@…` steps in this workflow are not commands.
 
@@ -244,9 +247,9 @@ Fence: `web-extension/AGENTS.md` `## Build & Test` starts with `cd web-extension
 | `check-web-extension.yml:128 (browser-tests)` | excluded | `npx playwright-core install --with-deps chromium` (`web-extension/`) | — | `web-extension / browser-tests` | CI only — setup: R8; fix: run that install command, or set `VELES_TEST_CHROMIUM` to an existing Chromium; CI's browser build is tied to the pinned `ubuntu-24.04` image |
 | `check-web-extension.yml:54 (lint)` | check | `node scripts/check-mac-comparisons.mjs --scan web-extension/src` (`.`) | `web-extension/AGENTS.md` (add a repository-root block; 2.1) | `web-extension / lint` | constant-time MAC guard: Linux static check, missing from the docs; **joins the table**; needs R5 |
 | `check-web-extension.yml:56 (lint)` | check | `web-extension/scripts/check-pairing-code.sh` (`.`) | `web-extension/AGENTS.md` (add a repository-root block; 2.1) | `web-extension / lint` | pairing-code debug-surface guard: Linux static check; the script holds today's inline grep; **joins the table** |
-| `check-web-extension.yml` (all jobs) | excluded | `node`/`npm` from R5 (`.`) | — | `web-extension / lint`, `web-extension / unit-tests`, `web-extension / browser-tests` | CI only — setup: R5 (`node-version: '22'`); fix: install Node >= 22 and put it on `PATH`, or `config set path_prepend <node bin>` |
+| `check-web-extension.yml` (all jobs) | excluded | — | — | `web-extension / lint`, `web-extension / unit-tests`, `web-extension / browser-tests` | CI only — setup: R5 (`node-version: '22'`); fix: install Node >= 22 and put it on `PATH`, or `config set path_prepend <node bin>` |
 | `check-web-extension.yml:40,83,116` | excluded | `rustup show active-toolchain` (`rust/`) | — | `web-extension / lint`, `web-extension / unit-tests`, `web-extension / browser-tests` | CI only — setup: R4; fix: run `rustup show active-toolchain` in `rust/` |
-| `check-web-extension.yml` lint/unit/browser jobs | excluded | JDK from R1 (`.`) | — | `web-extension / lint`, `web-extension / unit-tests`, `web-extension / browser-tests` | CI only — setup: R1; fix: install JDK 21 and `config set java_home <jdk>` |
+| `check-web-extension.yml` lint/unit/browser jobs | excluded | — | — | `web-extension / lint`, `web-extension / unit-tests`, `web-extension / browser-tests` | CI only — setup: R1; fix: install JDK 21 and `config set java_home <jdk>` |
 
 `npm run test:connector-browser` (`web-extension/package.json`) is in no doc and no CI step; it is outside
 this inventory (noted for `docs/verify.md`, not a table entry).
@@ -271,7 +274,7 @@ Fence: `rust/AGENTS.md` `## Build & Test` runs from the repository root.
 | `check-rust.yml:117` | excluded | `npm ci` (`web-extension/`) | — | `rust / jni-integration` | CI only — build/-cleaning sequence: provisions R9 inside the sequence (the same command as `web-extension/AGENTS.md:12`) |
 | `check-rust.yml:33,66,99` | excluded | `rustup show active-toolchain` (`rust/`) | — | `rust / lint`, `rust / unit-tests`, `rust / jni-integration` | CI only — setup: R4; fix as above |
 | `check-rust.yml:35-39,68-72,101-105` | excluded | `sdkmanager "ndk;<version>"` (`.`) | — | `rust / lint`, `rust / unit-tests`, `rust / jni-integration` | CI only — setup: R3 (`./gradlew -q rustNdkVersion`); fix: install that NDK, set `ANDROID_NDK_HOME`, or `config set android_ndk <dir>` |
-| `check-rust.yml` lint/unit/jni jobs | excluded | `java`, `node` (`.`) | — | `rust / lint`, `rust / unit-tests`, `rust / jni-integration` | CI only — setup: R1 (`setup-java`), R5 (`setup-node`); fixes as above |
+| `check-rust.yml` lint/unit/jni jobs | excluded | — | — | `rust / lint`, `rust / unit-tests`, `rust / jni-integration` | CI only — setup: R1 (`setup-java`), R5 (`setup-node`); fixes as above |
 
 The remaining steps of `check-rust.yml` are artifact uploads. `build-rust.yml` is release-only and adds
 `rustPackage`/`rustJni` inputs, already covered as excluded product builds.
@@ -286,7 +289,7 @@ Fence: `protocol/AGENTS.md` `## Build & Test` runs from the repository root.
 | `check-protocol.yml:46 (contract-tests)` | producer | `./gradlew rustHostJni` (`.`) | `rust/AGENTS.md` | `protocol / contract-tests` | producer `rust.hostJni`; CI builds it before `protocolCheck` because the loopback child JVM loads it |
 | `check-protocol.yml:48 (contract-tests)` | excluded | `python3 --version && python3 -c 'import sys; assert sys.version_info >= (3, 8)'` (`.`) | — | `protocol / contract-tests` | CI only — setup: R7; fix: install Python 3.8 or newer and put it on `PATH`, or `config set path_prepend <dir>` |
 | `check-protocol.yml:39 (contract-tests)` | excluded | `rustup show active-toolchain` (`rust/`) | — | `protocol / contract-tests` | CI only — setup: R4; fix as above |
-| `check-protocol.yml` contract-tests | excluded | JDK/node (`.`) | — | `protocol / contract-tests` | CI only — setup: R1, R5 (`node-version: '22'`); fixes as above |
+| `check-protocol.yml` contract-tests | excluded | — | — | `protocol / contract-tests` | CI only — setup: R1, R5 (`node-version: '22'`); fixes as above |
 
 ### Node: bridge-scaffold (`native-bridge/`)
 
@@ -298,17 +301,20 @@ Fence: `native-bridge/AGENTS.md` `## Build & Test` runs from the repository root
 | `native-bridge/AGENTS.md:15`; `check-bridge-scaffold.yml:38 (lint)` | check | `./gradlew bridgeFormat` (`.`) | `native-bridge/AGENTS.md` | `bridge-scaffold / lint` | Prettier check |
 | `native-bridge/AGENTS.md:15`; `check-bridge-scaffold.yml:38 (lint)` | check | `./gradlew bridgeLint` (`.`) | `native-bridge/AGENTS.md` | `bridge-scaffold / lint` | ESLint |
 | `native-bridge/AGENTS.md:15`; `check-bridge-scaffold.yml:38 (lint)` | check | `./gradlew bridgeTypecheck` (`.`) | `native-bridge/AGENTS.md` | `bridge-scaffold / lint` | `tsc --noEmit` |
-| `native-bridge/AGENTS.md:15`; `check-bridge-scaffold.yml:38 (lint)` | check | `./gradlew bridgeRustFormat` (`.`) | `native-bridge/AGENTS.md` (add; 2.1) | `bridge-scaffold / lint` | `cargo fmt --check` of `src-tauri`; missing from the docs; **joins the table** (a Linux static check) |
-| `native-bridge/AGENTS.md:15`; `check-bridge-scaffold.yml:38 (lint)` | check | `./gradlew bridgeRustLint` (`.`) | `native-bridge/AGENTS.md` (add; 2.1) | `bridge-scaffold / lint` | `cargo clippy -D warnings` of `src-tauri`; missing from the docs; **joins the table** |
+| `check-bridge-scaffold.yml:38 (lint)` | check | `./gradlew bridgeRustFormat` (`.`) | `native-bridge/AGENTS.md` (add; 2.1) | `bridge-scaffold / lint` | `cargo fmt --check` of `src-tauri`; missing from the docs; **joins the table** (a Linux static check) |
+| `check-bridge-scaffold.yml:38 (lint)` | check | `./gradlew bridgeRustLint` (`.`) | `native-bridge/AGENTS.md` (add; 2.1) | `bridge-scaffold / lint` | `cargo clippy -D warnings` of `src-tauri`; missing from the docs; **joins the table** |
 | `native-bridge/AGENTS.md:15`; `check-bridge-scaffold.yml:60 (unit-tests)` | test | `./gradlew bridgeTest` (`.`) | `native-bridge/AGENTS.md` | `bridge-scaffold / unit-tests` | test aggregate (`bridgeNpmTest` + `bridgeRustFormat` + `bridgeRustLint` + `bridgeRustTest`); the spec's "mixed Gradle task is a test" scenario |
-| `check-bridge-scaffold.yml:60 (unit-tests)` | test | `./gradlew bridgeNpmTest` (`.`) | `native-bridge/AGENTS.md` | `bridge-scaffold / unit-tests` | covered by the `bridgeTest` entry, which depends on it; no separate entry |
-| `check-bridge-scaffold.yml:60 (unit-tests)` | test | `./gradlew bridgeRustTest` (`.`) | `native-bridge/AGENTS.md` | `bridge-scaffold / unit-tests` | covered by the `bridgeTest` entry; no separate entry |
+| `check-bridge-scaffold.yml:60 (unit-tests)` | excluded | `./gradlew bridgeNpmTest` (`.`) | `native-bridge/AGENTS.md` | `bridge-scaffold / unit-tests` | covered by the `bridgeTest` aggregate (it depends on this task); no separate entry |
+| `check-bridge-scaffold.yml:60 (unit-tests)` | excluded | `./gradlew bridgeRustTest` (`.`) | `native-bridge/AGENTS.md` | `bridge-scaffold / unit-tests` | covered by the `bridgeTest` aggregate (it depends on this task); no separate entry |
 | `native-bridge/AGENTS.md:16` | excluded | `./gradlew bridgeBuild` (`.`) | `native-bridge/AGENTS.md` | — | unsigned product build (`cargo tauri build --no-bundle`): build artifact, not a gate; release pipeline runs it |
 | `native-bridge/AGENTS.md:17` | excluded | `./gradlew bridgeManifests` (`.`) | `native-bridge/AGENTS.md` | — | generates Chrome native-messaging manifests: packaging artifact, not a gate |
 | `native-bridge/AGENTS.md:18` | excluded | `./gradlew bridgePackage` (`.`) | `native-bridge/AGENTS.md` | — | deterministic packaging into `build/native-bridge/`: release artifact, not a gate |
 | `check-bridge-scaffold.yml:37,59` | excluded | `rustup show active-toolchain` (`native-bridge/src-tauri/`) | — | `bridge-scaffold / lint`, `bridge-scaffold / unit-tests` | CI only — setup: R4 (pin 1.98.0 in `native-bridge/src-tauri/rust-toolchain.toml`); fix: run `rustup show active-toolchain` there |
-| `check-bridge-scaffold.yml` all jobs | excluded | Node/npm (`.`) | — | `bridge-scaffold / lint`, `bridge-scaffold / unit-tests` | CI only — setup: R5 (`node-version: '22'`); fix as above; `bridgeInstall` provisions R10 |
-| `check-bridge-scaffold.yml` all jobs | excluded | JDK (`.`) | — | `bridge-scaffold / lint`, `bridge-scaffold / unit-tests` | CI only — setup: R1; fix: install JDK 21 and `config set java_home <jdk>` |
+| `check-bridge-scaffold.yml` all jobs | excluded | — | — | `bridge-scaffold / lint`, `bridge-scaffold / unit-tests` | CI only — setup: R5 (`node-version: '22'`); fix as above; `bridgeInstall` provisions R10 |
+| `check-bridge-scaffold.yml` all jobs | excluded | — | — | `bridge-scaffold / lint`, `bridge-scaffold / unit-tests` | CI only — setup: R1; fix: install JDK 21 and `config set java_home <jdk>` |
+| `.agents/rules/native-bridge-test-app-tcc.md:64-66` (listed by `native-bridge/AGENTS.md:27`) | excluded | `codesign --verify --strict path/to/App.app`; `codesign -dvvv path/to/App.app`; `codesign -d -r- path/to/App.app` | `.agents/rules/native-bridge-test-app-tcc.md` | — | macOS-only manual signing-identity verification with a placeholder path: not a gate; excluded so the rule's fence is covered |
+| `.agents/rules/native-bridge-test-app-tcc.md:72` | excluded | `log show --start "<before>" --end "<after>" … --predicate 'process == "tccd" …'` | `.agents/rules/native-bridge-test-app-tcc.md` | — | macOS-only TCC log capture: not a gate |
+| `.agents/rules/native-bridge-test-app-tcc.md` (build text) | excluded | `native-bridge/host/scripts/macos-test-bundle.sh` | `.agents/rules/native-bridge-test-app-tcc.md` | — | macOS-only test-bundle build named in prose; not a fenced command, so not a drift line |
 
 ### Node: native-host (`native-bridge/host/`)
 
@@ -321,12 +327,12 @@ Fence: `native-bridge/host/AGENTS.md` `## Build & Test` runs from the repository
 | `native-bridge/host/AGENTS.md:12`; same jobs | check | `./gradlew bridgeHostLint` (`.`) | `native-bridge/host/AGENTS.md` | as above | `cargo clippy -D warnings` |
 | `native-bridge/host/AGENTS.md:12`; `check-native-host.yml:59,75,98` | test | `./gradlew bridgeHostTest` (`.`) | `native-bridge/host/AGENTS.md` | `native-host / unit-tests (linux)`, `native-host / unit-tests (windows)`, `native-host / unit-tests (macos)` | portable control-plane tests on Linux; Windows/macOS compile the real adapters |
 | `native-bridge/host/AGENTS.md:13`; `check-native-host.yml:133,164` | excluded | `./gradlew bridgeHostBuild` (`.`) | `native-bridge/host/AGENTS.md` | `native-host / compile (windows)`, `compile (macos)` | product build (locked release executable + SHA256SUMS): build artifact, not a gate; CI compiles it only on Windows/macOS |
-| `native-bridge/host/AGENTS.md:14`; `check-native-host.yml:117 (build-contract)` | test | `python3 -m unittest discover -s native-bridge/host/scripts -p 'test_build_contract.py' -v` (`.`) | `native-bridge/host/AGENTS.md` | `native-host / build-contract` | the host's Python build-contract suite; branch-only (no `related`), per D4's stated limit |
-| `check-native-host.yml:75,98,133` | excluded | `.\gradlew.bat`/`./gradlew` with the same tasks (`native-bridge/host/` etc.) | — | `native-host / unit-tests (windows)`, `unit-tests (macos)`, `compile (windows)` | the Windows/macOS executions map to the same check/test entries (the argv differs only by the wrapper); no separate entry — recorded here so every CI step is accounted for |
-| `check-native-host.yml:92-93 (macos)`, `check-native-host.yml:158-159 (macos)` | excluded | Xcode 26.6 validation (`xcodebuild -version` = `17F113`, `xcrun --sdk macosx26.5`) | — | `native-host / unit-tests (macos)`, `compile (macos)` | CI only — macOS: Xcode/`DEVELOPER_DIR` provisioning; no D7 resolver exists, so `docs/verify.md` lists it with the pinned image |
+| `native-bridge/host/AGENTS.md:14`; `check-native-host.yml:117 (build-contract)` | test | `python3 -m unittest discover -s native-bridge/host/scripts -p 'test_build_contract.py' -v` (`.`) | `native-bridge/host/AGENTS.md` | `native-host / build-contract` | the host's Python build-contract suite; branch-only (no `related`), per D4's stated limit. The entry uses the documented argv **with** `-v`; the CI step at `check-native-host.yml:117` runs the same discovery without `-v` and maps to the same entry |
+| `check-native-host.yml:75,98,133` | excluded | — | — | `native-host / unit-tests (windows)`, `native-host / unit-tests (macos)`, `native-host / compile (windows)` | the Windows/macOS executions map to the same check/test entries (the argv differs only by the wrapper); no separate entry — recorded here so every CI step is accounted for |
+| `check-native-host.yml:92-93 (macos)`, `check-native-host.yml:158-159 (macos)` | excluded | — | — | `native-host / unit-tests (macos)`, `compile (macos)` | CI only — macOS: Xcode/`DEVELOPER_DIR` provisioning; no D7 resolver exists, so `docs/verify.md` lists it with the pinned image |
 | `check-native-host.yml:168 (macos)` | excluded | `bash native-bridge/host/scripts/package-macos-artifact.sh build/native-bridge/host build/native-bridge/host-archive` (`.`) | — | `native-host / compile (macos)` | CI only — macOS: mode-preserving artifact packaging for the check artifact |
 | `check-native-host.yml:41,58,74,97,116,132,163` | excluded | `rustup show active-toolchain` (`native-bridge/host/`) | — | all `native-host` jobs | CI only — setup: R4 (host's 1.98.0 pin); fix as above |
-| `check-native-host.yml` all jobs | excluded | JDK (`.`) | — | all `native-host` jobs | CI only — setup: R1; fix as above |
+| `check-native-host.yml` all jobs | excluded | — | — | all `native-host` jobs | CI only — setup: R1; fix as above |
 
 ### Node: installer (`native-bridge/installer/`)
 
@@ -344,14 +350,14 @@ none. Sub-node docs: `native-bridge/installer/macos/AGENTS.md` and
 | `native-bridge/installer/AGENTS.md:19`; `macos/AGENTS.md:29`; `windows/AGENTS.md:17` | platform | `./gradlew bridgeInstallerPackageFixture` (`.`) | `native-bridge/installer/AGENTS.md` | — | CI only — macOS/Windows: the FIXTURE-channel input tree from the tracked `fixture-<platform>.json`; `platform` entry |
 | `native-bridge/installer/AGENTS.md:20` | check | `./gradlew bridgeInstallerSupplyChain` (`.`) | `native-bridge/installer/AGENTS.md` | — | runs `verify/verify-supply-chain.sh` incl. `native-installer.cdx.json`: a Linux check; the same script is the `supply-chain` node's check, so Task 3 must share one entry/id rather than run it twice |
 | `build-native-windows.yml:124`, `build-native-macos.yml:99` | platform | `./gradlew bridgeInstallerDebug` (`.`) | `native-bridge/installer/AGENTS.md` (add; 2.1) | `publish-release / build-windows`, `publish-release / build-macos` | CI only — macOS/Windows + release: the debug fixture-channel installer; not documented in any AGENTS.md |
-| `check-installer.yml:79 (windows)`, `check-installer.yml:105 (macos)` | excluded | `.\gradlew.bat`/`./gradlew` with the same tasks | — | `installer / unit-tests (windows)`, `installer / unit-tests (macos)` | the platform executions map to the same check/test entries; no separate entry |
-| `build-native-windows.yml:66-70 (windows)`, `build-native-macos.yml:70-74 (macos)` | excluded | build-kind validation (accepts `release` or `debug`) | — | `publish-release / build-windows`, `publish-release / build-macos` | CI only — macOS/Windows + release: workflow input validation, not a repository check |
+| `check-installer.yml:79 (windows)`, `check-installer.yml:105 (macos)` | excluded | — | — | `installer / unit-tests (windows)`, `installer / unit-tests (macos)` | the platform executions map to the same check/test entries; no separate entry |
+| `build-native-windows.yml:66-70 (windows)`, `build-native-macos.yml:70-74 (macos)` | excluded | — | — | `publish-release / build-windows`, `publish-release / build-macos` | CI only — macOS/Windows + release: workflow input validation, not a repository check |
 | `build-native-windows.yml:56-57 (windows)` | excluded | `pwsh native-bridge/installer/scripts/provision-nsis.ps1 …` (`.`) | — | `publish-release / build-windows` | CI only — Windows + release: provisions the pinned NSIS into `build/native-bridge/installer/tools/nsis`; no D7 resolver, documented in `docs/verify.md` |
-| `build-native-windows.yml:83-85 (windows)` | excluded | Enter the Visual Studio developer environment (`vswhere`, `Enter-VsDevShell`) | — | `publish-release / build-windows` | CI only — Windows: MSVC toolchain provisioning |
-| `check-installer.yml:95-96 (macos)`, `build-native-macos.yml:60-61 (macos)` | excluded | Xcode 26.6 validation | — | `installer / unit-tests (macos)`; `publish-release / build-macos` | CI only — macOS: Xcode/`DEVELOPER_DIR` provisioning; no resolver |
+| `build-native-windows.yml:83-85 (windows)` | excluded | — | — | `publish-release / build-windows` | CI only — Windows: MSVC toolchain provisioning |
+| `check-installer.yml:95-96 (macos)`, `build-native-macos.yml:60-61 (macos)` | excluded | — | — | `installer / unit-tests (macos)`; `publish-release / build-macos` | CI only — macOS: Xcode/`DEVELOPER_DIR` provisioning; no resolver |
 | `check-installer.yml:36,39,56,59,75,78,101,104,121,124`; `build-native-windows.yml:62,65`; `build-native-macos.yml:66,69` | excluded | `rustup show active-toolchain` (`native-bridge/host/`, `native-bridge/installer/`) | — | all `installer` jobs; `publish-release / build-windows`, `publish-release / build-macos` | CI only — setup: R4 (two pins); fix as above |
-| all `check-installer.yml` jobs | excluded | `java` from R1 (`.`) | — | `installer / lint`, `installer / unit-tests (linux)`, `installer / unit-tests (windows)`, `installer / unit-tests (macos)`, `installer / scripts-tests` | CI only — setup: R1; fix: install JDK 21 and `config set java_home <jdk>` |
-| `build-native-windows.yml:53`, `build-native-macos.yml:57` | excluded | `python3` 3.12 (`actions/setup-python`) | — | `publish-release / build-windows`, `publish-release / build-macos` | CI only — macOS/Windows + release: the release runners pin Python 3.12; fix: install Python 3.12 and `config set path_prepend <dir>` (R7's `>= 3.8` does not cover the release pin) |
+| all `check-installer.yml` jobs | excluded | — | — | `installer / lint`, `installer / unit-tests (linux)`, `installer / unit-tests (windows)`, `installer / unit-tests (macos)`, `installer / scripts-tests` | CI only — setup: R1; fix: install JDK 21 and `config set java_home <jdk>` |
+| `build-native-windows.yml:53`, `build-native-macos.yml:57` | excluded | — | — | `publish-release / build-windows`, `publish-release / build-macos` | CI only — macOS/Windows + release: the release runners pin Python 3.12; fix: install Python 3.12 and `config set path_prepend <dir>` (R7's `>= 3.8` does not cover the release pin) |
 | `publish-release.yml` `sign-windows` / `sign-macos` | excluded | — | `native-bridge/installer/windows/AGENTS.md`; `native-bridge/installer/macos/AGENTS.md` | `publish-release / sign-windows`, `publish-release / sign-macos` | CI only — signing: the owner-only release signing/notarization; never a local gate |
 
 #### Sub-doc: `native-bridge/installer/macos/AGENTS.md`
@@ -361,9 +367,6 @@ none. Sub-node docs: `native-bridge/installer/macos/AGENTS.md` and
 | `macos/AGENTS.md:27` | test | `./gradlew bridgeInstallerTest bridgeInstallerScriptsTest` (`.`) | `native-bridge/installer/AGENTS.md` | `installer / unit-tests (macos)`, `installer / scripts-tests` | same two entries as the installer rows; the sub-doc line is their source, no duplicate entry |
 | `macos/AGENTS.md:28` | platform | `./gradlew bridgeInstallerUnsigned` (`.`) | `native-bridge/installer/AGENTS.md` | `publish-release / build-macos` | same entry as the installer row (macOS/Windows + release) |
 | `macos/AGENTS.md:29` | platform | `./gradlew bridgeInstallerPackageFixture` (`.`) | `native-bridge/installer/AGENTS.md` | — | same entry as the installer row |
-| `.agents/rules/native-bridge-test-app-tcc.md:64-66` (listed by `native-bridge/AGENTS.md`) | excluded | `codesign --verify --strict path/to/App.app`; `codesign -dvvv path/to/App.app`; `codesign -d -r- path/to/App.app` | `.agents/rules/native-bridge-test-app-tcc.md` | — | macOS-only manual signing-identity verification with a placeholder path: not a gate; excluded so the rule's fence is covered |
-| `.agents/rules/native-bridge-test-app-tcc.md:72` | excluded | `log show --start "<before>" --end "<after>" … --predicate 'process == "tccd" …'` | `.agents/rules/native-bridge-test-app-tcc.md` | — | macOS-only TCC log capture: not a gate |
-| `.agents/rules/native-bridge-test-app-tcc.md` (build text) | excluded | `native-bridge/host/scripts/macos-test-bundle.sh` | `.agents/rules/native-bridge-test-app-tcc.md` | — | macOS-only test-bundle build named in prose; not a fenced command, so not a drift line |
 
 #### Sub-doc: `native-bridge/installer/windows/AGENTS.md`
 
@@ -385,8 +388,8 @@ Fence: `verify/AGENTS.md` `## Build & Test` runs from the repository root; `## R
 | `verify/AGENTS.md:16`; `build-supply-chain.yml:34` | check | `verify/verify-supply-chain.sh` (`.`) | `verify/AGENTS.md` | `supply-chain / build` | the supply-chain verifier; `env_exit` 2 (wrong Node/npm, missing tool/input) with the script's fix text; needs R5, R6, R11, R12 |
 | `verify/AGENTS.md:17` | excluded | `verify/aggregate-checksums.sh <commit>` (`.`) | `verify/AGENTS.md` | — | the script no longer exists (removed in #133, `5e5ab09e`): a stale doc line; 2.1 removes it (it cannot be an entry) |
 | `verify/AGENTS.md:18` | excluded | `node --test verify/test/*.test.mjs` (`.`) | `verify/AGENTS.md` | `tooling / unit-tests` | the aggregate is run by the tooling node (`verify/test/` is a tooling path, see §Findings): the supply-chain doc line is `excluded` with why "runs as the tooling node's aggregate"; the entry itself is the tooling node's aggregate row |
-| `build-supply-chain.yml:24,28` | excluded | `node`/`npm` from R5/R6 (`.`) | — | `supply-chain / build` | CI only — setup: R5/R6 exact pins (26.8.1 / 11.19.0); fix: install those versions and put them first on `PATH` (`config set path_prepend <dir>`); the script re-checks the pins with `env_exit` 2 |
-| `build-supply-chain.yml` | excluded | JDK from R1 (`.`) | — | `supply-chain / build` | CI only — setup: R1; fix as above |
+| `build-supply-chain.yml:24,28` | excluded | — | — | `supply-chain / build` | CI only — setup: R5/R6 exact pins (26.8.1 / 11.19.0); fix: install those versions and put them first on `PATH` (`config set path_prepend <dir>`); the script re-checks the pins with `env_exit` 2 |
+| `build-supply-chain.yml` | excluded | — | — | `supply-chain / build` | CI only — setup: R1; fix as above |
 
 ### Node: tooling (`scripts/`)
 
@@ -404,12 +407,12 @@ Fence: `scripts/AGENTS.md` `## Build & Test` runs from the repository root; `## 
 | `scripts/AGENTS.md:18`; `ci.yml:80 (changes)` | excluded | `python3 -I scripts/components.py changed --base <sha>` (`.`) | `scripts/AGENTS.md` | `changes` | the CI selector: placeholders supplied by the workflow; `verify.py` implements its own selection (D3) and must not use this as a gate |
 | `scripts/AGENTS.md:19`; `ci.yml:74 (changes)` | excluded | `python3 -I scripts/last_green.py --pr <n> --head <sha> --head-repo <owner/name> --head-ref <ref>` (`.`) | `scripts/AGENTS.md` | `changes` | GitHub-API last-green evidence with placeholders: selection support (network), not a tree check |
 | `scripts/AGENTS.md:20` | excluded | `python3 -I scripts/project_flow.py --help` (`.`) | `scripts/AGENTS.md` | — | usage/help demo; the real commands (`check`, `sync`, `next`, `start`, `followup`) need GitHub and are event-driven, not a gate |
-| `check-tooling.yml:29` | test | `node --test verify/test/*.test.mjs` (`.`) | `scripts/AGENTS.md` (add; 2.1) | `tooling / unit-tests` | the aggregate entry (task 1.2's example) covers the CI's single `node --test verify/test/workflow-contracts.test.mjs`; `verify/test/` is a tooling path, but the line is documented in `verify/AGENTS.md` today, so 2.1 adds it to `scripts/AGENTS.md`; the argv must be expanded to file names (no shell), which Task 3 decides |
+| `check-tooling.yml:29` | test | `node --test verify/test/*.test.mjs` (`.`) | `scripts/AGENTS.md` (add; 2.1) | `tooling / unit-tests` | the aggregate entry (task 1.2's example) covers the CI's single `node --test verify/test/workflow-contracts.test.mjs`; `verify/test/` is a tooling path, but the line is documented in `verify/AGENTS.md` today, so 2.1 adds it to `scripts/AGENTS.md`; Task 3 MUST expand this glob to explicit file arguments, because the table's `run` argv is executed without a shell (D2) |
 | `check-tooling.yml:36` | check | `sh verify/check-root-aliases.sh` (`.`) | `scripts/AGENTS.md` (add; 2.1) | `tooling / unit-tests` | resolves every documented root Gradle alias with a dry run: Linux static check; `verify/check-root-aliases.sh` is in tooling's `ci-paths`; missing from the docs |
 | `check-tooling.yml:38` | check | `sh verify/check-root-aliases.sh --self-test` (`.`) | `scripts/AGENTS.md` (add; 2.1) | `tooling / unit-tests` | proves the alias check fails on an unresolved alias; a separate entry so the branch gate runs it; missing from the docs |
 | `check-tooling.yml:44` | excluded | `python3 --version && python3 -c 'import sys; assert sys.version_info >= (3, 8)'` (`.`) | — | `tooling / unit-tests` | CI only — setup: R7; fix: install Python 3.8+ and put it on `PATH` |
-| `check-tooling.yml:26` | excluded | Node from R5 exact 26.8.1 (`.`) | — | `tooling / unit-tests` | CI only — setup: R5 (`node-version: '26.8.1'`); fix: install Node 26.8.1 (or >= 22 for the JS tests) and `config set path_prepend <node bin>` |
-| `check-tooling.yml` | excluded | JDK from R1 (`.`) | — | `tooling / unit-tests` | CI only — setup: R1; fix as above |
+| `check-tooling.yml:26` | excluded | — | — | `tooling / unit-tests` | CI only — setup: R5 (`node-version: '26.8.1'`); fix: install Node 26.8.1 (or >= 22 for the JS tests) and `config set path_prepend <node bin>` |
+| `check-tooling.yml` | excluded | — | — | `tooling / unit-tests` | CI only — setup: R1; fix as above |
 
 `ci.yml`'s `ci-ok` job only aggregates job results; `commit-guard` is the `commitlint.py` message check
 recorded in the `scripts/AGENTS.md:16` row.
@@ -427,7 +430,7 @@ site paragraph (`docs/AGENTS.md:29`) adds `check_site.py` in prose.
 | `docs/AGENTS.md:12`; `check-docs.yml:40 (unit-tests)` | test | `python3 -m unittest discover -s docs/checks -p 'test_*.py' -v` (`.`) | `docs/AGENTS.md` | `docs / unit-tests` | stdlib suites of the docs checks; needs R7 |
 | `docs/AGENTS.md:21` | excluded | `python3 -I scripts/agent_rules.py pointers --write` (`.`) | `docs/AGENTS.md` | — | hook-delivered-rule maintenance command under "Hook-delivered rules": regenerates the pointer block, not a gate; outside the drift check's `## Commands` section |
 | `docs/AGENTS.md:29`; `check-docs.yml:31 (agent-files)` | check | `python3 docs/checks/check_site.py --root .` (`.`) | `docs/AGENTS.md` (move into `## Commands`; 2.1) | `docs / agent-files` | documentation-site guard; Linux static check, currently only in prose |
-| `check-docs.yml` | excluded | Python from R7 (`.`) | — | `docs / agent-files`, `docs / unit-tests` | CI only — setup: R7 (the workflow installs nothing); fix: install Python 3.8+ and put it on `PATH` |
+| `check-docs.yml` | excluded | — | — | `docs / agent-files`, `docs / unit-tests` | CI only — setup: R7 (the workflow installs nothing); fix: install Python 3.8+ and put it on `PATH` |
 
 ### Node: summary of rows per node
 
@@ -438,15 +441,15 @@ site paragraph (`docs/AGENTS.md:29`) adds `check_site.py` in prose.
 | web-extension | 5 | 3 | 0 | 0 | 2 | 6 | 16 |
 | rust | 2 | 1 | 0 | 0 | 2 | 10 | 15 |
 | protocol | 0 | 1 | 0 | 0 | 1 | 3 | 5 |
-| bridge-scaffold | 5 | 3 | 0 | 0 | 0 | 7 | 15 |
+| bridge-scaffold | 5 | 1 | 0 | 0 | 0 | 12 | 18 |
 | native-host | 3 | 2 | 0 | 0 | 0 | 6 | 11 |
 | installer | 3 | 2 | 0 | 3 | 0 | 9 | 17 |
-| installer/macos (sub-doc) | 0 | 1 | 0 | 2 | 0 | 3 | 6 |
+| installer/macos (sub-doc) | 0 | 1 | 0 | 2 | 0 | 0 | 3 |
 | installer/windows (sub-doc) | 0 | 1 | 0 | 2 | 0 | 1 | 4 |
 | supply-chain | 1 | 0 | 0 | 0 | 0 | 6 | 7 |
 | tooling | 3 | 4 | 0 | 0 | 0 | 8 | 15 |
 | docs | 4 | 1 | 0 | 0 | 0 | 2 | 7 |
-| **Total** | **33** | **20** | **1** | **7** | **5** | **69** | **135** |
+| **Total** | **33** | **18** | **1** | **7** | **5** | **71** | **135** |
 
 Every CI `run:` step in `check-*.yml` plus `build-supply-chain.yml` is either a row in its node table
 (mapped to an entry) or a CI-only row above; `uses:` steps and artifact uploads are not commands and are
@@ -460,14 +463,14 @@ represented by the setup rows.
 | R2 | `android-sdk` | Set `sdk.dir` in `android/local.properties` or `ANDROID_HOME`/`ANDROID_SDK_ROOT` to the SDK, else `config set android_sdk <dir>` |
 | R3 | `android-ndk` (pin `rust/ndk-version`) | `"$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;<version>"` with the version from `./gradlew -q rustNdkVersion`; set `ANDROID_NDK_HOME`, or `config set android_ndk <dir>` |
 | R4 | `rustup-toolchain` | Run `rustup show active-toolchain` in the directory of the node's `rust-toolchain.toml` (`rust/`, `native-bridge/host`, `native-bridge/installer`, `native-bridge/src-tauri`) so the pinned channel is installed |
-| R5 | `node` (>= 22; exact 26.8.1 for tooling/supply-chain) | Install Node 26.8.1 (or >= 22 for the extension) and put it on `PATH`, or `config set path_prepend <node bin>` |
-| R6 | `npm` (exact 11.19.0, checked by the supply-chain script) | Install npm 11.19.0 alongside Node 26.8.1 and put it on `PATH` |
-| R7 | `python` (>= 3.8) | Install Python 3.8 or newer and put it on `PATH`, or `config set path_prepend <dir>` |
+| R5 | `path-tool` — `node` (`min` 22; `exact` 26.8.1 for tooling/supply-chain) | Install Node 26.8.1 (or >= 22 for the extension) and put it on `PATH`, or `config set path_prepend <node bin>` |
+| R6 | `path-tool` — `npm` (record-only; the supply-chain script's `env_exit` carries the exact 11.19.0 pin) | Install npm 11.19.0 alongside Node 26.8.1 and put it on `PATH` |
+| R7 | `path-tool` — `python` (`min` 3.8) | Install Python 3.8 or newer and put it on `PATH`, or `config set path_prepend <dir>` |
 | R8 | `playwright-chromium` | `cd web-extension && npx playwright-core install --with-deps chromium` (CI ties the browser to its pinned `ubuntu-24.04` image), or set `VELES_TEST_CHROMIUM=<chromium>` |
-| R9 | `web-extension/node_modules` (`stat`) | `cd web-extension && npm ci` (CI: `npm ci --ignore-scripts`) |
-| R10 | `native-bridge/node_modules` (`stat`) | `cd native-bridge && npm ci --ignore-scripts` (or `./gradlew bridgeInstall`) |
-| R11 | `verify/node_modules` | `npm ci --ignore-scripts --prefix verify` |
-| R12 | `cargo-deny`, `cargo-cyclonedx` | `./gradlew installCargoDeny` and `./gradlew verifyCargoCyclonedx` |
+| R9 | `path` — `web-extension/node_modules` (plus a declared `inputs` entry `{"path": "web-extension/node_modules", "mode": "stat"}`) | `cd web-extension && npm ci` (CI: `npm ci --ignore-scripts`) |
+| R10 | `path` — `native-bridge/node_modules` (plus a declared `inputs` entry `{"path": "native-bridge/node_modules", "mode": "stat"}`) | `cd native-bridge && npm ci --ignore-scripts` (or `./gradlew bridgeInstall`) |
+| R11 | `path` — `verify/node_modules` | `npm ci --ignore-scripts --prefix verify` |
+| R12 | `path-tool` — `cargo-deny`, `cargo-cyclonedx` (resolved from `build/verify-tools/*/bin`) | `./gradlew installCargoDeny` and `./gradlew verifyCargoCyclonedx` |
 
 macOS-only provisioning with no D7 resolver (Xcode 26.6 / Build `17F113`, its SDK, `DEVELOPER_DIR`,
 NSIS, Visual Studio, Python 3.12 on the release runners) is `platform`/`excluded` and belongs in
@@ -484,7 +487,7 @@ NSIS, Visual Studio, Python 3.12 on the release runners) is `platform`/`excluded
 3. **Docs to extend (2.1).** `npm run build`, `npm run test:browser` (the web extension's existing
    `cd web-extension` block); `node scripts/check-mac-comparisons.mjs --scan android/app/src/main` and
    `android/scripts/check-pairing-code.sh` (the Android rule, whose block runs from the repository
-   root, together with the `android/scripts/check-raw-log.sh` call added by 2.3);
+   root; 2.3 replaces the rule's existing guard fence with the `android/scripts/check-raw-log.sh` call);
    `./gradlew :app:releaseHookGuard` (`android/AGENTS.md`, `android/`); `bridgeRustFormat`,
    `bridgeRustLint` (bridge scaffold); `node --test verify/test/*.test.mjs`,
    `sh verify/check-root-aliases.sh`, `sh verify/check-root-aliases.sh --self-test` (tooling);
@@ -500,9 +503,12 @@ NSIS, Visual Studio, Python 3.12 on the release runners) is `platform`/`excluded
 5. **Producer rows.** `rustWasm` (`rust.wasm`), `rustHostJni` (`rust.hostJni`) and `npm run build`
    (`web-extension.build`) are `producers[]` entries, not command kinds. `bridgeInstallerUnsigned`,
    `bridgeInstallerPackageFixture` and `bridgeInstallerDebug` are `platform` entries (macOS/Windows).
-6. **`./gradlew bridgeTest`** stays a `test` (it depends on `bridgeRustFormat`/`bridgeRustLint`); its
-   Rust format/lint are also split out as `check` entries for the task gate, as are
-   `bridgeNpmTest`/`bridgeRustTest` under it (no separate entries).
+6. **`./gradlew bridgeTest`** stays a `test`; `bridgeNpmTest` and `bridgeRustTest` are recorded
+   `excluded` because only this aggregate runs them (no separate entries). Its other dependencies,
+   `bridgeRustFormat`/`bridgeRustLint`, are also `check` entries for the task gate, so a branch-gate plan
+   that runs those checks and then `bridgeTest` would run them twice — Task 3 MUST either drop the two
+   check entries when `bridgeTest` runs, or keep only the checks and accept no branch-gate Rust test
+   (dropping them from the plan while `bridgeTest` runs is recommended).
 7. **`./gradlew protocolCheck`** is one aggregate `test`; Gradle runs its producers itself. Task 3 must
    decide whether to keep it as one entry (accepting that Gradle, not the verifier, orders
    `rustHostJni`/`rustWasm`) or split it into the consumer commands with explicit producer steps.
