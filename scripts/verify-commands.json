@@ -117,8 +117,14 @@
       "inputs": [
         {"path": "{gradle_user_home}/gradle.properties"},
         {"path": "{gradle_user_home}/init.d/"},
-        {"path": "rust/"},
-        {"path": "protocol/"}
+        {"path": "rust/veles-crypto/"},
+        {"path": "rust/Cargo.toml"},
+        {"path": "rust/Cargo.lock"},
+        {"path": "rust/rust-toolchain.toml"},
+        {"path": "rust/toolchain-tools.toml"},
+        {"path": "rust/ndk-version"},
+        {"path": "rust/build.gradle.kts"},
+        {"path": "rust/settings.gradle.kts"}
       ]
     },
     {
@@ -130,8 +136,14 @@
       "inputs": [
         {"path": "{gradle_user_home}/gradle.properties"},
         {"path": "{gradle_user_home}/init.d/"},
-        {"path": "rust/"},
-        {"path": "protocol/"}
+        {"path": "rust/veles-crypto/"},
+        {"path": "rust/Cargo.toml"},
+        {"path": "rust/Cargo.lock"},
+        {"path": "rust/rust-toolchain.toml"},
+        {"path": "rust/toolchain-tools.toml"},
+        {"path": "rust/ndk-version"},
+        {"path": "rust/build.gradle.kts"},
+        {"path": "rust/settings.gradle.kts"}
       ]
     },
     {

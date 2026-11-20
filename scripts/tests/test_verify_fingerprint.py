@@ -18,6 +18,7 @@ REPO = os.path.dirname(SCRIPTS)
 sys.path.insert(0, SCRIPTS)
 sys.path.insert(0, TESTS)
 
+import components  # noqa: E402
 from verify import (  # noqa: E402
     FingerprintInput,
     NodePlan,
@@ -114,6 +115,12 @@ def fixture_table():
 def fixture_cmap():
     return {"nodes": {"web-extension": {"paths": ["web-extension/"]}},
             "global": [], "ci-global": [], "unowned": []}
+
+
+def real_table():
+    """The repository's real table, for the producer-input cases."""
+    cmap = components.load_map(os.path.join(REPO, ".github", "components.json"))
+    return load_table(os.path.join(REPO, "scripts", "verify-commands.json"), cmap)
 
 
 class ScriptedRunner(FakeRunner):
@@ -575,6 +582,103 @@ class RememberedLookupTest(FingerprintFixture):
         self.assertEqual(outcome.results["web-extension"].status, "FAIL")
         self.assertIn(("web-extension", "web-extension.lint", "timeout"), outcome.problems)
         self.assertEqual(self.step_calls(runner), [])
+
+    # -- run_gate-level invalidation: the lookup must re-read, not replay a record ---------
+
+    def record_pass(self):
+        context = self.context()
+        first = run_gate("task", None, context, self.table, fixture_cmap())
+        self.assertEqual(first.results["web-extension"].status, "PASS")
+        self.assertIn("task/web-extension", self.read_passes())
+
+    def lookup(self, **kwargs):
+        runner = ScriptedRunner(self.clock, script=self.machine())
+        context = self.context(runner=runner, **kwargs)
+        outcome = run_gate("task", None, context, self.table, fixture_cmap(),
+                           use_passes=True)
+        return runner, outcome
+
+    def assert_commands_ran(self, runner, outcome):
+        self.assertEqual(outcome.results["web-extension"].status, "PASS")
+        self.assertIn(["npm", "run", "lint"], self.step_calls(runner))
+
+    def test_rebuilt_output_not_remembered(self):
+        # Important: a rebuilt generated output must make the lookup miss and run the commands.
+        self.record_pass()
+        runner, outcome = self.lookup(files=self.environment(pkg=b'{"name":"rebuilt"}\n'))
+        self.assert_commands_ran(runner, outcome)
+
+    def test_changed_tool_output_not_remembered(self):
+        # Important: an upgraded Node changes `env.resolved`, so the lookup must miss.
+        self.record_pass()
+        script = self.machine()
+        script[("node", "--version")] = Outcome("ok", stdout=["v22.2.0"])
+        runner = ScriptedRunner(self.clock, script=script)
+        context = self.context(runner=runner)
+        outcome = run_gate("task", None, context, self.table, fixture_cmap(),
+                           use_passes=True)
+        self.assert_commands_ran(runner, outcome)
+
+    def test_edited_source_not_remembered(self):
+        # A changed selecting path changes `files`; the lookup must miss.
+        self.record_pass()
+        files = self.environment()
+        files[self.path(EXT)] = b"export const background = 2;\n"
+        runner, outcome = self.lookup(files=files)
+        self.assert_commands_ran(runner, outcome)
+
+
+class RustProducerInputTest(FingerprintFixture):
+    """The rust producers declare what the build reads, not its own build-output trees."""
+
+    def rust_plan(self, producer="rust.wasm"):
+        table = real_table()
+        step = table.producers[producer]
+        return NodePlan(steps=[PlannedStep(step=step, argv=list(step.run))])
+
+    def crate_files(self):
+        files = self.environment()
+        files[self.path("rust/veles-crypto/src/lib.rs")] = b"// one\n"
+        files[self.path("rust/Cargo.toml")] = b"[workspace]\n"
+        files[self.path("rust/Cargo.lock")] = b"# lock\n"
+        return files
+
+    def test_producer_inputs_exclude_build_trees(self):
+        table = real_table()
+        for producer in ("rust.wasm", "rust.hostJni"):
+            with self.subTest(producer=producer):
+                paths = [entry["path"] for entry in table.producers[producer].inputs]
+                self.assertNotIn("rust/", paths)
+                self.assertNotIn("protocol/", paths)
+                self.assertIn("rust/veles-crypto", paths)
+                self.assertIn("rust/Cargo.lock", paths)
+                self.assertIn("rust/toolchain-tools.toml", paths)
+                self.assertIn("{gradle_user_home}/gradle.properties", paths)
+
+    def test_rust_build_outputs_do_not_invalidate(self):
+        # rust/.gradle and rust/build are written by every Gradle run; they must not be inputs,
+        # or the web-extension node is never recordable.
+        plan = self.rust_plan()
+        clean = self.context(files=self.crate_files())
+        noisy_files = dict(self.crate_files())
+        noisy_files[self.path(
+            "rust/.gradle/9.5.0/executionHistory/executionHistory.bin")] = b"history"
+        noisy_files[self.path(
+            "rust/.gradle/buildOutputCleanup/buildOutputCleanup.lock")] = b"lock"
+        noisy_files[self.path("rust/build/tmp/compile/x")] = b"tmp"
+        noisy = self.context(files=noisy_files)
+        fi = self.fingerprint_input(node_plan=plan, changed=[], entry="entry")
+        key = fingerprint(fi, clean)
+        self.assertIsNotNone(key)
+        self.assertEqual(key, fingerprint(fi, noisy))
+
+    def test_crate_source_change_invalidates(self):
+        plan = self.rust_plan()
+        files = self.crate_files()
+        files[self.path("rust/veles-crypto/src/lib.rs")] = b"// two\n"
+        fi = self.fingerprint_input(node_plan=plan, changed=[], entry="entry")
+        self.assertNotEqual(fingerprint(fi, self.context(files=self.crate_files())),
+                            fingerprint(fi, self.context(files=files)))
 
 
 class PassesTest(unittest.TestCase):
