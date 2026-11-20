@@ -154,12 +154,13 @@ OpenSpec CLI 2.x.
 - Test: `scripts/tests/test_agent_rules.py` (`ChangeSetTest`)
 
 **Interfaces:**
-- Produces: `record_changes(state: SessionState, event: Event) -> None`; `CHANGE_ARG_RE = re.compile(r"--change(?:=|\s+)[\"']?([a-z0-9][a-z0-9-]{0,63})(?![a-z0-9-])")`; only when `event.ok is True`, `event.command` matches `\bopenspec\b`.
+- Produces: `record_changes(state: SessionState, event: Event) -> None`; `CHANGE_ARG_RE = re.compile(r"--change(?:=|\s+)[\"']?([a-z0-9][a-z0-9-]{0,63})(?![a-z0-9-])")`; only when `event.ok is True`, `event.command` matches `\bopenspec\b`. Also `SessionState.applied: bool` (session-wide, default `False`), set at an apply-skill moment (any of the three forms) — the stop gate passes when it is unset.
 
 - [ ] **Step 1: Write failing tests** `test_change_forms` (each of `--change demo`, `--change=demo`,
   `--change "demo"`, `--change 'demo'` → `state.changes == ["demo"]`), `test_long_name_ignored` (65 chars),
   `test_non_openspec_command_ignored` (`grep -- "--change demo" notes.txt`), `test_failed_command_ignored`,
-  `test_subagent_call_counts` (event with `agent` set → session set), `test_keeps_20_newest` (21 names → first dropped; re-naming moves to newest).
+  `test_subagent_call_counts` (event with `agent` set → session set), `test_keeps_20_newest` (21 names → first dropped; re-naming moves to newest),
+  `test_apply_skill_arms_the_session` (a Skill event for `openspec-apply-change`, and a `/opsx:apply` prompt, and a read of its `SKILL.md` → `state.applied` true), `test_named_change_without_apply_is_not_armed` (`openspec status --change demo` and `openspec instructions apply --change demo` → `applied` false).
 - [ ] **Step 2:** Run `-k ChangeSet`. Expected: FAIL.
 - [ ] **Step 3:** Implement; call `record_changes` at the start of the `tool-after` path of `decide`, before the
   "no matching rule → pass" return, so `openspec status --change demo` (which matches no rule) is recorded; the
@@ -224,7 +225,9 @@ Change `{name}` has an apply receipt and no finalize receipt. Run verify if it h
 
 - [ ] **Step 1: Write failing tests**
   - `test_stall_after_apply_blocks` (text starts with the formatted `STOP_LINE`, then the closeout rule text; one
-    stop record `{change: "demo", iteration: 1, verify_state: "none"}`; rule not marked delivered).
+    stop record `{change: "demo", iteration: 1, verify_state: "none"}`; rule not marked delivered). These gate
+    tests set `state.applied` true; `test_not_armed_without_apply_skill` (a session that named the change but did
+    not invoke apply → pass, no record) pins the arming rule.
   - `test_second_stop_passes`, `test_pass_phase_blocks_again`, `test_new_iteration_blocks_again`,
     `test_stop_hook_active_same_phase_passes`, `test_stop_hook_active_new_phase_blocks`,
     `test_compaction_keeps_record`, `test_no_block_without_change_set`, `test_first_unrecorded_change_named`
@@ -233,7 +236,7 @@ Change `{name}` has an apply receipt and no finalize receipt. Run verify if it h
     entries `[{"rule": ["stop", "demo"], "write_id": n}]`; `test_block_rejected_for_tool_after` → `ValueError`.
   - `test_void_removes_stop_record` and `test_late_void_keeps_newer_record`.
 - [ ] **Step 2:** Run `-k StopGate -k Render`. Expected: FAIL.
-- [ ] **Step 3:** Implement: at `stop` with no agent id, take rules with `"superspec-finalize-pending"` in
+- [ ] **Step 3:** Implement: at `stop` with no agent id and `state.applied` true, take rules with `"superspec-finalize-pending"` in
   `stops`; compute pending; skip changes with a record for `(change, iteration, verify_state)`; block on the first
   remaining; write the record with `store.next_write_id()`; cap records at 40.
 - [ ] **Step 4:** Run the full engine suite. Expected: PASS.
@@ -373,7 +376,8 @@ In the frontmatter string each `\` is doubled, as in `repo-commit-types.md`, e.g
 - [ ] **Step 2:** `openspec/config.yaml` `operations.apply.guidance` becomes a two-item list: the existing apply-stop
   sentence (repointed) and "When every task is done, run verify and then finalize in the same turn without asking: finalize pushes the branch and creates or readies the PR, as .agents/hooked-rules/repo-superspec-closeout.md states."
 - [ ] **Step 3:** `docs/hook-delivered-rules.md`: add `stops` to "Adding a rule"; a "Stop gate" section (predicate,
-  phases, records, `stop_hook_active`, OpenCode `session.execution.succeeded`); a `void` of a merged entry removes it whole; per-trigger repeats in "Delivery"; state version 2; amended
+  phases, records, `stop_hook_active`, OpenCode `session.execution.succeeded`, and that only a session that invoked
+  the apply skill is armed, so a delegated verify or review session is not reminded); a `void` of a merged entry removes it whole; per-trigger repeats in "Delivery"; state version 2; amended
   stale credit; stop fail-open in "Degraded modes"; `--separate-git-dir` unhandled.
 - [ ] **Step 4:** Run `openspec instructions apply --change hook-workflow-rules --json` and confirm the guidance shows
   both entries; run the greps:

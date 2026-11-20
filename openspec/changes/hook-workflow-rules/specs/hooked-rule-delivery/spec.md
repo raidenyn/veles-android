@@ -8,10 +8,15 @@ a `stop` event: Claude Code's `Stop`, or an OpenCode root session's `session.exe
 the engine's predicate registry; an unknown name MUST be an error of the agent-file check. The registry SHALL hold
 `superspec-finalize-pending`.
 
-**Session change set.** On every successful `tool-after` shell event of any context of a session whose command
-matches `\bopenspec\b`, the engine MUST add to a session-wide change set each name given as `--change <name>` or
-`--change=<name>`, quoted or not, that matches `[a-z0-9][a-z0-9-]{0,63}`. The set MUST keep the 20 most recently
-named changes.
+**Session change set and arming.** On every successful `tool-after` shell event of any context of a session whose
+command matches `\bopenspec\b`, the engine MUST add to a session-wide change set each name given as
+`--change <name>` or `--change=<name>`, quoted or not, that matches `[a-z0-9][a-z0-9-]{0,63}`. The set MUST keep
+the 20 most recently named changes.
+
+The stop gate MUST consider a change only when the same session invoked the apply skill — a Skill call for
+`openspec-apply-change`, its `/opsx:apply` form, or a read of its `SKILL.md` — recorded as a session-wide flag.
+A session that only named the change, such as a delegated verify or review session, MUST pass: the reminder
+belongs to the session that will finalize, which is normally the parent that applied.
 
 **Predicate `superspec-finalize-pending`.** For each change in the set, the copies are
 `openspec/changes/<name>/` in the event's checkout, then in the main working tree (the parent of the git common
@@ -85,6 +90,11 @@ entry carrying the identity `["stop", <change>]` and the stop record's write id.
 
 #### Scenario: Unrelated session
 - **WHEN** a session never ran an `openspec` command naming the change, and the change has `apply.md` and no `finalize.md`
+- **THEN** that session's stop passes
+
+#### Scenario: Delegated verify or review session
+- **WHEN** a session that did not invoke the apply skill ran `openspec status --change demo` and
+  `openspec instructions apply --change demo`, and `demo` has `apply.md` and no `finalize.md`
 - **THEN** that session's stop passes
 
 #### Scenario: Name in another command
@@ -337,7 +347,7 @@ The engine SHALL keep delivery state in one JSON file per session under
   POSIX and `msvcrt.locking` on Windows. Writes MUST go through a temporary file and an atomic rename.
 
 **Version.** The state file MUST be version 2. A version 1 file MUST load as version 2 with empty triggers, change
-set and stop records, and is written back as version 2.
+set and stop records and an unset apply flag, and is written back as version 2.
 
 **Re-arm.** A `compacted` event (Claude Code `PreCompact`; OpenCode `session.compaction.started`) MUST increment
 the generation of the compacting key only. When the host does not identify a compacting subagent, it MUST increment

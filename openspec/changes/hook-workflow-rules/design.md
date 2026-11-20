@@ -106,9 +106,12 @@ a different trigger still delivers. The spec's stale-credit text and `docs/hook-
 the engine's registry is an error (agent-file check). A rule must still have at least one of `skills`,
 `commands`, `gates` or `stops`. The registry has one predicate, `superspec-finalize-pending`.
 
-**Session change set.** On every successful `tool-after` shell event (any context key of the session) whose
+**Session change set and arming.** On every successful `tool-after` shell event (any context key of the session) whose
 command matches `\bopenspec\b`, the engine extracts change names from `--change <name>`, `--change=<name>` and their quoted forms, with names
 matching `[a-z0-9][a-z0-9-]{0,63}` (longer names are ignored), and adds them to a session-wide `changes` set in the state file.
+A session-wide `applied` flag is set when the session invokes the apply skill; without it, the stop gate passes. This keeps
+the reminder in the session that applied and will finalize, never in a delegated verify or review session that only names
+the change.
 
 **Event.** A new engine event `stop` (Claude Code `Stop`; plain `{"event":"stop", …}` with an optional
 `stop_hook_active`). `SubagentStop` is not wired; in OpenCode the plugin sends `stop` only for a root session (no
@@ -145,8 +148,10 @@ run, then finalize now: it pushes and creates the PR without asking. If a rule r
 the user told you to stop, say which and end your turn; the next stop is not blocked." It writes the stop record
 in the same transaction. A recorded phase or no pending change: pass. `stop_hook_active` does not suppress a block in a new phase:
 after an earlier block the agent may continue in the same turn, run verify and stall again, and that is the
-post-verify stall the second phase exists for. The per-phase records bound the blocks, so no loop is possible. The block does not mark
-the rule delivered. Several pending changes: the first by name is named; the record is per change, so another
+post-verify stall the second phase exists for. The per-phase records bound the blocks, so no loop is possible. The
+gate is armed only in a session that invoked the apply skill (a Skill call, `/opsx:apply`, or a read of its
+`SKILL.md`), so a delegated verify or review session that merely names the change is never reminded; the
+session-wide flag lives in the state file. The block does not mark the rule delivered. Several pending changes: the first by name is named; the record is per change, so another
 could block a later stop.
 
 **Rendering.** Claude Code: `{"decision": "block", "reason": <text>}` on `Stop`. Plain: the usual
@@ -170,7 +175,7 @@ an engine failure the plugin does nothing at a stop moment.
 
 ### 4. State version 2
 
-The state file gains `triggers` on entries, a session `changes` list and a session-wide `stops` list of
+The state file gains `triggers` on entries, a session `changes` list, a session-wide `applied` flag and a session-wide `stops` list of
 `{change, iteration, verify_state, write_id}`, at most the 40 newest, removed with the session file. `void` also
 removes a stop record whose write id matches. `STATE_VERSION` becomes 2. A version 1 file loads as version 2 with empty new
 fields and is written back as version 2. An old engine meeting a version 2 file raises its existing `StoreError`
@@ -245,7 +250,8 @@ Unit tests per decision (no sleeps, injected state). Then a live re-run in both 
 2. A disposable change with `apply.md` and no `finalize.md`, recorded through an `openspec status --change <name>`
    call: the first stop is blocked with the engine line; the second stop passes; a passing `verify.md` blocks once
    more; a new `apply.md` iteration blocks once more; a ticked FAIL at the same iteration and an archived copy do
-   not block; a FAIL from an earlier iteration does block; a session that never named the change is not blocked.
+   not block; a FAIL from an earlier iteration does block; a session that never named the change is not blocked;
+   a delegated verify or review session that only names the change is not blocked.
 3. `git push` is denied once with the pre-push rule; after `openspec instructions finalize` it is not.
 4. A stale delivery (the after-write failure switch) suppresses the same trigger and not a different one.
 5. An end-to-end apply-to-finalize run on a disposable change shows the agent going on to finalize without asking,
@@ -256,8 +262,9 @@ Unit tests per decision (no sleeps, injected state). Then a live re-run in both 
 
 - [The stop gate blocks a legitimate pause] → once per phase (at most twice per apply iteration), an engine line that permits the stop,
   per-phase records bounding the blocks, armed only by the session's own `--change` calls.
-- [A stale or abandoned change in a linked worktree keeps the predicate true] → only changes the session named
-  count, and only once per phase.
+- [A session that resumes a change without invoking apply is not reminded] → accepted: the pointer carries the
+  authorization, and the reminder belongs to the session that applied and will finalize.
+- [A delegated verify or review session is not reminded] → by design; it is not the session that finalizes.
 - [OpenCode turn-end continuation does not work] → the spike verified it (`session.execution.succeeded`,
   `resume: true`); the owner approved using that event when `session.idle` proved absent in 2.3.2.
 - [A command pattern matches text inside a heredoc or quoted string] → existing residual; with per-trigger
