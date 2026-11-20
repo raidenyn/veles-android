@@ -126,10 +126,11 @@ def _constant_strings(nodes, stop):
 class _Visitor(ast.NodeVisitor):
     """Findings for one parsed ``docs/checks`` file."""
 
-    def __init__(self, path, siblings):
+    def __init__(self, path, siblings, called):
         self.path = path
         self.basename = path.rsplit("/", 1)[-1]
         self.siblings = siblings
+        self.called = called
         self.findings = []
         self.top_function = "<module>"
         self.depth = 0
@@ -230,7 +231,7 @@ class _Visitor(ast.NodeVisitor):
 
     def visit_List(self, node):
         if _starts_with_git(node):
-            self.check_git_tokens(node, _constant_strings(node.elts[1:], True))
+            self.check_git_tokens(node, _constant_strings(node.elts[1:], False))
         self.generic_visit(node)
 
     def visit_Call(self, node):
@@ -246,7 +247,8 @@ class _Visitor(ast.NodeVisitor):
             elif function.id == "getattr":
                 self.check_getattr(node)
             elif function.id in ("_git", "git"):
-                self.check_git_tokens(node, _constant_strings(node.args, False))
+                args = node.args[1:] if function.id == "_git" else node.args
+                self.check_git_tokens(node, _constant_strings(args, False))
         self.generic_visit(node)
 
     def check_subprocess_call(self, node, attr):
@@ -256,6 +258,12 @@ class _Visitor(ast.NodeVisitor):
             self.add(node, "subprocess.%s(...) is not an allowed subprocess call" % attr)
             return
         for keyword in node.keywords:
+            if keyword.arg is None:
+                self.add(node, "subprocess.%s(...) must not expand a keyword mapping" % attr)
+                break
+            if keyword.arg == "executable":
+                self.add(node, "subprocess.%s(...) must not pass executable=" % attr)
+                break
             if keyword.arg == "shell" and not (
                 isinstance(keyword.value, ast.Constant) and keyword.value.value is False
             ):
@@ -329,8 +337,7 @@ def scan(root):
         except SyntaxError as error:
             findings.append(Finding(path, error.lineno or 1, "does not parse: %s" % error.msg))
             continue
-        visitor = _Visitor(path, siblings)
-        visitor.called = _collect_called_attributes(tree)
+        visitor = _Visitor(path, siblings, _collect_called_attributes(tree))
         visitor.visit(tree)
         findings.extend(visitor.findings)
     return sorted(findings, key=lambda finding: (finding.path, finding.line))

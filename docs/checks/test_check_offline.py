@@ -101,6 +101,20 @@ class RejectedFormTests(GuardTestCase):
     def test_rejects_shell_keyword(self):
         self.assertRejected('subprocess.run(["git"], shell=True)\n', "shell")
 
+    def test_rejects_executable_keyword(self):
+        self.assertRejected(
+            'subprocess.run(["git"], executable="/usr/bin/curl")\n', "executable"
+        )
+
+    def test_rejects_keyword_splat(self):
+        self.assertRejected('subprocess.run(["git"], **kw)\n', "keyword")
+
+    def test_rejects_list_token_after_non_constant(self):
+        self.assertRejected('subprocess.run(["git", sub, "clone"])\n', "clone")
+
+    def test_rejects_helper_with_constant_root(self):
+        self.assertRejected('_git("/r", "clone")\n', "clone")
+
     def test_rejects_forbidden_git_global_option(self):
         self.assertRejected(
             'subprocess.run(["git", "-c", "core.sshCommand=x", "status"])\n', "-c"
