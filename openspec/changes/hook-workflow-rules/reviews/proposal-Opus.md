@@ -47,3 +47,19 @@ No finding: the two bullets that name the OpenCode event now say `session.execut
 proposal text was changed by the fix round.
 
 Approved content: proposal sha256 7b49970f3a2828fea7be10679a7476652c2bbe5e6cac42b0a3a49f72440a3bb2
+
+## Pass — stop-gate arming amendment (2026-11-20)
+
+Owner ruling: the reminder reaches only the session that will finalize; delegated reviewer, verifier and coder
+sessions are not reminded. Commits 90340ef5, 2debe9d2, 982dc4ef, 6f3596ab.
+
+Upstream hashes for this pass: brainstorm sha256 fc2565ee022c5c34ea26082455ce71569d3f6b67c735a8901ba49742b6908a79; design sha256 8e6c6b32aeef0a8d8c1dc6daaf4d346308e2760d1d98f7d11450a5a7b4963ab2
+
+### Round 1 — approve
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| medium | The stop-gate bullet said any naming session is blocked. | Fixed: only a session that invoked the apply skill. |
+| low | The delta summary omitted the apply flag. | Fixed. |
+
+Approved content: proposal sha256 0adb1bb18c90cfff5d2b6140a72e5761f9c2d8903096d5392f6cec9a7a2e0abd

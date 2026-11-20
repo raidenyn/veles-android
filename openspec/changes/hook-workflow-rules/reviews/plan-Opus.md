@@ -63,3 +63,21 @@ Upstream hashes for this pass: brainstorm sha256 5039765682f6a99acc07db91825def9
 | low | L2: no test for a second success while one is in flight. | Fixed: test added. |
 
 Approved content: plan sha256 3a73504bdc4167ae2620d44d8e8f7401c481120b7b1255590a1fe3dd531f6d4b
+
+## Pass — stop-gate arming amendment (2026-11-20)
+
+Owner ruling: the reminder reaches only the session that will finalize. Commits 90340ef5, 2debe9d2, 982dc4ef.
+
+Upstream hashes for this pass: brainstorm sha256 fc2565ee022c5c34ea26082455ce71569d3f6b67c735a8901ba49742b6908a79; proposal sha256 0adb1bb18c90cfff5d2b6140a72e5761f9c2d8903096d5392f6cec9a7a2e0abd; design sha256 8e6c6b32aeef0a8d8c1dc6daaf4d346308e2760d1d98f7d11450a5a7b4963ab2; specs/agent-guidance-layout/spec.md sha256 3f7a81bb1aea06018990e639633a701fe4c8a44bc2f468769ff4cdd2ded772df; specs/hooked-rule-delivery/spec.md sha256 7061981e17b0ce75e5f7f64219b69af509ef5229ec7ec532d941fdf11c131cdc; specs/real-device-testing/spec.md sha256 b8716a68bb192a8e770570ee1931679798a6db6cdb45bf3fa389b66e828f721a; specs/superspec-closeout/spec.md sha256 ee5e4641db075e9ee0515f294ed2d100e874e2e694f477f63ab8370772b9a993; specs/superspec-review-gate/spec.md sha256 881683095bb0707a09580191479b7913c2b3fcb4a2cc5277a79d56634d01bd33; tasks sha256 33ee7f02fa8cf2ec22aa01a4b19ce3574852b45fa1019ee768c1fe2f183ae39f
+
+### Round 1 — changes-required
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| medium | Task 4's "Produces" said the flag is set at "any of the three forms", including a `SKILL.md` read. | Fixed. |
+
+### Round 2 — approve
+
+No finding.
+
+Approved content: plan sha256 d3bbdd7aef40e13ad79593977c9fb3e93ebbc92ebf29168673500cf408411672

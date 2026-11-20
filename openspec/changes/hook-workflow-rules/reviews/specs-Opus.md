@@ -77,3 +77,24 @@ Approved content: specs/agent-guidance-layout/spec.md sha256 3f7a81bb1aea0601899
 Approved content: specs/real-device-testing/spec.md sha256 b8716a68bb192a8e770570ee1931679798a6db6cdb45bf3fa389b66e828f721a
 Approved content: specs/superspec-closeout/spec.md sha256 ee5e4641db075e9ee0515f294ed2d100e874e2e694f477f63ab8370772b9a993
 Approved content: specs/superspec-review-gate/spec.md sha256 881683095bb0707a09580191479b7913c2b3fcb4a2cc5277a79d56634d01bd33
+
+## Pass — stop-gate arming amendment (2026-11-20)
+
+Owner ruling: the reminder reaches only the session that will finalize. Commits 90340ef5, 2debe9d2, 982dc4ef.
+
+Upstream hashes for this pass: brainstorm sha256 fc2565ee022c5c34ea26082455ce71569d3f6b67c735a8901ba49742b6908a79; design sha256 8e6c6b32aeef0a8d8c1dc6daaf4d346308e2760d1d98f7d11450a5a7b4963ab2; proposal sha256 0adb1bb18c90cfff5d2b6140a72e5761f9c2d8903096d5392f6cec9a7a2e0abd
+
+### Round 1 — approve (hooked-rule-delivery), unchanged files re-pointed
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| medium | The blocking scenarios did not say the session applied. | Fixed: one sentence covers them. |
+| medium | A `SKILL.md` read armed a reviewer. | Fixed: MUST NOT arm; code updated. |
+| low | The flag read per change though it is one session-wide boolean. | Fixed: stated session-wide. |
+| low | Re-arm omitted the apply flag. | Fixed. |
+
+Approved content: specs/hooked-rule-delivery/spec.md sha256 7061981e17b0ce75e5f7f64219b69af509ef5229ec7ec532d941fdf11c131cdc
+Approved content: specs/superspec-closeout/spec.md sha256 ee5e4641db075e9ee0515f294ed2d100e874e2e694f477f63ab8370772b9a993
+Approved content: specs/agent-guidance-layout/spec.md sha256 3f7a81bb1aea06018990e639633a701fe4c8a44bc2f468769ff4cdd2ded772df
+Approved content: specs/real-device-testing/spec.md sha256 b8716a68bb192a8e770570ee1931679798a6db6cdb45bf3fa389b66e828f721a
+Approved content: specs/superspec-review-gate/spec.md sha256 881683095bb0707a09580191479b7913c2b3fcb4a2cc5277a79d56634d01bd33

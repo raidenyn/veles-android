@@ -114,3 +114,22 @@ Upstream hashes for this pass: none (brainstorm is the first planning file).
 | low | L2: "carrying the text" wording, future tense after the spike. | Deferred: the brainstorming record is historical; the wording is accurate. |
 
 Approved content: brainstorm sha256 5039765682f6a99acc07db91825def99937d9ae65de38cb7846896775cdfdabd
+
+## Pass — stop-gate arming amendment (2026-11-20)
+
+Owner ruling: the reminder reaches only the session that will finalize; delegated reviewer, verifier and coder
+sessions are not reminded. Commits 90340ef5, 2debe9d2, 982dc4ef, 6f3596ab.
+
+Upstream hashes for this pass: none (brainstorm is the first planning file).
+
+### Round 1 — approve
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| medium | The gate description omitted the arming condition. | Fixed: the session must have invoked the apply skill. |
+| medium | The "which change" decision made the change set the only input. | Fixed: a dedicated arming decision was added. |
+| low | "One trigger" did not note that a `SKILL.md` read never arms. | Fixed. |
+| low | The state-v2 field list omitted the apply flag. | Fixed. |
+| low | The delta summary omits the apply flag. | Deferred: cosmetic; the proposal names it. |
+
+Approved content: brainstorm sha256 fc2565ee022c5c34ea26082455ce71569d3f6b67c735a8901ba49742b6908a79

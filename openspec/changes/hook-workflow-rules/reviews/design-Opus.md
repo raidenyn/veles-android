@@ -76,3 +76,26 @@ Upstream hashes for this pass: brainstorm sha256 5039765682f6a99acc07db91825def9
 | low | §3 names `parentID` but not its source (`session.get`) or the fail-open when that call fails. | Deferred: the plugin's general fail-open rule covers it; `docs/hook-delivered-rules.md` (Task 11) records the detail. |
 
 Approved content: design sha256 0ca6076e0be0a98b98fbef9a89bb5ebe39a157201a267302de9d71c1977704da
+
+## Pass — stop-gate arming amendment (2026-11-20)
+
+Owner ruling: the reminder reaches only the session that will finalize. Commits 90340ef5, 2debe9d2, 982dc4ef.
+
+Upstream hashes for this pass: brainstorm sha256 fc2565ee022c5c34ea26082455ce71569d3f6b67c735a8901ba49742b6908a79
+
+### Round 1 — changes-required
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| medium | §10 live test 2 named the change without applying, contradicting the rule. | Fixed: the session invokes apply first. |
+| medium | The risks line said the gate is armed by `--change` calls. | Fixed: armed by applying only. |
+| low | The risks did not list apply-by-read-only being unarmed. | Fixed. |
+| low | "Bound the reminder to two" needed "per apply iteration". | Fixed. |
+
+### Round 2 — approve
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| low | The `decide` docstring called a `SKILL.md` read an apply-skill moment. | Fixed in d2b89339. |
+
+Approved content: design sha256 8e6c6b32aeef0a8d8c1dc6daaf4d346308e2760d1d98f7d11450a5a7b4963ab2
