@@ -115,6 +115,7 @@
                   "docs/dev/specs/component-versioning",
                   "docs/dev/specs/release-publishing",
                   "docs/dev/specs/pr-last-green-selection",
+                  "docs/dev/specs/secret-scanning",
                   "docs/dev/specs/commit-conventions",
                   "docs/dev/specs/documentation-site"
                 ]

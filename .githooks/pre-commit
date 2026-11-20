@@ -1,0 +1,38 @@
+#!/bin/sh
+# Scan staged changes for secrets before they enter a commit.
+# Needs the pinned gitleaks: ./gradlew installGitleaks (see docs/ci.md).
+root=$(git rev-parse --show-toplevel) || exit 1
+
+if [ -n "${VELES_GITLEAKS:-}" ]; then
+    gitleaks=$VELES_GITLEAKS
+elif [ -x "$root/build/release-tools/gitleaks/gitleaks" ]; then
+    gitleaks=$root/build/release-tools/gitleaks/gitleaks
+else
+    gitleaks=$root/build/release-tools/gitleaks/gitleaks.exe
+fi
+
+if [ ! -x "$gitleaks" ]; then
+    echo "pre-commit: gitleaks not installed; secret scan skipped. Run ./gradlew installGitleaks" >&2
+    exit 0
+fi
+
+cd "$root" || exit 1
+if [ -f "$root/.gitleaks.toml" ]; then
+    "$gitleaks" git --staged --redact --verbose --no-banner --exit-code 3 \
+        --config "$root/.gitleaks.toml" 1>&2
+else
+    "$gitleaks" git --staged --redact --verbose --no-banner --exit-code 3 1>&2
+fi
+rc=$?
+
+if [ "$rc" -eq 3 ]; then
+    echo "pre-commit: a secret-looking value is staged; the commit is blocked." >&2
+    echo "Remove the value, or, if it is a false positive, allowlist it in .gitleaks.toml with a reason." >&2
+    echo "git commit --no-verify bypasses this scan deliberately." >&2
+    exit 1
+fi
+if [ "$rc" -eq 0 ]; then
+    exit 0
+fi
+echo "pre-commit: gitleaks exited $rc; secret scan did not run" >&2
+exit 0

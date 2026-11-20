@@ -1,0 +1,27 @@
+# History-only false positives for the full-history gitleaks scan.
+#
+# Each fingerprint is commit-bound and names a path that is no longer in the
+# tree, so a path allowlist in .gitleaks.toml cannot cover it. The file is
+# read by both the full-history scan and the staged pre-commit scan; a
+# commit-bound fingerprint never matches a staged finding.
+
+# The historical Kotlin test sender declared a synthetic probe-marker constant
+# used by the notification-redaction test. The file was removed by revert
+# ec776b30 and is no longer tracked.
+75b5d83e085431604dd42d5d4876b8163c537423:app/src/main/java/me/nagaev/veles/testing/TestNotificationSender.kt:generic-api-key:18
+
+# The pre-archive OpenSpec plan line is prose describing mutually authenticated
+# sessions. The change was archived under openspec/changes/archive/, which is
+# the tracked copy and carries its own allowlist entry in .gitleaks.toml.
+c2544c4815f2bbdbf6605fe53ee34db2b13c83c5:openspec/changes/otp-09-authenticated-reconnect/plan.md:generic-api-key:9
+990abf9b09c4b2f182ec927345ae4b044f962dc1:openspec/changes/otp-09-authenticated-reconnect/plan.md:generic-api-key:9
+90e5e3da80030973910f86a86da4a19208a218b1:openspec/changes/otp-09-authenticated-reconnect/plan.md:generic-api-key:9
+627ffe57cad72ce9895ad9a8f06535e206243cd2:openspec/changes/otp-09-authenticated-reconnect/plan.md:generic-api-key:9
+c14f9b84747aa7b352209e61453837fabd246437:openspec/changes/otp-09-authenticated-reconnect/plan.md:generic-api-key:9
+3748037c99828b9166f03396d292249532d063c2:openspec/changes/otp-09-authenticated-reconnect/plan.md:generic-api-key:9
+ef90de77c5e443dbb4c042d0d37b86f691b46274:openspec/changes/otp-09-authenticated-reconnect/plan.md:generic-api-key:9
+04716aabf5012414bdd81ab817b51be4d527e376:openspec/changes/otp-09-authenticated-reconnect/plan.md:generic-api-key:9
+9215b5f18a07f623e885057f8f357f345b76a232:openspec/changes/otp-09-authenticated-reconnect/plan.md:generic-api-key:9
+690dc92d0df2bd37bcbd59bbe940a6aa4f2c2055:openspec/changes/otp-09-authenticated-reconnect/plan.md:generic-api-key:9
+e05399b5b634eae41014dfc9465cc7fba3e5201a:openspec/changes/otp-09-authenticated-reconnect/plan.md:generic-api-key:9
+2d0c07bb27e17ba365709e56282b59593788de50:openspec/changes/otp-09-authenticated-reconnect/plan.md:generic-api-key:9
