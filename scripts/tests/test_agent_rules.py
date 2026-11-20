@@ -41,6 +41,7 @@ from agent_rules import (  # noqa: E402
     parse_rule,
     render,
     render_pointer_block,
+    rule_text as rule_body,
 )
 
 CLI = os.path.join(SCRIPTS, "agent_rules.py")
@@ -3591,9 +3592,24 @@ TYPE_LINE_PREFIX = "- `"
 class RealRepoRuleTest(unittest.TestCase):
     """The repository's own hooked rules, read from this checkout."""
 
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="veles-real-rules-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.store = Store(os.path.join(self.tmp, "agent-rules"), sleep=no_sleep, lock_attempts=2)
+        self.rules, self.errors = load_rules(REPO_ROOT)
+        self.by_name = dict((rule.name, rule) for rule in self.rules)
+
     def real_rule(self):
         with open(COMMIT_TYPES_RULE, "r", encoding="utf-8", newline="") as handle:
             return parse_rule("repo-commit-types.md", handle.read())
+
+    def rule(self, name):
+        self.assertIn(name, self.by_name)
+        return self.by_name[name]
+
+    def run_event(self, ev):
+        with self.store.transaction(ev.session) as state:
+            return decide(self.rules, state, context_key(ev), ev)
 
     def test_real_rules_load_without_errors(self):
         rules, errors = load_rules(REPO_ROOT)
@@ -3642,6 +3658,52 @@ class RealRepoRuleTest(unittest.TestCase):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_push_denied_without_delivery(self):
+        # A context that has delivered nothing: the push gate denies with the pre-push rule text.
+        decision = self.run_event(bash_before("git push origin feature"))
+        self.assertEqual(decision.kind, "deny")
+        self.assertEqual(decision.text, rule_body(self.rule("repo-pre-push-checks.md").body))
+        self.assertIn("scripts/components.py changed", decision.text)
+
+    def test_push_after_finalize_passes(self):
+        decision = self.run_event(bash_after("openspec instructions finalize --change demo"))
+        self.assertEqual(decision.kind, "context")
+        self.assertIn(rule_body(self.rule("repo-pre-push-checks.md").body), decision.text)
+        self.assertEqual(self.run_event(bash_before("git push origin feature")).kind, "pass")
+
+    def test_gh_pr_create_denied_with_real_device(self):
+        # A fresh context, so nothing but this gate has been delivered before the PR is created.
+        decision = self.run_event(bash_before("gh pr create --fill"))
+        self.assertEqual(decision.kind, "deny")
+        self.assertIn(rule_body(self.rule("repo-real-device-testing.md").body), decision.text)
+
+    def test_finalize_command_delivers_closeout_real_device_pre_push(self):
+        decision = self.run_event(bash_after("openspec instructions finalize --change demo"))
+        self.assertEqual(decision.kind, "context")
+        for name in (
+            "repo-superspec-closeout.md",
+            "repo-real-device-testing.md",
+            "repo-pre-push-checks.md",
+        ):
+            self.assertIn(rule_body(self.rule(name).body), decision.text, name)
+
+    def test_ff_skill_delivers_gate_and_roster(self):
+        decision = self.run_event(event("tool-after", tool="Skill", skill="openspec-ff-change"))
+        self.assertEqual(decision.kind, "context")
+        self.assertIn(rule_body(self.rule("repo-superspec-review-gate.md").body), decision.text)
+        self.assertIn(rule_body(self.rule("repo-review-models.md").body), decision.text)
+
+    def test_verify_skill_delivers_gate_not_roster(self):
+        decision = self.run_event(event("tool-after", tool="Skill", skill="openspec-verify-change"))
+        self.assertEqual(decision.kind, "context")
+        self.assertIn(rule_body(self.rule("repo-superspec-review-gate.md").body), decision.text)
+        self.assertNotIn(rule_body(self.rule("repo-review-models.md").body), decision.text)
+
+    def test_closeout_declares_stop_predicate(self):
+        self.assertEqual(
+            self.rule("repo-superspec-closeout.md").stops, ("superspec-finalize-pending",)
+        )
 
 
 if __name__ == "__main__":

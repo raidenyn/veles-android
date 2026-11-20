@@ -1,6 +1,21 @@
 ---
-trigger: always_on
+pointer: "After apply, run verify then finalize without asking (finalize pushes and creates or readies the PR, owner-authorized); delivered at apply, verify, finalize, archive and a stop before finalize; read this file then if it was not."
+skills:
+  - "openspec-apply-change"
+  - "opsx:apply"
+  - "openspec-verify-change"
+  - "opsx:verify"
+  - "openspec-continue-change"
+  - "opsx:continue"
+  - "openspec-archive-change"
+  - "opsx:archive"
+commands:
+  - "\\bopenspec\\s+instructions\\s+(verify|finalize)\\b"
+stops:
+  - "superspec-finalize-pending"
 ---
+
+After the last apply task, run verify and then finalize in the same turn. Do not ask first: the owner durably authorizes finalize to push the feature branch, create or update the pull request and mark it ready. Stop only when verify fails, finalize cannot create or confirm the pull request, a rule requires you to ask (a device or browser is unavailable, a blocker, an ambiguity) or the user told you to stop.
 
 Before closing out, read the sections Closeout and Monitoring of `docs/superspec-workflow.md`.
 
