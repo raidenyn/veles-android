@@ -1710,10 +1710,26 @@ class ChangeSetTest(EngineTest):
             return list(state.changes)
 
     def test_change_forms(self):
-        for form in ("--change demo", "--change=demo", '--change "demo"', "--change 'demo'"):
-            # `openspec status` matches no rule, so the recording happens on the pass path.
-            self.assertEqual(self.run_event(bash_after("openspec status %s" % form)).kind, "pass")
-            self.assertEqual(self.changes(), ["demo"], form)
+        forms = ("--change demo", "--change=demo", '--change "demo"', "--change 'demo'")
+        # Each form gets its own session: a name recorded by an earlier form cannot mask a form that
+        # never matched. `openspec status` matches no rule, so this is the pass path.
+        for index, form in enumerate(forms):
+            session = "f%d" % index
+            self.assertEqual(
+                self.run_event(bash_after("openspec status %s" % form, session=session)).kind, "pass"
+            )
+            self.assertEqual(self.changes(session), ["demo"], form)
+
+    def test_64_character_name_recorded(self):
+        # Exactly the longest name `CHANGE_NAME_RE` accepts; the 65-character test below is the
+        # rejecting side of the same boundary.
+        name = "a" * 64
+        self.run_event(bash_after("openspec status --change %s" % name))
+        self.assertEqual(self.changes(), [name])
+
+    def test_several_names_in_one_command(self):
+        self.run_event(bash_after("openspec x --change a --change=a --change b", session="multi"))
+        self.assertEqual(self.changes("multi"), ["a", "b"])
 
     def test_long_name_ignored(self):
         # 65 characters: one past the longest change name, and the trailing character proves the
