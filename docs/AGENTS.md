@@ -6,6 +6,7 @@ needs the `opencode-rules` plugin pinned in `opencode.json`: `docs/opencode-rule
 
 ## Commands
 ```bash
+python3 docs/checks/check_offline.py --root .
 python3 docs/checks/check_agent_files.py --root .
 python3 docs/checks/check_gate_b_matrix.py
 python3 -m unittest discover -s docs/checks -p 'test_*.py' -v
