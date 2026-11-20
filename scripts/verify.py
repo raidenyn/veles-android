@@ -9,6 +9,7 @@ table, owns the injected clock/wait/runner/git/filesystem seams, and wires the C
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -16,6 +17,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, List, Optional, Tuple
@@ -118,6 +120,9 @@ class Context:
 
 
 Run = Callable[[List[str], str, Dict[str, str], str, float, bool], Outcome]
+# With `capture=True` the runner returns the command's stdout and stderr separately in the
+# Outcome (in addition to logging them), so a probe can read `java -version` from stderr and a
+# version command's first line from stdout (design D7/D9).
 
 
 @dataclass(frozen=True)
@@ -193,6 +198,9 @@ class Fs:
 
     def stat(self, path):
         return os.stat(path)
+
+    def is_executable(self, path):
+        return os.path.isfile(path) and os.access(path, os.X_OK)
 
 
 class GitError(Exception):
@@ -1309,6 +1317,904 @@ def _list_mode(args, ctx, cmap, table):
     return 0
 
 
+# --- requirements, probes and the machine config (design D7, D8 and D2) ---------------------
+
+
+class ConfigError(ValueError):
+    """The machine config cannot be read, validated or written; the CLI exits 2 (design D8)."""
+
+
+CONFIG_VERSION = 1
+CONFIG_KEYS = ("java_home", "android_sdk", "android_ndk", "path_prepend")
+# A short state lock: 100 non-blocking tries 0.1 s apart, the design's 10-second bound (D9).
+CONFIG_LOCK_ATTEMPTS = 100
+JAVA_PIN_FILE = ".java-version"
+NDK_PIN_FILE = "rust/ndk-version"
+JVM_ROOT = "/usr/lib/jvm"
+SDK_ROOTS = ("$HOME/.android-sdk", "$HOME/Android/Sdk")
+TOOL_ROOTS = ("$HOME/.cargo/bin", "$HOME/.nvm/versions/node/*/bin")
+CANDIDATE_LIMIT = 5
+PROBE_TIMEOUT = "the requirement probe reached the deadline reserve"
+ASK_USER = "ask the user which one this project uses"
+PLAYWRIGHT_QUERY = ["node", "-e",
+                    "console.log(require('playwright-core').chromium.executablePath())"]
+
+
+def _checkout_for(common_dir):
+    """The checkout a git common dir belongs to, for `Config(common_dir)` alone.
+
+    A linked worktree's common dir is the main checkout's `.git`, so the main checkout is the
+    fallback; `verify.py` passes the run's own checkout explicitly (design D8).
+    """
+    base = os.path.basename(common_dir)
+    if base == ".git" or base.endswith(".git"):
+        return os.path.dirname(common_dir)
+    return common_dir
+
+
+class Config:
+    """`<git-common-dir>/veles-verify/tools.json`: one machine config shared by every worktree."""
+
+    def __init__(self, common_dir, repo=None, fs=None, wait=None):
+        self.common_dir = os.path.realpath(common_dir)
+        self.repo = os.path.realpath(repo) if repo else _checkout_for(self.common_dir)
+        self.fs = fs or Fs()
+        self.wait = wait or time.sleep
+        self.directory = os.path.join(self.common_dir, "veles-verify")
+        self.path = os.path.join(self.directory, "tools.json")
+        self.lock_path = os.path.join(self.directory, "tools.json.lock")
+
+    def load(self):
+        """The saved keys, or `{}` without the file; a malformed file is a `ConfigError`."""
+        try:
+            text = self.fs.read_text(self.path)
+        except FileNotFoundError:
+            return {}
+        except (OSError, KeyError) as error:
+            raise ConfigError("cannot read %s: %s" % (self.path, error))
+        try:
+            data = json.loads(text)
+        except ValueError as error:
+            raise ConfigError("%s is not valid JSON: %s" % (self.path, error))
+        if not isinstance(data, dict):
+            raise ConfigError("%s must hold a JSON object" % self.path)
+        version = data.get("version")
+        if isinstance(version, bool) or version != CONFIG_VERSION:
+            raise ConfigError("%s: version must be %d" % (self.path, CONFIG_VERSION))
+        config = {}
+        for key in sorted(set(data) - {"version"}):
+            if key not in CONFIG_KEYS:
+                raise ConfigError("%s: unknown key %r (known: %s)"
+                                  % (self.path, key, ", ".join(CONFIG_KEYS)))
+            value = data[key]
+            if not isinstance(value, str) or not value:
+                raise ConfigError("%s: %s must be a non-empty string" % (self.path, key))
+            config[key] = value
+        return config
+
+    def set(self, key, value):
+        """Validate `value` as the matching resolver does, then save it atomically."""
+        if key not in CONFIG_KEYS:
+            raise ConfigError("unknown key %r; use one of %s"
+                              % (key, ", ".join(CONFIG_KEYS)))
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError("%s must be a non-empty value" % key)
+        normalized = self._validated(key, value.strip())
+        with self._lock():
+            config = self.load()
+            config[key] = normalized
+            self._write(config)
+
+    def show(self, env=None):
+        """The path, every key with its value and resolved version, and the SDK warning."""
+        config = self.load()
+        effective = effective_env(dict(os.environ if env is None else env), config)
+        suffix = "" if self.fs.exists(self.path) else " (no file yet)"
+        lines = ["config: %s (version %d)%s" % (self.path, CONFIG_VERSION, suffix)]
+        for key in CONFIG_KEYS:
+            value = config.get(key)
+            if not value:
+                lines.append("%s: (not set)" % key)
+                continue
+            lines.append("%s: %s (%s)" % (key, value, _resolved_description(self.fs, key, value)))
+        warning = _sdk_dir_warning(self.repo, effective, self.fs)
+        if warning:
+            lines.append(warning)
+        return "\n".join(lines)
+
+    def _validated(self, key, value):
+        """The value as it is saved: an absolute, symlink-free path, checked against the pins."""
+        path = os.path.realpath(os.path.abspath(os.path.expanduser(value)))
+        if key == "java_home":
+            if not self.fs.isdir(path) or not self.fs.exists(os.path.join(path, "bin", "java")):
+                raise ConfigError("java_home %s is not a JDK: it has no bin/java" % path)
+            found = _release_java_version(self.fs, path)
+            required = self._pin(JAVA_PIN_FILE)
+            if found is None:
+                raise ConfigError(
+                    "cannot read %s/release, so java_home %s cannot be validated "
+                    "against %s; nothing was saved" % (path, path, JAVA_PIN_FILE))
+            if _java_major(found) != _java_major(required):
+                raise ConfigError(
+                    "java_home %s reports %s (major %s), but %s pins %s (major %s); "
+                    "nothing was saved" % (path, found, _java_major(found), JAVA_PIN_FILE,
+                                           required, _java_major(required)))
+        elif key == "android_sdk":
+            if not _valid_sdk(self.fs, path):
+                raise ConfigError(
+                    "android_sdk %s is not an Android SDK: it has neither platform-tools "
+                    "nor cmdline-tools; nothing was saved" % path)
+        elif key == "android_ndk":
+            required = self._pin(NDK_PIN_FILE)
+            found = _source_revision(self.fs, path)
+            if found != required:
+                raise ConfigError(
+                    "android_ndk %s reports Pkg.Revision %s, but %s pins %s; "
+                    "nothing was saved" % (path, found or "missing", NDK_PIN_FILE, required))
+        elif not self.fs.isdir(path):
+            raise ConfigError("path_prepend %s is not an existing directory; nothing was saved"
+                              % path)
+        return path
+
+    def _pin(self, relative):
+        path = os.path.join(self.repo, relative)
+        try:
+            text = self.fs.read_text(path)
+        except (OSError, KeyError) as error:
+            raise ConfigError("cannot read %s: %s" % (path, error))
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines:
+            raise ConfigError("%s is empty" % path)
+        return lines[0]
+
+    @contextlib.contextmanager
+    def _lock(self):
+        lock = agent_rules.FileLock(self.lock_path, sleep=self.wait,
+                                    attempts=CONFIG_LOCK_ATTEMPTS)
+        try:
+            with lock:
+                yield
+        except agent_rules.LockTimeout:
+            raise ConfigError("the config lock %s stayed busy for 10 seconds" % self.lock_path)
+
+    def _write(self, config):
+        document = {"version": CONFIG_VERSION}
+        document.update(config)
+        text = json.dumps(document, indent=2, sort_keys=True) + "\n"
+        try:
+            os.makedirs(self.directory, exist_ok=True)
+            descriptor, temporary = tempfile.mkstemp(
+                prefix="tools.json.", suffix=".tmp", dir=self.directory)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(text)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, self.path)
+            except BaseException:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
+                raise
+        except OSError as error:
+            raise ConfigError("cannot write %s: %s" % (self.path, error))
+
+
+def effective_env(inherited, config):
+    """The inherited environment with the config applied to the variables builds read (D8)."""
+    env = dict(inherited)
+    java_home = config.get("java_home")
+    if java_home:
+        env["JAVA_HOME"] = java_home
+    sdk = config.get("android_sdk")
+    if sdk:
+        env["ANDROID_HOME"] = sdk
+        env["ANDROID_SDK_ROOT"] = sdk
+    ndk = config.get("android_ndk")
+    if ndk:
+        env["ANDROID_NDK_HOME"] = ndk
+    prefix = []
+    path_prepend = config.get("path_prepend")
+    if path_prepend:
+        prefix.append(path_prepend)
+    effective_java = env.get("JAVA_HOME")
+    if effective_java:
+        prefix.append(os.path.join(effective_java, "bin"))
+    inherited_path = env.get("PATH", "")
+    env["PATH"] = os.pathsep.join(prefix + ([inherited_path] if inherited_path else []))
+    return env
+
+
+def _properties_get(fs, path, key):
+    """One value of a `key=value` properties file (`release`, `source.properties`, `local.properties`)."""
+    try:
+        text = fs.read_text(path)
+    except (OSError, KeyError):
+        return None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped[0] in ("#", "!"):
+            continue
+        if "=" in stripped:
+            name, _, value = stripped.partition("=")
+        elif ":" in stripped:
+            name, _, value = stripped.partition(":")
+        else:
+            continue
+        if name.strip() != key:
+            continue
+        value = _properties_unescape(value.strip())
+        if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+            value = value[1:-1]
+        return value
+    return None
+
+
+def _properties_unescape(value):
+    out = []
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char == "\\" and index + 1 < len(value):
+            out.append(value[index + 1])
+            index += 2
+            continue
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
+def _release_java_version(fs, home):
+    return _properties_get(fs, os.path.join(home, "release"), "JAVA_VERSION")
+
+
+def _source_revision(fs, directory):
+    return _properties_get(fs, os.path.join(directory, "source.properties"), "Pkg.Revision")
+
+
+def _valid_sdk(fs, path):
+    return (bool(path) and fs.isdir(path)
+            and (fs.isdir(os.path.join(path, "platform-tools"))
+                 or fs.isdir(os.path.join(path, "cmdline-tools"))))
+
+
+def _local_sdk_dir(repo, fs, properties="android/local.properties"):
+    sdk = _properties_get(fs, os.path.join(repo, properties), "sdk.dir")
+    return sdk.strip() if sdk else None
+
+
+def _sdk_dir_warning(repo, env, fs):
+    """The `local.properties` warning shared by `config show` and a run's android node (D8)."""
+    local = _local_sdk_dir(repo, fs)
+    if not local:
+        return None
+    effective = (env.get("ANDROID_HOME") or env.get("ANDROID_SDK_ROOT") or "").strip()
+    if not effective:
+        return None
+    if os.path.realpath(local) == os.path.realpath(effective):
+        return None
+    return ("android/local.properties sets sdk.dir=%s, but the effective Android SDK is %s; "
+            "Gradle reads local.properties first, and verify.py never writes it"
+            % (local, effective))
+
+
+def sdk_dir_warning(ctx, env):
+    """The warning a run reports under the android node (design D8); None when there is none."""
+    return _sdk_dir_warning(ctx.repo, env, ctx.fs)
+
+
+def _resolved_description(fs, key, value):
+    if key == "java_home":
+        version = _release_java_version(fs, value)
+        return "version %s" % (version or "unknown")
+    if key == "android_sdk":
+        return "valid SDK" if _valid_sdk(fs, value) else "not a valid SDK"
+    if key == "android_ndk":
+        return "Pkg.Revision %s" % (_source_revision(fs, value) or "missing")
+    return "directory"
+
+
+def _java_major(text):
+    """The major of a JDK version or of a `java -version` line (1.8 is 8, 21.0.12 is 21)."""
+    match = re.search(r"\d+(?:\.\d+)*", text or "")
+    if not match:
+        return None
+    parts = match.group(0).split(".")
+    if parts[0] == "1" and len(parts) > 1:
+        return int(parts[1])
+    return int(parts[0])
+
+
+def _first_version(text):
+    match = re.search(r"\d+(?:\.\d+)*", text or "")
+    return match.group(0) if match else None
+
+
+def _version_tuple(version):
+    try:
+        return tuple(int(part) for part in version.split("."))
+    except (AttributeError, ValueError):
+        return None
+
+
+def _which(ctx, program, env, cwd):
+    """The first executable `program` on the effective PATH, relative entries against `cwd`."""
+    for entry in (env.get("PATH") or "").split(os.pathsep):
+        if not entry:
+            continue
+        base = entry if os.path.isabs(entry) else os.path.join(cwd, entry)
+        candidate = os.path.join(base, program)
+        if (ctx.fs.exists(candidate) and not ctx.fs.isdir(candidate)
+                and ctx.fs.is_executable(candidate)):
+            return candidate
+    return None
+
+
+def _output_text(outcome):
+    """The full captured output of a version command: stdout, then stderr, stripped."""
+    lines = []
+    for part in (outcome.stdout or [], outcome.stderr or []):
+        for line in part:
+            stripped = line.strip()
+            if stripped:
+                lines.append(stripped)
+    return "\n".join(lines)
+
+
+def _first_line(text):
+    return (text or "").splitlines()[0].strip() if (text or "").strip() else ""
+
+
+def _scan_lines(entries, empty):
+    """The bounded candidate scan lines: `path (version)` per entry, matches first."""
+    if not entries:
+        return "candidates: none found under %s" % empty
+    lines = ["candidates:"]
+    for path, version in entries:
+        lines.append("  %s (%s)" % (path, version or "version unknown"))
+    return "\n".join(lines)
+
+
+def _bounded(entries, matches):
+    """The bounded candidate view: at most `CANDIDATE_LIMIT`, the ones that satisfy the pin first."""
+    preferred = [entry for entry in entries if matches(entry)]
+    rest = [entry for entry in entries if entry not in preferred]
+    return (preferred + rest)[:CANDIDATE_LIMIT]
+
+
+def _fix_for_candidate(key, matching, req):
+    """The exact fix: the one matching candidate, the ask-user text, else the required fix."""
+    if len(matching) == 1:
+        return "python3 -I scripts/verify.py config set %s %s" % (key, matching[0][0]), None
+    if len(matching) > 1:
+        listed = ", ".join(entry[0] for entry in matching[:CANDIDATE_LIMIT])
+        return req["fix"], "Several candidates match (%s): %s." % (listed, ASK_USER)
+    return req["fix"], None
+
+
+def _probe_failure(resolver, required, found, scan, fix, extra=None):
+    parts = ["%s: %s" % (resolver, required)]
+    if found:
+        parts.append(found)
+    if scan:
+        parts.append(scan)
+    if extra:
+        parts.append(extra)
+    parts.append("fix: %s" % fix)
+    return Outcome("not_run", error="\n".join(parts), fix=fix)
+
+
+def _runner_failure(resolver, argv, outcome, req):
+    if outcome.kind == "timeout":
+        return Outcome("timeout", error="%s: `%s` %s"
+                       % (resolver, _argv_text(argv), PROBE_TIMEOUT))
+    detail = _output_text(outcome) or outcome.error or outcome.kind
+    fix = req["fix"]
+    return Outcome(
+        "not_run",
+        error="%s: `%s` did not complete (%s): %s\nfix: %s"
+              % (resolver, _argv_text(argv), outcome.kind, detail, fix),
+        fix=fix)
+
+
+def _probe_log(ctx, req_id):
+    return os.path.join(ctx.run_dir, "%s.probe.log" % req_id)
+
+
+def _probe_run(ctx, run, argv, cwd, env, req_id):
+    return run(list(argv), cwd, dict(env), _probe_log(ctx, req_id),
+               _resolver_cutoff(ctx), True)
+
+
+def _pin_value(ctx, relative, req, resolver):
+    """The first non-empty line of a pin file, else the `not_run` outcome naming it."""
+    path = os.path.join(ctx.repo, relative)
+    try:
+        text = ctx.fs.read_text(path)
+    except (OSError, KeyError) as error:
+        return None, Outcome(
+            "not_run",
+            error="%s: cannot read %s (%s)\nfix: %s"
+                  % (resolver, relative, error, req["fix"]),
+            fix=req["fix"])
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return None, Outcome(
+            "not_run",
+            error="%s: %s is empty\nfix: %s" % (resolver, relative, req["fix"]),
+            fix=req["fix"])
+    return lines[0], None
+
+
+def _read_repo_text(ctx, relative, req, resolver):
+    path = os.path.join(ctx.repo, relative)
+    try:
+        return ctx.fs.read_text(path), None
+    except (OSError, KeyError) as error:
+        return None, Outcome(
+            "not_run",
+            error="%s: cannot read %s (%s)\nfix: %s"
+                  % (resolver, relative, error, req["fix"]),
+            fix=req["fix"])
+
+
+def _java_candidates(ctx, major):
+    if not ctx.fs.isdir(JVM_ROOT):
+        return []
+    entries = []
+    seen = set()
+    for name in ctx.fs.listdir(JVM_ROOT):
+        path = os.path.join(JVM_ROOT, name)
+        if not ctx.fs.isdir(path):
+            continue
+        real = os.path.realpath(path)
+        if real in seen:
+            continue
+        version = _release_java_version(ctx.fs, path)
+        if version is None and not ctx.fs.exists(os.path.join(path, "bin", "java")):
+            continue
+        seen.add(real)
+        entries.append((real, version))
+    return _bounded(entries, lambda entry: _java_major(entry[1] or "") == major)
+
+
+def _sdk_candidate_roots(env, ctx):
+    """The SDK directories the candidate scan knows about, with the local.properties one first."""
+    roots = []
+    for value in (_local_sdk_dir(ctx.repo, ctx.fs),
+                  env.get("ANDROID_SDK_ROOT"), env.get("ANDROID_HOME"),
+                  _expand_home(env, SDK_ROOTS[1]), _expand_home(env, SDK_ROOTS[0])):
+        if value and value not in roots:
+            roots.append(value)
+    return roots
+
+
+def _expand_home(env, root):
+    home = env.get("HOME") or os.path.expanduser("~")
+    if root.startswith("$HOME/"):
+        return os.path.join(home, root[len("$HOME/"):])
+    return root
+
+
+def _android_sdk_candidates(ctx, env):
+    entries = []
+    seen = set()
+    for path in _sdk_candidate_roots(env, ctx):
+        real = os.path.realpath(path)
+        if real in seen or not ctx.fs.isdir(real):
+            continue
+        seen.add(real)
+        valid = _valid_sdk(ctx.fs, real)
+        if valid:
+            version = ("platform-tools" if ctx.fs.isdir(os.path.join(real, "platform-tools"))
+                       else "cmdline-tools")
+        else:
+            version = "no platform-tools or cmdline-tools"
+        entries.append((real, version))
+    return _bounded(entries, lambda entry: _valid_sdk(ctx.fs, entry[0]))
+
+
+def _ndk_candidates(ctx, env, pin):
+    entries = []
+    seen = set()
+
+    def add(path):
+        if not path:
+            return
+        real = os.path.realpath(path)
+        if real in seen or not ctx.fs.isdir(real):
+            return
+        seen.add(real)
+        entries.append((real, _source_revision(ctx.fs, real)))
+
+    add((env.get("ANDROID_NDK_HOME") or "").strip())
+    for sdk in _sdk_candidate_roots(env, ctx):
+        ndk_dir = os.path.join(sdk, "ndk")
+        if ctx.fs.isdir(ndk_dir):
+            for name in ctx.fs.listdir(ndk_dir):
+                add(os.path.join(ndk_dir, name))
+    return _bounded(entries, lambda entry: entry[1] == pin)
+
+
+def _path_tool_candidates(ctx, env, args, req_id, run):
+    """The bounded scan for a missing or too-old PATH tool: `(bin dir, executable, version)`."""
+    program = args["program"]
+    entries = []
+    cargo = _expand_home(env, TOOL_ROOTS[0])
+    if ctx.fs.isdir(cargo) and ctx.fs.exists(os.path.join(cargo, program)):
+        entries.append((cargo, os.path.join(cargo, program), None))
+    nvm = _expand_home(env, "$HOME/.nvm/versions/node")
+    if ctx.fs.isdir(nvm):
+        for name in ctx.fs.listdir(nvm):
+            bindir = os.path.join(nvm, name, "bin")
+            executable = os.path.join(bindir, program)
+            if not ctx.fs.exists(executable):
+                continue
+            version = None
+            if name.startswith("v") and _first_version(name):
+                version = _first_version(name)
+            version_cmd = args.get("version_cmd")
+            if version is None and version_cmd and version_cmd[0] == program:
+                outcome = _probe_run(ctx, run, [executable] + version_cmd[1:], ctx.repo,
+                                     env, req_id + ".candidate")
+                if outcome.kind == "ok":
+                    version = _first_version(_output_text(outcome))
+            entries.append((bindir, executable, version))
+    entries.sort()
+    return _path_candidates_bounded(entries, args, ctx)
+
+
+def _path_candidates_bounded(entries, args, ctx):
+    def matches(entry):
+        return _satisfies(args, entry[2], ctx)
+
+    preferred = [entry for entry in entries if matches(entry)]
+    rest = [entry for entry in entries if entry not in preferred]
+    return (preferred + rest)[:CANDIDATE_LIMIT]
+
+
+def _satisfies(args, version, ctx):
+    if not version:
+        return False
+    if args.get("exact"):
+        return _version_tuple(version) == _version_tuple(args["exact"])
+    if args.get("min"):
+        have, need = _version_tuple(version), _version_tuple(args["min"])
+        return have is not None and need is not None and have >= need
+    if args.get("pin_file"):
+        pin, _failure = _pin_value(ctx, args["pin_file"], {"fix": ""}, "path-tool")
+        return pin is not None and _version_tuple(version) == _version_tuple(pin)
+    return True
+
+
+def _requirement_text(args):
+    if args.get("exact"):
+        return "exactly %s" % args["exact"]
+    if args.get("min"):
+        return "%s or newer" % args["min"]
+    if args.get("pin_file"):
+        return "the version pinned in %s" % args["pin_file"]
+    return "any version"
+
+
+def probe(req_id, req, ctx, env, run):
+    """One requirement under the step's effective environment (design D7).
+
+    Returns `(outcome, resolved)` where `outcome.kind` is `ok` or `not_run` with `.fix`, or
+    `timeout` when the probe was cut off; `resolved` is `"<real path>@<version output>"` for the
+    fingerprint (D6) and None otherwise. A version command runs through `run` under the deadline.
+    """
+    if _past_cutoff(ctx):
+        return Outcome("timeout", error=PROBE_TIMEOUT), None
+    kind = req.get("kind")
+    if kind == "path":
+        path = req["path"]
+        if ctx.fs.exists(_abs_path(ctx, path)):
+            return Outcome("ok"), None
+        fix = req["fix"]
+        return Outcome("not_run",
+                       error="path %s is missing\nfix: %s" % (path, fix),
+                       fix=fix), None
+    if kind == "generated":
+        path = req["path"]
+        if ctx.fs.isdir(_abs_path(ctx, path)):
+            return Outcome("ok"), None
+        fix = req["fix"]
+        return Outcome("not_run",
+                       error="generated output %s is missing\nfix: %s" % (path, fix),
+                       fix=fix), None
+    if kind != "tool":
+        raise ValueError("unknown requirement kind %r" % (kind,))
+    resolver = req.get("resolver")
+    if resolver == "java-home":
+        return _probe_java_home(req_id, req, ctx, env, run)
+    if resolver == "android-sdk":
+        return _probe_android_sdk(req_id, req, ctx, env)
+    if resolver == "android-ndk":
+        return _probe_android_ndk(req_id, req, ctx, env)
+    if resolver == "path-tool":
+        return _probe_path_tool(req_id, req, ctx, env, run)
+    if resolver == "rustup-toolchain":
+        return _probe_rustup(req_id, req, ctx, env, run)
+    if resolver == "playwright-chromium":
+        return _probe_playwright(req_id, req, ctx, env, run)
+    raise ValueError("unknown requirement resolver %r" % (resolver,))
+
+
+def _probe_java_home(req_id, req, ctx, env, run):
+    pin, failure = _pin_value(ctx, JAVA_PIN_FILE, req, "java-home")
+    if failure is not None:
+        return failure, None
+    major = _java_major(pin)
+    java_home = (env.get("JAVA_HOME") or "").strip()
+    if java_home:
+        java_bin = os.path.join(java_home, "bin", "java")
+        if not ctx.fs.exists(java_bin):
+            return _java_failure(ctx, env, req, pin, major,
+                                 "JAVA_HOME is %s but it has no bin/java" % java_home), None
+        found_label = "JAVA_HOME is %s" % java_home
+    else:
+        java_bin = _which(ctx, "java", env, ctx.repo)
+        if java_bin is None:
+            return _java_failure(
+                ctx, env, req, pin, major,
+                "JAVA_HOME is unset and no java is on PATH"), None
+        java_home = os.path.dirname(os.path.dirname(java_bin))
+        found_label = "java on PATH is %s" % java_bin
+    argv = [java_bin, "-version"]
+    outcome = _probe_run(ctx, run, argv, ctx.repo, env, req_id)
+    if outcome.kind != "ok":
+        return _runner_failure("java-home", argv, outcome, req), None
+    text = _output_text(outcome)
+    if _java_major(text) == major:
+        return Outcome("ok"), os.path.realpath(java_home) + "@" + text
+    found = "%s, reporting %s" % (found_label, _first_line(text) or "no version output")
+    return _java_failure(ctx, env, req, pin, major, found), None
+
+
+def _java_failure(ctx, env, req, pin, major, found):
+    candidates = _java_candidates(ctx, major)
+    matching = [entry for entry in candidates if _java_major(entry[1] or "") == major]
+    fix, extra = _fix_for_candidate("java_home", matching, req)
+    required = "%s pins %s (major %s)" % (JAVA_PIN_FILE, pin, major)
+    scan = _scan_lines(candidates, JVM_ROOT)
+    return _probe_failure("java-home", required, found, scan, fix, extra)
+
+
+def _probe_android_sdk(req_id, req, ctx, env):
+    local = _local_sdk_dir(ctx.repo, ctx.fs)
+    source = None
+    for label, value in (("android/local.properties sdk.dir", local),
+                         ("ANDROID_HOME", env.get("ANDROID_HOME")),
+                         ("ANDROID_SDK_ROOT", env.get("ANDROID_SDK_ROOT"))):
+        if value and value.strip():
+            source = (label, value.strip())
+            break
+    if source is None:
+        return _android_sdk_failure(
+            ctx, env, req,
+            "android/local.properties has no sdk.dir, and ANDROID_HOME and "
+            "ANDROID_SDK_ROOT are unset"), None
+    # Gradle/AGP uses a set sdk.dir or ANDROID_HOME even when it is invalid: an invalid first
+    # source is reported, never skipped in favour of one Gradle would not use (design D7/D8).
+    label, path = source
+    if _valid_sdk(ctx.fs, path):
+        return Outcome("ok"), os.path.realpath(path) + "@"
+    return _android_sdk_failure(
+        ctx, env, req,
+        "%s is %s, which has neither platform-tools nor cmdline-tools" % (label, path)), None
+
+
+def _android_sdk_failure(ctx, env, req, found):
+    candidates = _android_sdk_candidates(ctx, env)
+    matching = [entry for entry in candidates if _valid_sdk(ctx.fs, entry[0])]
+    fix, extra = _fix_for_candidate("android_sdk", matching, req)
+    scan = _scan_lines(candidates, "$HOME/.android-sdk, $HOME/Android/Sdk")
+    return _probe_failure("android-sdk", "an Android SDK directory", found, scan, fix, extra)
+
+
+def _ndk_locations(ctx, env, pin):
+    locations = []
+    ndk_home = (env.get("ANDROID_NDK_HOME") or "").strip()
+    if ndk_home:
+        locations.append(("ANDROID_NDK_HOME", ndk_home))
+    sdk_root = (env.get("ANDROID_SDK_ROOT") or "").strip()
+    if sdk_root:
+        locations.append(("ANDROID_SDK_ROOT", os.path.join(sdk_root, "ndk", pin)))
+    android_home = (env.get("ANDROID_HOME") or "").strip()
+    if android_home:
+        locations.append(("ANDROID_HOME", os.path.join(android_home, "ndk", pin)))
+    for properties in ("local.properties", "android/local.properties"):
+        sdk = _local_sdk_dir(ctx.repo, ctx.fs, properties)
+        if sdk:
+            locations.append((properties + " sdk.dir", os.path.join(sdk, "ndk", pin)))
+    return locations
+
+
+def _probe_android_ndk(req_id, req, ctx, env):
+    pin, failure = _pin_value(ctx, NDK_PIN_FILE, req, "android-ndk")
+    if failure is not None:
+        return failure, None
+    locations = _ndk_locations(ctx, env, pin)
+    selected = None
+    for label, path in locations:
+        if ctx.fs.isdir(path):
+            selected = (label, path)
+            break
+    if selected is None:
+        searched = ", ".join("%s %s" % (label, path) for label, path in locations) or "none"
+        return _android_ndk_failure(
+            ctx, env, req, pin,
+            "no candidate directory exists (searched: %s)" % searched), None
+    label, path = selected
+    found = _source_revision(ctx.fs, path)
+    if found == pin:
+        return Outcome("ok"), os.path.realpath(path) + "@" + pin
+    # D7: the first existing candidate is the answer; a revision mismatch there is NOT RUN,
+    # never a fall-through to a candidate the Gradle build would not use.
+    return _android_ndk_failure(
+        ctx, env, req, pin,
+        "%s (%s) reports Pkg.Revision %s, and the first existing candidate is the one "
+        "the Gradle build uses" % (path, label, found or "missing")), None
+
+
+def _android_ndk_failure(ctx, env, req, pin, found):
+    candidates = _ndk_candidates(ctx, env, pin)
+    matching = [entry for entry in candidates if entry[1] == pin]
+    fix, extra = _fix_for_candidate("android_ndk", matching, req)
+    required = "%s pins %s" % (NDK_PIN_FILE, pin)
+    scan = _scan_lines(candidates, "$ANDROID_SDK_ROOT/ndk, $ANDROID_HOME/ndk, "
+                                  "$HOME/.android-sdk/ndk, $HOME/Android/Sdk/ndk")
+    return _probe_failure("android-ndk", required, found, scan, fix, extra)
+
+
+def _probe_path_tool(req_id, req, ctx, env, run):
+    args = req.get("args") or {}
+    program = args["program"]
+    cwd = _abs_path(ctx, args.get("cwd") or ".")
+    executable = _which(ctx, program, env, cwd)
+    required = "%s is required (%s)" % (program, _requirement_text(args))
+    if executable is None:
+        return _path_tool_failure(
+            ctx, env, req, req_id, run, args,
+            required, "%s is not on the effective PATH" % program), None
+    argv = list(args["version_cmd"])
+    outcome = _probe_run(ctx, run, argv, cwd, env, req_id)
+    if outcome.kind != "ok":
+        return _runner_failure("path-tool", argv, outcome, req), None
+    text = _output_text(outcome)
+    version = _first_version(text)
+    if not _satisfies(args, version, ctx):
+        found = "%s is %s" % (executable, text or "not reporting a version")
+        return _path_tool_failure(ctx, env, req, req_id, run, args, required, found), None
+    return Outcome("ok"), os.path.realpath(executable) + "@" + text
+
+
+def _path_tool_failure(ctx, env, req, req_id, run, args, required, found):
+    candidates = _path_tool_candidates(ctx, env, args, req_id, run)
+    matching = [entry for entry in candidates if _satisfies(args, entry[2], ctx)]
+    fix, extra = _fix_for_candidate("path_prepend", matching, req)
+    lines = ["  %s (%s)" % (entry[1], entry[2] or "version unknown") for entry in candidates]
+    scan = ("candidates:\n" + "\n".join(lines)) if lines else (
+        "candidates: none found under " + ", ".join(TOOL_ROOTS))
+    return _probe_failure("path-tool", required, found, scan, fix, extra)
+
+
+def _toolchain_channel(text):
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            continue
+        if "=" in stripped:
+            name, _, value = stripped.partition("=")
+            if name.strip() == "channel":
+                return _properties_unescape(value.strip().strip('"'))
+        elif stripped and not stripped.startswith("#"):
+            return stripped
+    return None
+
+
+def _channel_matches(channel, active):
+    first = active.split()[0] if active.split() else ""
+    return first == channel or first.startswith(channel + "-")
+
+
+def _probe_rustup(req_id, req, ctx, env, run):
+    relative = req["args"]["toolchain_file"]
+    text, failure = _read_repo_text(ctx, relative, req, "rustup-toolchain")
+    if failure is not None:
+        return failure, None
+    channel = _toolchain_channel(text)
+    if not channel:
+        return Outcome("not_run",
+                       error="rustup-toolchain: %s pins no channel\nfix: %s"
+                             % (relative, req["fix"]),
+                       fix=req["fix"]), None
+    cwd = _abs_path(ctx, os.path.dirname(relative) or ".")
+    rustup = _which(ctx, "rustup", env, cwd)
+    required = "%s pins channel %s" % (relative, channel)
+    if rustup is None:
+        cargo = _expand_home(env, TOOL_ROOTS[0])
+        scan = ("candidates:\n  %s" % cargo) if ctx.fs.isdir(cargo) else (
+            "candidates: none found under " + TOOL_ROOTS[0])
+        return _probe_failure("rustup-toolchain", required,
+                              "rustup is not on the effective PATH", scan,
+                              req["fix"]), None
+    argv = [rustup, "show", "active-toolchain"]
+    outcome = _probe_run(ctx, run, argv, cwd, env, req_id)
+    if outcome.kind != "ok":
+        return _runner_failure("rustup-toolchain", argv, outcome, req), None
+    text = _output_text(outcome)
+    active = _first_line(text)
+    if _channel_matches(channel, active):
+        return Outcome("ok"), os.path.realpath(rustup) + "@" + text
+    return _probe_failure("rustup-toolchain", required,
+                          "the active toolchain is %s" % (active or "unknown"),
+                          None, req["fix"]), None
+
+
+def _probe_playwright(req_id, req, ctx, env, run):
+    explicit = (env.get("VELES_TEST_CHROMIUM") or "").strip()
+    required = "the pinned playwright-core Chromium, or VELES_TEST_CHROMIUM"
+    if explicit:
+        if ctx.fs.exists(explicit) and not ctx.fs.isdir(explicit) \
+                and ctx.fs.is_executable(explicit):
+            return Outcome("ok"), os.path.realpath(explicit) + "@"
+        return _probe_failure("playwright-chromium", required,
+                              "VELES_TEST_CHROMIUM is %s, which is not an executable file"
+                              % explicit, None, req["fix"]), None
+    cwd = _abs_path(ctx, "web-extension")
+    if _which(ctx, "node", env, cwd) is None:
+        return _probe_failure("playwright-chromium", required,
+                              "node is not on the effective PATH, so playwright-core cannot "
+                              "report its Chromium", None, req["fix"]), None
+    outcome = _probe_run(ctx, run, PLAYWRIGHT_QUERY, cwd, env, req_id)
+    if outcome.kind != "ok":
+        return _runner_failure("playwright-chromium", PLAYWRIGHT_QUERY, outcome, req), None
+    reported = _first_line(_output_text(outcome))
+    if not reported:
+        return _probe_failure("playwright-chromium", required,
+                              "playwright-core reported no executable path", None,
+                              req["fix"]), None
+    path = reported if os.path.isabs(reported) else os.path.join(cwd, reported)
+    if ctx.fs.exists(path) and not ctx.fs.isdir(path) and ctx.fs.is_executable(path):
+        return Outcome("ok"), os.path.realpath(path) + "@"
+    return _probe_failure("playwright-chromium", required,
+                          "%s does not exist or is not executable" % path, None,
+                          req["fix"]), None
+
+
+def _log_matches(path, regex):
+    """True when any line of the whole log matches; a missing log never matches (D7)."""
+    pattern = re.compile(regex)
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if pattern.search(line):
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def classify_env_failure(step, outcome, log_path):
+    """Turn a failure the command's own environment entry explains into `not_run` (D7).
+
+    `env_exit` codes are matched first, then `env_patterns`, against the whole log line by
+    line -- a diagnostic at the start of a long log still classifies the failure.
+    """
+    if outcome.kind != "fail":
+        return outcome
+    for entry in step.env_exit:
+        if outcome.code == entry["code"]:
+            return replace(outcome, kind="not_run", fix=entry["fix"])
+    for entry in step.env_patterns:
+        if _log_matches(log_path, entry["regex"]):
+            return replace(outcome, kind="not_run", fix=entry["fix"])
+    return outcome
+
+
 # --- the CLI ------------------------------------------------------------------------------
 
 
@@ -1367,9 +2273,18 @@ def _unwired(args, ctx):
 
 
 def _config_mode(args, ctx):
-    """The machine config lands with the probe step (design D8)."""
-    ctx.log("verify: config is not built yet")
-    return 2
+    """`config set|show` over the machine config (design D8); validation happens before a write."""
+    config = Config(ctx.common_dir, repo=ctx.repo, wait=ctx.wait.sleep)
+    try:
+        if args.config_command == "set":
+            config.set(args.key, args.value)
+        text = config.show()
+    except ConfigError as error:
+        ctx.log("verify: %s" % error)
+        return 2
+    for line in text.splitlines():
+        ctx.log(line)
+    return 0
 
 
 def main(argv, ctx):

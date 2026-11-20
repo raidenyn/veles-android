@@ -200,6 +200,11 @@ class FakeFs:
             return FakeStat(mode=self.modes.get(path, 0o40755), size=0)
         raise FileNotFoundError(path)
 
+    def is_executable(self, path):
+        """Fixture files are executable unless their recorded mode says otherwise."""
+        path = self._norm(path)
+        return path in self.files and bool(self.modes.get(path, 0o100755) & 0o111)
+
 
 def make_context(**overrides):
     """A Context wired to fakes; any field can be overridden by keyword."""
