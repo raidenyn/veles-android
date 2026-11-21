@@ -16,6 +16,10 @@ permissions:
 
 jobs:
   build:
+    # Same-repository heads only: the checkout below takes an arbitrary commit SHA, and a
+    # fork PR must not run in this privileged (default-branch cache and artifact) context
+    # (CodeQL actions/cache-poisoning). Maintainers build fork PRs from a branch instead.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
