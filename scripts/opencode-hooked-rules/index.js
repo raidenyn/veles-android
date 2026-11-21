@@ -685,9 +685,18 @@ export function createHandlers(
    * session with the verifier text, a notice is a message that starts no run, and a pass sends nothing; a
    * failed synthetic prompt is caught, so the watcher and the slot are never held by the host. Nothing is
    * sent after dispose or after the watcher aborted.
+   *
+   * The lookup runs inside one handler budget (`HANDLER_BUDGET_MS`): a host record that never answers must
+   * not hold this session's slot, or every later turn end of it would silently skip verification.
    */
   async function verifyTurn(sessionID, signal) {
-    const resolved = await resolveSession(sessionID)
+    const bound = budget(signal)
+    let resolved
+    try {
+      resolved = await lookup(sessionID, bound)
+    } finally {
+      bound.end()
+    }
     if (signal.aborted || closed || resolved === null) return
     if (resolved.key.agent !== undefined) return // a child session's turn end starts no verifier
     const response = await verifier({ session_id: sessionID, cwd: resolved.cwd }, { signal })
@@ -706,7 +715,10 @@ export function createHandlers(
   /**
    * Claim a session's verifier slot and start one run, unless one is already in flight (a later turn end
    * starts no second run). The slot is released when the run settles, never by a timer, so a resume that
-   * never settles does not keep it: the run's own budget bounds the launcher, not the slot.
+   * never settles does not keep it: the run's own budget bounds the launcher, not the slot. An expired or
+   * disposed run frees the slot as soon as it resolves, while the launcher may still be inside its SIGKILL
+   * grace; a turn end in that window starts a second launcher, whose run reports the old one's lock as
+   * contention (harmless, and documented in `docs/verify.md`).
    */
   function startVerifier(sessionID, signal) {
     if (closed || verifiesInFlight.has(sessionID) || (signal && signal.aborted)) return

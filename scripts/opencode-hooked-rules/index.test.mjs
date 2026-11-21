@@ -1703,6 +1703,16 @@ const verifyPrints = (stdout) => (call) => (isVerify(call) ? { code: 0, stdout }
 /** Script: the verifier child never finishes, the engine prints nothing. */
 const hangingVerifier = (call) => (isVerify(call) ? { hang: true } : { code: 0, stdout: "" })
 
+/**
+ * The one live SIGKILL grace timer. The engine's and the lookup's 5 s budgets share the same duration, so
+ * this asserts they are already cleared rather than picking the first timer that happens to be 5000 ms.
+ */
+function liveGrace(timers) {
+  const grace = timers.live().filter((timer) => timer.ms === VERIFY_KILL_GRACE_MS)
+  assert.equal(grace.length, 1, "exactly one live SIGKILL grace timer")
+  return grace[0]
+}
+
 test("verifier: a block resumes with resume:true", async () => {
   const { ctx, spawn } = await boot({
     events: [succeeded("ses_a")],
@@ -1784,10 +1794,7 @@ test("verifier: budget expiry sends SIGTERM, then SIGKILL after 5000 ms, and sen
   await flush()
   assert.deepEqual(verifier.signals, ["SIGTERM"], "the launcher is stopped first")
   assert.deepEqual(ctx.synthetics, [], "an expired run sends nothing")
-  const grace = timers.timers.find(
-    (timer) => timer.ms === VERIFY_KILL_GRACE_MS && !timer.cleared && !timer.fired,
-  )
-  assert.ok(grace, "a SIGKILL follows after the grace")
+  const grace = liveGrace(timers)
   grace.fn()
   await flush()
   assert.deepEqual(verifier.signals, ["SIGTERM", "SIGKILL"])
@@ -1795,7 +1802,7 @@ test("verifier: budget expiry sends SIGTERM, then SIGKILL after 5000 ms, and sen
 })
 
 test("verifier: dispose stops a running verifier", async () => {
-  const { ctx, spawn, dispose } = await boot({
+  const { ctx, spawn, timers, dispose } = await boot({
     events: [succeeded("ses_a")],
     script: hangingVerifier,
   })
@@ -1807,6 +1814,10 @@ test("verifier: dispose stops a running verifier", async () => {
   assert.deepEqual(verifier.signals, ["SIGTERM"], "the launcher is stopped first")
   assert.equal(await settled(disposing), true, "the disposer stays bounded and resolves")
   assert.deepEqual(ctx.synthetics, [], "a disposed run sends nothing")
+  liveGrace(timers).fn()
+  await flush()
+  assert.deepEqual(verifier.signals, ["SIGTERM", "SIGKILL"], "dispose keeps the SIGKILL grace too")
+  assert.deepEqual(ctx.synthetics, [])
 })
 
 test("verifier: a turn end while one runs still sends the engine stop and starts no second verifier", async () => {
@@ -1830,7 +1841,39 @@ test("verifier: a turn end while one runs still sends the engine stop and starts
   await flush()
   assert.equal(spawn.calls.filter(isVerify).length, 1, "no second verifier run")
   assert.equal(spawn.calls.filter((call) => !isVerify(call)).length, 2, "both engine stops were sent")
-  assert.deepEqual(ctx.synthetics, [])
+  assert.deepEqual(ctx.synthetics, [], "the second turn end starts nothing of its own")
+  // The first, still in-flight run finishes and must resume the session with its block.
+  const verifier = spawn.calls.find(isVerify).child
+  verifier.stdout.emit("data", Buffer.from(blockJson("VERIFY TEXT")))
+  verifier.emit("close", 0, null)
+  await flush()
+  assert.deepEqual(
+    ctx.synthetics.map((message) => [message.text, message.resume]),
+    [["VERIFY TEXT", true]],
+    "the in-flight run's block is still delivered once",
+  )
+  assert.equal(spawn.calls.filter(isVerify).length, 1, "and it is still the only verifier run")
+})
+
+test("verifier: a lookup that never answers is bounded and frees the slot for a later turn end", async () => {
+  let verifications = 0
+  const { ctx, spawn, timers, handlers } = turnEnd({
+    verifier: async () => {
+      verifications += 1
+      return { kind: "pass", text: "" }
+    },
+  })
+  ctx.session.get = () => new Promise(() => {}) // the host never answers either turn-end lookup
+  await handlers.onEvent(succeeded("ses_a"), STREAM_SIGNAL)
+  await flush()
+  timers.fire() // every 5 s handler budget expires: the engine stop and the verifier lookup give up
+  await flush()
+  assert.equal(verifications, 0, "nothing was verified while the lookup hung")
+  ctx.session.get = async ({ sessionID }) => ({ id: sessionID }) // the host answers again
+  await handlers.onEvent(succeeded("ses_a"), STREAM_SIGNAL)
+  await flush()
+  assert.equal(verifications, 1, "the later turn end starts a verifier once the slot is free")
+  assert.equal(spawn.calls.length, 1, "and the later engine stop still runs")
 })
 
 test("verifier: engine and verifier blocks are two separate resumes", async () => {
