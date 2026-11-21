@@ -723,7 +723,7 @@
             "verify/test/vendored-patches.test.mjs",
             "verify/test/workflow-contracts.test.mjs"
           ],
-          "requires": ["node"],
+          "requires": ["node", "verify.node-modules"],
           "inputs": [{"path": "verify/test"}],
           "ci": "tooling / unit-tests"
         },

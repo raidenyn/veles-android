@@ -33,6 +33,10 @@ TASKS = (
     "bridgeHostTest",
     "bridgeHostBuild",
 )
+# The four verifier-run tasks (toolchain check, format, lint and test) run at every Stop through
+# `native-host.*` in scripts/verify-commands.json, so they stay in docs/reproducible-builds.md and
+# must not be repeated in the host AGENTS.md, which lists only the commands the verifier does not run.
+HOST_DOC_TASKS = ("bridgeHostBuild",)
 BEGIN = "// ---- OTP-24 production host (begin) ----"
 END = "// ---- OTP-24 production host (end) ----"
 SHA_PINNED_USE = re.compile(r"uses:\s*(?:\./|[\w.-]+/[\w./-]+@[0-9a-f]{40}\b)")
@@ -356,8 +360,11 @@ def check_vendored_patch():
 
 def check_docs(claude_md, repro_md, readme):
     errors = []
-    for name, text in (("native-bridge/host/AGENTS.md", claude_md), ("docs/reproducible-builds.md", repro_md)):
-        for task in TASKS:
+    for name, text, tasks in (
+        ("native-bridge/host/AGENTS.md", claude_md, HOST_DOC_TASKS),
+        ("docs/reproducible-builds.md", repro_md, TASKS),
+    ):
+        for task in tasks:
             if task not in text:
                 errors.append("%s does not document %s" % (name, task))
         if "native-host-windows" not in text or "native-host-macos" not in text:
