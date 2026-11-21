@@ -71,7 +71,8 @@ is stale. Each pointer MUST keep its rule's must-never-miss fact always on:
 - roster: models and presets live only in the roster, and no model is substituted;
 - real-device testing: a behaviour change needs a real device, emulator or Chrome run before it is called done,
   stated in the PR or report;
-- pre-push checks: before a push, run `python3 -I scripts/verify.py --branch`.
+- pre-push checks: before a push, run `python3 -I scripts/verify.py` (the task gate), whose complete run the push
+  gate requires.
 
 #### Scenario: Stale block
 - **WHEN** a hooked rule's `pointer` changes and the block is not regenerated
@@ -83,7 +84,7 @@ is stale. Each pointer MUST keep its rule's must-never-miss fact always on:
 
 #### Scenario: Pre-push pointer names the verify command
 - **WHEN** the pointer block is generated from `.agents/hooked-rules/repo-pre-push-checks.md`
-- **THEN** its line names `python3 -I scripts/verify.py --branch` and keeps the rule's moments, `openspec instructions finalize` and before `git push`
+- **THEN** its line names `python3 -I scripts/verify.py`, does not name `--branch` as the required command, and keeps the rule's moments, `openspec instructions finalize` and before `git push`
 
 ### Requirement: Engine events and decisions
 `scripts/agent_rules.py hook` SHALL be a standard-library Python 3.8+ program, run with `-I`. It MUST read one event
@@ -593,9 +594,10 @@ change passes (see "Delegated verify or review session").
 `git push` with a regex of the same form as the `git commit` gate (`git`, then anything up to a shell operator, then
 the word `push`), SHALL declare `requires: ["branch-pass"]`, and SHALL exempt ref-deletion pushes (`--delete`, `-d`,
 and a `:<ref>` or `+:<ref>` refspec). Its text MUST tell the agent to commit everything first, to run
-`python3 -I scripts/verify.py --branch` in the background and wait for it because a foreground run exceeds the shell
-tools' limits, to fix every `FAIL` and unexpected `NOT RUN`, and then to push; it MUST NOT tell the agent to run node
-checks by hand.
+`python3 -I scripts/verify.py` (the task gate) in the background and wait for it because a foreground run can exceed
+the shell tools' limits, to fix every `FAIL` and unexpected `NOT RUN`, and then to push; it MUST say that
+`python3 -I scripts/verify.py --branch` is the optional full local run, which satisfies the gate as well, and that CI
+runs every test; it MUST NOT tell the agent to run node checks by hand.
 
 #### Scenario: Push without delivery
 - **WHEN** an agent that has not received the rule and has no branch pass for HEAD runs `git push origin feature`
@@ -608,6 +610,14 @@ checks by hand.
 #### Scenario: Push during finalize
 - **WHEN** `openspec instructions finalize` succeeded in the context, a branch pass exists for HEAD, and the agent then runs `git push`
 - **THEN** the push is not denied
+
+#### Scenario: Task-gate pass allows the push
+- **WHEN** the agent commits everything, a complete `python3 -I scripts/verify.py` run passes, and the agent runs `git push origin feature`
+- **THEN** the push is not denied
+
+#### Scenario: Rule names the task gate
+- **WHEN** `.agents/hooked-rules/repo-pre-push-checks.md` is read
+- **THEN** its pointer and body name `python3 -I scripts/verify.py` as the command to run, mention `--branch` only as the optional full run, and keep the commit-first and background instructions
 
 #### Scenario: Pass made stale by a commit
 - **WHEN** the agent commits after the branch pass and runs `git push`
