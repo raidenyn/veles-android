@@ -4431,15 +4431,26 @@ def _stop_child(child):
         pass
 
 
-def _install_sigterm(child):
+class _Terminated(Exception):
+    """The launcher's SIGTERM handler raises this instead of doing blocking work (design D4).
+
+    A handler that called `_stop_child` would run `Popen.wait()` while `_watch`'s `poll()` may
+    hold Popen's non-reentrant waitpid lock (the handler runs between bytecodes, inside `poll`),
+    and block forever. Raising unwinds `poll()` and releases the lock; `launcher` then stops the
+    child outside signal context.
+    """
+
+
+def _install_sigterm():
     """Install the launcher's SIGTERM handler and return it (design D4).
 
     The dispatched child runs in its own session, so killing the launcher alone never reaches
-    it: the handler stops it with `_stop_child`, and `_watch` then sees the dead child and lets
-    `launcher` return 0. It is installed only in the launcher, never in the `--dispatched` gate.
+    it: the handler raises `_Terminated`, which unwinds `_watch` (and any `poll()` it interrupted)
+    so `launcher` can call `_stop_child` outside signal context and return 0. It is installed
+    only in the launcher, never in the `--dispatched` gate.
     """
     def handler(_signum, _frame):
-        _stop_child(child)
+        raise _Terminated()
 
     signal.signal(signal.SIGTERM, handler)
     return handler
@@ -4572,14 +4583,19 @@ def launcher(event_bytes, ctx, spawn, host):
         _close_fd(write_fd)
         previous = signal.getsignal(signal.SIGTERM)
         try:
-            _install_sigterm(child)
+            _install_sigterm()
             _watch(child, read_fd, event_bytes, ctx, outer)
+        except _Terminated:
+            # SIGTERM: stop the child here, outside signal context, and return 0 without a
+            # stderr line. Unwinding _watch also stops waiting on a pipe a descendant may hold.
+            _stop_child(child)
         except Exception:
             # A launcher failure still fails open, but this child is ours alone: stop it.
             _stop_child(child)
             raise
         finally:
-            signal.signal(signal.SIGTERM, previous)
+            signal.signal(signal.SIGTERM,
+                          previous if previous is not None else signal.SIG_DFL)
             _close_fd(read_fd)
     except Exception as error:
         _stderr(_hook_error(error))

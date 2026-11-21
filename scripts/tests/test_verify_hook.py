@@ -366,42 +366,100 @@ class LauncherTest(LauncherFixture):
     def test_launcher_sigterm_stops_child(self):
         # D4: SIGTERM stops the dispatched child (it runs in its own session, so killing the
         # launcher alone never reaches it) and the launcher returns 0. The installed handler is
-        # invoked directly from the child's poll; no signal is sent.
+        # invoked directly from a fake poll while a flag simulates Popen's poll lock, so the
+        # handler must unwind before `_stop_child` runs; no signal is sent.
         self.files[self.script] = b""
         self.checkout(self.repo, self.repo)
         installed = []
         fired = []
-        original = verify._install_sigterm
+        lock_held = []
+        stop_calls = []
+        original_install = verify._install_sigterm
+        original_stop = verify._stop_child
 
-        def install(child):
-            handler = original(child)
+        def install():
+            handler = original_install()
             installed.append(handler)
             return handler
+
+        def stop(child):
+            stop_calls.append((child, list(lock_held)))
+            original_stop(child)
 
         def spawn(argv, **kwargs):
             child = self.spawn(argv, **kwargs)
             poll = child.poll
 
             def polling():
-                result = poll()
-                if installed and not fired:
-                    fired.append(True)
-                    installed[0](signal.SIGTERM, None)
-                return result
+                lock_held.append(True)
+                try:
+                    result = poll()
+                    if installed and not fired:
+                        fired.append(True)
+                        installed[0](signal.SIGTERM, None)  # inside the simulated lock
+                    return result
+                finally:
+                    lock_held.pop()
 
             child.poll = polling
             return child
 
         data = json.dumps({"session_id": SESSION, "cwd": self.repo}).encode()
-        out = io.StringIO()
+        out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(verify, "_install_sigterm", install), \
-                contextlib.redirect_stdout(out):
+                mock.patch.object(verify, "_stop_child", stop), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = verify.launcher(data, self.context(), spawn, "opencode")
-        self.assertEqual((code, out.getvalue()), (0, ""))
+        self.assertEqual((code, out.getvalue(), err.getvalue()), (0, "", ""))
         child = self.children[0]
         self.assertTrue(fired)
         self.assertTrue(child.killed)
         self.assertTrue(child.reaped)
+        # The child was stopped by the launcher after the exception unwound the poll lock, not
+        # by the handler itself; the lock flag is empty at that point.
+        self.assertEqual(stop_calls, [(child, [])])
+
+    def test_launcher_restores_previous_sigterm_handler(self):
+        self.files[self.script] = b""
+        self.checkout(self.repo, self.repo)
+        previous = signal.getsignal(signal.SIGTERM)
+        code, out = self.run_launcher()
+        self.assertEqual((code, out), (0, ""))
+        self.assertIs(signal.getsignal(signal.SIGTERM), previous)
+
+    def test_launcher_restores_handler_after_watch_failure(self):
+        self.files[self.script] = b""
+        self.checkout(self.repo, self.repo)
+        previous = signal.getsignal(signal.SIGTERM)
+        data = json.dumps({"session_id": SESSION, "cwd": self.repo}).encode()
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(verify, "_watch", side_effect=RuntimeError("boom")), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = verify.launcher(data, self.context(), self.spawn, "claude")
+        self.assertEqual((code, out.getvalue()), (0, ""))
+        lines = [line for line in err.getvalue().splitlines() if line.strip()]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("boom", lines[0])
+        self.assertIs(signal.getsignal(signal.SIGTERM), previous)
+        child = self.children[0]
+        self.assertTrue(child.killed)
+        self.assertTrue(child.reaped)
+
+    def test_launcher_none_previous_handler_restores_default(self):
+        # `signal.getsignal` returns None for a handler installed outside Python; restoring it
+        # verbatim would raise TypeError, so the launcher falls back to SIG_DFL.
+        self.files[self.script] = b""
+        self.checkout(self.repo, self.repo)
+        data = json.dumps({"session_id": SESSION, "cwd": self.repo}).encode()
+        out = io.StringIO()
+        with mock.patch.object(verify.signal, "getsignal", return_value=None), \
+                mock.patch.object(verify.signal, "signal") as install, \
+                contextlib.redirect_stdout(out):
+            code = verify.launcher(data, self.context(), self.spawn, "claude")
+        self.assertEqual((code, out.getvalue()), (0, ""))
+        self.assertEqual(len(install.call_args_list), 2)
+        self.assertEqual(install.call_args_list[0].args[0], signal.SIGTERM)
+        self.assertEqual(install.call_args_list[1].args, (signal.SIGTERM, signal.SIG_DFL))
 
     def test_linked_worktree_runs_its_verifier(self):
         self.files[self.worktree_script] = b""
@@ -1319,6 +1377,14 @@ class HookOutputTest(GateFixture):
         session = self.session()
         self.assertEqual(session["blocks"], 2)
         self.assertEqual(session["synopsis"], "old")
+
+    def test_dispatched_never_installs_sigterm_handler(self):
+        install = mock.Mock(side_effect=AssertionError("installed in --dispatched"))
+        with mock.patch.object(verify, "_install_sigterm", install), \
+                mock.patch.object(verify, "run_gate", return_value=self.outcome({})):
+            code, out, err = self.call_hook(self.ctx)
+        self.assertEqual((code, out, err), (0, "", ""))
+        self.assertFalse(install.called)
 
     def test_state_keys_by_host(self):
         # D4: the same session id under two hosts is two sessions, keyed `<host>:<session id>`.
