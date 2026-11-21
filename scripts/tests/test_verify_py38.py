@@ -8,7 +8,9 @@ import unittest
 
 TESTS = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(TESTS)
-SOURCES = sorted([os.path.join(SCRIPTS, "verify.py")]
+SOURCES = sorted([os.path.join(SCRIPTS, "verify.py"),
+                  os.path.join(SCRIPTS, "branch_pass.py"),
+                  os.path.join(TESTS, "test_branch_pass.py")]
                  + glob.glob(os.path.join(TESTS, "*verify*.py")))
 # Builtins that became subscriptable (PEP 585) only in 3.9.
 BUILTIN_GENERICS = {"tuple", "list", "dict", "set", "frozenset", "type"}
