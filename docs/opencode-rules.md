@@ -32,6 +32,13 @@ agent-file check rejects an unpinned or unbounded entry.
   still starts; scoped rules are simply not delivered, and the root `AGENTS.md` pointer plus each node's
   listed rule files keep them discoverable. This degraded state is supported, not a repository error.
 
+## The verify Stop hook
+
+Claude Code's `Stop` event also runs `python3 -I scripts/verify.py --hook claude` (the task gate over the
+affected nodes). The plugin gives OpenCode the same rule delivery and the same gates, but not that hook:
+OpenCode has no equivalent yet, so an OpenCode agent runs `python3 -I scripts/verify.py` itself before
+calling the work done.
+
 ## Untrusted checkouts
 
 Any agent configuration in a checkout (`opencode.json`, `.claude/settings.json`, auto-discovered plugins

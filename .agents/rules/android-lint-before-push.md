@@ -6,9 +6,8 @@ paths:
   - "android/**"
 ---
 
-Before pushing, run the Android lint gate.
-
-Run from `android/`:
+`python3 -I scripts/verify.py --branch` runs these commands for an Android change; run them by hand
+where it cannot run. Run from `android/`:
 
 ```bash
 ./gradlew spotlessCheck detekt lintDebug
