@@ -1,14 +1,23 @@
 ---
-pointer: "Before `git push`, run `python3 -I scripts/verify.py --branch` (the node `AGENTS.md` lists where it cannot run); delivered at `openspec instructions finalize` and before the push; read this file then if it was not."
+pointer: "`git push` is denied until `python3 -I scripts/verify.py --branch` passed for HEAD; delivered at `openspec instructions finalize` and at a denied push; read this file then if it was not."
 commands:
   - "\\bopenspec\\s+instructions\\s+finalize\\b"
 gates:
   - "\\bgit\\b[^;&|\\n]*?\\spush\\b"
+requires: ["branch-pass"]
+exempt:
+  - "\\bgit\\b[^;&|\\n]*?\\spush\\b[^;&|\\n]*?(?:\\s--delete(?:\\s|$)|\\s-d(?:\\s|$))"
+  - "\\bgit\\b[^;&|\\n]*?\\spush\\b(?:\\s+-[^\\s;&|]+)*\\s+[^\\s;&|]+\\s+(?:\\+?:[^\\s;&|]+)(?:\\s+\\+?:[^\\s;&|]+)*\\s*$"
 ---
 
-Run `python3 -I scripts/verify.py --branch` before pushing.
+Commit everything first: the branch pass needs a clean tree, including new untracked change files.
 
-Where it cannot run, find the nodes you touched with
-`python3 -I scripts/components.py changed --base $(git merge-base origin/master HEAD)` and run
-the checks listed in the `AGENTS.md` of every node it selects, including nodes selected because
-of a shared input such as `gradle/`, `gradlew`, `.java-version` or a workflow file.
+Then run
+
+```bash
+python3 -I scripts/verify.py --branch
+```
+
+in the background and wait for it: it takes about 15 minutes, and a foreground run exceeds the
+shell tools' limits. Fix every `FAIL` and every unexpected `NOT RUN` (its fix text is the path),
+then push.
