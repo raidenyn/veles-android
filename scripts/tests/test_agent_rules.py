@@ -3265,10 +3265,11 @@ class ProofGateTest(CheckoutFixture):
             "branch-pass": lambda cwd, deadline, now: (False, "first failure"),
             "second-proof": lambda cwd, deadline, now: (False, "second failure"),
         }
-        def second(cwd, deadline, now):
+        # Exists only so `parse_rule` accepts the rule's second `requires` name.
+        def registered_only(cwd, deadline, now):
             return True, ""
 
-        with mock.patch.dict(agent_rules.PROOF_PREDICATES, {"second-proof": second}):
+        with mock.patch.dict(agent_rules.PROOF_PREDICATES, {"second-proof": registered_only}):
             out, code = self.push(command="gh pr merge 1", proofs=proofs)
         self.assertEqual(code, 0)
         decision = json.loads(out)
@@ -4034,6 +4035,8 @@ class RealRepoRuleTest(unittest.TestCase):
             "git push  origin feat # wip",
             "git push origin feat # -d",
             "git push origin feat # --delete",
+            "git push # :x",
+            "git push -f # :wip",
             "GIT_TRACE=1 git push origin feat",
         )
         message = "no branch pass for HEAD abc123"
