@@ -3595,7 +3595,7 @@ test('check-android runs Gradle from android and guards from the root', async ()
   };
   assertAndroidCheckLayout(source, scripts.rawLog, scripts.pairing);
   const mutations = {
-    'gradle from the root': (text) => text.replace('      - run: ./gradlew spotlessCheck\n        working-directory: android\n', '      - run: ./gradlew spotlessCheck\n'),
+    'gradle from the root': (text) => text.replace('      - run: ./gradlew spotlessCheck --stacktrace\n        working-directory: android\n', '      - run: ./gradlew spotlessCheck --stacktrace\n'),
     'guard from android': (text) => text.replace('        run: node scripts/check-mac-comparisons.mjs --scan android/app/src/main\n', '        working-directory: android\n        run: node scripts/check-mac-comparisons.mjs --scan android/app/src/main\n'),
     'scan outside the relocated root': (text) => text.replace('--scan android/app/src/main', '--scan web-extension/src'),
     'guards off the relocated sources': (text) => text.replaceAll('android/app/src/main', 'app/src/main'),
