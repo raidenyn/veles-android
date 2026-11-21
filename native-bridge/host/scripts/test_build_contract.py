@@ -423,6 +423,19 @@ class GradleGraph(unittest.TestCase):
                                       else block.replace('"--locked"', '"--frozen"', 1))
         self.assertTrue(any("--locked" in e for e in self.violations(mutated)))
 
+    def test_unlocked_cargo_in_the_typed_task_class_is_rejected(self):
+        """The typed class body is checked, not just the registration block."""
+        block = host_block(self.gradle)
+        start = block.index("abstract class HostBuildTask")
+        class_body = block[start:]
+        self.assertIn('"--locked", ', class_body)
+        mutated_class = class_body.replace('"--locked", ', "", 1)
+        self.assertNotEqual(mutated_class, class_body)
+        mutated = self.gradle.replace(block, block[:start] + mutated_class)
+        self.assertTrue(
+            any("bridgeHostBuild does not pass --locked" in e for e in self.violations(mutated))
+        )
+
     def test_tauri_or_npm_dependency_is_rejected(self):
         for injected in ('dependsOn(bridgeInstall)', 'commandLine("npm", "ci")', 'inputs.file("native-bridge/src-tauri/Cargo.toml")'):
             block = host_block(self.gradle)
