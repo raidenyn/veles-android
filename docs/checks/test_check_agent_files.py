@@ -442,8 +442,8 @@ def default_overrides():
 
 
 FIXTURE_NODES = {"docs": {"paths": ["docs/"]}}
-# The smallest table the drift check accepts: one node, one documented command whose doc is
-# that node's AGENTS.md, named in the component map so the node sets agree.
+# The smallest table the check accepts: one node, one command, named in the component map so
+# the node sets agree.
 FIXTURE_TABLE = {
     "version": 1,
     "requirements": {},
@@ -456,12 +456,10 @@ FIXTURE_TABLE = {
                     "kind": "check",
                     "cwd": ".",
                     "run": ["python3", "docs/checks/check_offline.py", "--root", "."],
-                    "doc": "docs/AGENTS.md",
                     "requires": [],
                     "inputs": [],
                 }
             ],
-            "excluded": [],
         }
     },
 }
@@ -547,9 +545,7 @@ def clean_files(skills=None):
     for path in EXPECTED_NODE_FILES:
         node = path[: -len("/AGENTS.md")]
         files[path] = nested_text(node)
-    files["docs/AGENTS.md"] = nested_text(
-        "docs", commands=["python3 docs/checks/check_offline.py --root ."]
-    )
+    files["docs/AGENTS.md"] = nested_text("docs")
     files["docs/openspec-skills.md"] = "\n".join(skill_section(skills)) + "\n"
     files["docs/agent-guidance.md"] = "# Agent-file guidance\n\nThe 40-line policy.\n"
     files["docs/openspec-workflow.md"] = "# OpenSpec workflow\n\nThe update procedure.\n"

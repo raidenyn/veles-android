@@ -9,9 +9,7 @@ Tauri, no Node/npm. The wire protocol is `protocol/docs/veles-v1.md`.
 Run from the repository root:
 
 ```bash
-./gradlew bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint bridgeHostTest
 ./gradlew bridgeHostBuild     # locked release veles-native-host + SHA256SUMS
-python3 -m unittest discover -s native-bridge/host/scripts -p 'test_build_contract.py' -v
 ```
 
 The toolchain is pinned to 1.98.0 by `native-bridge/host/rust-toolchain.toml`; cargo's target

@@ -10,21 +10,8 @@ browser check all need it. The packaged zip and its sha256 sidecar land in `../b
 ```bash
 cd web-extension
 npm ci                          # install deps from lockfile
-npm run format:check            # prettier check
-npm run lint                    # eslint
-npm run typecheck               # tsc --noEmit
-npm test                        # vitest source-level tests (incl. the pairing core wrapper)
 npm run build                   # vite build -> dist/ (test:bundle and test:browser read it)
-npm run test:bundle             # vitest bundle tests (requires `npm run build` first)
-npm run test:browser            # Playwright browser tests (requires `npm run build` and Chromium)
 npm run package                 # vite build + deterministic zip + sha256 sidecar -> ../build/web-extension/
-```
-
-From the repository root, run the source guards:
-
-```bash
-node scripts/check-mac-comparisons.mjs --scan web-extension/src
-web-extension/scripts/check-pairing-code.sh
 ```
 
 ## Rules

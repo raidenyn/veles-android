@@ -11,14 +11,8 @@ Run from the repository root:
 ```bash
 ./gradlew installGitCliff      # pinned, SHA-256-verified git-cliff -> build/release-tools/
 ./gradlew installGitleaks      # pinned, SHA-256-verified gitleaks -> build/release-tools/
-./gradlew scriptsTest          # stdlib-Python suites in scripts/tests
-node --test scripts/check-mac-comparisons.test.mjs
-node --test scripts/opencode-hooked-rules/index.test.mjs
 node --test verify/test/*.test.mjs            # workflow-contract tests (the tooling aggregate)
-sh verify/check-root-aliases.sh               # every documented root Gradle alias resolves
-sh verify/check-root-aliases.sh --self-test   # prove the alias check fails on an unresolved alias
 python3 -I scripts/commitlint.py --message "feat(app): add thing"   # --file PATH
-python3 -I scripts/components.py check
 python3 -I scripts/components.py changed --base <sha>
 python3 -I scripts/verify.py              # task gate: affected nodes' checks and related tests
 python3 -I scripts/verify.py --branch     # branch gate before a push: all of affected nodes' tests

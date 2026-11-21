@@ -21,11 +21,9 @@ Run from `android/`; root aliases cannot carry `--tests`.
 ```bash
 ./gradlew assembleDebug
 ./gradlew assembleRelease          # R8-minified; signed only with VELES_KEYSTORE_* set
-./gradlew testDebugUnitTest
 ./gradlew testDebugUnitTest --tests "me.nagaev.veles.otp.handlers.RegexMessageHandlerTest"
 ./gradlew connectedDebugAndroidTest
 ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.nagaev.permissions.ui.VelesPermissionsAppTests
-./gradlew :app:releaseHookGuard    # scan the assembled release APK for debug hooks
 ```
 
 Clean assembly needs rustup/cargo and NDK r29; Node >= 22 is not needed for the APK alone. The OTP-02
@@ -34,6 +32,6 @@ and code: `docs/releasing.md` (the `androidGitVersion` format).
 
 ## Rules
 
-- `.agents/rules/android-lint-before-push.md` — run the lint and source guards (raw-`Log`, pairing-code, MAC comparisons) before pushing.
+None.
 
 > **Run your agent from the repository root.** Scoped rules in `.agents/rules/` load only from there; if you started in this folder, read this folder's rule files listed below by hand.

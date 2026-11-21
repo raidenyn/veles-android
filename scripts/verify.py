@@ -217,7 +217,6 @@ class Step:
     kind: str
     cwd: str = "."
     run: List[str] = field(default_factory=list)
-    doc: str = ""
     requires: List[str] = field(default_factory=list)
     inputs: List[dict] = field(default_factory=list)
     reuse: bool = True
@@ -231,7 +230,6 @@ class Step:
 @dataclass(frozen=True)
 class NodeEntry:
     commands: List[Step]
-    excluded: List[dict]
     none: Optional[str] = None
 
 
@@ -2196,7 +2194,7 @@ def _check_reusable_tools(step, requirements):
 
 
 def _load_step(record, step_id, kind, requirements, repo, where, producer=False):
-    allowed = ["id", "kind", "cwd", "run", "doc", "requires", "inputs", "reuse",
+    allowed = ["id", "kind", "cwd", "run", "requires", "inputs", "reuse",
                "env_exit", "env_patterns", "ci"]
     if producer:
         allowed.remove("kind")
@@ -2209,7 +2207,6 @@ def _load_step(record, step_id, kind, requirements, repo, where, producer=False)
         _fail(where, "run must be a non-empty list of strings")
     _check_placeholders(run, where)
     cwd = _repo_relative(record.get("cwd", "."), where + " cwd", repo)
-    doc = _expect_str(record.get("doc"), where + " doc")
     requires = _string_list(record.get("requires", []), where + " requires")
     inputs = _load_inputs(record, where, repo)
     reuse = record.get("reuse", True)
@@ -2247,7 +2244,6 @@ def _load_step(record, step_id, kind, requirements, repo, where, producer=False)
         kind="producer" if producer else kind,
         cwd=cwd,
         run=run,
-        doc=doc,
         requires=requires,
         inputs=[] if inputs is None else inputs,
         reuse=reuse,
@@ -2259,20 +2255,6 @@ def _load_step(record, step_id, kind, requirements, repo, where, producer=False)
     )
     _check_reusable_tools(step, requirements)
     return step
-
-
-def _load_excluded(raw, repo, where):
-    excluded = []
-    for entry in _expect_list(raw, where + " excluded"):
-        entry_where = where + " excluded"
-        _expect_dict(entry, entry_where)
-        _known_fields(entry, ("doc", "cwd", "line", "why"), entry_where)
-        doc = _expect_str(entry.get("doc"), entry_where + " doc")
-        line = _expect_str(entry.get("line"), entry_where + " line")
-        why = _expect_str(entry.get("why"), entry_where + " why")
-        cwd = _repo_relative(entry.get("cwd", "."), entry_where + " cwd", repo)
-        excluded.append({"doc": doc, "cwd": cwd, "line": line, "why": why})
-    return excluded
 
 
 def _load_nodes(raw, requirements, repo, cmap, seen):
@@ -2294,7 +2276,7 @@ def _load_nodes(raw, requirements, repo, cmap, seen):
         record = raw[name]
         where = "node %r" % name
         _expect_dict(record, where)
-        _known_fields(record, ("commands", "excluded", "none"), where)
+        _known_fields(record, ("commands", "none"), where)
         commands = []
         for entry in _expect_list(record.get("commands", []), where + " commands"):
             _expect_dict(entry, where + " command")
@@ -2308,14 +2290,13 @@ def _load_nodes(raw, requirements, repo, cmap, seen):
                 _fail(command_where, "unknown kind %r" % (kind,))
             commands.append(_load_step(entry, step_id, kind, requirements, repo,
                                        command_where, producer=False))
-        excluded = _load_excluded(record.get("excluded", []), repo, where)
         none = record.get("none")
         if commands:
             if none is not None:
                 _fail(where, "'none' is only allowed when commands is empty")
         else:
             _expect_str(none, where + " none")
-        nodes[name] = NodeEntry(commands=commands, excluded=excluded, none=none)
+        nodes[name] = NodeEntry(commands=commands, none=none)
     return nodes
 
 

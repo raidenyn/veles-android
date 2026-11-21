@@ -81,25 +81,25 @@ def fixture_table():
         },
         "producers": [{
             "id": "rust.wasm", "cwd": ".", "run": ["./gradlew", "rustWasm"],
-            "doc": "scripts/AGENTS.md", "requires": ["java-home"], "inputs": GRADLE_HOME,
+            "requires": ["java-home"], "inputs": GRADLE_HOME,
         }],
         "nodes": {
             "web-extension": {"commands": [
                 {
                     "id": "web-extension.lint", "kind": "check", "cwd": "web-extension",
-                    "run": ["npm", "run", "lint"], "doc": "scripts/AGENTS.md",
+                    "run": ["npm", "run", "lint"],
                     "requires": ["node", "npm", "web-extension.node-modules"],
                     "inputs": NODE_MODULES_STAT,
                 },
                 {
                     "id": "web-extension.typecheck", "kind": "check", "cwd": "web-extension",
-                    "run": ["npm", "run", "typecheck"], "doc": "scripts/AGENTS.md",
+                    "run": ["npm", "run", "typecheck"],
                     "requires": ["node", "npm", "web-extension.node-modules", "rust.wasm"],
                     "inputs": NODE_MODULES_STAT,
                 },
                 {
                     "id": "web-extension.unit", "kind": "test", "cwd": "web-extension",
-                    "run": ["npm", "test"], "doc": "scripts/AGENTS.md",
+                    "run": ["npm", "test"],
                     "requires": ["node", "npm", "web-extension.node-modules", "rust.wasm"],
                     "inputs": NODE_MODULES_STAT,
                     "related": {

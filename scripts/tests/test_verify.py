@@ -528,7 +528,6 @@ class ResolverTest(GateFixture):
                 "kind": "test",
                 "cwd": "web-extension",
                 "run": ["npx", "vitest", "run"],
-                "doc": "scripts/AGENTS.md",
                 "reuse": False,
                 "related": {
                     "strategy": "files-arg",
@@ -549,7 +548,7 @@ class ResolverTest(GateFixture):
         """An earlier node whose check can use up the reserve, then the extension node."""
         repo = os.path.join(self.tmp, "later-fixture")
         os.makedirs(os.path.join(repo, "scripts"))
-        command = {"cwd": ".", "doc": "scripts/AGENTS.md", "reuse": False}
+        command = {"cwd": ".", "reuse": False}
         table = {
             "version": 1,
             "requirements": {},
@@ -564,7 +563,6 @@ class ResolverTest(GateFixture):
                     "kind": "test",
                     "cwd": "web-extension",
                     "run": ["npx", "vitest", "run"],
-                    "doc": "scripts/AGENTS.md",
                     "reuse": False,
                     "related": {
                         "strategy": "files-arg",

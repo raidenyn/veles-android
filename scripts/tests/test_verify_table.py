@@ -73,7 +73,6 @@ def valid_table():
                 "id": "rust.wasm",
                 "cwd": ".",
                 "run": ["./gradlew", "rustWasm"],
-                "doc": "rust/AGENTS.md",
                 "requires": ["java-home"],
                 "inputs": GRADLE_HOME,
             }
@@ -86,7 +85,6 @@ def valid_table():
                         "kind": "check",
                         "cwd": "android",
                         "run": ["./gradlew", "lintDebug"],
-                        "doc": "android/AGENTS.md",
                         "requires": ["java-home"],
                         "inputs": GRADLE_HOME,
                     }
@@ -99,7 +97,6 @@ def valid_table():
                         "kind": "test",
                         "cwd": ".",
                         "run": ["./gradlew", "scriptsTest"],
-                        "doc": "scripts/AGENTS.md",
                         "requires": ["java-home"],
                         "inputs": GRADLE_HOME,
                     },
@@ -108,7 +105,6 @@ def valid_table():
                         "kind": "test",
                         "cwd": ".",
                         "run": ["python3", "-I", "-m", "unittest", "discover"],
-                        "doc": "scripts/AGENTS.md",
                         "requires": ["python"],
                         "inputs": [],
                     },
@@ -349,10 +345,40 @@ class TableValidationTest(unittest.TestCase):
                 command(table)["run"] = run
                 self.assertInvalid(table, "android.lint")
 
-    def test_doc_required(self):
-        table = valid_table()
-        command(table)["doc"] = ""
-        self.assertInvalid(table, "android.lint", "doc")
+    def test_loader_rejects_doc_and_excluded(self):
+        cases = [
+            (
+                "doc",
+                lambda table: command(table).update({"doc": "android/AGENTS.md"}),
+                "android.lint",
+            ),
+            (
+                "excluded",
+                lambda table: table["nodes"]["android"].update({"excluded": []}),
+                "android",
+            ),
+        ]
+        for field, mutate, entry in cases:
+            with self.subTest(field=field):
+                table = valid_table()
+                mutate(table)
+                with tempfile.TemporaryDirectory() as root:
+                    write_table(root, table)
+                    map_dir = os.path.join(root, ".github")
+                    os.makedirs(map_dir)
+                    with open(
+                        os.path.join(map_dir, "components.json"), "w", encoding="utf-8"
+                    ) as handle:
+                        json.dump(minimal_cmap(), handle)
+                    lines = []
+                    context = make_context(repo=root, log=lines.append)
+                    code = main([], context)
+                self.assertEqual(code, 2)
+                self.assertTrue(
+                    any(entry in line and field in line for line in lines), lines
+                )
+                self.assertEqual(context.runner.calls, [])
+                self.assertEqual(context.git.calls, [])
 
     def test_invalid_related_on_check(self):
         table = valid_table()
@@ -413,13 +439,11 @@ class CommandLineTest(unittest.TestCase):
             self.assertTrue(node.commands or node.none)
             for step in node.commands:
                 used.update(step.requires)
-                self.assertTrue(os.path.exists(os.path.join(REPO, step.doc)), step.id)
                 if step.kind == "platform":
                     self.assertTrue(step.platforms, step.id)
                     self.assertTrue(step.ci, step.id)
         for producer in table.producers.values():
             used.update(producer.requires)
-            self.assertTrue(os.path.exists(os.path.join(REPO, producer.doc)), producer.id)
         self.assertEqual(set(table.requirements), used)
         self.assertIn("rust.wasm", table.producers)
         self.assertIn("web-extension.build", table.producers)

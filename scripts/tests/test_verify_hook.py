@@ -923,8 +923,8 @@ class GateFixture(unittest.TestCase):
         self.table_commands = []
 
     def command(self, step_id, run, **extra):
-        record = {"id": step_id, "kind": "check", "cwd": ".", "doc": "scripts/AGENTS.md",
-                  "reuse": False, "run": list(run)}
+        record = {"id": step_id, "kind": "check", "cwd": ".", "reuse": False,
+                  "run": list(run)}
         record.update(extra)
         return record
 

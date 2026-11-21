@@ -726,7 +726,7 @@ class EnvFailureTest(FixtureRepo):
         return path
 
     def step(self, env_exit=None, env_patterns=None):
-        return Step(id="tooling.check", kind="check", run=["check"], doc="scripts/AGENTS.md",
+        return Step(id="tooling.check", kind="check", run=["check"],
                     env_exit=list(env_exit or []), env_patterns=list(env_patterns or []))
 
     def test_env_exit_supply_chain(self):

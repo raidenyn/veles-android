@@ -13,7 +13,6 @@ Run from the repository root:
 ```bash
 npm ci --ignore-scripts --prefix verify   # CI provisions the same tools
 ./gradlew installCargoDeny
-verify/verify-supply-chain.sh             # SBOMs, licences, install scripts, build scripts, remote code
 node --test verify/test/*.test.mjs         # the verifier's own unit tests
 ```
 

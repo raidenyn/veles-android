@@ -1,4 +1,4 @@
-"""Tests for the command-table drift check (design D13).
+"""Tests for the command-table check (design D1): its structure and its duplicates.
 
 Every fixture is a plain directory: the check reads files only, so no git repository is
 needed. Stdlib only; Python 3.8 compatible.
@@ -33,7 +33,6 @@ def _node(name):
         "kind": "check",
         "cwd": name,
         "run": ["./gradlew", "lintDebug"],
-        "doc": name + "/AGENTS.md",
         "requires": [],
         "inputs": [],
     }
@@ -47,19 +46,20 @@ def _table(nodes, producers=None):
         "nodes": {},
     }
     for name in nodes:
-        table["nodes"][name] = {"commands": [_node(name)], "excluded": []}
+        table["nodes"][name] = {"commands": [_node(name)]}
     return table
 
 
 def _doc(name):
+    """A default doc whose build line is not in the table, so it is never a duplicate."""
     return (
-        "# %s/AGENTS.md\n\n## Build & Test\n\nRun from `%s/`:\n\n```bash\n./gradlew lintDebug\n```\n"
+        "# %s/AGENTS.md\n\n## Build & Test\n\nRun from `%s/`:\n\n```bash\n./gradlew assembleDebug\n```\n"
         "\n## Rules\n\nNone.\n" % (name, name)
     )
 
 
-def _producer(pid, doc, run):
-    return {"id": pid, "cwd": ".", "run": list(run), "doc": doc, "requires": [], "inputs": []}
+def _producer(pid, run):
+    return {"id": pid, "cwd": ".", "run": list(run), "requires": [], "inputs": []}
 
 
 class Fixture(object):
@@ -219,7 +219,7 @@ class ReadingTest(unittest.TestCase):
         self.assertIsInstance(commands[0], DocCommand)
 
 
-class MatchingTest(Base):
+class StructuralTest(Base):
     def test_structural_subset(self):
         # Duplicate ids in two nodes.
         table = _table(("android", "rust"))
@@ -239,12 +239,6 @@ class MatchingTest(Base):
         found = self.fixture(table=table).findings()
         self.assert_finding(found, "scripts/verify-commands.json", "unknown requirement")
 
-        # A missing doc.
-        table = _table(("android",))
-        del table["nodes"]["android"]["commands"][0]["doc"]
-        found = self.fixture(table=table).findings()
-        self.assert_finding(found, "scripts/verify-commands.json", "has no doc")
-
         # Neither inputs nor "reuse": false.
         table = _table(("android",))
         del table["nodes"]["android"]["commands"][0]["inputs"]
@@ -256,249 +250,153 @@ class MatchingTest(Base):
         found = self.fixture(nodes=("android",), table=table).findings()
         self.assert_finding(found, "scripts/verify-commands.json", "nodes differ")
 
-    def test_forward_exact_argv_and_cwd(self):
-        docs = {
-            "android/AGENTS.md": (
-                "# android/AGENTS.md\n\n## Rules\n\n"
-                "- `.agents/rules/android-lint-before-push.md` — the gate.\n"
-            ),
-            ".agents/rules/android-lint-before-push.md": (
-                "## Gate\n\n```bash\npython3 docs/checks/check_offline.py --root .\n```\n"
-            ),
-        }
+    def test_doc_key_rejected(self):
         table = _table(("android",))
-        table["nodes"]["android"]["commands"][0].update(
-            {
-                "run": ["python3", "docs/checks/check_offline.py", "--root", "."],
-                "cwd": ".",
-                "doc": ".agents/rules/android-lint-before-push.md",
-            }
+        table["nodes"]["android"]["commands"][0]["doc"] = "android/AGENTS.md"
+        message = self.assert_finding(
+            self.fixture(table=table).findings(), "scripts/verify-commands.json", "`doc` field"
         )
-        self.assertEqual(
-            self.fixture(table=table, docs=docs).findings(),
-            [],
-        )
-        # The same argv from another working directory is not the documented command.
-        table["nodes"]["android"]["commands"][0]["cwd"] = "android"
-        found = self.fixture(table=table, docs=docs).findings()
-        self.assert_finding(found, "scripts/verify-commands.json", "no matching command")
+        self.assertIn("android.lint", message)
 
-    def test_forward_gradle_task_subset(self):
-        docs = {
-            "android/AGENTS.md": (
-                "## Build & Test\n\nRun from `android/`:\n\n"
-                "```bash\n./gradlew spotlessCheck detekt lintDebug\n```\n"
-            )
-        }
+        table = _table(("android",))
+        table["producers"] = [_producer("rust.wasm", ["./gradlew", "rustWasm"])]
+        table["producers"][0]["doc"] = "rust/AGENTS.md"
+        message = self.assert_finding(
+            self.fixture(table=table).findings(), "scripts/verify-commands.json", "`doc` field"
+        )
+        self.assertIn("rust.wasm", message)
+
+    def test_excluded_key_rejected(self):
+        table = _table(("android",))
+        table["nodes"]["android"]["excluded"] = []
+        message = self.assert_finding(
+            self.fixture(table=table).findings(), "scripts/verify-commands.json", "`excluded` list"
+        )
+        self.assertIn("`android`", message)
+
+
+class DuplicateTest(Base):
+    def test_doc_repeats_check(self):
         table = _table(("android",))
         template = table["nodes"]["android"]["commands"][0]
         table["nodes"]["android"]["commands"] = [
             dict(template, id="android." + task, run=["./gradlew", task])
             for task in ("spotlessCheck", "detekt", "lintDebug")
         ]
-        self.assertEqual(self.fixture(table=table, docs=docs).findings(), [])
-        table["nodes"]["android"]["commands"][2]["run"] = ["./gradlew", "lintSomething"]
-        found = self.fixture(table=table, docs=docs).findings()
-        self.assert_finding(found, "scripts/verify-commands.json", "no matching command")
-
-    def test_reverse_missing_entry_message(self):
         docs = {
             "android/AGENTS.md": (
-                "## Build & Test\n\nRun from `android/`:\n\n```bash\n./gradlew lintDebug\n"
-                "npm run test:e2e\n```\n"
+                "## Build & Test\n\nRun from `android/`:\n\n"
+                "```bash\n./gradlew spotlessCheck detekt lintDebug\n```\n"
+            )
+        }
+        found = self.fixture(table=table, docs=docs).findings()
+        self.assertEqual(len(found), 1, found)
+        message = self.assert_finding(
+            found,
+            "android/AGENTS.md",
+            "`./gradlew spotlessCheck detekt lintDebug` is run by verify.py",
+        )
+        for identifier in ("android.spotlessCheck", "android.detekt", "android.lintDebug"):
+            self.assertIn(identifier, message)
+        self.assertIn("remove it from the doc", message)
+
+    def test_targeted_line_allowed(self):
+        table = _table(("android",))
+        table["nodes"]["android"]["commands"][0]["run"] = ["./gradlew", "testDebugUnitTest"]
+        docs = {
+            "android/AGENTS.md": (
+                "## Build & Test\n\nRun from `android/`:\n\n```bash\n"
+                './gradlew testDebugUnitTest --tests "me.nagaev.veles.otp.handlers.RegexMessageHandlerTest"'
+                "\n```\n"
+            )
+        }
+        self.assertEqual(self.fixture(table=table, docs=docs).findings(), [])
+
+    def test_build_and_producer_lines_allowed(self):
+        table = _table(("rust",))
+        table["producers"] = [_producer("rust.wasm", ["./gradlew", "rustWasm"])]
+        docs = {
+            "rust/AGENTS.md": (
+                "## Build & Test\n\n```bash\n./gradlew rustWasm\n./gradlew rustJni\n```\n"
+            )
+        }
+        self.assertEqual(
+            self.fixture(nodes=("rust",), table=table, docs=docs).findings(), []
+        )
+
+    def test_documented_command_missing_from_table_passes(self):
+        table = _table(("web-extension",))
+        table["nodes"]["web-extension"]["commands"][0]["run"] = ["npm", "run", "lint"]
+        docs = {
+            "web-extension/AGENTS.md": (
+                "## Build & Test\n\nRun from `web-extension/`:\n\n```bash\nnpm run test:e2e\n```\n"
+            )
+        }
+        self.assertEqual(
+            self.fixture(nodes=("web-extension",), table=table, docs=docs).findings(), []
+        )
+
+    def test_wrong_working_directory_not_duplicate(self):
+        table = _table(("android",))
+        table["nodes"]["android"]["commands"][0]["run"] = ["./gradlew", "testDebugUnitTest"]
+        docs = {
+            "android/AGENTS.md": (
+                "## Build & Test\n\n```bash\n./gradlew testDebugUnitTest\n```\n"
+            )
+        }
+        # The doc line runs at the repository root; the entry runs from android/.
+        self.assertEqual(self.fixture(table=table, docs=docs).findings(), [])
+
+    def test_excluded_setup_line_passes(self):
+        table = _table(("tooling",))
+        table["nodes"]["tooling"]["commands"][0]["run"] = ["./gradlew", "scriptsTest"]
+        docs = {
+            "tooling/AGENTS.md": (
+                "## Build & Test\n\n```bash\n./gradlew installGitCliff\n```\n"
+            )
+        }
+        self.assertEqual(
+            self.fixture(nodes=("tooling",), table=table, docs=docs).findings(), []
+        )
+
+    def test_value_less_gradle_option_ignored(self):
+        table = _table(("android",))
+        for flag in ("-q", "--offline"):
+            with self.subTest(flag=flag):
+                docs = {
+                    "android/AGENTS.md": (
+                        "## Build & Test\n\nRun from `android/`:\n\n```bash\n"
+                        "./gradlew %s lintDebug\n```\n" % flag
+                    )
+                }
+                found = self.fixture(table=table, docs=docs).findings()
+                message = self.assert_finding(
+                    found, "android/AGENTS.md", "is run by verify.py"
+                )
+                self.assertIn("android.lint", message)
+
+    def test_quoted_duplicate(self):
+        docs = {
+            "android/AGENTS.md": (
+                "## Build & Test\n\nRun from `android/`:\n\n```bash\n./gradlew 'lintDebug'\n```\n"
             )
         }
         found = self.fixture(docs=docs).findings()
-        message = self.assert_finding(found, "android/AGENTS.md", "npm run test:e2e")
-        self.assertIn("add it to scripts/verify-commands.json or exclude it", message)
+        message = self.assert_finding(found, "android/AGENTS.md", "is run by verify.py")
+        self.assertIn("android.lint", message)
 
-    def test_wrong_working_directory(self):
-        table = _table(("android",))
-        table["nodes"]["android"]["commands"][0]["cwd"] = "."
-        found = self.fixture(table=table).findings()
-        messages = [finding.message for finding in found if finding.path == "android/AGENTS.md"]
-        self.assertEqual(len(messages), 1, found)
-        self.assertIn("`android`", messages[0])
-        self.assertIn("from `.`", messages[0])
-
-    def test_exclusion_first(self):
+    def test_rule_line_is_scanned(self):
         docs = {
             "android/AGENTS.md": (
-                "## Build & Test\n\nRun from `android/`:\n\n"
-                "```bash\n./gradlew installGitCliff lintDebug\n```\n"
-            )
-        }
-        table = _table(("android",))
-        # Without the exclusion the union of the entries' tasks cannot cover the setup task.
-        found = self.fixture(table=table, docs=docs).findings()
-        self.assert_finding(found, "android/AGENTS.md", "installGitCliff")
-        table["nodes"]["android"]["excluded"] = [
-            {
-                "doc": "android/AGENTS.md",
-                "cwd": "android",
-                "line": "./gradlew installGitCliff lintDebug",
-                "why": "setup, not a gate",
-            }
-        ]
-        self.assertEqual(self.fixture(table=table, docs=docs).findings(), [])
-
-    def test_excluded_compound_line_covers_its_tasks(self):
-        # The bridge shape: one documented line installs dependencies and runs four gates. The
-        # exclusion names only the setup task, so the line is covered by the union of that
-        # exclusion and the four gate steps — and a dropped gate task is drift.
-        docs = {
-            "android/AGENTS.md": (
-                "## Build & Test\n\nRun from `android/`:\n\n```bash\n"
-                "./gradlew installDeps gateFormat gateLint gateTypecheck gateTest\n"
-                "```\n"
-            )
-        }
-        table = _table(("android",))
-        template = table["nodes"]["android"]["commands"][0]
-        table["nodes"]["android"]["commands"] = [
-            dict(template, id="android." + task, run=["./gradlew", task])
-            for task in ("gateFormat", "gateLint", "gateTypecheck", "gateTest")
-        ]
-        table["nodes"]["android"]["excluded"] = [
-            {
-                "doc": "android/AGENTS.md",
-                "cwd": "android",
-                "line": "./gradlew installDeps",
-                "why": "setup, not a gate: the dependency install",
-            }
-        ]
-        self.assertEqual(self.fixture(table=table, docs=docs).findings(), [])
-        # Dropping a gate step leaves its task uncovered, even though the setup is excluded.
-        table["nodes"]["android"]["commands"] = [
-            command
-            for command in table["nodes"]["android"]["commands"]
-            if command["id"] != "android.gateFormat"
-        ]
-        found = self.fixture(table=table, docs=docs).findings()
-        self.assert_finding(found, "android/AGENTS.md", "gateFormat")
-
-    def test_gradle_union_per_directory(self):
-        docs = {
-            "android/AGENTS.md": (
-                "## Build & Test\n\nRun from `android/`:\n\n"
-                "```bash\n./gradlew firstTask secondTask\n```\n"
-            )
-        }
-        table = _table(("android",))
-        table["nodes"]["android"]["commands"] = [
-            {
-                "id": "android.first",
-                "kind": "check",
-                "cwd": "android",
-                "run": ["./gradlew", "firstTask"],
-                "doc": "android/AGENTS.md",
-                "requires": [],
-                "inputs": [],
-            },
-            {
-                "id": "android.second",
-                "kind": "check",
-                "cwd": ".",
-                "run": ["./gradlew", "secondTask"],
-                "doc": "android/AGENTS.md",
-                "requires": [],
-                "inputs": [],
-            },
-        ]
-        found = self.fixture(table=table, docs=docs).findings()
-        self.assert_finding(found, "android/AGENTS.md", "secondTask")
-        # The same entries from the line's directory cover the line.
-        table["nodes"]["android"]["commands"][1]["cwd"] = "android"
-        self.assertEqual(self.fixture(table=table, docs=docs).findings(), [])
-
-    def test_argument_line_needs_exact_entry(self):
-        docs = {
-            "android/AGENTS.md": (
-                "## Build & Test\n\nRun from `android/`:\n\n```bash\n"
-                "./gradlew testDebugUnitTest\n"
-                "./gradlew testDebugUnitTest --tests \"me.nagaev.FocusedTest\"\n"
-                "```\n"
-            )
-        }
-        table = _table(("android",))
-        table["nodes"]["android"]["commands"][0]["run"] = ["./gradlew", "testDebugUnitTest"]
-        found = self.fixture(table=table, docs=docs).findings()
-        self.assert_finding(found, "android/AGENTS.md", "testDebugUnitTest")
-        table["nodes"]["android"]["excluded"] = [
-            {
-                "doc": "android/AGENTS.md",
-                "cwd": "android",
-                "line": './gradlew testDebugUnitTest --tests "me.nagaev.FocusedTest"',
-                "why": "focused example",
-            }
-        ]
-        self.assertEqual(self.fixture(table=table, docs=docs).findings(), [])
-
-    def test_documented_glob_covers_expanded_argv(self):
-        # The table lists the files explicitly; the doc keeps the shell glob the verifier's argv
-        # cannot expand, and the listing must equal the glob's expansion.
-        docs = {
-            "android/AGENTS.md": (
-                "## Build & Test\n\n```bash\nnode --test verify/test/*.test.mjs\n```\n"
+                "# android/AGENTS.md\n\n## Rules\n\n"
+                "- `.agents/rules/android-gate.md` — the gate.\n"
             ),
-            "verify/test/a.test.mjs": "",
-            "verify/test/b.test.mjs": "",
-            "verify/test/notes.md": "",
+            ".agents/rules/android-gate.md": (
+                "## Gate\n\nRun from `android/`:\n\n```bash\n./gradlew lintDebug\n```\n"
+            ),
         }
-        table = _table(("android",))
-        command = table["nodes"]["android"]["commands"][0]
-        command["cwd"] = "."
-        command["run"] = ["node", "--test", "verify/test/a.test.mjs", "verify/test/b.test.mjs"]
-        self.assertEqual(self.fixture(table=table, docs=docs).findings(), [])
-        # A file the glob names but the argv does not is a test that silently stops running.
-        command["run"] = ["node", "--test", "verify/test/a.test.mjs"]
-        found = self.fixture(table=table, docs=docs).findings()
-        self.assert_finding(found, "scripts/verify-commands.json", "no matching command")
-        self.assert_finding(found, "android/AGENTS.md", "verify/test/*.test.mjs")
-        # An argv item the glob does not name is equally drift.
-        command["run"] = [
-            "node",
-            "--test",
-            "verify/test/a.test.mjs",
-            "verify/test/b.test.mjs",
-            "verify/test/extra.test.mjs",
-        ]
-        found = self.fixture(table=table, docs=docs).findings()
-        self.assert_finding(found, "scripts/verify-commands.json", "no matching command")
-        # A new matching file on disk must be added to the table.
-        docs["verify/test/c.test.mjs"] = ""
-        command["run"] = ["node", "--test", "verify/test/a.test.mjs", "verify/test/b.test.mjs"]
-        found = self.fixture(table=table, docs=docs).findings()
-        self.assert_finding(found, "android/AGENTS.md", "verify/test/*.test.mjs")
-
-    def test_producer_doc_ownership(self):
-        nodes = ("android", "rust")
-        docs = {
-            "android/AGENTS.md": "# android/AGENTS.md\n\n## Rules\n\nNone.\n",
-            "rust/AGENTS.md": "## Build & Test\n\n```bash\n./gradlew rustWasm\n```\n",
-        }
-        table = _table(nodes)
-        table["nodes"]["android"]["commands"] = []
-        table["nodes"]["rust"]["commands"] = []
-        table["producers"] = [_producer("rust.wasm", "rust/AGENTS.md", ["./gradlew", "rustWasm"])]
-        # A producer counts toward the reverse coverage of the node doc it names.
-        self.assertEqual(self.fixture(nodes=nodes, table=table, docs=docs).findings(), [])
-        # A producer's doc may name a rule another node lists.
-        docs["android/AGENTS.md"] = (
-            "# android/AGENTS.md\n\n## Rules\n\n"
-            "- `.agents/rules/android-lint-before-push.md` — the gate.\n"
-        )
-        docs[".agents/rules/android-lint-before-push.md"] = (
-            "## Gate\n\n```bash\n./gradlew rustWasm\n```\n"
-        )
-        docs["rust/AGENTS.md"] = "## Build & Test\n\nNone.\n"
-        table["producers"][0]["doc"] = ".agents/rules/android-lint-before-push.md"
-        self.assertEqual(self.fixture(nodes=nodes, table=table, docs=docs).findings(), [])
-        # A doc that is neither an AGENTS.md nor a listed rule is a finding.
-        table["producers"][0]["doc"] = "docs/notes.md"
-        docs["docs/notes.md"] = "```bash\n./gradlew rustWasm\n```\n"
-        found = self.fixture(nodes=nodes, table=table, docs=docs).findings()
-        self.assert_finding(found, "scripts/verify-commands.json", "docs/notes.md")
+        found = self.fixture(docs=docs).findings()
+        self.assert_finding(found, ".agents/rules/android-gate.md", "is run by verify.py")
 
 
 if __name__ == "__main__":

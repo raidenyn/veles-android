@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drift check: the command table matches the node docs (design D13).
+"""Check: the command table's structure and no node doc repeats a command it runs (design D1).
 
 Called from `check_agent_files.py`, inside the docs offline guard. It reads only
 `.github/components.json`, `scripts/verify-commands.json` and the docs those name, and every
@@ -22,6 +22,7 @@ COMPONENTS_PATH = ".github/components.json"
 
 SHELL_INFOS = ("", "bash", "sh", "shell")
 COMMAND_KINDS = ("check", "test", "device", "platform")
+RUN_COMMAND_KINDS = ("check", "test")
 REQUIREMENT_KINDS = ("tool", "path", "generated")
 # Lines that are shell structure, not a command a reader can copy verbatim.
 KEYWORDS = ("if", "then", "else", "elif", "fi", "for", "do", "done", "while", "case", "esac")
@@ -32,8 +33,6 @@ HEADING_RE = re.compile(r"^\s{0,3}(#{1,6})\s+(.*)$")
 FENCE_RE = re.compile(r"^\s*```(.*)$")
 RUN_FROM_RE = re.compile(r"Run from `([^`]+)`")
 RULE_RE = re.compile(r"\.agents/rules/([A-Za-z0-9._-]+\.md)")
-BUILD_SECTIONS = ("Build & Test", "Commands")
-GLOB_CHARS = ("*", "?")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -161,94 +160,117 @@ def read_doc_commands(text, doc):
 
 
 def _task_only(argv):
-    return (
-        isinstance(argv, list)
-        and len(argv) > 1
-        and argv[0] == "./gradlew"
-        and all(isinstance(item, str) and TASK_RE.match(item) for item in argv[1:])
-    )
+    """The tasks of a task-only `./gradlew` line, or None when the line is targeted.
 
-
-def _has_glob(token):
-    return any(char in token for char in GLOB_CHARS)
-
-
-def _glob_regex(pattern):
-    return re.compile(
-        "^"
-        + "".join(
-            "[^/]*" if char == "*" else "[^/]" if char == "?" else re.escape(char)
-            for char in pattern
-        )
-        + "$"
-    )
-
-
-def _expand_glob(root, cwd, pattern):
-    """The repo-relative files a documented glob names, sorted; a directory read only."""
-    directory, _, name = pattern.rpartition("/")
-    if _has_glob(directory):
-        return []
-    location = os.path.normpath(os.path.join(cwd, directory)) if directory else cwd
-    full = root if location == "." else os.path.join(root, *location.split("/"))
-    # The entry's arguments are relative to its cwd, exactly like the documented ones.
-    prefix = directory + "/" if directory else ""
-    try:
-        names = os.listdir(full)
-    except OSError:
-        return []
-    expression = _glob_regex(name)
-    expanded = [
-        prefix + entry
-        for entry in names
-        if expression.match(entry) and os.path.isfile(os.path.join(full, entry))
-    ]
-    return sorted(expanded)
-
-
-def _glob_tokens(document, entry, root, cwd):
-    """Match a documented argv whose glob token stands for the files it names on disk.
-
-    The glob expands to exactly the files it matches in its directory; the entry's arguments
-    must equal that expansion (sorted), so a table that lists fewer or extra files drifts.
+    A value-less Gradle option (`-q`, `--offline`) starts with `-` and is ignored. Any
+    remaining argument that is not a task name (for example the class after `--tests`) makes
+    the line targeted, so it is never a duplicate.
     """
-    if not document:
-        return not entry
-    token = document[0]
-    if _has_glob(token):
-        expanded = _expand_glob(root, cwd, token)
-        if not expanded or len(entry) < len(expanded):
-            return False
-        head, rest = entry[: len(expanded)], entry[len(expanded):]
-        if sorted(head) != expanded:
-            return False
-        return _glob_tokens(document[1:], rest, root, cwd)
-    if not entry or entry[0] != token:
-        return False
-    return _glob_tokens(document[1:], entry[1:], root, cwd)
-
-
-def _argv_match(document, argv, root, cwd="."):
-    """A documented argv covers an entry's argv, allowing a documented shell glob."""
-    if document == argv:
-        return True
-    if not any(_has_glob(token) for token in document):
-        return False
-    return _glob_tokens(document, argv, root, cwd)
-
-
-def _documented(doc_entry, argv, root):
-    if _argv_match(doc_entry.argv, argv, root, doc_entry.cwd):
-        return True
-    return _task_only(doc_entry.argv) and _task_only(argv) and set(argv[1:]) <= set(
-        doc_entry.argv[1:]
-    )
+    if not isinstance(argv, list) or len(argv) < 2 or argv[0] != "./gradlew":
+        return None
+    if not all(isinstance(item, str) for item in argv):
+        return None
+    tasks = [item for item in argv[1:] if not item.startswith("-")]
+    if not tasks or not all(TASK_RE.match(item) for item in tasks):
+        return None
+    return tasks
 
 
 def _entry_label(entry):
     if entry.get("id"):
         return entry["id"]
     return " ".join(entry.get("line") or []) or "entry"
+
+
+def _run_candidates(table):
+    """The table's `check` and `test` commands, which no doc line may repeat."""
+    candidates = []
+    nodes = table.get("nodes") if isinstance(table, dict) else None
+    if not isinstance(nodes, dict):
+        return candidates
+    for name in sorted(nodes):
+        entry = nodes[name]
+        if not isinstance(entry, dict):
+            continue
+        for command in entry.get("commands") or []:
+            if not isinstance(command, dict):
+                continue
+            if command.get("kind") not in RUN_COMMAND_KINDS:
+                continue
+            run = command.get("run")
+            if not isinstance(run, list) or not run:
+                continue
+            candidates.append(
+                {"id": _entry_label(command), "argv": run, "cwd": command.get("cwd", ".")}
+            )
+    return candidates
+
+
+def _unique(items):
+    result = []
+    for item in items:
+        if item not in result:
+            result.append(item)
+    return result
+
+
+def _duplicating_ids(entry, candidates):
+    """The ids of the check/test entries that make a documented line a duplicate.
+
+    The line is a duplicate when its argv and cwd equal an entry's, or when it is a task-only
+    `./gradlew` line and every task it names is run by entries from the same directory. An
+    id appears once, in the order the line names the tasks.
+    """
+    same = [
+        candidate["id"]
+        for candidate in candidates
+        if candidate["cwd"] == entry.cwd and candidate["argv"] == entry.argv
+    ]
+    if same:
+        return _unique(same)
+    wanted = _task_only(entry.argv)
+    if wanted is None:
+        return []
+    provided = collections.defaultdict(list)
+    for candidate in candidates:
+        if candidate["cwd"] != entry.cwd:
+            continue
+        tasks = _task_only(candidate["argv"])
+        if tasks is None:
+            continue
+        for task in tasks:
+            if candidate["id"] not in provided[task]:
+                provided[task].append(candidate["id"])
+    if not all(task in provided for task in wanted):
+        return []
+    identifiers = []
+    for task in wanted:
+        for identifier in provided[task]:
+            if identifier not in identifiers:
+                identifiers.append(identifier)
+    return identifiers
+
+
+def duplicate_findings(table, docs):
+    """The documented lines that repeat a command the verifier runs, each with the fix.
+
+    ``docs`` maps each scanned doc's path to its entries (``_read_entries``). A line is a
+    duplicate when its argv and working directory equal those of a `check` or `test` entry of
+    any node, or when it is a task-only `./gradlew` line and every task it names is a task of
+    such entries from the same working directory. A documented line the table does not hold is
+    fine: the table must not require a doc entry, and the doc must not repeat one.
+    """
+    candidates = _run_candidates(table)
+    found = []
+    for doc in sorted(docs):
+        for entry in docs[doc]:
+            identifiers = _duplicating_ids(entry, candidates)
+            if identifiers:
+                found.append(
+                    "%s: `%s` is run by verify.py (%s); remove it from the doc"
+                    % (doc, entry.line, ", ".join(identifiers))
+                )
+    return found
 
 
 # ---------------------------------------------------------------------------------------------
@@ -327,12 +349,20 @@ def _structure(cmap, table):
             findings.append(Finding("error", TABLE_PATH, "node `%s` is not an object; fix it" % node))
             continue
         commands = entry.get("commands", [])
-        excluded = entry.get("excluded", [])
         if not isinstance(commands, list):
             findings.append(
                 Finding("error", TABLE_PATH, "node `%s` has no commands list; add one" % node)
             )
             commands = []
+        if "excluded" in entry:
+            findings.append(
+                Finding(
+                    "error",
+                    TABLE_PATH,
+                    "node `%s` has an `excluded` list; remove it (the table is the single "
+                    "source of the commands it runs)" % node,
+                )
+            )
         for command in commands:
             if not isinstance(command, dict):
                 findings.append(
@@ -361,35 +391,6 @@ def _structure(cmap, table):
                     )
                 )
             findings.extend(_step_structure(command, _entry_label(command), requirements))
-        if not isinstance(excluded, list):
-            findings.append(
-                Finding("error", TABLE_PATH, "node `%s` has no excluded list; add one" % node)
-            )
-            excluded = []
-        for entry_item in excluded:
-            if not isinstance(entry_item, dict):
-                findings.append(
-                    Finding("error", TABLE_PATH, "a `%s` exclusion is not an object; fix it" % node)
-                )
-                continue
-            if not isinstance(entry_item.get("doc"), str) or not entry_item.get("doc"):
-                findings.append(
-                    Finding(
-                        "error",
-                        TABLE_PATH,
-                        "an exclusion in `%s` has no doc; name the doc whose line it excludes"
-                        % node,
-                    )
-                )
-            if not isinstance(entry_item.get("line"), str) or not entry_item.get("line"):
-                findings.append(
-                    Finding(
-                        "error",
-                        TABLE_PATH,
-                        "an exclusion in `%s` has no line; copy the documented command"
-                        % node,
-                    )
-                )
 
     for identifier, requirement in sorted(requirements.items()):
         if not isinstance(requirement, dict):
@@ -428,12 +429,13 @@ def _step_structure(step, label, requirements):
         findings.append(
             Finding("error", TABLE_PATH, "`%s` has no run argv; give it a non-empty list of strings" % label)
         )
-    if not isinstance(step.get("doc"), str) or not step.get("doc"):
+    if "doc" in step:
         findings.append(
             Finding(
                 "error",
                 TABLE_PATH,
-                "`%s` has no doc; name the node's AGENTS.md or a rule it lists" % label,
+                "`%s` has a `doc` field; remove it (the table is the single source of the "
+                "commands it runs)" % label,
             )
         )
     requires = step.get("requires", [])
@@ -532,13 +534,16 @@ def _listed_rules(root, doc):
     return sorted(set(".agents/rules/" + name for name in names))
 
 
-def _node_allows(node_doc, doc, rules):
-    if doc == node_doc or doc in rules:
-        return True
-    if not node_doc:
-        return False
-    folder = os.path.dirname(node_doc)
-    return bool(folder) and doc.startswith(folder + "/") and doc.endswith("/AGENTS.md")
+def _scanned_docs(root, cmap):
+    """Every doc the check reads: a node's AGENTS.md and the rules its `## Rules` lists."""
+    docs = []
+    for doc in _node_docs(root, cmap).values():
+        if doc not in docs:
+            docs.append(doc)
+        for rule in _listed_rules(root, doc):
+            if rule not in docs:
+                docs.append(rule)
+    return docs
 
 
 # ---------------------------------------------------------------------------------------------
@@ -546,7 +551,7 @@ def _node_allows(node_doc, doc, rules):
 
 
 def findings(root):
-    """Drift findings for the repository at ``root``; each message is the fix."""
+    """Findings for the repository at ``root``; each message is the fix."""
     cmap, cmap_problem = _read_json(root, COMPONENTS_PATH)
     if cmap_problem is not None or not isinstance(cmap, dict):
         return []  # the agent-file check already reports a missing or invalid component map
@@ -558,207 +563,12 @@ def findings(root):
     if not complete:
         return found
 
-    node_docs = _node_docs(root, cmap)
-    node_rules = dict(
-        (node, _listed_rules(root, doc)) for node, doc in node_docs.items()
-    )
-    producers = [producer for producer in table.get("producers", []) if isinstance(producer, dict)]
-    nodes = table["nodes"]
-
-    cache = {}
-
-    def entries_for(doc):
-        if doc not in cache:
-            text = _read_text(root, doc)
-            cache[doc] = [] if text is None else _read_entries(text)
-        return cache[doc]
-
-    any_doc = set(node_docs.values())
-    for rules in node_rules.values():
-        any_doc.update(rules)
-
-    # Forward: every command and producer is a documented command of its doc, same directory.
-    by_doc = collections.defaultdict(list)
-    for node, entry in sorted(nodes.items()):
-        if not isinstance(entry, dict):
-            continue
-        primary = node_docs.get(node)
-        rules = node_rules.get(node, [])
-        for command in entry.get("commands", []) or []:
-            if not isinstance(command, dict):
-                continue
-            doc = command.get("doc")
-            if isinstance(doc, str) and doc and primary:
-                if not _node_allows(primary, doc, rules):
-                    found.append(
-                        Finding(
-                            "error",
-                            TABLE_PATH,
-                            "`%s` names `%s`, which is not `%s`'s AGENTS.md or a rule it lists; "
-                            "name the node doc or one of its rules"
-                            % (_entry_label(command), doc, primary),
-                        )
-                    )
-                elif _read_text(root, doc) is None:
-                    _check_doc_exists(root, doc, found, _entry_label(command))
-            _forward(command, entries_for, found, root)
-        for exclusion in entry.get("excluded", []) or []:
-            if not isinstance(exclusion, dict):
-                continue
-            doc = exclusion.get("doc")
-            if isinstance(doc, str) and doc and primary and not _node_allows(primary, doc, rules):
-                found.append(
-                    Finding(
-                        "error",
-                        TABLE_PATH,
-                        "an exclusion in `%s` names `%s`, which is not `%s`'s AGENTS.md or a rule "
-                        "it lists; name the node doc or one of its rules" % (node, doc, primary),
-                    )
-                )
-            line = exclusion.get("line")
-            if isinstance(doc, str) and doc and isinstance(line, str) and line:
-                try:
-                    argv = shlex.split(line)
-                except ValueError:
-                    argv = None
-                if argv is not None:
-                    by_doc[doc].append(
-                        {
-                            "argv": argv,
-                            "cwd": exclusion.get("cwd", "."),
-                            "excluded": True,
-                        }
-                    )
-    for producer in producers:
-        doc = producer.get("doc")
-        if isinstance(doc, str) and doc:
-            if doc not in any_doc:
-                found.append(
-                    Finding(
-                        "error",
-                        TABLE_PATH,
-                        "producer `%s` names `%s`, which is not a node's AGENTS.md or a rule one "
-                        "lists; name an existing node doc or rule" % (_entry_label(producer), doc),
-                    )
-                )
-            else:
-                _check_doc_exists(root, doc, found, _entry_label(producer))
-        _forward(producer, entries_for, found, root)
-
-    for node, entry in sorted(nodes.items()):
-        if not isinstance(entry, dict):
-            continue
-        for command in entry.get("commands", []) or []:
-            if not isinstance(command, dict):
-                continue
-            doc = command.get("doc")
-            if isinstance(doc, str) and doc:
-                by_doc[doc].append(
-                    {"argv": list(command.get("run") or []), "cwd": command.get("cwd", "."), "excluded": False}
-                )
-    for producer in producers:
-        doc = producer.get("doc")
-        if isinstance(doc, str) and doc:
-            by_doc[doc].append(
-                {"argv": list(producer.get("run") or []), "cwd": producer.get("cwd", "."), "excluded": False}
-            )
-
-    # Reverse: every line of a node's AGENTS.md and of the rules its `## Rules` lists.
-    checked = set()
-    for node, doc in sorted(node_docs.items()):
-        if doc not in checked and _read_text(root, doc) is not None:
-            _reverse(doc, entries_for(doc), by_doc.get(doc, []), found, root)
-            checked.add(doc)
-        for rule in node_rules.get(node, []):
-            if rule in checked or _read_text(root, rule) is None:
-                continue
-            _reverse(rule, entries_for(rule), by_doc.get(rule, []), found, root)
-            checked.add(rule)
+    docs = {}
+    for doc in _scanned_docs(root, cmap):
+        text = _read_text(root, doc)
+        if text is not None:
+            docs[doc] = _read_entries(text)
+    for message in duplicate_findings(table, docs):
+        doc, _, detail = message.partition(": ")
+        found.append(Finding("error", doc, detail))
     return found
-
-
-def _check_doc_exists(root, doc, found, label):
-    if _read_text(root, doc) is None:
-        found.append(
-            Finding(
-                "error",
-                TABLE_PATH,
-                "`%s` names `%s`, which does not exist; create the doc or fix the path"
-                % (label, doc),
-            )
-        )
-        return False
-    return None
-
-
-def _forward(step, entries_for, found, root):
-    doc = step.get("doc")
-    if not isinstance(doc, str) or not doc:
-        return  # reported by the structural pass
-    argv = step.get("run")
-    cwd = step.get("cwd", ".")
-    if not isinstance(argv, list):
-        return
-    documented = entries_for(doc)
-    if any(entry.cwd == cwd and _documented(entry, argv, root) for entry in documented):
-        return
-    message = "`%s` runs `%s` from `%s`, but %s documents no matching command; add it there or fix the entry" % (
-        _entry_label(step),
-        " ".join(str(item) for item in argv),
-        cwd,
-        doc,
-    )
-    other = [entry.cwd for entry in documented if _documented(entry, argv, root) and entry.cwd != cwd]
-    if other:
-        message += " (the doc has it under `%s`)" % other[0]
-    found.append(Finding("error", TABLE_PATH, message))
-
-
-def _reverse(doc, entries, candidates, found, root):
-    for entry in entries:
-        if doc.endswith("AGENTS.md") and entry.section not in BUILD_SECTIONS:
-            continue
-        if _reverse_covered(entry, candidates, root):
-            continue
-        message = "documents `%s`; add it to scripts/verify-commands.json or exclude it" % entry.line
-        other = None
-        for candidate in candidates:
-            if candidate["cwd"] == entry.cwd:
-                continue
-            if candidate["argv"] == entry.argv or (
-                _task_only(entry.argv)
-                and _task_only(candidate["argv"])
-                and set(candidate["argv"][1:]) <= set(entry.argv[1:])
-            ):
-                other = candidate["cwd"]
-                break
-        if other is not None:
-            message += " (scripts/verify-commands.json runs it from `%s`, but the doc says `%s`)" % (
-                other,
-                entry.cwd,
-            )
-        found.append(Finding("error", doc, message))
-
-
-def _reverse_covered(entry, candidates, root):
-    if any(
-        candidate["excluded"] and candidate["argv"] == entry.argv and candidate["cwd"] == entry.cwd
-        for candidate in candidates
-    ):
-        return True
-    if _task_only(entry.argv):
-        wanted = set(entry.argv[1:])
-        union = set()
-        for candidate in candidates:
-            if candidate["cwd"] != entry.cwd or not _task_only(candidate["argv"]):
-                continue
-            if set(candidate["argv"][1:]) <= wanted:
-                union |= set(candidate["argv"][1:])
-        if union == wanted:
-            return True
-    return any(
-        not candidate["excluded"]
-        and candidate["cwd"] == entry.cwd
-        and _argv_match(entry.argv, candidate["argv"], root, entry.cwd)
-        for candidate in candidates
-    )

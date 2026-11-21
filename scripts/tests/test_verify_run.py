@@ -707,8 +707,7 @@ def fixture_cmap():
 
 def fixture_table():
     """One node with two steps, so a run can leave its second step not reached."""
-    command = {"kind": "check", "cwd": "web-extension", "doc": "scripts/AGENTS.md",
-               "reuse": False}
+    command = {"kind": "check", "cwd": "web-extension", "reuse": False}
     return {
         "version": 1,
         "requirements": {},
