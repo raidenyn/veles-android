@@ -302,14 +302,78 @@ class DuplicateTest(Base):
 
     def test_targeted_line_allowed(self):
         table = _table(("android",))
-        table["nodes"]["android"]["commands"][0]["run"] = ["./gradlew", "testDebugUnitTest"]
+        template = table["nodes"]["android"]["commands"][0]
+        table["nodes"]["android"]["commands"] = [
+            dict(template, id="android." + task, run=["./gradlew", task])
+            for task in ("lintDebug", "detekt", "testDebugUnitTest")
+        ]
+        # Every option below takes a value or targets one task; the values collide with real
+        # task names, so a matcher that drops the option would report a duplicate.
+        targeted = (
+            './gradlew testDebugUnitTest --tests "me.nagaev.veles.otp.handlers.RegexMessageHandlerTest"',
+            "./gradlew testDebugUnitTest --tests detekt",
+            "./gradlew testDebugUnitTest --tests=lintDebug",
+            "./gradlew testDebugUnitTest -Pk=v",
+            "./gradlew testDebugUnitTest -x lintDebug",
+            "./gradlew --max-workers=2 testDebugUnitTest",
+        )
+        for line in targeted:
+            with self.subTest(line=line):
+                docs = {
+                    "android/AGENTS.md": (
+                        "## Build & Test\n\nRun from `android/`:\n\n```bash\n%s\n```\n" % line
+                    )
+                }
+                self.assertEqual(self.fixture(table=table, docs=docs).findings(), [])
+        # The control: the same task line without an option is a duplicate.
         docs = {
             "android/AGENTS.md": (
                 "## Build & Test\n\nRun from `android/`:\n\n```bash\n"
-                './gradlew testDebugUnitTest --tests "me.nagaev.veles.otp.handlers.RegexMessageHandlerTest"'
-                "\n```\n"
+                "./gradlew testDebugUnitTest\n```\n"
             )
         }
+        self.assert_finding(
+            self.fixture(table=table, docs=docs).findings(),
+            "android/AGENTS.md",
+            "is run by verify.py",
+        )
+
+    def test_task_only_line_with_unknown_task_passes(self):
+        docs = {
+            "android/AGENTS.md": (
+                "## Build & Test\n\nRun from `android/`:\n\n```bash\n"
+                "./gradlew assembleDebug lintDebug\n```\n"
+            )
+        }
+        # `lintDebug` is android.lint; `assembleDebug` has no entry, so the line is not run.
+        self.assertEqual(self.fixture(docs=docs).findings(), [])
+
+    def test_device_and_platform_lines_allowed(self):
+        table = _table(("android",))
+        template = table["nodes"]["android"]["commands"][0]
+        table["nodes"]["android"]["commands"] = [
+            dict(
+                template,
+                id="android.connected",
+                kind="device",
+                run=["./gradlew", "connectedDebugAndroidTest"],
+            ),
+            dict(
+                template,
+                id="android.release",
+                kind="platform",
+                run=["./gradlew", "publishRelease"],
+                platforms=["macos"],
+                ci="publish-release / build-macos",
+            ),
+        ]
+        docs = {
+            "android/AGENTS.md": (
+                "## Build & Test\n\nRun from `android/`:\n\n```bash\n"
+                "./gradlew connectedDebugAndroidTest\n./gradlew publishRelease\n```\n"
+            )
+        }
+        # Exact argv and cwd matches, but only check and test entries count as duplicates.
         self.assertEqual(self.fixture(table=table, docs=docs).findings(), [])
 
     def test_build_and_producer_lines_allowed(self):

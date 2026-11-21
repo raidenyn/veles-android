@@ -29,6 +29,28 @@ KEYWORDS = ("if", "then", "else", "elif", "fi", "for", "do", "done", "while", "c
 NO_COMMANDS = ("echo", "exit", "set", "export", "source", ".", ":")
 ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 TASK_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:-]*$")
+# Gradle flags that take no value: a task-only line may carry them and still be a duplicate.
+# Every other `-` argument (for example `--tests <class>`, `-Pkey=value` or `-x <task>`) makes
+# the line targeted.
+VALUE_LESS_OPTIONS = (
+    "-q", "--quiet",
+    "--offline",
+    "--continue",
+    "-i", "--info",
+    "-d", "--debug",
+    "-s", "--stacktrace",
+    "-S", "--full-stacktrace",
+    "--scan",
+    "--daemon", "--no-daemon",
+    "--parallel", "--no-parallel",
+    "--build-cache", "--no-build-cache",
+    "--rerun-tasks",
+    "-m", "--dry-run",
+    "--profile",
+    "--foreground",
+    "--configuration-cache", "--no-configuration-cache",
+    "--watch-fs", "--no-watch-fs",
+)
 HEADING_RE = re.compile(r"^\s{0,3}(#{1,6})\s+(.*)$")
 FENCE_RE = re.compile(r"^\s*```(.*)$")
 RUN_FROM_RE = re.compile(r"Run from `([^`]+)`")
@@ -162,15 +184,22 @@ def read_doc_commands(text, doc):
 def _task_only(argv):
     """The tasks of a task-only `./gradlew` line, or None when the line is targeted.
 
-    A value-less Gradle option (`-q`, `--offline`) starts with `-` and is ignored. Any
-    remaining argument that is not a task name (for example the class after `--tests`) makes
-    the line targeted, so it is never a duplicate.
+    A value-less Gradle option in `VALUE_LESS_OPTIONS` (`-q`, `--offline`) is ignored. Any
+    other argument that is not a task name - another option such as `--tests=<class>`,
+    `-Pkey=value` or `-x <task>`, or a non-task word - makes the line targeted, so it is never
+    a duplicate.
     """
     if not isinstance(argv, list) or len(argv) < 2 or argv[0] != "./gradlew":
         return None
     if not all(isinstance(item, str) for item in argv):
         return None
-    tasks = [item for item in argv[1:] if not item.startswith("-")]
+    tasks = []
+    for item in argv[1:]:
+        if item.startswith("-"):
+            if item not in VALUE_LESS_OPTIONS:
+                return None
+            continue
+        tasks.append(item)
     if not tasks or not all(TASK_RE.match(item) for item in tasks):
         return None
     return tasks
@@ -251,8 +280,8 @@ def _duplicating_ids(entry, candidates):
     return identifiers
 
 
-def duplicate_findings(table, docs):
-    """The documented lines that repeat a command the verifier runs, each with the fix.
+def _duplicate_findings(table, docs):
+    """`(doc, detail)` for each documented line that repeats a verifier command.
 
     ``docs`` maps each scanned doc's path to its entries (``_read_entries``). A line is a
     duplicate when its argv and working directory equal those of a `check` or `test` entry of
@@ -266,11 +295,23 @@ def duplicate_findings(table, docs):
         for entry in docs[doc]:
             identifiers = _duplicating_ids(entry, candidates)
             if identifiers:
-                found.append(
-                    "%s: `%s` is run by verify.py (%s); remove it from the doc"
-                    % (doc, entry.line, ", ".join(identifiers))
-                )
+                found.append((doc, _duplicate_detail(entry.line, identifiers)))
     return found
+
+
+def _duplicate_detail(line, identifiers):
+    return "`%s` is run by verify.py (%s); remove it from the doc" % (
+        line,
+        ", ".join(identifiers),
+    )
+
+
+def duplicate_findings(table, docs):
+    """The documented lines that repeat a command the verifier runs, each with the fix.
+
+    The published string form of ``_duplicate_findings``: ``"<doc>: <detail>"`` per line.
+    """
+    return ["%s: %s" % (doc, detail) for doc, detail in _duplicate_findings(table, docs)]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -568,7 +609,6 @@ def findings(root):
         text = _read_text(root, doc)
         if text is not None:
             docs[doc] = _read_entries(text)
-    for message in duplicate_findings(table, docs):
-        doc, _, detail = message.partition(": ")
+    for doc, detail in _duplicate_findings(table, docs):
         found.append(Finding("error", doc, detail))
     return found

@@ -11,7 +11,6 @@ Run from the repository root:
 ```bash
 ./gradlew installGitCliff      # pinned, SHA-256-verified git-cliff -> build/release-tools/
 ./gradlew installGitleaks      # pinned, SHA-256-verified gitleaks -> build/release-tools/
-node --test verify/test/*.test.mjs            # workflow-contract tests (the tooling aggregate)
 python3 -I scripts/commitlint.py --message "feat(app): add thing"   # --file PATH
 python3 -I scripts/components.py changed --base <sha>
 python3 -I scripts/verify.py              # task gate: affected nodes' checks and related tests

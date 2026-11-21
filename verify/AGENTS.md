@@ -13,7 +13,6 @@ Run from the repository root:
 ```bash
 npm ci --ignore-scripts --prefix verify   # CI provisions the same tools
 ./gradlew installCargoDeny
-node --test verify/test/*.test.mjs         # the verifier's own unit tests
 ```
 
 Exit codes are the shared 0/1/2 contract: 0 all checks matched, 1 a policy/artifact mismatch, 2 a
