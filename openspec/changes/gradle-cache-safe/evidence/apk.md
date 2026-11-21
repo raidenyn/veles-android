@@ -140,10 +140,11 @@ The debug hash differs from the recorded one. The version fields are equal:
 `aapt2 dump badging` prints `versionCode='90909' versionName='9.9.9'` (package
 `me.nagaev.veles.debug`), matching the baseline record.
 
-The difference is not caused by the change. Rebuilding the debug APK in a fresh clone at the merge
-base (`597ee2c6…`, tag `android-v9.9.9`, `--no-build-cache`) reproduces `9df61e18…` byte for byte
-under both JDKs available here — Zulu 21.0.12.1 and a freshly installed Temurin 21.0.12+8 — and in a
-different clone path. The change's APK and the merge-base rebuild are the same file.
+The difference is not caused by the change. Rebuilding the debug APK in two fresh clones at the
+merge base (`597ee2c6…`, tag `android-v9.9.9`, `--no-build-cache`) reproduces `9df61e18…` byte for
+byte under both JDKs available here — Zulu 21.0.12.1 and a freshly installed Temurin 21.0.12+8 — so
+the same hash came out of three different clone paths (two merge-base control clones and the
+change's clone). The change's APK and both merge-base rebuilds are the same file.
 
 The candidate environment input is the debug signing key: the APK is signed with v2 only
 (`apksigner verify`: v1 false, v2 true), so its `unzip -l` entries are untouched by signing and the
@@ -152,5 +153,6 @@ and signature in the APK signing block. `~/.android/debug.keystore` was regenera
 2026-11-20, four hours after the baseline record (13:32); re-signing the same APK with a throwaway key
 changes the SHA-256 while the `unzip -l` entry list stays identical apart from `apksigner`'s own v1
 entries. The recorded baseline debug APK itself was not retained on this machine, so no artifact-level
-`unzip -l` diff against `9bc86264…` could be produced; the 69531578-byte size is unchanged and no
-product-code difference exists between the two builds.
+`unzip -l` diff against `9bc86264…` could be produced; the 69531578-byte size is unchanged, and the
+two merge-base control rebuilds above are the evidence that no product-code difference exists between
+the two builds.
