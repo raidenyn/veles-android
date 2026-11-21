@@ -3788,6 +3788,31 @@ class RealRepoRuleTest(unittest.TestCase):
         self.assertIn(rule_body(self.rule("repo-pre-push-checks.md").body), decision.text)
         self.assertEqual(self.run_event(bash_before("git push origin feature")).kind, "pass")
 
+    def test_pre_push_rule_denies_push_before_delivery(self):
+        # The real rule's gate denies the first push with its text, then confirms the pending rule.
+        rule = self.rule("repo-pre-push-checks.md")
+        self.assertEqual(
+            [pattern.pattern for pattern in rule.gates],
+            ["\\bgit\\b[^;&|\\n]*?\\spush\\b"],
+        )
+        decision = self.run_event(bash_before("git push origin feature"))
+        self.assertEqual(decision.kind, "deny")
+        self.assertEqual(decision.text, rule_body(rule.body))
+        self.assertIn("python3 -I scripts/verify.py --branch", decision.text)
+        self.assertEqual(self.run_event(bash_before("git push origin feature")).kind, "pass")
+
+    def test_pre_push_rule_delivered_at_finalize(self):
+        # A successful finalize delivers the real rule, so the push is not denied.
+        rule = self.rule("repo-pre-push-checks.md")
+        self.assertEqual(
+            [pattern.pattern for pattern in rule.commands],
+            ["\\bopenspec\\s+instructions\\s+finalize\\b"],
+        )
+        decision = self.run_event(bash_after("openspec instructions finalize --change demo"))
+        self.assertEqual(decision.kind, "context")
+        self.assertIn("python3 -I scripts/verify.py --branch", decision.text)
+        self.assertEqual(self.run_event(bash_before("git push origin feature")).kind, "pass")
+
     def test_gh_pr_create_denied_with_real_device(self):
         # A fresh context, so nothing but this gate has been delivered before the PR is created.
         decision = self.run_event(bash_before("gh pr create --fill"))

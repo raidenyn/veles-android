@@ -14,9 +14,14 @@ Run from the repository root:
 ./gradlew scriptsTest          # stdlib-Python suites in scripts/tests
 node --test scripts/check-mac-comparisons.test.mjs
 node --test scripts/opencode-hooked-rules/index.test.mjs
+node --test verify/test/*.test.mjs            # workflow-contract tests (the tooling aggregate)
+sh verify/check-root-aliases.sh               # every documented root Gradle alias resolves
+sh verify/check-root-aliases.sh --self-test   # prove the alias check fails on an unresolved alias
 python3 -I scripts/commitlint.py --message "feat(app): add thing"   # --file PATH
 python3 -I scripts/components.py check
 python3 -I scripts/components.py changed --base <sha>
+python3 -I scripts/verify.py              # task gate: affected nodes' checks and related tests
+python3 -I scripts/verify.py --branch     # branch gate before a push: all of affected nodes' tests
 python3 -I scripts/last_green.py --pr <n> --head <sha> --head-repo <owner/name> --head-ref <ref>
 python3 -I scripts/project_flow.py --help   # check, sync, next, start, followup
 ```
@@ -30,6 +35,6 @@ and bump table is in `docs/releasing.md`.
 
 ## Rules
 
-None.
+- `.agents/rules/scripts-verify-commands.md` — read `docs/verify.md` before editing `scripts/verify-commands.json`.
 
 > **Run your agent from the repository root.** Scoped rules in `.agents/rules/` load only from there; if you started in this folder, read this folder's rule files listed below by hand.

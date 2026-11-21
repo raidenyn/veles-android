@@ -14,7 +14,6 @@ Run from the repository root:
 npm ci --ignore-scripts --prefix verify   # CI provisions the same tools
 ./gradlew installCargoDeny
 verify/verify-supply-chain.sh             # SBOMs, licences, install scripts, build scripts, remote code
-verify/aggregate-checksums.sh <commit>    # optional local checksum manifest
 node --test verify/test/*.test.mjs         # the verifier's own unit tests
 ```
 

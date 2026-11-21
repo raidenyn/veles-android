@@ -670,7 +670,7 @@ const CHECK_WORKFLOWS = ['android', 'web-extension', 'rust', 'protocol', 'native
 // one check-*.yml (per owner: the host build-contract suite in native-host, the installer suites through
 // bridgeInstallerScriptsTest in installer).
 const CI_COMMAND_INVENTORY = [
-  'spotlessCheck', 'detekt', 'android.util.Log', 'lintDebug', 'testDebugUnitTest', 'connectedDebugAndroidTest',
+  'spotlessCheck', 'detekt', 'check-raw-log.sh', 'lintDebug', 'testDebugUnitTest', 'connectedDebugAndroidTest',
   'protocolCheck',
   'npm run format:check', 'npm run lint', 'npm run typecheck', 'npm test', 'npm run test:bundle', 'npm run test:browser',
   'rustFormat', 'rustLint', 'rustTest', 'verify-apk-jni.sh', 'assert-clean.sh',
@@ -3533,7 +3533,7 @@ function gradleSteps(jobText) {
   return steps(jobText).filter((step) => /(?:^|\s)\.\/gradlew(?:\s|$)/.test(stepRunText(step)));
 }
 
-function assertAndroidCheckLayout(source) {
+function assertAndroidCheckLayout(source, scriptText, pairingScriptText) {
   const jobs = workflowJobBlocks(executableYaml(source));
   assert.deepEqual(Object.keys(jobs).sort(), ['instrumented-tests', 'lint', 'release-hook-guard', 'unit-tests'], 'check-android must keep its four jobs');
   for (const job of ['lint', 'release-hook-guard', 'unit-tests']) {
@@ -3556,17 +3556,25 @@ function assertAndroidCheckLayout(source) {
   const stepLevelKeys = emulator.map(mappingEntry).filter((entry) => entry?.indent === usesIndent).map((entry) => entry.key);
   assert.ok(!stepLevelKeys.includes('working-directory') && !stepLevelKeys.includes('script'), 'the emulator runner inputs must not be step-level keys');
 
-  // Repository guards run from the root and name the relocated sources.
+  // Repository guards run from the root. The raw-Log and Kotlin pairing-code guards are scripts;
+  // their scope is read from the script text, never from an inline workflow body.
   const mac = stepContaining(jobs.lint, 'check-mac-comparisons');
   assert.equal(stepRunText(mac).trim(), 'node scripts/check-mac-comparisons.mjs --scan android/app/src/main', 'the MAC guard must scan android/app/src/main from the root');
   assert.equal(stepWorkingDirectory(mac), null, 'the MAC guard must run from the repository root');
-  const log = stepContaining(jobs.lint, 'android.util.Log');
-  assert.equal(stepWorkingDirectory(log), null, 'the android.util.Log guard must run from the repository root');
-  assert.match(stepRunText(log), /android\/app\/src\/main android\/app\/src\/debug --include=\*\.kt/, 'the android.util.Log guard must scan the relocated sources');
-  const pairing = stepContaining(jobs.lint, 'PairingCode');
+  const log = stepContaining(jobs.lint, 'android/scripts/check-raw-log.sh');
+  assert.equal(stepRunText(log).trim(), 'android/scripts/check-raw-log.sh', 'the raw-Log guard must run its script');
+  assert.equal(stepWorkingDirectory(log), null, 'the raw-Log guard must run from the repository root');
+  const rawLogGreps = scriptText.split('\n').filter((line) => line.includes('--include=*.kt'));
+  assert.equal(rawLogGreps.length, 2, 'android/scripts/check-raw-log.sh must keep both greps');
+  for (const line of rawLogGreps) {
+    assert.match(line, /android\/app\/src\/main android\/app\/src\/debug --include=\*\.kt/, 'each raw-Log grep must scan the relocated main and debug sources');
+    assert.match(line, /grep -v "LogSink\.kt"/, 'each raw-Log grep must keep the LogSink.kt exemption');
+  }
+  const pairing = stepContaining(jobs.lint, 'android/scripts/check-pairing-code.sh');
+  assert.equal(stepRunText(pairing).trim(), 'android/scripts/check-pairing-code.sh', 'the Kotlin pairing-code guard must run its script');
   assert.equal(stepWorkingDirectory(pairing), null, 'the pairing-code guard must run from the repository root');
-  assert.match(stepRunText(pairing), /android\/app\/src\/debug --include=\*\.kt/, 'the Kotlin pairing-code guard must scan android/app/src/debug');
-  assert.doesNotMatch(stepRunText(pairing), /web-extension\/src\/debug/, 'the web-extension pairing-code guard belongs to web-extension / lint');
+  assert.match(pairingScriptText, /android\/app\/src\/debug --include=\*\.kt/, 'the Kotlin pairing-code guard must scan android/app/src/debug');
+  assert.doesNotMatch(pairingScriptText, /web-extension\/src\/debug/, 'the web-extension pairing-code guard belongs to web-extension / lint');
 
   // The root-only host-JNI prebuild is gone; the NDK version comes from the Android build.
   assert.doesNotMatch(executableYaml(source), /rustHostJni/, 'check-android must not run the root-only rustHostJni alias');
@@ -3581,13 +3589,20 @@ function assertAndroidCheckLayout(source) {
 
 test('check-android runs Gradle from android and guards from the root', async () => {
   const source = await workflow('check-android.yml');
-  assertAndroidCheckLayout(source);
+  const scripts = {
+    rawLog: await readFile(new URL('android/scripts/check-raw-log.sh', root), 'utf8'),
+    pairing: await readFile(new URL('android/scripts/check-pairing-code.sh', root), 'utf8'),
+  };
+  assertAndroidCheckLayout(source, scripts.rawLog, scripts.pairing);
   const mutations = {
-    'gradle from the root': (text) => text.replace('      - run: ./gradlew spotlessCheck\n        working-directory: android\n', '      - run: ./gradlew spotlessCheck\n'),
+    'gradle from the root': (text) => text.replace('      - run: ./gradlew spotlessCheck --stacktrace\n        working-directory: android\n', '      - run: ./gradlew spotlessCheck --stacktrace\n'),
     'guard from android': (text) => text.replace('        run: node scripts/check-mac-comparisons.mjs --scan android/app/src/main\n', '        working-directory: android\n        run: node scripts/check-mac-comparisons.mjs --scan android/app/src/main\n'),
     'scan outside the relocated root': (text) => text.replace('--scan android/app/src/main', '--scan web-extension/src'),
     'guards off the relocated sources': (text) => text.replaceAll('android/app/src/main', 'app/src/main'),
-    'web pairing guard back in android': (text) => text.replace('          exit $fail\n      - run: ./gradlew lintDebug', '          if grep -rnE "x" web-extension/src/debug --include=*.ts; then exit 1; fi\n          exit $fail\n      - run: ./gradlew lintDebug'),
+    'raw-log invocation changed': (text) => text.replace('        run: android/scripts/check-raw-log.sh\n', '        run: android/scripts/other.sh\n'),
+    'raw-log guard from android': (text) => text.replace('      - name: Guard against raw android.util.Log usage outside LogSink.kt\n        run: android/scripts/check-raw-log.sh\n', '      - name: Guard against raw android.util.Log usage outside LogSink.kt\n        working-directory: android\n        run: android/scripts/check-raw-log.sh\n'),
+    'pairing invocation changed': (text) => text.replace('        run: android/scripts/check-pairing-code.sh\n', '        run: android/scripts/other.sh\n'),
+    'pairing guard from android': (text) => text.replace('      - name: Guard against pairing-code logging in the Kotlin debug surface\n        run: android/scripts/check-pairing-code.sh\n', '      - name: Guard against pairing-code logging in the Kotlin debug surface\n        working-directory: android\n        run: android/scripts/check-pairing-code.sh\n'),
     'root host-JNI prebuild': (text) => text.replace('      - run: ./gradlew testDebugUnitTest\n        working-directory: android\n', '      - run: ./gradlew rustHostJni\n      - run: ./gradlew testDebugUnitTest\n        working-directory: android\n'),
     'ndk from the root': (text) => text.replace('        working-directory: android\n        run: |\n          NDK_VERSION="$(./gradlew -q rustNdkVersion)"', '        run: |\n          NDK_VERSION="$(./gradlew -q rustNdkVersion)"'),
     'emulator directory at step level': (text) => text
@@ -3598,7 +3613,32 @@ test('check-android runs Gradle from android and guards from the root', async ()
   for (const [label, mutate] of Object.entries(mutations)) {
     const mutated = mutate(source);
     assert.notEqual(mutated, source, `mutation "${label}" must change check-android.yml`);
-    assert.throws(() => assertAndroidCheckLayout(mutated), `the contract must reject "${label}"`);
+    assert.throws(() => assertAndroidCheckLayout(mutated, scripts.rawLog, scripts.pairing), `the contract must reject "${label}"`);
+  }
+  const scriptMutations = {
+    'first raw-Log grep narrowed to main': {
+      script: 'rawLog',
+      mutate: (text) => text.replace('android/app/src/main android/app/src/debug --include=*.kt', 'android/app/src/main --include=*.kt'),
+    },
+    'second raw-Log grep narrowed to main': {
+      script: 'rawLog',
+      mutate: (text) => text.replace('grep -rnE "Log\\.[dweiv]\\(" android/app/src/main android/app/src/debug --include=*.kt', 'grep -rnE "Log\\.[dweiv]\\(" android/app/src/main --include=*.kt'),
+    },
+    'LogSink.kt filter dropped': {
+      script: 'rawLog',
+      mutate: (text) => text.replaceAll(' | grep -v "LogSink.kt"', ''),
+    },
+    'web pairing guard back in android': {
+      script: 'pairing',
+      mutate: (text) => text.replace('exit $fail', 'if grep -rnE "x" web-extension/src/debug --include=*.ts; then exit 1; fi\nexit $fail'),
+    },
+  };
+  for (const [label, { script, mutate }] of Object.entries(scriptMutations)) {
+    const mutated = mutate(scripts[script]);
+    assert.notEqual(mutated, scripts[script], `mutation "${label}" must change the ${script} guard script`);
+    const rawLogScript = script === 'rawLog' ? mutated : scripts.rawLog;
+    const pairingScript = script === 'pairing' ? mutated : scripts.pairing;
+    assert.throws(() => assertAndroidCheckLayout(source, rawLogScript, pairingScript), `the contract must reject "${label}"`);
   }
 });
 
@@ -3649,29 +3689,42 @@ test('every pinned Android NDK install exports the installed path to $GITHUB_ENV
   }
 });
 
-function assertWebExtensionGuards(source) {
+function assertWebExtensionGuards(source, pairingScriptText) {
   const lint = workflowJobBlocks(executableYaml(source)).lint;
   const mac = stepContaining(lint, 'check-mac-comparisons');
   assert.equal(stepRunText(mac).trim(), 'node scripts/check-mac-comparisons.mjs --scan web-extension/src', 'web-extension lint must scan web-extension/src from the root');
   assert.equal(stepWorkingDirectory(mac), null, 'the MAC guard must run from the repository root');
-  const pairing = stepContaining(lint, 'web-extension/src/debug');
+  const pairing = stepContaining(lint, 'web-extension/scripts/check-pairing-code.sh');
+  assert.equal(stepRunText(pairing).trim(), 'web-extension/scripts/check-pairing-code.sh', 'the pairing-code guard must run its script');
   assert.equal(stepWorkingDirectory(pairing), null, 'the pairing-code guard must run from the repository root');
-  assert.match(stepRunText(pairing), /PairingCode/, 'the web-extension pairing-code guard must inspect code-bearing values');
+  assert.match(pairingScriptText, /web-extension\/src\/debug --include=\*\.ts/, 'the web-extension pairing-code guard must scan web-extension/src/debug');
+  assert.match(pairingScriptText, /PairingCode/, 'the web-extension pairing-code guard must inspect code-bearing values');
 }
 
 test('web-extension lint runs the MAC and pairing-code guards', async () => {
   const source = await workflow('check-web-extension.yml');
-  assertWebExtensionGuards(source);
+  const pairingScript = await readFile(new URL('web-extension/scripts/check-pairing-code.sh', root), 'utf8');
+  assertWebExtensionGuards(source, pairingScript);
   const mutations = {
     'root scan removed': (text) => text.replace('node scripts/check-mac-comparisons.mjs --scan web-extension/src', 'node scripts/check-mac-comparisons.mjs'),
     'android scan': (text) => text.replace('--scan web-extension/src', '--scan android/app/src/main'),
     'guard from the extension directory': (text) => text.replace('        run: node scripts/check-mac-comparisons.mjs --scan web-extension/src\n', '        working-directory: web-extension\n        run: node scripts/check-mac-comparisons.mjs --scan web-extension/src\n'),
-    'pairing guard dropped': (text) => text.replace(/      - name: Guard against pairing-code logging in the Chrome debug surface\n        run: \|\n(?:          [^\n]*\n|            [^\n]*\n)+/, ''),
+    'pairing step invocation changed': (text) => text.replace('        run: web-extension/scripts/check-pairing-code.sh\n', '        run: web-extension/scripts/other.sh\n'),
+    'pairing guard from the extension directory': (text) => text.replace('      - name: Guard against pairing-code logging in the Chrome debug surface\n        run: web-extension/scripts/check-pairing-code.sh\n', '      - name: Guard against pairing-code logging in the Chrome debug surface\n        working-directory: web-extension\n        run: web-extension/scripts/check-pairing-code.sh\n'),
   };
   for (const [label, mutate] of Object.entries(mutations)) {
     const mutated = mutate(source);
     assert.notEqual(mutated, source, `mutation "${label}" must change check-web-extension.yml`);
-    assert.throws(() => assertWebExtensionGuards(mutated), `the contract must reject "${label}"`);
+    assert.throws(() => assertWebExtensionGuards(mutated, pairingScript), `the contract must reject "${label}"`);
+  }
+  const scriptMutations = {
+    'pairing scan narrowed': (text) => text.replace('web-extension/src/debug --include=*.ts', 'web-extension/src --include=*.ts'),
+    'PairingCode dropped': (text) => text.replace('PairingCode|', ''),
+  };
+  for (const [label, mutate] of Object.entries(scriptMutations)) {
+    const mutated = mutate(pairingScript);
+    assert.notEqual(mutated, pairingScript, `mutation "${label}" must change the extension pairing-code script`);
+    assert.throws(() => assertWebExtensionGuards(source, mutated), `the contract must reject "${label}"`);
   }
 });
 

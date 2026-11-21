@@ -17,4 +17,10 @@
 /docs.json                    @raidenyn
 /.mintignore                  @raidenyn
 /scripts/agent_rules.py       @raidenyn
+/scripts/verify.py            @raidenyn
+/scripts/verify-commands.json @raidenyn
+/docs/checks/verify_table.py  @raidenyn
+/android/scripts/check-raw-log.sh @raidenyn
+/android/scripts/check-pairing-code.sh @raidenyn
+/web-extension/scripts/check-pairing-code.sh @raidenyn
 /scripts/opencode-hooked-rules/ @raidenyn

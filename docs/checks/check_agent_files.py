@@ -4,8 +4,9 @@
 Checks the legacy files, the AGENTS.md notices and line caps, node-map parity, rule files, the
 three always-on `repo-*` rules, the hook-delivered rules and their pointer block, the stop-predicate
 registry, the delivery budget, the `.claude/` symlinks, skill set and hook wiring, `opencode.json`,
-`.github/CODEOWNERS`, the `opencode-rules` mentions and the component overrides.
-Stdlib only; Python 3.8 compatible; run from the `docs / agent-files` CI check.
+`.github/CODEOWNERS`, the `opencode-rules` mentions, the component overrides and the command-table
+drift check (`verify_table.py`). Stdlib only; Python 3.8 compatible; run from the `docs / agent-files`
+CI check.
 """
 import argparse
 import collections
@@ -15,6 +16,8 @@ import os
 import re
 import subprocess
 import sys
+
+import verify_table
 
 Finding = collections.namedtuple("Finding", "severity path message")
 
@@ -99,11 +102,14 @@ CODEOWNER_SAMPLE_PATHS = (
 )
 
 # The Claude Code hooks that deliver the hooked rules: event -> expected matcher (None: no
-# `matcher` key). Each event has exactly one entry holding exactly one command. Any other key on a
-# command (`async`, `onFailure`, `if`, `shell`, ...) or on an entry could change how or whether the
-# hook runs, so only these keys are allowed.
+# `matcher` key). Each event has exactly one entry; every event but `Stop` holds exactly one
+# command, and `Stop` holds exactly the engine command then the verify command (design D11).
+# Any other key on a command (`async`, `onFailure`, `if`, `shell`, ...) or on an entry could
+# change how or whether the hook runs, so only these keys are allowed.
 CLAUDE_HOOK_COMMAND = 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/agent_rules.py" hook --format claude'
 CLAUDE_HOOK_TIMEOUT = 5
+CLAUDE_VERIFY_COMMAND = 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/verify.py" --hook claude || true'
+CLAUDE_VERIFY_TIMEOUT = 1800
 CLAUDE_HOOK_COMMAND_KEYS = ("type", "command", "timeout")
 CLAUDE_HOOK_ENTRY_KEYS = ("matcher", "hooks")
 CLAUDE_HOOKS = (
@@ -248,6 +254,7 @@ OVERRIDE_TARGETS.update(
         ".github/CODEOWNERS": ("docs",),
         ".github/components.json": ("tooling", "docs"),
         ".github/workflows/check-docs.yml": ("docs", "tooling"),
+        "scripts/verify-commands.json": ("docs", "tooling"),
     }
 )
 
@@ -561,9 +568,11 @@ def _check_overrides(root, tracked_nested):
     if problem is not None:
         findings.append(Finding("error", COMPONENTS_JSON, problem))
         overrides = {}
-    for path in tracked_nested:
-        if path in NESTED_EXCLUSIVE_DOCS:
-            continue
+    required = set(OVERRIDE_TARGETS)
+    required.update(
+        path for path in tracked_nested if path not in NESTED_EXCLUSIVE_DOCS
+    )
+    for path in sorted(required):
         if path not in overrides:
             findings.append(
                 Finding(
@@ -1740,26 +1749,102 @@ def _strict_object(pairs):
     return dict(pairs)
 
 
-def _hook_findings(event, expected_matcher, entries):
-    """Findings for one event's entry list in `.claude/settings.json`."""
+def _hook_command_findings(event, command, expected, expected_timeout, verify=False):
+    """Findings for one hook command: its type, exact text, timeout and key set."""
+
     def error(message):
         return [Finding("error", SETTINGS_JSON, "hook %s %s" % (event, message))]
 
+    if not isinstance(command, dict):
+        return error("%s must be an object" % ("verify command" if verify else "command"))
+    findings = []
+    if command.get("type") != "command":
+        prefix = "verify command " if verify else ""
+        findings.extend(
+            error("has %stype %r; expected 'command'" % (prefix, command.get("type")))
+        )
+    if command.get("command") != expected:
+        if verify:
+            findings.extend(
+                error(
+                    "has verify command %r; expected %r"
+                    % (command.get("command"), expected)
+                )
+            )
+        else:
+            findings.extend(
+                error("has command %r; expected %r" % (command.get("command"), expected))
+            )
+    timeout = command.get("timeout")
+    if verify:
+        if "timeout" not in command:
+            findings.extend(error("has verify command no timeout; expected %d" % expected_timeout))
+        elif (
+            not isinstance(timeout, int)
+            or isinstance(timeout, bool)
+            or timeout != expected_timeout
+        ):
+            findings.extend(
+                error(
+                    "has verify command timeout %r; expected %d" % (timeout, expected_timeout)
+                )
+            )
+    else:
+        if "timeout" not in command:
+            findings.extend(error("has no timeout; expected %d" % expected_timeout))
+        elif (
+            not isinstance(timeout, int)
+            or isinstance(timeout, bool)
+            or timeout != expected_timeout
+        ):
+            findings.extend(error("has timeout %r; expected %d" % (timeout, expected_timeout)))
+    prefix = "verify command " if verify else ""
+    for key in sorted(set(command) - set(CLAUDE_HOOK_COMMAND_KEYS)):
+        findings.extend(
+            error(
+                "has %sunexpected key `%s`; only `type`, `command` and `timeout` are allowed"
+                % (prefix, ascii(key)[1:-1])
+            )
+        )
+    return findings
+
+
+def _hook_findings(event, expected_matcher, entries):
+    """Findings for one event's entry list in `.claude/settings.json`.
+
+    Every event holds one entry; `Stop` holds the engine command followed by the verify command,
+    every other event only the engine command.
+    """
+
+    def error(message):
+        return [Finding("error", SETTINGS_JSON, "hook %s %s" % (event, message))]
+
+    verify = event == "Stop"
+    expected_commands = (
+        (
+            (CLAUDE_HOOK_COMMAND, CLAUDE_HOOK_TIMEOUT),
+            (CLAUDE_VERIFY_COMMAND, CLAUDE_VERIFY_TIMEOUT),
+        )
+        if verify
+        else ((CLAUDE_HOOK_COMMAND, CLAUDE_HOOK_TIMEOUT),)
+    )
+    expected_shape = (
+        "exactly two commands: the engine command then the verify command"
+        if verify
+        else "exactly one command"
+    )
     if not isinstance(entries, list) or not entries:
         return error("must be a non-empty list holding exactly one entry")
     if len(entries) != 1:
         return error(
-            "has %d entries; expected exactly one entry with exactly one command" % len(entries)
+            "has %d entries; expected exactly one entry with %s" % (len(entries), expected_shape)
         )
     entry = entries[0]
     if not isinstance(entry, dict):
         return error("entry must be an object")
     commands = entry.get("hooks")
-    if not isinstance(commands, list) or len(commands) != 1:
-        return error("must hold exactly one command in its entry")
-    command = commands[0]
-    if not isinstance(command, dict):
-        return error("command must be an object")
+    if not isinstance(commands, list) or len(commands) != len(expected_commands):
+        return error("must hold %s in its entry" % expected_shape)
 
     findings = []
     if expected_matcher is None:
@@ -1771,29 +1856,19 @@ def _hook_findings(event, expected_matcher, entries):
         findings.extend(
             error("has matcher %r; expected %r" % (entry.get("matcher"), expected_matcher))
         )
-    if command.get("type") != "command":
-        findings.extend(error("has type %r; expected 'command'" % (command.get("type"),)))
-    if command.get("command") != CLAUDE_HOOK_COMMAND:
+    for index, (expected_command, expected_timeout) in enumerate(expected_commands):
         findings.extend(
-            error("has command %r; expected %r" % (command.get("command"), CLAUDE_HOOK_COMMAND))
+            _hook_command_findings(
+                event,
+                commands[index],
+                expected_command,
+                expected_timeout,
+                verify=verify and index == 1,
+            )
         )
-    timeout = command.get("timeout")
-    if "timeout" not in command:
-        findings.extend(error("has no timeout; expected %d" % CLAUDE_HOOK_TIMEOUT))
-    elif (
-        not isinstance(timeout, int) or isinstance(timeout, bool) or timeout != CLAUDE_HOOK_TIMEOUT
-    ):
-        findings.extend(error("has timeout %r; expected %d" % (timeout, CLAUDE_HOOK_TIMEOUT)))
     for key in sorted(set(entry) - set(CLAUDE_HOOK_ENTRY_KEYS)):
         findings.extend(
             error("entry has unexpected key `%s`; only `matcher` and `hooks` are allowed" % ascii(key)[1:-1])
-        )
-    for key in sorted(set(command) - set(CLAUDE_HOOK_COMMAND_KEYS)):
-        findings.extend(
-            error(
-                "has unexpected key `%s`; only `type`, `command` and `timeout` are allowed"
-                % ascii(key)[1:-1]
-            )
         )
     return findings
 
@@ -1801,11 +1876,13 @@ def _hook_findings(event, expected_matcher, entries):
 def check_claude_hooks(root):
     """Check that `.claude/settings.json` wires the hooked-rule engine into Claude Code.
 
-    Each of the four events has exactly one entry with exactly one command, the engine's `hook`
-    subcommand, the expected matcher (or none) and a 5-second timeout, and no other key on the entry
-    or the command. `disableAllHooks` must not be set to a true value, and the engine the hooks run
-    must exist. Whether the engine may ever answer `allow` is a property of the engine, tested there,
-    not here. A repository with these hooks and no hooked rule is valid: the engine passes silently.
+    Each of the five events has exactly one entry: every event but `Stop` holds exactly one
+    command, the engine's `hook` subcommand; `Stop` holds the engine command and then the verify
+    command. Each command has the expected text, the expected matcher (or none) and its fixed
+    timeout (5 seconds, 1800 for the verify command), and no other key on the entry or the command.
+    `disableAllHooks` must not be set to a true value, and the engine the hooks run must exist.
+    Whether the engine may ever answer `allow` is a property of the engine, tested there, not here.
+    A repository with these hooks and no hooked rule is valid: the engine passes silently.
     """
     if os.path.islink(os.path.join(root, SETTINGS_JSON)):
         return []  # `check_links` reports the symlink; a dangling target is not a second error
@@ -1911,6 +1988,10 @@ def check_repo(root, platform=sys.platform):
     findings.extend(_check_nested_files(root, tracked_nested))
     findings.extend(_check_node_map(root_text, tracked_nested))
     findings.extend(_check_overrides(root, tracked_nested))
+    findings.extend(
+        Finding(finding.severity, finding.path, finding.message)
+        for finding in verify_table.findings(root)
+    )
     findings.extend(check_rules(root, files))
     findings.extend(check_always_on_rules(root, files))
     findings.extend(check_moved_rules(root, files))

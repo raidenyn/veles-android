@@ -72,6 +72,11 @@ procedures; `.agents/rules/` holds the scoped rule files. The agent-file check
 (`docs/checks/check_agent_files.py`) enforces the layout, including the 40-line cap on every
 `AGENTS.md`; `docs/agent-guidance.md` explains the policy and how to add a rule or a node.
 
+Run `python3 -I scripts/verify.py` (the task gate: the affected nodes' checks and related tests) before
+finishing a task, and `python3 -I scripts/verify.py --branch` (the branch gate: all tests of the affected
+nodes) before pushing. `docs/verify.md` explains the command table, requirements, generated outputs and
+the Claude Code `Stop` hook.
+
 - **Start at the repository root.** Scoped rules are delivered only when the agent is started at the
   root; started inside a node folder you get that folder's `AGENTS.md` (Claude Code also loads the
   parent chain; OpenCode does not), but you must read that folder's listed rule files by hand.

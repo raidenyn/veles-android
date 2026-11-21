@@ -154,6 +154,7 @@ EXPECTED_OVERRIDE_TARGETS = {
     ".github/CODEOWNERS": ["docs"],
     ".github/components.json": ["tooling", "docs"],
     ".github/workflows/check-docs.yml": ["docs", "tooling"],
+    "scripts/verify-commands.json": ["docs", "tooling"],
 }
 EXPECTED_CODEOWNER_PATTERNS = (
     "/opencode.json",
@@ -171,6 +172,10 @@ EXPECTED_CODEOWNER_PATTERNS = (
     "/scripts/opencode-hooked-rules/",
 )
 HOOK_COMMAND = 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/agent_rules.py" hook --format claude'
+# The verify hook that `Stop` holds after the engine command: design D11 fixes both texts and
+# timeouts, so they are repeated here rather than imported from the module under test.
+VERIFY_COMMAND = 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/verify.py" --hook claude || true'
+VERIFY_TIMEOUT = 1800
 # (event, matcher) per hook; a matcher of None means the entry carries no `matcher` key.
 EXPECTED_HOOKS = (
     ("PreToolUse", "Bash"),
@@ -278,11 +283,19 @@ def skill_section(skills):
     return lines
 
 
-def nested_text(node, notice=EXPECTED_NOTICE_NESTED, rules=True, target_lines=None):
+def nested_text(
+    node, notice=EXPECTED_NOTICE_NESTED, rules=True, target_lines=None, commands=None
+):
     lines = ["# %s/AGENTS.md" % node, ""]
     if notice is not None:
         lines.extend([notice, ""])
-    lines.extend(["## Commands", "", "None.", ""])
+    lines.extend(["## Commands", ""])
+    if commands:
+        lines.extend(["Run from the repository root:", "", "```bash"])
+        lines.extend(commands)
+        lines.extend(["```", ""])
+    else:
+        lines.extend(["None.", ""])
     if rules:
         lines.extend(["## Rules", "", "Follow `.agents/rules/`."])
     else:
@@ -335,7 +348,8 @@ def hooks_block(drop=None, matchers=None, commands=None, timeouts=None):
     """The expected `hooks` block, with per-event overrides for the negative tests.
 
     ``drop`` names events to omit; ``matchers`` and ``commands`` replace a value; ``timeouts``
-    replaces the timeout, and a value of ``False`` omits the key.
+    replaces the timeout, and a value of ``False`` omits the key. The overrides apply to the
+    event's first command, so `Stop` keeps its verify command second.
     """
     block = {}
     for event, matcher in EXPECTED_HOOKS:
@@ -346,9 +360,14 @@ def hooks_block(drop=None, matchers=None, commands=None, timeouts=None):
         timeout = (timeouts or {}).get(event, 5)
         if timeout is not False:
             command["timeout"] = timeout
-        entry = {"hooks": [command]}
+        hooks = [command]
+        if event == "Stop":
+            hooks.append(
+                {"type": "command", "command": VERIFY_COMMAND, "timeout": VERIFY_TIMEOUT}
+            )
+        entry = {"hooks": hooks}
         if matcher is not None:
-            entry = {"matcher": matcher, "hooks": [command]}
+            entry = {"matcher": matcher, "hooks": hooks}
         block[event] = [entry]
     return block
 
@@ -416,9 +435,39 @@ def default_overrides():
     return overrides
 
 
+FIXTURE_NODES = {"docs": {"paths": ["docs/"]}}
+# The smallest table the drift check accepts: one node, one documented command whose doc is
+# that node's AGENTS.md, named in the component map so the node sets agree.
+FIXTURE_TABLE = {
+    "version": 1,
+    "requirements": {},
+    "producers": [],
+    "nodes": {
+        "docs": {
+            "commands": [
+                {
+                    "id": "docs.offline-check",
+                    "kind": "check",
+                    "cwd": ".",
+                    "run": ["python3", "docs/checks/check_offline.py", "--root", "."],
+                    "doc": "docs/AGENTS.md",
+                    "requires": [],
+                    "inputs": [],
+                }
+            ],
+            "excluded": [],
+        }
+    },
+}
+
+
 def components_json(overrides=None):
     return json.dumps(
-        {"since": "0" * 40, "global-overrides": default_overrides() if overrides is None else overrides},
+        {
+            "since": "0" * 40,
+            "nodes": FIXTURE_NODES,
+            "global-overrides": default_overrides() if overrides is None else overrides,
+        },
         indent=2,
     ) + "\n"
 
@@ -482,6 +531,7 @@ def clean_files(skills=None):
         ".agents/skills/.openspec-target": "claude\n",
         LOCAL_PLUGIN_INDEX: "export default {}\n",
         ENGINE_FILE: ENGINE_TEXT,
+        "scripts/verify-commands.json": json.dumps(FIXTURE_TABLE, indent=2) + "\n",
     }
     for name, text in fixture_hooked_rules().items():
         files[HOOKED_DIR + name] = text
@@ -490,6 +540,9 @@ def clean_files(skills=None):
     for path in EXPECTED_NODE_FILES:
         node = path[: -len("/AGENTS.md")]
         files[path] = nested_text(node)
+    files["docs/AGENTS.md"] = nested_text(
+        "docs", commands=["python3 docs/checks/check_offline.py --root ."]
+    )
     files["docs/openspec-skills.md"] = "\n".join(skill_section(skills)) + "\n"
     files["docs/agent-guidance.md"] = "# Agent-file guidance\n\nThe 40-line policy.\n"
     files["docs/openspec-workflow.md"] = "# OpenSpec workflow\n\nThe update procedure.\n"
@@ -635,6 +688,8 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assertEqual(getattr(check_module, "AGENTS_LINE_MAX", None), 40)
         self.assertEqual(tuple(check_module.ALWAYS_ON_REPO_RULES), EXPECTED_REPO_RULES)
         self.assertEqual(tuple(check_module.CLAUDE_HOOKS), EXPECTED_HOOKS)
+        self.assertEqual(getattr(check_module, "CLAUDE_VERIFY_COMMAND", None), VERIFY_COMMAND)
+        self.assertEqual(getattr(check_module, "CLAUDE_VERIFY_TIMEOUT", None), VERIFY_TIMEOUT)
         self.assertEqual(tuple(check_module.BUDGET_COMMANDS), EXPECTED_BUDGET_COMMANDS)
         self.assertEqual(
             dict(check_module.MOVED_RULES),
@@ -652,6 +707,11 @@ class AgentFileCheckTest(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             self.assertEqual(main(["--root", root]), 0)
         self.assertEqual(output.getvalue(), "")
+
+    def test_clean_fixture_has_no_findings(self):
+        # The fixture carries a minimal valid command table and the docs it references, so the
+        # drift check is clean on the same tree the other checks call clean.
+        self.assertEqual(check_repo(self.repo()), [])
 
     def test_nested_claude_md_fails(self):
         files = clean_files()
@@ -1095,6 +1155,26 @@ class AgentFileCheckTest(unittest.TestCase):
         files = with_rule(clean_files(), "native-bridge-multi.md", text, "native-bridge")
         findings = check_repo(self.repo(files))
         self.assertEqual(findings, [])
+
+    def test_scripts_rule_scope(self):
+        # The shipped table rule loads for the table only, and points at its reference page.
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(CHECKS)),
+            ".agents",
+            "rules",
+            "scripts-verify-commands.md",
+        )
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+        frontmatter = parse_frontmatter(text)
+        self.assertEqual(frontmatter["trigger"], "glob")
+        for key in ("globs", "paths"):
+            self.assertEqual(frontmatter[key], ["scripts/verify-commands.json"])
+        pattern = frontmatter["globs"][0]
+        regex = re.compile("^" + re.escape(pattern).replace(r"\*", ".*") + "$")
+        self.assertTrue(regex.match("scripts/verify-commands.json"))
+        self.assertFalse(regex.match("scripts/verify.py"))
+        self.assertIn("docs/verify.md", text)
 
     def test_node_rule_rejects_parent_directory_traversal(self):
         text = rule_text(
@@ -1798,6 +1878,31 @@ class AgentFileCheckTest(unittest.TestCase):
         )
         self.assertEqual(len(findings), 1, findings)
 
+    def test_override_absent(self):
+        overrides = default_overrides()
+        del overrides["scripts/verify-commands.json"]
+        files = clean_files()
+        files[".github/components.json"] = components_json(overrides)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings,
+            "error",
+            "scripts/verify-commands.json",
+            "has no entry in .github/components.json global-overrides",
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_override_wrong_owners(self):
+        overrides = default_overrides()
+        overrides["scripts/verify-commands.json"] = ["docs"]
+        files = clean_files()
+        files[".github/components.json"] = components_json(overrides)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", "scripts/verify-commands.json", "expected exactly"
+        )
+        self.assertEqual(len(findings), 1, findings)
+
     def test_override_target_sets_exact(self):
         cases = (
             ("native-bridge/host/AGENTS.md", ["docs"], "native-bridge/host/AGENTS.md", "native-host"),
@@ -2006,6 +2111,89 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assert_finding(findings, "error", ".claude/settings.json", "hook Stop is missing")
         self.assertEqual(len(findings), 1, findings)
 
+    def test_stop_holds_verify_hook(self):
+        # The otherwise valid fixture passes, and the two Stop commands are the fixed pair.
+        files = clean_files()
+        stop = json.loads(files[".claude/settings.json"])["hooks"]["Stop"]
+        self.assertEqual(
+            [command["command"] for command in stop[0]["hooks"]], [HOOK_COMMAND, VERIFY_COMMAND]
+        )
+        self.assertEqual(
+            [command["timeout"] for command in stop[0]["hooks"]], [5, VERIFY_TIMEOUT]
+        )
+        self.assertEqual(check_claude_hooks(self.repo(files)), [])
+        self.assertEqual(check_repo(self.repo(files)), [])
+
+    def test_stop_without_verify(self):
+        block = hooks_block()
+        block["Stop"][0]["hooks"].pop()
+        files = clean_files()
+        files[".claude/settings.json"] = settings_text(block)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings,
+            "error",
+            ".claude/settings.json",
+            "hook Stop must hold exactly two commands",
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_stop_verify_first(self):
+        block = hooks_block()
+        block["Stop"][0]["hooks"].reverse()
+        files = clean_files()
+        files[".claude/settings.json"] = settings_text(block)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".claude/settings.json", "hook Stop has command")
+        self.assert_finding(
+            findings, "error", ".claude/settings.json", "expected %r" % VERIFY_COMMAND
+        )
+        self.assertEqual(len(findings), 4, findings)
+
+    def test_stop_third_command(self):
+        block = hooks_block()
+        block["Stop"][0]["hooks"].append({"type": "command", "command": "true", "timeout": 5})
+        files = clean_files()
+        files[".claude/settings.json"] = settings_text(block)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings,
+            "error",
+            ".claude/settings.json",
+            "hook Stop must hold exactly two commands",
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_stop_wrong_timeout(self):
+        block = hooks_block()
+        block["Stop"][0]["hooks"][1]["timeout"] = 5
+        files = clean_files()
+        files[".claude/settings.json"] = settings_text(block)
+        findings = check_repo(self.repo(files))
+        self.assert_finding(findings, "error", ".claude/settings.json", "hook Stop has verify command timeout")
+        self.assert_finding(findings, "error", ".claude/settings.json", "expected 1800")
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_other_event_second_command(self):
+        for event, _ in EXPECTED_HOOKS:
+            if event == "Stop":
+                continue
+            with self.subTest(event=event):
+                block = hooks_block()
+                block[event][0]["hooks"].append(
+                    {"type": "command", "command": "true", "timeout": 5}
+                )
+                files = clean_files()
+                files[".claude/settings.json"] = settings_text(block)
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings,
+                    "error",
+                    ".claude/settings.json",
+                    "hook %s must hold exactly one command" % event,
+                )
+                self.assertEqual(len(findings), 1, findings)
+
     def test_subagent_stop_rejected(self):
         # A subagent stop is not a delivery moment; wiring it would run the stop gate twice.
         block = hooks_block()
@@ -2060,7 +2248,12 @@ class AgentFileCheckTest(unittest.TestCase):
                 files[".claude/settings.json"] = settings_text(block)
                 findings = check_repo(self.repo(files))
                 self.assert_finding(findings, "error", ".claude/settings.json", "hook %s " % event)
-                self.assert_finding(findings, "error", ".claude/settings.json", "exactly one")
+                self.assert_finding(
+                    findings,
+                    "error",
+                    ".claude/settings.json",
+                    "exactly two" if event == "Stop" else "exactly one",
+                )
                 self.assertEqual(len(findings), 1, findings)
 
     def test_hooks_malformed_entry_fails(self):
@@ -2189,6 +2382,10 @@ class AgentFileCheckTest(unittest.TestCase):
         block = hooks_block()
         for event, matcher in EXPECTED_HOOKS:
             self.assertEqual(sorted(block[event][0]["hooks"][0]), ["command", "timeout", "type"])
+            if event == "Stop":
+                self.assertEqual(
+                    sorted(block[event][0]["hooks"][1]), ["command", "timeout", "type"]
+                )
             expected = ["hooks", "matcher"] if matcher is not None else ["hooks"]
             self.assertEqual(sorted(block[event][0]), expected)
         self.assertEqual(check_claude_hooks(self.repo()), [])

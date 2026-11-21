@@ -177,6 +177,15 @@ class SelectionTest(unittest.TestCase):
                 self.assertEqual({n for n, v in a.items() if v}, nodes)
                 self.assertEqual(unaccounted([path], CMAP), [])
 
+    def test_verify_table_only_selects_tooling_and_docs(self):
+        # The drift check's table: the docs check and the scripts suites both own it.
+        path = "scripts/verify-commands.json"
+        self.assertEqual(sorted(CMAP["global-overrides"][path]), ["docs", "tooling"])
+        self.assertEqual(owner_nodes(path, CMAP), {"docs", "tooling"})
+        a = affected([path], CMAP)
+        self.assertEqual({n for n, v in a.items() if v}, {"docs", "tooling"})
+        self.assertEqual(unaccounted([path], CMAP), [])
+
     def test_other_workflows_stay_global(self):
         for path in (
             ".github/workflows/ci.yml",

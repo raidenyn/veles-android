@@ -57,6 +57,11 @@
             "type": "command",
             "command": "python3 -I \"$CLAUDE_PROJECT_DIR/scripts/agent_rules.py\" hook --format claude",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 -I \"$CLAUDE_PROJECT_DIR/scripts/verify.py\" --hook claude || true",
+            "timeout": 1800
           }
         ]
       }
