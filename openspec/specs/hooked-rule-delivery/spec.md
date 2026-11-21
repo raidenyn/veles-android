@@ -64,7 +64,7 @@ is stale. Each pointer MUST keep its rule's must-never-miss fact always on:
 - roster: models and presets live only in the roster, and no model is substituted;
 - real-device testing: a behaviour change needs a real device, emulator or Chrome run before it is called done,
   stated in the PR or report;
-- pre-push checks: before a push, run the checks of every node `scripts/components.py changed` selects.
+- pre-push checks: before a push, run `python3 -I scripts/verify.py --branch`.
 
 #### Scenario: Stale block
 - **WHEN** a hooked rule's `pointer` changes and the block is not regenerated
@@ -73,6 +73,10 @@ is stale. Each pointer MUST keep its rule's must-never-miss fact always on:
 #### Scenario: Pointer without hooks
 - **WHEN** the hooks and the OpenCode plugin are disabled and a session starts at the repository root, with no parent `CLAUDE.md` or `CLAUDE.local.md`
 - **THEN** the agent's context contains the pointer block, including the closeout pointer's authorization to finalize without asking
+
+#### Scenario: Pre-push pointer names the verify command
+- **WHEN** the pointer block is generated from `.agents/hooked-rules/repo-pre-push-checks.md`
+- **THEN** its line names `python3 -I scripts/verify.py --branch` and keeps the rule's moments, `openspec instructions finalize` and before `git push`
 
 ### Requirement: Engine events and decisions
 `scripts/agent_rules.py hook` SHALL be a standard-library Python 3.8+ program, run with `-I`. It MUST read one event
@@ -350,6 +354,12 @@ The repository SHALL wire the engine into Claude Code and OpenCode.
 - `PreCompact`;
 - `Stop`.
 
+The `Stop` hook's single entry MUST hold exactly one more command after the engine command, the verify hook of
+the `verification-stop-hook` capability:
+`python3 -I "$CLAUDE_PROJECT_DIR/scripts/verify.py" --hook claude || true` with `timeout: 1800`. Every other event
+MUST hold only the engine command. The two `Stop` commands are independent: the engine's stop gate and the verify
+hook each answer for themselves.
+
 `SubagentStop` MUST NOT be wired.
 
 **OpenCode.** A V2 plugin in `scripts/opencode-hooked-rules/`, declared in `opencode.json` as a local entry next to
@@ -374,6 +384,14 @@ for the stop gate, documented as such.
 #### Scenario: Claude Code wiring
 - **WHEN** `.claude/settings.json` lacks one of the five hooks, omits the timeout, or wires `SubagentStop`
 - **THEN** the agent-file check fails
+
+#### Scenario: Stop holds the verify hook
+- **WHEN** an otherwise valid fixture's `Stop` entry holds the engine command with timeout 5 followed by the verify command with timeout 1800
+- **THEN** the agent-file check emits no hook-wiring finding
+
+#### Scenario: Stop wiring drifts
+- **WHEN** the `Stop` entry lacks the verify command, holds it before the engine command, holds a third command, gives it another timeout, or another event holds a second command
+- **THEN** the agent-file check fails and names the event
 
 #### Scenario: OpenCode plugin entry
 - **WHEN** `opencode.json` lacks the local hooked-rules plugin entry

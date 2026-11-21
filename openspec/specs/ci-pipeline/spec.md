@@ -248,6 +248,10 @@ A `changes` job SHALL run the component map check on every run and compute affec
 - **WHEN** a PR changes only `scripts/agent_rules.py`, or, separately, only one file under `scripts/opencode-hooked-rules/`
 - **THEN** in each case exactly `tooling` and `docs` run and no other node starts, because `global-overrides` maps each of those files to both nodes and the agent-file check imports the engine's parser
 
+#### Scenario: Command-table-only PR
+- **WHEN** a PR changes only `scripts/verify-commands.json`
+- **THEN** exactly `tooling` and `docs` run, through its `global-overrides` entry, so the drift check in the agent-file check runs
+
 ### Requirement: Single aggregate gate
 `ci.yml` SHALL end with `ci-ok`, which depends on every node, runs with `always()`, and fails when `changes` did not succeed or any needed job's result is `failure` or `cancelled`. `ci-ok` MUST be the only required check from `ci.yml`. A node skipped because the selection excluded it, including because of last-green evidence, MUST NOT fail `ci-ok`.
 
