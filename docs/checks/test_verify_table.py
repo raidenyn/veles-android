@@ -307,8 +307,9 @@ class DuplicateTest(Base):
             dict(template, id="android." + task, run=["./gradlew", task])
             for task in ("lintDebug", "detekt", "testDebugUnitTest")
         ]
-        # Every option below takes a value or targets one task; the values collide with real
-        # task names, so a matcher that drops the option would report a duplicate.
+        # Every option below takes a value, targets one task, or makes the line run nothing; the
+        # values collide with real task names, so a matcher that drops the option would report a
+        # duplicate.
         targeted = (
             './gradlew testDebugUnitTest --tests "me.nagaev.veles.otp.handlers.RegexMessageHandlerTest"',
             "./gradlew testDebugUnitTest --tests detekt",
@@ -316,6 +317,7 @@ class DuplicateTest(Base):
             "./gradlew testDebugUnitTest -Pk=v",
             "./gradlew testDebugUnitTest -x lintDebug",
             "./gradlew --max-workers=2 testDebugUnitTest",
+            "./gradlew -m lintDebug",
         )
         for line in targeted:
             with self.subTest(line=line):

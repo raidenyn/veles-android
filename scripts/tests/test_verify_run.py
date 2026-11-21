@@ -1,9 +1,10 @@
 """The runner, the run lock, orphan cleanup and the report (design D9, D10).
 
 Every case injects the clock, the wait, the process API and the git reader; the filesystem
-cases use a temporary directory. Nothing sleeps, spawns a real process or reads the wall clock:
-`FakeProcesses` is the process API, and the runner's signals, grace and reaping are recorded
-there instead of hitting the operating system.
+cases use a temporary directory. Nothing sleeps or reads the wall clock, and only `GitStatusTest`
+spawns a real command (`git status` in a throwaway fixture repository, to test the flags the real
+call passes). Everywhere else `FakeProcesses` is the process API, and the runner's signals, grace
+and reaping are recorded there instead of hitting the operating system.
 
 The fake process API's shape proves the TERM/grace/KILL sequence: `FakeProcesses.spawn` hands
 back a `FakeProcess` whose `poll` keeps returning None until it is signalled; `signal_group`
@@ -28,6 +29,7 @@ sys.path.insert(0, SCRIPTS)
 sys.path.insert(0, TESTS)
 
 import branch_pass  # noqa: E402
+import gitfixture  # noqa: E402
 import verify  # noqa: E402
 from verify import (  # noqa: E402
     NodeResult,
@@ -776,6 +778,23 @@ class BranchFixture(RunFixture):
                 return handle.read()
         except OSError:
             return None
+
+
+class GitStatusTest(unittest.TestCase):
+    """`Git.status_porcelain` lists untracked files whatever the user's status config says."""
+
+    def test_untracked_file_listed_despite_show_untracked_files_no(self):
+        # A branch pass compares this text for completeness (design D2): with the user's
+        # `status.showUntrackedFiles=no`, a bare `git status --porcelain` hides an untracked file,
+        # so a tree that still has one would look clean.
+        repo = gitfixture.make_repo(self)
+        repo.git("config", "status.showUntrackedFiles", "no")
+        repo.write("scratch.md", "untracked\n")
+
+        status = verify.Git(str(repo.path)).status_porcelain()
+
+        self.assertIn("scratch.md", status)
+        self.assertEqual("?? scratch.md\0", status)
 
 
 class BranchPassRunTest(BranchFixture):

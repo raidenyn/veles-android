@@ -6,8 +6,8 @@ gates:
   - "\\bgit\\b[^;&|\\n]*?\\spush\\b"
 requires: ["branch-pass"]
 exempt:
-  - "\\bgit\\b[^;&|#\\n]*?\\spush\\b[^;&|#\\n]*?(?:\\s--delete(?:\\s|$)|\\s-d(?:\\s|$))"
-  - "\\bgit\\b[^;&|#\\n]*?\\spush\\b(?:\\s+-[^\\s;&|#]+)*\\s+[^\\s;&|#]+\\s+(?:\\+?:[^\\s;&|#]+)(?:\\s+\\+?:[^\\s;&|#]+)*\\s*$"
+  - "\\bgit\\b[^<>$`;&|#\\n()]*?\\spush\\b[^<>$`;&|#\\n()]*?(?:\\s(?<!-o )(?<!--push-option )(?<!--receive-pack )(?:--delete|-d)(?:\\s|$))"
+  - "\\bgit\\b[^<>$`;&|#\\n]*?\\spush\\b(?:\\s+-[^\\s<>$`;&|#]+)*\\s+[^\\s<>$`;&|#]+\\s+(?<!-o )(?<!--push-option )(?<!--receive-pack )(?:\\+?:[^\\s<>$`;&|#]+)(?:\\s+\\+?:[^\\s<>$`;&|#]+)*\\s*$"
 ---
 
 Commit everything first: the branch pass needs a clean tree, including new untracked change files.

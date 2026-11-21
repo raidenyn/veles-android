@@ -4038,6 +4038,9 @@ class RealRepoRuleTest(unittest.TestCase):
             "git push # :x",
             "git push -f # :wip",
             "GIT_TRACE=1 git push origin feat",
+            "git push origin feat -o -d",
+            "git push origin feat > -d",
+            "echo $(git push origin feat) -d",
         )
         message = "no branch pass for HEAD abc123"
         for index, command in enumerate(gated):

@@ -92,7 +92,9 @@ This section describes a rule without `requires`; a rule with `requires` follows
   segment. The proofs are required when any segment matches a gate and no `exempt` pattern. So
   `git push origin feat && git branch -d tmp` is not exempt (the `-d` is in another segment), and a
   deletion push such as `git push origin --delete feat` is. Commands reached through variables,
-  aliases, scripts or quoted operators stay out of scope, as for the other gates.
+  aliases, scripts or quoted operators stay out of scope, as for the other gates. Any process can
+  write `build/verify/branch-pass.json` by hand; the gate is a guardrail for cooperative agents,
+  not a security boundary.
 - **Registry.** `PROOF_PREDICATES` in `scripts/agent_rules.py` holds the proofs; today only
   `branch-pass`, bound to `branch_pass.check` in `scripts/branch_pass.py`. It checks the record a
   complete `python3 -I scripts/verify.py --branch` run writes for HEAD and the merge base with
@@ -102,9 +104,9 @@ This section describes a rule without `requires`; a rule with `requires` follows
   and the rule is not denied for delivery; so does a call whose every proof holds, because the
   proof is stronger than delivery. When a proof fails, raises or reaches its deadline, the call is
   denied with the rule text followed by each failing proof's message, and the rule is marked
-  delivered in that context, so its moments do not re-deliver. The denial repeats on every matching
-  call until the proof holds: there is no deny-once for a proof rule, and a matching pattern does
-  not confirm one.
+  delivered in that context, so its moments may deliver it again. The denial repeats on every
+  matching call until the proof holds: there is no deny-once for a proof rule, and a matching
+  pattern does not confirm one.
 - **Deadline.** The proofs share a deadline 3.5 seconds after the engine starts handling the event,
   a 1.5-second margin under the hosts' 5-second limit. `branch_pass.check` gives each git call the
   time left; a proof that reaches the deadline denies with "proof timed out".
@@ -117,6 +119,9 @@ Its fail-open limits, each accepted:
 - *Host timeout*: if the host's 5-second limit fires before the proofs answer (for example a slow
   checkout discovery before they start), the engine is killed and the call passes: the proof's
   denial is never produced.
+- *Held state lock*: the proofs run inside the session's `Store.transaction`, so they hold that
+  session's state lock for their whole run — up to 3.5 seconds of git calls; a concurrent hook event
+  in the same session waits for it.
 - *Version skew*: Claude Code runs the engine from `$CLAUDE_PROJECT_DIR` and the OpenCode plugin
   from its own checkout, while the rules come from the event's checkout. An old engine that meets a
   rule with `requires` gets a rule parse error and fails open, so the push passes; a new engine with

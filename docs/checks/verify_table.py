@@ -45,7 +45,6 @@ VALUE_LESS_OPTIONS = (
     "--parallel", "--no-parallel",
     "--build-cache", "--no-build-cache",
     "--rerun-tasks",
-    "-m", "--dry-run",
     "--profile",
     "--foreground",
     "--configuration-cache", "--no-configuration-cache",

@@ -297,9 +297,10 @@ reproducible-builds coverage. The landed fix is
 `1b0c50c3 test(tooling): align the host docs test and require verify node modules`: it keeps all five
 tasks checked in `docs/reproducible-builds.md` and adds `HOST_DOC_TASKS = ("bridgeHostBuild",)`, the
 only command the host `AGENTS.md` must name (the four verifier-run tasks are documented in
-`docs/reproducible-builds.md` and must not be repeated in the host `AGENTS.md`), so both checks agree. The same commit
-adds `verify.node-modules` to `tooling.verify-tests`'s `requires`, because that command had run without
-`verify/node_modules` and failed `verify/test/license-policy.test.mjs` with a spawn ENOENT.
+`docs/reproducible-builds.md` and must not be repeated in the host `AGENTS.md`), so both checks agree.
+The same commit adds `verify.node-modules` to `tooling.verify-tests`'s `requires`, because that command
+had run without `verify/node_modules` and failed `verify/test/license-policy.test.mjs` with a spawn
+ENOENT.
 
 ### Claude Code 2.1.329
 
@@ -403,9 +404,9 @@ predecessor `204ec119` (which reduced `TASKS` itself) shipped in the disposable 
 ### Main worktree
 
 The fixes landed as `1b0c50c3 test(tooling): align the host docs test and require verify node modules`
-on this worktree, and `python3 -I scripts/verify.py --branch` then ran twice, detached, with the tree
-clean except the pre-existing `tasks.md` modification (saved and restored around the runs so the
-run could start from a clean tree). The first run exited **2** after **1042.2 s**: `docs`,
+on this worktree, and `python3 -I scripts/verify.py --branch` then ran twice, detached, with the
+pre-existing `tasks.md` modification saved and restored around the runs, so the tree was fully clean
+during them. The first run exited **2** after **1042.2 s**: `docs`,
 `native-host`, `protocol` and `tooling` passed, but `supply-chain` was `NOT RUN` because
 `verify/verify-supply-chain.sh` looks for `build/verify-tools/cargo-deny/bin/cargo-deny` in the
 worktree and that path was missing (the script had installed `cargo-cyclonedx` there itself). After
@@ -419,13 +420,14 @@ copying the pinned `cargo-deny 0.20.2` there, the second run exited **0** after 
  "version": 1}
 ```
 
-`git push -u origin HEAD:refs/heads/chore/unified-verify-followups` then ran and created the branch;
-`git ls-remote origin` reports `1b0c50c3` for it:
+`git push -u origin HEAD:refs/heads/chore/unified-verify-followups` then ran and created the branch:
 
 ```text
  * [new branch]        HEAD -> chore/unified-verify-followups
 branch 'chore/unified-verify-followups' set up to track 'origin/chore/unified-verify-followups'.
 ```
+
+`git ls-remote origin` reports `1b0c50c3` for it.
 
 This section was corrected after that push (review finding 1). The branch pass and push for the
 correcting commit, whose only change is this file, are recorded in the task report; they follow the

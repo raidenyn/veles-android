@@ -347,8 +347,15 @@ class Git:
         return self._read("rev-parse", "HEAD").decode("utf-8", "replace").strip()
 
     def status_porcelain(self):
-        """`git status --porcelain -z` as text; empty for a clean tree (design D2's completeness)."""
-        return self._read("status", "--porcelain", "-z").decode("utf-8", "surrogateescape")
+        """`git status --porcelain -z` as text; empty for a clean tree (design D2's completeness).
+
+        The untracked and submodule modes are explicit: the user's
+        `status.showUntrackedFiles` (or `diff.ignoreSubmodules`) must not hide an untracked file
+        from a branch-pass completeness check.
+        """
+        return self._read("status", "--porcelain", "-z",
+                          "--untracked-files=normal",
+                          "--ignore-submodules=none").decode("utf-8", "surrogateescape")
 
     def commit(self, ref):
         """The full sha `ref` names, when it names a commit (design D3's base check)."""

@@ -275,6 +275,17 @@ class BranchPassTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual("no branch pass for HEAD %s" % short(repo.head()), message)
 
+        # A detached HEAD is still that worktree's record: a pass written for the detached commit
+        # passes there, and the main checkout, which has another HEAD and no record, still does not.
+        repo.git("checkout", "-q", "--detach", cwd=worktree)
+        detached = repo.git("rev-parse", "HEAD", cwd=worktree)
+        self.assertEqual(head, detached)
+        branch_pass.write(worktree, detached, base, NODES)
+        self.assertEqual((True, ""), self.check(worktree))
+        ok, message = self.check(str(repo.path))
+        self.assertFalse(ok)
+        self.assertEqual("no branch pass for HEAD %s" % short(repo.head()), message)
+
     def test_delete(self):
         repo = gitfixture.make_repo(self)
         head = repo.head()
