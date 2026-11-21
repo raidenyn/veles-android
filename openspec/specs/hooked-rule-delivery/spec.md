@@ -17,10 +17,13 @@ lists of double-quoted strings in which only the `\"` and `\\` escapes are allow
 - `commands`: Python regexes for workflow commands.
 - `gates`: Python regexes for gated commands.
 - `stops`: predicate names from the engine's registry.
+- `requires`: proof names from the engine's proof registry; valid only with a non-empty `gates`.
+- `exempt`: Python regexes for gated command segments that need no proof; valid only with a non-empty `requires`.
 
 An omitted list is empty, and a rule MUST have at least one entry in `skills`, `commands`, `gates` or `stops`.
-Duplicate keys, an unknown key, a list written as `[]`, an invalid regex and an unknown predicate name MUST be
-errors.
+Duplicate keys, an unknown key, a list written as `[]`, an invalid regex, an unknown predicate or proof name,
+`requires` without `gates` and `exempt` without `requires` MUST be errors. `requires` and `exempt` are not trigger
+lists.
 
 **Body and identity.** The body MUST be at most 4,096 bytes. A rule's identity is its file name plus the sha256 of
 the file.
@@ -46,6 +49,10 @@ the file.
 #### Scenario: Not loaded up front
 - **WHEN** a session starts in Claude Code, OpenCode or Antigravity and no moment or gate has fired
 - **THEN** no file under `.agents/hooked-rules/` is in the agent's context
+
+#### Scenario: Proof keys
+- **WHEN** a rule has `gates`, `requires: ["branch-pass"]` and an `exempt` regex
+- **THEN** the engine and the agent-file check both parse it; with an unknown proof name, `requires` without `gates`, or `exempt` without `requires`, the agent-file check fails and names the file
 
 ### Requirement: Pointer block in the root AGENTS.md
 The root `AGENTS.md` SHALL carry a generated block between `<!-- hooked-rules:begin -->` and
@@ -188,7 +195,8 @@ and already records every trigger the event matched; otherwise it MUST be includ
 - **THEN** the rule is added again
 
 ### Requirement: Gates block once
-The engine SHALL match each `gates` regex against the whole shell call string. A call that matches a gate of a
+The engine SHALL match each `gates` regex against the whole shell call string. This requirement governs rules
+without `requires`; a rule with `requires` follows Proof-requiring gates instead. A call that matches a gate of a
 rule not delivered in that context since the last re-arm MUST be denied, with the rule text as the reason. Each rule
 included in the denial (see Combining rules) MUST then be recorded as **pending**, together with every gate pattern
 the call matched.
@@ -363,7 +371,7 @@ hook each answer for themselves.
 `SubagentStop` MUST NOT be wired.
 
 **OpenCode.** A V2 plugin in `scripts/opencode-hooked-rules/`, declared in `opencode.json` as a local entry next to
-`opencode-rules`, MUST map these hooks and events to engine events, with a 5-second spawn timeout:
+`opencode-rules`, MUST map these hooks and events to engine events, with a 5-second spawn timeout for the engine:
 
 | OpenCode hook or event | Engine event |
 |---|---|
@@ -371,7 +379,7 @@ hook each answer for themselves.
 | `context.tool.hook('execute.after')` | `tool-after`, appending context to the tool output |
 | `context.session.hook('prompt')` | `prompt` |
 | `session.compaction.started` | `compacted` |
-| `session.execution.succeeded` of a root session (never `failed` or `interrupted`) | `stop`; a `block` is sent as a synthetic prompt with `resume: true` that continues the session |
+| `session.execution.succeeded` of a root session (never `failed` or `interrupted`) | `stop`; a `block` is sent as a synthetic prompt with `resume: true` that continues the session. The same event also starts the verifier's OpenCode hook in its own slot (capability `verification-stop-hook`), which never delays or suppresses this `stop` |
 
 The plugin MUST accept `block` only for a `stop` event and MUST ignore any other response at a stop moment. It MUST
 NOT count a per-call `context.session.hook('context')` injection as delivery. Antigravity gets no adapter.
@@ -581,17 +589,29 @@ change passes (see "Delegated verify or review session").
 - **THEN** the stop passes
 
 ### Requirement: Pre-push rule triggers
-`.agents/hooked-rules/repo-pre-push-checks.md` SHALL be delivered at `openspec instructions finalize` and SHALL
-gate `git push` with a regex of the same form as the `git commit` gate (`git`, then anything up to a shell
-operator, then the word `push`).
+`.agents/hooked-rules/repo-pre-push-checks.md` SHALL be delivered at `openspec instructions finalize`, SHALL gate
+`git push` with a regex of the same form as the `git commit` gate (`git`, then anything up to a shell operator, then
+the word `push`), SHALL declare `requires: ["branch-pass"]`, and SHALL exempt ref-deletion pushes (`--delete`, `-d`,
+and a `:<ref>` or `+:<ref>` refspec). Its text MUST tell the agent to commit everything first, to run
+`python3 -I scripts/verify.py --branch` in the background and wait for it because a foreground run exceeds the shell
+tools' limits, to fix every `FAIL` and unexpected `NOT RUN`, and then to push; it MUST NOT tell the agent to run node
+checks by hand.
 
 #### Scenario: Push without delivery
-- **WHEN** an agent that has not received the rule runs `git push origin feature`
-- **THEN** the call is denied once with the rule text, and the re-run proceeds
+- **WHEN** an agent that has not received the rule and has no branch pass for HEAD runs `git push origin feature`
+- **THEN** the call is denied with the rule text, and the re-run is denied again until a branch pass exists
+
+#### Scenario: Push without a pass is denied every time
+- **WHEN** an agent with no branch pass for HEAD runs `git push origin feature` twice
+- **THEN** both calls are denied with the rule text
 
 #### Scenario: Push during finalize
-- **WHEN** `openspec instructions finalize` succeeded in the context and the agent then runs `git push`
+- **WHEN** `openspec instructions finalize` succeeded in the context, a branch pass exists for HEAD, and the agent then runs `git push`
 - **THEN** the push is not denied
+
+#### Scenario: Pass made stale by a commit
+- **WHEN** the agent commits after the branch pass and runs `git push`
+- **THEN** the push is denied naming the pass's commit and HEAD
 
 ### Requirement: Delivery budget check
 The agent-file check SHALL compute, for each listed trigger, the joined text of every hooked rule it matches,
@@ -617,3 +637,41 @@ The runtime cap MUST remain the backstop for commands outside the list.
 #### Scenario: Current rules
 - **WHEN** the check runs on the tree this change produces
 - **THEN** every listed trigger is within the cap
+
+### Requirement: Proof-requiring gates
+For a rule with `requires`, the engine SHALL split each `tool-before` call string into segments at `;`, `&`, `|` and
+newlines, match the rule's `gates` and `exempt` patterns per segment, and require the proofs when any segment matches
+a gate and no `exempt` pattern. It MUST then run every required proof with the event's `cwd`. The proof registry
+SHALL hold `branch-pass`, bound to the check of `scripts/branch_pass.py` (capability `affected-node-verification`),
+imported from the engine's own `scripts/` directory; adding a proof MUST be a registry entry, and requiring it MUST be
+a rule edit. When every proof holds, or no segment requires them, the call MUST pass and the rule MUST NOT be denied
+for delivery. When any proof fails, raises or reaches its deadline, the call MUST be denied with the rule text
+followed by each failing proof's message, the rule MUST be recorded as delivered in that context, and the denial
+MUST repeat on every matching call until the proofs hold. The proofs MUST share a deadline 3.5 seconds after the
+engine starts handling the event. A crash or a host timeout of the whole engine keeps the fail-open behaviour of the
+Fail open requirement, and so does an engine that predates this requirement meeting a rule with `requires`; these
+limits MUST be stated in `docs/hook-delivered-rules.md`.
+
+#### Scenario: Push without a pass
+- **WHEN** an agent of either host runs `git push origin feature` and the worktree has no branch-pass record for HEAD
+- **THEN** the call is denied with the pre-push rule text and "no branch pass", and an immediate re-run is denied again
+
+#### Scenario: Push with a pass
+- **WHEN** the record matches HEAD and the merge base
+- **THEN** `git push origin feature` passes without a delivery denial
+
+#### Scenario: Deletion push exempt
+- **WHEN** the call is `git push origin --delete feature`, `git push -d origin feature`, `git push origin :feature` or `git push origin +:feature`
+- **THEN** a table-driven test shows that each passes without a proof, and that `git push`, `git push --tags`, `git -C dir push origin x`, `git push origin feat :old` and `git push origin feat && git branch -d tmp` are not exempt
+
+#### Scenario: Proof deadline
+- **WHEN** a fake proof does not return before the deadline
+- **THEN** the call is denied with "proof timed out" before the host's 5-second limit
+
+#### Scenario: Proof error
+- **WHEN** the branch-pass check raises, or `git merge-base origin/master HEAD` fails because `origin/master` is missing
+- **THEN** the call is denied with the error text
+
+#### Scenario: Another command can require a proof
+- **WHEN** a test fixture rule adds `gh pr create` to `gates` with `requires: ["branch-pass"]`
+- **THEN** `gh pr create` is gated by the proof with no engine code change
