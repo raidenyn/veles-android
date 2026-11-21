@@ -3998,7 +3998,10 @@ class RealRepoRuleTest(unittest.TestCase):
         )
         self.assertEqual(rule.requires, ("branch-pass",))
         self.assertEqual(len(rule.exempt), 2)
-        self.assertIn("python3 -I scripts/verify.py --branch", rule.pointer)
+        self.assertIn("python3 -I scripts/verify.py`", rule.pointer)
+        self.assertIn("python3 -I scripts/verify.py\n", rule.body)
+        self.assertIn("--branch", rule.body)
+        self.assertIn("CI", rule.body)
         self.assertIn("background", rule.body)
         self.assertNotIn("by hand", rule.body)
 
