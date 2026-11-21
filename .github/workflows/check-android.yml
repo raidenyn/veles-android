@@ -29,6 +29,12 @@ jobs:
           distribution: temurin
           java-version-file: .java-version
       - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      # The restored `gradle-dependencies` cache can carry a stale/negative ktlint entry that
+      # Spotless reports as "You need to add a repository containing the
+      # '[com.pinterest.ktlint:ktlint-cli:…]' artifact". A clean modules cache resolves it from
+      # Maven Central (verified with an empty GRADLE_USER_HOME), so reset only the dependency cache.
+      - name: Reset the dependency cache Spotless resolves ktlint from
+        run: rm -rf "$GRADLE_USER_HOME/caches/modules-2"
       - run: ./gradlew spotlessCheck
         working-directory: android
       - run: ./gradlew detekt
