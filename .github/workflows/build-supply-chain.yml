@@ -28,7 +28,9 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '26.8.1'
-      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      # No Gradle cache action: this workflow can be called with an arbitrary commit SHA,
+      # and a cache it read would be writable by unprivileged runs (CodeQL
+      # actions/cache-poisoning). The wrapper supplies Gradle.
       - run: npm ci --ignore-scripts --prefix verify
       - run: ./gradlew installCargoDeny --no-build-cache --no-configuration-cache
       - run: verify/verify-supply-chain.sh

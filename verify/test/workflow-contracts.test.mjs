@@ -376,12 +376,20 @@ function assertWasmBeforeNpm(block, name) {
   assert.ok(npm === -1 || wasm < npm, `${name} must run ./gradlew rustWasm before npm`);
 }
 
-function assertWasmToolchain(block, name) {
+function assertWasmToolchain(block, name, { cacheFree = false } = {}) {
   assert.match(block, /actions\/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5/, `${name} must set up the pinned JDK for Gradle`);
-  assert.match(block, /gradle\/actions\/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6/, `${name} must set up Gradle`);
   assert.match(block, /working-directory:\s*rust\s*\n\s*run:\s*rustup show active-toolchain/, `${name} must activate the pinned Rust toolchain`);
-  assert.match(block, /path:\s*build\/rust-tools/, `${name} must cache the pinned Rust tools`);
-  assert.match(block, /key:\s*rust-tools-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-\$\{\{ hashFiles\('rust\/rust-toolchain\.toml', 'rust\/toolchain-tools\.toml', 'rust\/Cargo\.lock'\) \}\}/, `${name} must key the cache on the Rust pins`);
+  if (cacheFree) {
+    // A workflow callable with an arbitrary commit SHA must not read a cache that
+    // unprivileged runs can write (CodeQL actions/cache-poisoning).
+    assert.doesNotMatch(block, /gradle\/actions\/setup-gradle@/, `${name} must not use a cache-capable Gradle action`);
+    assert.doesNotMatch(block, /actions\/cache@/, `${name} must not use a writable action cache`);
+    assert.doesNotMatch(block, /^\s+cache:\s*npm\s*$/m, `${name} must not enable the npm cache`);
+  } else {
+    assert.match(block, /gradle\/actions\/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6/, `${name} must set up Gradle`);
+    assert.match(block, /path:\s*build\/rust-tools/, `${name} must cache the pinned Rust tools`);
+    assert.match(block, /key:\s*rust-tools-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-\$\{\{ hashFiles\('rust\/rust-toolchain\.toml', 'rust\/toolchain-tools\.toml', 'rust\/Cargo\.lock'\) \}\}/, `${name} must key the cache on the Rust pins`);
+  }
   assertWasmBeforeNpm(block, name);
 }
 
@@ -394,7 +402,7 @@ test('web extension workflows build the WASM package before the TS client', asyn
   const build = await workflow('build-web-extension.yml');
   const buildJobs = workflowJobBlocks(executableYaml(build));
   assert.deepEqual(Object.keys(buildJobs), ['build']);
-  assertWasmToolchain(buildJobs.build, 'build-web-extension.yml build');
+  assertWasmToolchain(buildJobs.build, 'build-web-extension.yml build', { cacheFree: true });
 
   // Negative: a missing WASM step or one placed after the npm client fails.
   const dropped = check.replace(/^ *- run: \.\/gradlew rustWasm\n/gm, '');
@@ -405,7 +413,7 @@ test('web extension workflows build the WASM package before the TS client', asyn
     '      - run: npm ci --ignore-scripts\n        working-directory: web-extension\n      - run: ./gradlew rustWasm --no-build-cache --no-configuration-cache\n',
   );
   assert.notEqual(moved, build);
-  assert.throws(() => assertWasmToolchain(workflowJobBlocks(executableYaml(moved)).build, 'mutated build'), /before npm/);
+  assert.throws(() => assertWasmToolchain(workflowJobBlocks(executableYaml(moved)).build, 'mutated build', { cacheFree: true }), /before npm/);
 });
 
 test('Rust workflow packages rust-jni-wasm without a reference rebuild', async () => {
@@ -426,6 +434,10 @@ test('supply-chain workflow enforces reports before uploading exactly six SBOMs'
   const source = await workflow('build-supply-chain.yml');
   assertReusableWorkflow(source, 'build-supply-chain.yml');
   assert.match(source, /actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38[\s\S]*?node-version:\s*['"]26\.8\.1['"]/, 'Supply-chain workflow must use Node 26.8.1');
+  // A workflow callable with an arbitrary commit SHA must not read a cache that
+  // unprivileged runs can write (CodeQL actions/cache-poisoning).
+  assert.doesNotMatch(source, /gradle\/actions\/setup-gradle@/, 'Supply-chain workflow must not use a cache-capable Gradle action');
+  assert.doesNotMatch(source, /actions\/cache@/, 'Supply-chain workflow must not use a writable action cache');
   assert.match(source, /\.\/gradlew installCargoDeny/, 'Supply-chain workflow must provision cargo-deny');
   assert.match(source, /verify\/verify-supply-chain\.sh/, 'Supply-chain workflow must enforce supply-chain policy');
   assert.ok(source.indexOf('./gradlew installCargoDeny') < source.indexOf('verify/verify-supply-chain.sh'), 'Supply-chain workflow must provision cargo-deny before enforcement');
