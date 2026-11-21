@@ -259,3 +259,149 @@ rejection and needs no queueing change.
   `<run>.plugin.jsonl` (every bus event with the counter), `<run>.sse.jsonl`, `<run>.events.txt`,
   `<run>.messages.json`, `<run>.inbox.json` for `S1-idle`, `S1-busy-a`, `S1-busy-b`,
   `S1-busy-finalstep`, `S1-busy-late`.
+
+## Acceptance — Task 10 real-session runs (2026-11-21)
+
+Everything below comes from real sessions and hook runs on the coding server on 2026-11-21. The
+clones were made from this branch (HEAD `7db9b870`) into `/tmp/opencode/t10-claude/` and
+`/tmp/opencode/t10-oc/`; each clone's `origin` was retargeted to a local bare repository before any
+push. No run touched this worktree's `.claude/`, `opencode.json`, plugins or git state: the Claude
+clone kept the tracked `.claude/settings.json` and ran with `CLAUDE_CONFIG_DIR` holding only
+`.credentials.json`; the OpenCode clone replaced its `opencode.json` with a disposable
+`["./scripts/opencode-hooked-rules", "./debug-events"]` config and omitted the tracked
+`opencode-rules` package, as in the archived recipe §6.1. `./debug-events` is a throwaway plugin that
+only appends bus events; it is excluded from git.
+
+| Tool | Version | Notes |
+|---|---|---|
+| Claude Code | `2.1.329` | headless `claude -p … --output-format stream-json --include-hook-events --dangerously-skip-permissions`; model resolved as `claude-opus-5-5` |
+| OpenCode | `v2.3.2` | kept-alive `opencode serve --port 4151` driven over the v2 HTTP API (`--standalone` exits at the turn end and kills the detached verifier, archived §6.1); model `opencode/deepseek-v4.1-flash-free` (the isolated provider catalog did not offer the ollama-cloud model S1 used) |
+| Node | `v26.13.1` shell; `v26.8.1` through the verifier's `path_prepend` | the supply-chain check pins 26.8.1 |
+| Python | `3.14.4` | the engine, the verifier and the drivers |
+
+Both clones were provisioned the way the fix texts say: `verify.py config set java_home
+/home/dev/.jdk/zulu21`, `config set android_sdk /home/dev/.android-sdk`, `config set path_prepend
+/home/dev/.local/node-26.8.1/bin`, and `cargo-deny`/`cargo-cyclonedx` on `PATH`. The missing
+`cargo-deny` also served as the absent-tool scenario before it was installed.
+
+**Branch defect found by the acceptance.** On this branch HEAD the `--branch` gate fails
+`tooling.verify-tests`: `native-bridge/host/scripts/test_build_contract.py`
+(`Documentation.test_docs_distinguish_production_host_from_scaffold`) still requires
+`bridgeHostToolchainCheck`, `bridgeHostFormat`, `bridgeHostLint` and `bridgeHostTest` in
+`native-bridge/host/AGENTS.md`, while this change's `docs/checks/check_agent_files.py` now rejects
+exactly those verifier-run commands there ("… is run by verify.py …; remove it from the doc"). The two
+checks contradict each other. The push scenarios below ran on a clone carrying one extra commit,
+`204ec119 test(native-host): stop requiring verifier-run commands in the host docs check`, which
+reduces that test's `TASKS` to `("bridgeHostBuild",)` and makes both checks pass. That is the branch
+fix this acceptance asks for (see "Main worktree" below); it is not only an acceptance workaround.
+
+### Claude Code 2.1.329
+
+| Run | What it ran on | Observed | Measured | Result |
+|---|---|---|---|---|
+| C1a repeated block (session `c699781e`; prompt "do not change any files") | clone, `web-extension/src/version.ts` with `const unusedBrokenLint = 1;` | four Stops: three `{"decision":"block"}` (attempts 1–3 of 3), then `{"systemMessage":"…not blocking again (attempt 4 of 3)"}` | 423.3 s total, 3 blocks | PASS for the block text and the per-problem cap; the model obeyed the no-edit instruction and did not fix the tree |
+| C1b block → fix → pass (session `9438a49e`) | same broken file, prompt without the no-edit clause | Stop 1 blocked with the lint tail, its re-run command and the log path; the model deleted the unused constant and ended; Stop 2 printed nothing | block gate: first supply-chain run 73.9 s plus the lint; fixed-tree pass: **1.1 s** (docs/native-host/tooling remembered, no node selected on the clean tree) | PASS |
+| C2 absent tool (session `6708545d`) | clean tree, `cargo-deny` removed from `PATH` | Stop 1 blocked: `supply-chain: NOT RUN (supply-chain.supply-chain: path-tool: cargo-deny …)`, `fix: Run ./gradlew installCargoDeny …`, `rerun: cd . && verify/verify-supply-chain.sh` | **3.0 s** | PASS |
+| C4a push without a branch pass (session `854e9e55`) | clone at `7db9b870`, local bare remote, no `branch-pass.json` | both `git push origin HEAD:refs/heads/acceptance-claude` calls denied by the pre-push rule before git ran; the second identical call denied identically | engine pre-tool gate, no verifier run | PASS (twice) |
+| C5 ref-deletion pushes | bare remote with `throwaway-a/-b/-c` | `git push origin --delete throwaway-a`, `git push origin -d throwaway-b`, `git push origin :throwaway-c` all ran and deleted the refs, with no pass | engine pre-tool gate | PASS (all three forms) |
+| C4b push after the pass (session `854e9e55`) | clone at `204ec119`, `build/verify/branch-pass.json` `{head: 204ec119…, base: 043e9aa…, nodes: [docs, native-host, protocol, supply-chain, tooling]}` | `git push origin HEAD:refs/heads/acceptance-claude` ran: `* [new branch] HEAD -> acceptance-claude` | branch gate **698.5 s** (exit 0) | PASS |
+| C3 linked worktree (`t10-wt-dispatch`) | the clone's `Stop` command run with the event `{"session_id": "t10-wt-dispatch", "cwd": "/tmp/opencode/t10-claude/wt"}`; the worktree is at `42f7c2ff` (one commit on the clone), with the broken lint | the launcher dispatched to `/tmp/opencode/t10-claude/wt/scripts/verify.py`; the block's log path and failing file are under `…/wt/`; the worktree's own table and changes decided it | **450.9 s** | PASS (hook-level dispatch: a headless Claude session cannot change its `cwd` mid-session, so this is the exact event the host would send) |
+
+C1b block text (trimmed):
+
+```text
+{"decision": "block", "reason": "verify: the task gate found problems; fix them and stop again (attempt 1 of 3)
+
+docs: PASS (remembered)
+native-host: PASS (remembered)
+  NOT RUN (branch gate only: native-host.build-contract)
+protocol: NOT RUN (nothing planned: no check and no related test for the changed files)
+supply-chain: PASS
+tooling: PASS (remembered)
+web-extension: FAIL
+  web-extension.lint: FAIL (exit 1)
+    rerun: cd web-extension && npm run lint
+    log: /tmp/opencode/t10-claude/repo/build/verify/runs/20261121T065721-1493948/web-extension.lint.1.log
+    tail:
+      /tmp/opencode/t10-claude/repo/web-extension/src/version.ts
+        67:7  error  'unusedBrokenLint' is assigned a value but never used  @typescript-eslint/no-unused-vars
+steps: supply-chain.supply-chain OK; web-extension.format OK; web-extension.lint FAIL; …" }
+```
+
+C4a/C4b (trimmed):
+
+```text
+TOOL: Bash {"command": "git push origin HEAD:refs/heads/acceptance-claude"}
+RESULT: PreToolUse:Bash hook error: Commit everything first: the branch pass needs a clean tree, … then push.
+        (… no branch pass for HEAD 7db9b8705bb2)
+ASSISTANT: The hook blocked the first push. You asked for the same command twice, so I'm running it again.
+TOOL: Bash {"command": "git push origin HEAD:refs/heads/acceptance-claude"}
+RESULT: PreToolUse:Bash hook error: Commit everything first: … no branch pass for HEAD 7db9b8705bb2
+… after `python3 -I scripts/verify.py --branch` (exit 0, 698.5 s):
+TOOL: Bash {"command": "git push origin HEAD:refs/heads/acceptance-claude"}
+RESULT: To /tmp/opencode/t10-claude/remote.git
+        * [new branch]        HEAD -> acceptance-claude
+```
+
+### OpenCode v2.3.2
+
+| Run | What it ran on | Observed | Measured | Result |
+|---|---|---|---|---|
+| O1 broken lint → block → fixed tree (session `ses_e02f2b41…`) | clone, `web-extension/src/version.ts` with the unused constant | `session.execution.succeeded`, then the plugin's `synthetic({resume:true})` with the block summary; the model removed the line; the next turn end's verifier run wrote no synthetic | turn 1 end at 4.3 s; block synthetic at **252.1 s** (cold: supply-chain ran); fixed-tree verifier run **0.2 s**, silent | PASS |
+| O2 new user message while the verifier runs (session `ses_e02edd9d…`) | same broken tree; turn 2 = `sleep 120` | the synthetic was enqueued 25 s into turn 2 (shell tool in flight), delivered immediately after `session.step.ended` at 123 s, and the same execution started three more steps before `succeeded` at 148 s | verifier **25 s** for this warm run | PASS, interleaved exactly as S1 predicted (not rejected, not parked) |
+| O3 session moved into the linked worktree (session `ses_e02e98ed…`) | `session.move({directory: /tmp/opencode/t10-oc/wt})`, worktree at `dfb6e490` with its own `docs/verify.md` change and broken lint | the worktree's `verify.py` ran and wrote its own `build/verify/last-run.json`; the block names `docs: FAIL … (docs/verify.md, web-extension/src/version.ts)` from the worktree | **175.7 s** | PASS (the first turn end after `move` still ran in the old directory and reported contention; the next run was the worktree's) |
+| O4 push without a branch pass (session `ses_e02e61de…`) | clone, no `branch-pass.json` | both pushes denied with the pre-push rule text before git ran | engine pre-tool gate | PASS (twice) |
+| O5 push after the pass (session `ses_e02e61de…`) | clone, clean tree, no `branch-pass.json` | `python3 -I scripts/verify.py --branch`: first run over the dirty marker 396.3 s with `protocol`, `supply-chain` and `web-extension` all PASS (no record: a branch pass requires a clean tree); a second run on the reverted, clean tree wrote `{"head": "73ef2ad4…", "base": "73ef2ad4…", "nodes": []}`; the same push then created `accept-oc` | branch gate **396.3 s**, record run **0.45 s** | PASS |
+
+O2 event order (the plugin's own bus log, ms after turn 2's user message was enqueued):
+
+```text
+     0  session.inbox.enqueued  item=user  "Run the shell command `sleep 120` …"
+    61  session.execution.started
+   742  session.step.started                  (the shell tool call starts)
+ 25200  session.inbox.enqueued  item=synthetic  "verify: the task gate found problems; …"
+122027  session.step.ended                    (the sleep ends)
+122027  session.inbox.delivered  msg_00024f…  (delivered at the step boundary, same execution)
+123433  session.step.started                  (a new step of the same execution answers the block)
+ …      three more steps of that execution
+147812  session.execution.succeeded
+```
+
+No `session.execution.failed`, no `session.inbox.delivery.changed`, no rejection: the block was
+admitted as `delivery: "steer"` and parked until the in-flight step ended, exactly as S1's verdict.
+
+### Summary
+
+| Scenario | Claude Code `2.1.329` | OpenCode `v2.3.2` |
+|---|---|---|
+| Broken lint blocks with the failing step, its tail, re-run command and log path; the fixed tree then passes | PASS (C1a block text and per-problem cap; C1b block → fix → silent pass) | PASS (O1 block summary via `synthetic({resume:true})`, then a silent 0.2 s run) |
+| An absent required tool → `NOT RUN` with its fix | PASS (C2, `cargo-deny` absent) | not part of the OpenCode scenarios |
+| A session moved into a linked worktree at a different revision runs that worktree's verifier | PASS (C3, hook-level dispatch to `wt/scripts/verify.py`) | PASS (O3, `session.move`, the worktree's own verifier) |
+| `git push` without a branch pass is denied | PASS, twice (C4a) | PASS, twice (O4) |
+| A ref-deletion push to a throwaway branch passes without a proof | PASS (C5, `--delete`, `-d` and `:ref`) | not part of the OpenCode scenarios |
+| The same push passes after a complete `--branch` run | PASS (C4b; branch gate 698.5 s, exit 0) | PASS (O5; 396.3 s run, then a 0.45 s run on the clean tree wrote the record, then the push) |
+| A new user message while the verifier runs | not applicable (the host is not driven this way) | PASS (O2, interleaved: admitted as `steer`, delivered at the next step boundary, the same execution extended) |
+
+**No product behaviour changed (tooling only; the device and browser rule's exemption applies).**
+Every run exercised the `Stop` hooks, the verifier (`scripts/verify.py`), the hooked-rules engine, the
+branch-pass record and the OpenCode plugin. No application, web-extension, native-host or installer
+behaviour was touched, so the real-device/browser run the rule asks for does not apply.
+
+The acceptance also found one branch blocker, recorded above: the branch's own `--branch` gate fails
+`tooling.verify-tests` until `native-bridge/host/scripts/test_build_contract.py` stops requiring the
+four verifier-run commands in `native-bridge/host/AGENTS.md` (the change's `check_agent_files.py`
+forbids them there). Commit `204ec119` in the disposable clone is that one-line fix.
+
+### Main worktree
+
+`python3 -I scripts/verify.py --branch` in this worktree, with the tree clean except the pre-existing
+`tasks.md` modification, exited **1** after **323.9 s** (the run covered the parent of the commit that
+adds this paragraph; the paragraph touches only `openspec/`, which no node selects):
+`native-host.build-contract` and `tooling.verify-tests` both fail on
+`Documentation.test_docs_distinguish_production_host_from_scaffold` for the reason above. No
+`build/verify/branch-pass.json` was written, so the pre-push rule keeps `git push` denied and the push
+was not attempted. The branch is one commit away from green: applying the same `TASKS` change as
+`204ec119` to `native-bridge/host/scripts/test_build_contract.py` makes both
+`docs/checks/check_agent_files.py` and that contract test pass, after which a clean `--branch` run
+records the pass this worktree needs.
+
