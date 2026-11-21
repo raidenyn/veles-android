@@ -8,10 +8,12 @@ import org.gradle.api.provider.ListProperty
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import org.gradle.process.CommandLineArgumentProvider
 import org.gradle.work.DisableCachingByDefault
 
 plugins {
@@ -139,6 +141,19 @@ android {
 }
 
 /**
+ * Puts the staged host-JVM cdylib on `java.library.path` without making the worktree's absolute
+ * path part of the test task's key. The directory itself is declared as the test task's
+ * `hostJniLibrary` input with relative path sensitivity, so a changed native library changes the
+ * key even when no JVM class did (gradle-cache-safe, the `testDebugUnitTest` fix).
+ */
+class HostJniLibraryPathArgumentProvider(
+    @get:Internal val hostJniDir: File,
+) : CommandLineArgumentProvider {
+    override fun asArguments(): Iterable<String> =
+        listOf("-Djava.library.path=${hostJniDir.absolutePath}")
+}
+
+/**
  * OTP-09 Task 10, root `sessionLoopbackCheck`: writes the JVM unit-test classpath the
  * cross-endpoint loopback reads. The classpath is a file collection, so it carries the
  * compilation dependencies without the task holding `testDebugUnitTest` (an `AndroidUnitTest`)
@@ -184,14 +199,25 @@ afterEvaluate {
     // never initialize VelesCrypto (one library per class loader), so the path is
     // inert for them. The library is a Rust build product under the repository
     // root build/, staged by the included :rustHostJni task.
-    val hostJniDir = layout.settingsDirectory.dir("../build/rust/host-jni").asFile
+    val hostJniDir = layout.settingsDirectory.dir("../build/rust/host-jni")
+    // The tests load this directory's cdylib, so its contents are a real input: a Rust-only
+    // change must re-run the tests instead of letting a cached or UP-TO-DATE pass stand.
+    // RELATIVE sensitivity keeps the worktree path out of the key, and the -D argument carries
+    // the absolute path through an @Internal property for the same reason.
+    val hostJniPath = HostJniLibraryPathArgumentProvider(hostJniDir.asFile)
     unitTest.dependsOn(gradle.includedBuild("rust").task(":rustHostJni"))
-    unitTest.systemProperty("java.library.path", hostJniDir.absolutePath)
+    unitTest.inputs.dir(hostJniDir)
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+        .withPropertyName("hostJniLibrary")
+    unitTest.jvmArgumentProviders.add(hostJniPath)
     tasks.register<Test>("protocolJvmTest") {
         group = "verification"
         description = "Runs the focused OTP-02 protocol fixture consumer on the JVM."
         dependsOn(gradle.includedBuild("rust").task(":rustHostJni"))
-        systemProperty("java.library.path", hostJniDir.absolutePath)
+        inputs.dir(hostJniDir)
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+            .withPropertyName("hostJniLibrary")
+        jvmArgumentProviders.add(hostJniPath)
         // `classpath` and `testClassesDirs` are the unit-test task's file collections: they carry
         // the compilation dependencies themselves. Resolving `unitTest.taskDependencies` here
         // would resolve the AGP configurations while the root build's included-build dependency
@@ -201,12 +227,11 @@ afterEvaluate {
         filter {
             includeTestsMatching("me.nagaev.veles.protocol.ProtocolFixturesTest")
         }
-        // The test loads the Rust host JNI library staged under build/rust/host-jni through
-        // java.library.path. That directory is a dependency of :rustHostJni, not a task input, so
-        // Gradle's key cannot see a changed native library with unchanged JVM classes: a build-cache
-        // hit would restore a stale result without testing the new library. Never cache it.
+        // The `hostJniLibrary` input above already makes a changed native library change the key.
+        // The task stays non-cacheable anyway: the change's spec makes every script-registered
+        // task other than the three Rust products non-cacheable.
         outputs.doNotCacheIf(
-            "loads the Rust host JNI library from build/rust/host-jni, which is not a task input",
+            "verification-only JVM test; every non-Rust script-registered task is non-cacheable",
         ) { true }
     }
 
