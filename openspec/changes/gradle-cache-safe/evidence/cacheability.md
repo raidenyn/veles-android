@@ -130,12 +130,16 @@ The full list matches `./gradlew tasks --all`.
 | Task | Mechanism | Reason |
 | --- | --- | --- |
 | `sessionLoopbackClasspath` | `SessionLoopbackClasspathTask`, typed non-cacheable | writes a generated classpath file |
-| `protocolJvmTest` | `Test` + `doNotCacheIf` | loads the Rust host JNI library from build/rust/host-jni, which is not a task input; a cache hit could skip testing a changed native library, so it is never cached |
+| `protocolJvmTest` | `Test` + `doNotCacheIf` | `hostJniLibrary` (`build/rust/host-jni`, RELATIVE sensitivity) is a declared input, so a changed native library changes the key; the task stays non-cacheable because the spec makes every non-Rust script-registered task non-cacheable |
 | `releaseHookGuard` | `ReleaseHookGuardTask`, typed non-cacheable | verification only: inspects the release APK and writes no output |
 
 AGP's own tasks are not script-registered. The two tasks the script reconfigures,
 `merge*JniLibFolders` (via `tasks.matching { … }.configureEach`) and `testDebugUnitTest`, keep AGP's
-declared cacheability; `connectedDebugAndroidTest` is device-bound and belongs to AGP (D5).
+declared cacheability. `testDebugUnitTest` additionally declares `build/rust/host-jni` as its
+`hostJniLibrary` input with `PathSensitivity.RELATIVE`, so a Rust-only change changes its key; the
+absolute `-Djava.library.path` value goes through a `CommandLineArgumentProvider` whose path property
+is `@Internal` and is therefore not in the key. `connectedDebugAndroidTest` is device-bound and belongs
+to AGP (D5).
 
 ## `android/git-version.gradle.kts`
 
@@ -156,6 +160,8 @@ Every script-registered task is accounted for: the two cacheable `CargoBuildTask
 `Sync`/`Delete`. `rustWasm` is a `CargoBuildTask` made non-cacheable by its `doNotCacheIf` after the
 relocation experiment (`evidence/cache-experiments.md` 7.3). The only script-configured task without its
 own marker is the `base` lifecycle `check`, which has no action and no outputs and is not cacheable.
-Every `Test` the script registers (`protocolJvmTest`) is explicitly excluded from the build cache because
-it loads a native library Gradle cannot key. No task relies on the implicit "has outputs" default without
-a stated reason.
+Every `Test` the script registers (`protocolJvmTest`) is explicitly excluded from the build cache, as the
+spec requires for non-Rust script tasks, and it keys the native library it loads through its
+`hostJniLibrary` input. `testDebugUnitTest` is AGP's task and stays cacheable, but it now keys that same
+library too, so neither test task can serve a stale pass after a Rust-only change. No task relies on the
+implicit "has outputs" default without a stated reason.

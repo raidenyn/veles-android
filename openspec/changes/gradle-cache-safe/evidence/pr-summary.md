@@ -158,7 +158,13 @@ Every script-registered task carries an explicit contract (`evidence/cacheabilit
 - **Non-cacheable with a stated reason:** `rustWasm` (`doNotCacheIf`, the `.gitignore` fallback above),
   every other custom task via `@DisableCachingByDefault(because = …)` or
   `doNotCacheIf(<reason>)`, and the `Sync`/`Delete` types. `protocolJvmTest` is explicitly excluded
-  because it loads a native library from `build/rust/host-jni` that is not a task input.
+  because the spec makes every non-Rust script task non-cacheable, and it now declares
+  `build/rust/host-jni` as a `hostJniLibrary` input (RELATIVE sensitivity) so a changed native library
+  changes its key; `testDebugUnitTest` declares the same input, so a Rust-only change can no longer
+  serve a cached or UP-TO-DATE JVM test pass.
+- Planning-text note: `proposal.md`, `design.md`, `plan.md` and the spec's requirement line still name
+  `rustWasm` as cacheable, and the spec's own fallback clause (the "Restored WASM package is complete"
+  scenario) is what governs the non-cacheable outcome.
 - **Plugin tasks** (AGP, Kotlin, Java, Spotless, `base`) keep the cacheability their plugins declare.
   `check` is a lifecycle task with no action or outputs.
 - **Guarded graphs:** every release/verification Gradle invocation passes
