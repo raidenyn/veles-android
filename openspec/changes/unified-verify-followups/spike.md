@@ -90,18 +90,30 @@ The driver makes exactly these calls:
 ```text
 POST /api/session                          {"title":"spike S1-busy-a"}   -> session id
 POST /api/session/<id>/prompt              {"text": <turn 1>}            (the turn that arms the plugin)
-   ... wait for that session's session.execution.succeeded ...
+   ... wait for that session's session.execution.succeeded in the SSE stream ...
 POST /api/session/<id>/prompt              {"text": <turn 2>}            (the new user message, sent 15-25 ms later)
 GET  /api/event                            (SSE, all session.* events)
 GET  /api/session/<id>/message?order=asc   (transcript)
 GET  /api/session/<id>/inbox               (pending inbox items)
 ```
 
-`opencode run --standalone` was not used: it exits at the end of its turn (archived spike §6.1), so it
-cannot send a second user message while a turn is in flight. The HTTP driver is the one that can, and it
-uses the same `prompt` endpoint (and the same default `delivery`) the TUI uses. The TUI sends prompts as
-`delivery: "steer"`; a prompt posted without `delivery` was recorded by the server as
-`delivery: "steer"` too.
+The timing logic a rerun needs, in order: start a fresh server with `SPIKE_DELAY_EVENTS` and a fresh
+`SPIKE_LOG`; subscribe to `GET /api/event`; create the session and post turn 1; block until the SSE
+record for this session's first `session.execution.succeeded` arrives (the driver polls the captured
+stream every 10 ms); immediately post turn 2 with the same endpoint; keep the server alive and the
+stream open until no event has arrived for 8 s; then read the transcript and the inbox. Turn 2 must still
+be running when the counter fires: the delay is counted in bus events, so it must be smaller than the
+events the running turn emits before its `session.execution.succeeded` (turn 2 emitted 29, 38 and 70
+events in these runs; a delay of 8 is safely inside, and `S1-busy-finalstep` used 24). The plugin excerpt
+above is the whole decision logic; the per-run log lines the tables quote (`phase`, `later`, `type`) are
+what it writes.
+
+`opencode run --standalone` was not used: it exits at the end of its turn (archived spike
+`openspec/changes/archive/2026-11-20-hook-workflow-rules/spike.md` §6.1), so it cannot send a second
+user message while a turn is in flight. The HTTP driver is the one that can, and it uses the documented
+`session.prompt` operation. A prompt posted without `delivery` was recorded by the server as
+`delivery: "steer"`; no TUI request was captured in this spike (the 2.3.2 binary's own submit path calls
+`session.prompt({ …, delivery: "steer" })`, but that is read from the binary, not observed here).
 
 ## S1.3 Control — the same resume while the session is idle
 
@@ -110,7 +122,7 @@ session, whose `session.created` is the one later event that fires the resume. E
 that `session.created`:
 
 ```text
-session.created (second session)                        (the counter event, later=1)
+session.created (second session)                        (the counter event, logged later=0)
 synthetic-start later=1
 synthetic-resolved ms=5 delivery=steer
 session.inbox.enqueued  msg_spike_…  item=synthetic  delivery=steer  text='SPIKE-RESUME'
@@ -120,15 +132,18 @@ session.step.started … / session.text.ended … / session.step.ended … / ses
 ```
 
 The call resolved in 5 ms with `delivery: "steer"` and started a new execution 4 ms after it was
-enqueued; turn 1 had ended 31 ms earlier and nothing was running. This reproduces archived-spike §2.2 on
-2.3.2 in this setup; it is the baseline for the busy case below.
+enqueued; turn 1 had ended 31 ms earlier and nothing was running. This reproduces archived spike
+`openspec/changes/archive/2026-11-20-hook-workflow-rules/spike.md` §2.2 on 2.3.2 in this setup; it is the
+baseline for the busy case below.
 
 ## S1.4 The busy case — primary run (`S1-busy-a`)
 
 Session `ses_e039b9183ffeRubeDarJBe30nV`, `SPIKE_DELAY_EVENTS=8`. Turn 1 answered `TURN-ONE-OK`; the
 driver posted the second user message 23 ms after turn 1's `session.execution.succeeded`. Times are the
-bus events' own `created` fields, in milliseconds after that second user message was enqueued (`later` is
-the plugin's counter of events after arming):
+bus events' own `created` fields, in milliseconds after that second user message was enqueued. The
+`later` column is the plugin's event counter as logged at the top of its handler — the plugin logs the
+event and then increments, so the column is the count *before* that event; the first event after arming
+therefore shows `later=0`, and `synthetic-start later=8` is the incremented count at the eighth event.
 
 ```text
 t(ms)  event
@@ -175,8 +190,8 @@ before the turn's end.
 
 ## S1.5 Repeat and the last-step case
 
-**Repeat (`S1-busy-b`, same shape, `seq 1 20`).** Same ordering: synthetic enqueued at t=675 ms (later=8,
-mid step 1, tool call in flight), delivered at t=1074 ms right after that step ended, and a second step
+**Repeat (`S1-busy-b`, same shape, `seq 1 20`).** Same ordering: the synthetic enqueued at t=675 ms
+(mid step 1, tool call in flight), delivered at t=1074 ms right after that step ended, and a second step
 (t=1699 ms) of the *same* execution answered the block. No rejection, no `session.inbox.delivery.changed`.
 
 **Resume during the last streaming step (`S1-busy-finalstep`, `SPIKE_DELAY_EVENTS=24`).** The counter put
@@ -201,7 +216,8 @@ t(ms)  event
 
 So even a steer admitted while the turn's last step was streaming is delivered at that step's end and
 starts another step of the same execution; the turn is extended rather than ended, and the block is not
-parked for the next turn.
+parked for the next turn. Step 2 had already produced the user's answer (`1…20`) before the delivery, so
+in this run the block came after the user's request was answered.
 
 An accidental extra case, `S1-busy-late` (`SPIKE_DELAY_EVENTS=30`), fired the counter two events after
 turn 2's `session.execution.succeeded`. By then the session was idle, and that run behaved exactly like
@@ -219,17 +235,21 @@ another step that sees the text. When the session is idle it starts a new execut
 **Decision: D5 as written.** A verifier block may be sent as its own `synthetic({resume: true})` when the
 verifier finishes, without the fallback that keeps the block for the next turn end.
 
-The observed consequence is worth stating in `docs/opencode-rules.md` alongside D5: the block enters the
-user's running turn as the newest message, and in all three busy runs the model answered it instead of
-producing the final answer the user's message asked for. That is the owner's accepted trade-off in D5
-("the running one still resumes when it finishes, even if the user sent a new message meanwhile"); it is
-not a rejection and needs no queueing change.
+The observed consequence is worth stating in `docs/opencode-rules.md` alongside D5: the block is
+delivered at the next step boundary of the running turn. If it arrives before the turn's final step, the
+model may answer it instead of the user's request (`S1-busy-a`, `S1-busy-b`, where the requested final
+answer was never produced); if it arrives during the final step, the user's answer is produced first and
+the turn is extended (`S1-busy-finalstep`). That is the owner's accepted trade-off in D5 ("the running
+one still resumes when it finishes, even if the user sent a new message meanwhile"); it is not a
+rejection and needs no queueing change.
 
 ## S1.7 Limits
 
 - Exercised on OpenCode `v2.3.2` with one model (`ollama-cloud/deepseek-v4.1-flash:1017`) and the `build`
   agent. The admission rule is host-side (`Session.Inbox.Delivery` is `steer | queue`); a `queue`
-  delivery would behave differently, but the default and the TUI's choice are both `steer`.
+  delivery would behave differently, but the observed default for a prompt posted without `delivery` is
+  `steer`. No TUI request was captured in a run; the 2.3.2 binary's submit path passes
+  `delivery: "steer"`, but that is read from the binary rather than observed.
 - The resume text was the literal `SPIKE-RESUME` (the brief's value), so model behaviour after delivery
   varies; only the delivery position is claimed here.
 - Not exercised: a synthetic admitted at the exact moment the execution transitions to `succeeded`.
