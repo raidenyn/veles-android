@@ -116,15 +116,17 @@ possible — stated as such in `evidence/apk.md`.
   `PairingInstrumentedTest` cases drove the Rust JNI through `VelesCrypto.pairingCommand`; the five skips
   are opt-in cases whose arguments were not passed, not BLE-only tests. **Gate re-run on 2026-11-21 did
   not reproduce a fully green suite on either attached phone** (the change modifies no
-  `android/app/src/**` file): on `864a3db0`, 83 finished / 6 skipped / 1 failed —
+  `android/app/src/**` file): on `864a3db0`, both runs finished 83 tests with 6 skipped and 1 failed —
   `UserNotifierOtpMessageHandlerTest.testNotificationCreation` fails before its body with
   `SecurityException: grantRuntimePermission: Neither user 2000 nor current process has
-  android.permission.GRANT_RUNTIME_PERMISSIONS` (the ROM refuses the grant to UiAutomation; it reproduces
-  in isolation). On `2be02e41` (OnePlus 6), 83 finished / 6 skipped / 3 failed — three
-  `ExportImportFlowTest` 5 s `waitUntil` timeouts, a different set of three each full run, although the
-  same class passes 8/8 in isolation; disabling animations (as CI does) did not change it. Both are
-  device/test-environment failures, not build-configuration regressions. The CI emulator job remains the
-  gate for this suite.
+  android.permission.GRANT_RUNTIME_PERMISSIONS` (it reproduces with the class alone). On `2be02e41`
+  (OnePlus 6), 82–83 tests finished with 3 failed — three `ExportImportFlowTest` 5 s `waitUntil` timeouts,
+  a different set of three each full run, although the same class passes 8/8 in isolation; disabling
+  animations (as CI does) did not change it. Both are device/test-environment failures, not
+  build-configuration regressions. The count also differs from the Task 5 record (it starts 77 tests but
+  finishes 82 there and 83 here, adding one skip: `SharingLifecycleTest.visibleStartAdvertisesAndExplicitStopCleansUp`),
+  so the device's runtime state has changed since Task 5; the exact cause of the permission failure is not
+  established. The CI emulator job remains the gate for this suite.
 - **Handset install/launch (`2be02e41`):** fixture-signed debug APK installed and launched
   `PermissionsActivity`. `dumpsys package` reported `versionCode=100`,
   `versionName=0.1.0-53-792a082-chore_gradle-cache-safe`, equal to `:app:androidGitVersion` at that
@@ -169,6 +171,10 @@ Every script-registered task carries an explicit contract (`evidence/cacheabilit
   `codesign`, notarization, the physical installer matrix): these run only on their runners. The
   configuration-cache probes for the four `check-native-host.yml`/`check-installer.yml` task sets were
   run on the home Windows PC and the MacBook; the CI jobs themselves still have to pass after the push.
+- **Bridge-scaffold packaging (`bridgeBuild`, `bridgePackage`):** NOT RUNNABLE on Linux — both fail on
+  `Package 'glib-2.0' not found` (Tauri's GTK/glib development libraries are absent), so neither result is
+  a pass. `bridgeManifests` passed (it wrote the Windows and macOS manifests). `check-bridge-scaffold.yml`
+  does not run the packaging step, so CI is unaffected.
 - **Installer unsigned/fixture producers** (`bridgeInstallerUnsigned`, `bridgeInstallerPackageFixture`):
   they refuse Linux by design (`OTP-25 installer inputs are built on a Windows or macOS runner`).
 - **Real macOS Bluetooth E2E:** requires the signed canonical test bundle on macOS; not run here.
@@ -177,19 +183,33 @@ Every script-registered task carries an explicit contract (`evidence/cacheabilit
 
 ## Local gates
 
-All run in the worktree on Linux; see `.superpowers/sdd/plan/task-11-report.md` for exact output.
+All run in the worktree on Linux; exact transcripts, per-node results and failure output are in
+`evidence/gates.md`.
 
 - `./gradlew scriptsTest` — pass (888 Python tests).
 - `node --test verify/test/workflow-contracts.test.mjs` — pass (61 tests).
 - `verify/verify-supply-chain.sh` — exit 0 (with the pinned Node 26.8.1 / npm 11.19.0; `npm ci
   --ignore-scripts --prefix verify` and `./gradlew installCargoDeny` provisioned first).
-- `openspec validate gradle-cache-safe` — valid (exit 0; only long-requirement warnings).
-- Node checks for `android`, `web-extension`, `installer`, `rust`, `protocol`, `native-host`,
-  `bridge-scaffold`, `supply-chain`, `tooling`, `docs` — pass, as recorded in the report, with one
-  exception: `connectedDebugAndroidTest` did not reach a green full suite on either attached phone for the
-  device/test-environment reasons above (the failing tests are outside the files this change touches).
+- `openspec validate gradle-cache-safe` — valid (exit 0; long-requirement warnings only).
+- Per-node checks that ran and passed: tooling (11 + 148 node tests, `components.py check`, commitlint,
+  `project_flow.py --help`, the root-alias check and its self-test); docs (the four checks, 300 unit
+  tests, site check); supply-chain (117 unit tests); rust (`rustInstall`, `rustFormat rustLint rustTest`,
+  `rustJni`, `rustWasm`, `rustHostJni`, `verify-apk-jni.sh`); protocol (`protocolCheck`); native-host
+  (`bridgeHost*` tasks, `bridgeHostBuild`, 26 contract tests); bridge-scaffold
+  (`bridgeInstall bridgeFormat bridgeLint bridgeTypecheck bridgeNpmTest bridgeRust*`, `bridgeManifests`);
+  installer (`bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest bridgeInstallerScriptsTest`,
+  65 Python contract tests, `bridgeInstallerSupplyChain` — `BUILD SUCCESSFUL in 2m 49s`); web-extension
+  (format, lint, typecheck, 691 tests, build, 8 bundle tests, package); and
+  Android (`assembleDebug assembleRelease testDebugUnitTest spotlessCheck detekt lintDebug
+  :app:releaseHookGuard`, plus the three CI guard greps).
+- **Not a pass:** `connectedDebugAndroidTest` did not reach a green full suite on either attached phone
+  (device/test-environment reasons above; the failing tests are outside the files this change touches).
+  `bridgeBuild` and `bridgePackage` are not runnable on Linux (`Package 'glib-2.0' not found`), and the
+  installer producers refuse Linux; they are listed as not run in "What did not run, and why" and are
+  never counted as passes.
 - The first `native-bridge/host` contract run failed because its static checker still parsed the old
   inline `Exec` block; the checker was updated to read the typed `HostBuildTask` class (same asserted
-  properties, negative controls intact) and the suite then passed (25 tests).
+  properties, negative controls intact, plus a negative control that removes `--locked` from the class
+  body) and the suite then passed (26 tests).
 
 Refs raidenyn/veles-android#181
