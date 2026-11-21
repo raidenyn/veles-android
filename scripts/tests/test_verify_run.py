@@ -10,6 +10,8 @@ back a `FakeProcess` whose `poll` keeps returning None until it is signalled; `s
 records the signal *and* the fake clock's ticks at that moment, so the test can assert the ten
 seconds between SIGTERM and SIGKILL, and `FakeProcess.wait` records the reap.
 """
+import contextlib
+import io
 import json
 import os
 import signal
@@ -25,6 +27,7 @@ REPO = os.path.dirname(SCRIPTS)
 sys.path.insert(0, SCRIPTS)
 sys.path.insert(0, TESTS)
 
+import branch_pass  # noqa: E402
 import verify  # noqa: E402
 from verify import (  # noqa: E402
     NodeResult,
@@ -34,12 +37,22 @@ from verify import (  # noqa: E402
     StateLock,
     cleanup_orphans,
     exit_code,
+    load_table,
+    main,
     prune_runs,
     render,
+    run_gate,
     step_cutoff,
     write_last_run,
 )
-from verifyfake import FakeClock, FakeWait, make_context  # noqa: E402
+from verifyfake import (  # noqa: E402
+    FakeClock,
+    FakeFs,
+    FakeGit,
+    FakeRunner,
+    FakeWait,
+    make_context,
+)
 
 RUN = "run-1"
 OTHER_RUN = "run-2"
@@ -213,15 +226,19 @@ class RunFixture(unittest.TestCase):
         self.wait = FakeWait(self.clock)
         self.lines = []
 
-    def context(self, processes=None, deadline=None, run_dir=None):
-        runner = Runner(self.clock, self.wait, processes or FakeProcesses(clock=self.clock,
-                                                                         wait=self.wait))
+    def context(self, processes=None, deadline=None, run_dir=None, git=None, files=None,
+                runner=None):
+        runner = runner or Runner(self.clock, self.wait,
+                                  processes or FakeProcesses(clock=self.clock,
+                                                             wait=self.wait))
         return make_context(
             repo=self.repo,
             common_dir=os.path.join(self.repo, ".git"),
+            git=git or FakeGit(),
             runner=runner,
             clock=self.clock,
             wait=self.wait,
+            fs=FakeFs(files=files),
             run_dir=run_dir or self.run_dir,
             deadline=deadline,
             log=self.lines.append,
@@ -674,6 +691,205 @@ class ReportTest(RunFixture):
         context = self.context(run_dir=os.path.join(self.runs_dir, "run-10"))
         self.assertEqual(prune_runs(context), ["run-00"])
         self.assertEqual(len(os.listdir(self.runs_dir)), 10)
+
+
+EXT = "web-extension/src/background.ts"
+BASE = "a" * 40
+HEAD = "c" * 40
+DIRTY = " M web-extension/src/background.ts"
+
+
+def fixture_cmap():
+    return {"since": "0" * 40,
+            "nodes": {"web-extension": {"paths": ["web-extension/"], "release": False}},
+            "global": [], "ci-global": [], "unowned": []}
+
+
+def fixture_table():
+    """One node with two steps, so a run can leave its second step not reached."""
+    command = {"kind": "check", "cwd": "web-extension", "doc": "scripts/AGENTS.md",
+               "reuse": False}
+    return {
+        "version": 1,
+        "requirements": {},
+        "producers": [],
+        "nodes": {"web-extension": {"commands": [
+            dict(command, id="web-extension.lint", run=["npm", "run", "lint"]),
+            dict(command, id="web-extension.typecheck", run=["npm", "run", "typecheck"]),
+        ]}},
+    }
+
+
+class MutatingRunner(FakeRunner):
+    """A fake runner whose `on_call(argv)` can dirty the tree or move HEAD during the run."""
+
+    def __init__(self, on_call=None):
+        super().__init__()
+        self.on_call = on_call
+
+    def run(self, argv, cwd, env, log_path, cutoff, capture):
+        outcome = super().run(argv, cwd, env, log_path, cutoff, capture)
+        if self.on_call is not None:
+            self.on_call(tuple(argv))
+        return outcome
+
+
+class Stdin:
+    """A `sys.stdin` stand-in: the hook reads `sys.stdin.buffer`, as at the real terminal."""
+
+    def __init__(self, data):
+        self.buffer = io.BytesIO(data)
+
+
+class BranchFixture(RunFixture):
+    """A one-node table, a seeded branch-pass record and the module's path patched to the run dir.
+
+    `branch_pass` resolves its record through git's worktree root; the run's context reads git
+    through the injected `FakeGit`, so the record's path is pinned to this temporary checkout and
+    no test touches the repository it runs from.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.record_path = os.path.join(self.verify_dir, "branch-pass.json")
+        patcher = mock.patch.object(branch_pass, "record_path", return_value=self.record_path)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.makedirs(os.path.join(self.repo, ".github"))
+        os.makedirs(os.path.join(self.repo, "scripts"))
+        write_json(os.path.join(self.repo, ".github", "components.json"), fixture_cmap())
+        write_json(os.path.join(self.repo, "scripts", "verify-commands.json"), fixture_table())
+        self.cmap = fixture_cmap()
+        self.table = load_table(os.path.join(self.repo, "scripts", "verify-commands.json"),
+                                self.cmap)
+
+    def git(self, diff=(EXT,), head=HEAD, porcelain=""):
+        return FakeGit(diff=list(diff), base=BASE, head=head, porcelain=porcelain)
+
+    def seed_record(self):
+        write_json(self.record_path, {"version": 1, "head": "d" * 40, "base": "e" * 40,
+                                      "nodes": ["web-extension"]})
+        return self.record_bytes()
+
+    def record_bytes(self):
+        try:
+            with open(self.record_path, "rb") as handle:
+                return handle.read()
+        except OSError:
+            return None
+
+
+class BranchPassRunTest(BranchFixture):
+    def test_branch_complete_writes_record(self):
+        # Spec "Complete run": exit 0, clean tree, same HEAD -> the record names HEAD, base, nodes.
+        context = self.context(git=self.git())
+        outcome = run_gate("branch", None, context, self.table, self.cmap)
+        self.assertEqual(exit_code(outcome.results, outcome.errors), 0)
+        self.assertEqual(read_json(self.record_path),
+                         {"version": 1, "head": HEAD, "base": BASE,
+                          "nodes": ["web-extension"]})
+
+    def test_branch_nothing_changed_writes_empty_nodes(self):
+        # A nothing-changed branch run is still complete, and its selected nodes are the empty list.
+        context = self.context(git=self.git(diff=()))
+        outcome = run_gate("branch", None, context, self.table, self.cmap)
+        self.assertEqual(exit_code(outcome.results, outcome.errors), 0)
+        document = read_json(self.record_path)
+        self.assertEqual(document["nodes"], [])
+        self.assertEqual((document["head"], document["base"]), (HEAD, BASE))
+
+    def test_branch_incomplete_no_record(self):
+        # Spec "Incomplete run": every incompleteness fact leaves no record, even one that existed.
+        def reached_reserve(clock):
+            def on_call(argv):
+                if argv == ("npm", "run", "lint"):
+                    clock.value = 1000.0 - 45.0
+            return on_call
+
+        def dirty_at_end(git):
+            def on_call(argv):
+                if argv == ("npm", "run", "lint"):
+                    git.porcelain = DIRTY
+            return on_call
+
+        def head_changed(git):
+            def on_call(argv):
+                if argv == ("npm", "run", "lint"):
+                    git.head_sha = "f" * 40
+            return on_call
+
+        exit_1 = FakeRunner(script={("npm", "run", "lint"): Outcome("fail", code=1)})
+        exit_2 = FakeRunner(script={("npm", "run", "lint"): Outcome(
+            "not_run", error="node is missing", fix="install node")})
+        late = self.git()
+        moved = self.git()
+        rewritten = self.git()
+        cases = [
+            ("exit 1", lambda: (self.context(git=self.git(), runner=exit_1), None), 1),
+            ("exit 2 unexpected NOT RUN",
+             lambda: (self.context(git=self.git(), runner=exit_2), None), 2),
+            ("--deadline",
+             lambda: (self.context(git=self.git(), deadline=1000.0), None), 0),
+            ("--base", lambda: (self.context(git=self.git()), BASE), 0),
+            ("not_reached",
+             lambda: (self.context(
+                 git=late, deadline=1000.0,
+                 runner=MutatingRunner(on_call=reached_reserve(self.clock))), None), 0),
+            ("dirty at start",
+             lambda: (self.context(git=self.git(porcelain=DIRTY)), None), 0),
+            ("dirty at end",
+             lambda: (self.context(
+                 git=moved, runner=MutatingRunner(on_call=dirty_at_end(moved))), None), 0),
+            ("HEAD changed",
+             lambda: (self.context(
+                 git=rewritten, runner=MutatingRunner(on_call=head_changed(rewritten))),
+              None), 0),
+        ]
+        for name, build, expected in cases:
+            with self.subTest(case=name):
+                self.clock.value = 0.0
+                self.seed_record()
+                context, base = build()
+                outcome = run_gate("branch", base, context, self.table, self.cmap)
+                self.assertEqual(exit_code(outcome.results, outcome.errors), expected)
+                self.assertFalse(os.path.exists(self.record_path), name)
+                if name == "not_reached":
+                    # The not-reached fact on its own: everything else about this run is complete.
+                    self.assertTrue(outcome.incomplete)
+                    self.assertFalse(verify._branch_pass_complete(
+                        outcome, None, None, (HEAD, ""), (HEAD, "")))
+
+    def test_branch_contended_keeps_record(self):
+        # Spec "Contended run keeps a pass": no lock, no delete, exit 2.
+        content = self.seed_record()
+        holder = RunLock(os.path.join(self.verify_dir, "lock"))
+        self.assertTrue(holder.try_acquire())
+        self.addCleanup(holder.release)
+        context = self.context(git=self.git())
+        outcome = run_gate("branch", None, context, self.table, self.cmap)
+        self.assertTrue(outcome.contended)
+        self.assertEqual(exit_code(outcome.results, outcome.errors), 2)
+        self.assertEqual(self.record_bytes(), content)
+
+    def test_task_gate_never_touches_record(self):
+        # Spec: the task gate and the hook never write or delete the branch-pass record.
+        content = self.seed_record()
+        context = self.context(git=self.git())
+        self.assertEqual(main([], context), 0)
+        self.assertEqual(self.record_bytes(), content)
+        # The hook's gate is the task gate with remembered passes; a failing step makes it block,
+        # which proves the gate ran before the record is compared again.
+        context = self.context(git=self.git(), runner=FakeRunner(script={
+            ("npm", "run", "lint"): Outcome("fail", code=1)}))
+        event = json.dumps({"session_id": "session-1", "cwd": self.repo}).encode("utf-8")
+        out = io.StringIO()
+        with mock.patch("sys.stdin", Stdin(event)), \
+                contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = main(["--hook", "claude", "--dispatched", "--deadline", "10000"], context)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out.getvalue())["decision"], "block")
+        self.assertEqual(self.record_bytes(), content)
 
 
 if __name__ == "__main__":

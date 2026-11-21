@@ -55,7 +55,7 @@ class FakeGit:
     """
 
     def __init__(self, diff=None, staged=None, unstaged=None, untracked=None, base=None,
-                 errors=None, commit=None, index=None):
+                 errors=None, commit=None, index=None, head=None, porcelain=None):
         self.diff = list(diff or [])
         self.staged_paths = list(staged or [])
         self.unstaged_paths = list(unstaged or [])
@@ -64,6 +64,10 @@ class FakeGit:
         self.commit_sha = commit
         self.errors = dict(errors or {})
         self.index = dict(index or {})
+        # The branch-pass identity: the HEAD commit and `git status --porcelain`, both mutable so
+        # a test's runner can change them during a run.
+        self.head_sha = head or ("b" * 40)
+        self.porcelain = "" if porcelain is None else porcelain
         self.calls = []
 
     def _maybe_raise(self, name):
@@ -95,6 +99,18 @@ class FakeGit:
         self.calls.append(("merge_base", ref))
         self._maybe_raise("merge_base")
         return self.base
+
+    def head(self):
+        """The HEAD commit; mutable through `head_sha` for a run that changes it."""
+        self.calls.append(("head",))
+        self._maybe_raise("head")
+        return self.head_sha
+
+    def status_porcelain(self):
+        """`git status --porcelain`; empty for a clean tree, mutable for a dirty run."""
+        self.calls.append(("status_porcelain",))
+        self._maybe_raise("status_porcelain")
+        return self.porcelain
 
     def commit(self, ref):
         self.calls.append(("commit", ref))

@@ -44,6 +44,7 @@ if SCRIPTS not in sys.path:
     sys.path.insert(0, SCRIPTS)
 
 import agent_rules  # noqa: E402
+import branch_pass  # noqa: E402
 import components  # noqa: E402
 
 TABLE_PATH = os.path.join(SCRIPTS, "verify-commands.json")
@@ -342,6 +343,14 @@ class Git:
 
     def merge_base(self, ref):
         return self._read("merge-base", ref, "HEAD").decode("utf-8", "replace").strip()
+
+    def head(self):
+        """The HEAD commit, which a branch pass is bound to (design D2)."""
+        return self._read("rev-parse", "HEAD").decode("utf-8", "replace").strip()
+
+    def status_porcelain(self):
+        """`git status --porcelain -z` as text; empty for a clean tree (design D2's completeness)."""
+        return self._read("status", "--porcelain", "-z").decode("utf-8", "surrogateescape")
 
     def commit(self, ref):
         """The full sha `ref` names, when it names a commit (design D3's base check)."""
@@ -1633,6 +1642,42 @@ def _record_pass(node, gate, base, ctx, cmap, node_plan, table, env, resolved, g
     Passes(os.path.join(_verify_dir(ctx), PASSES_POINTER)).put(gate, node, digest)
 
 
+def _branch_state(ctx):
+    """`(HEAD, git status --porcelain)` for the branch pass, or None when git cannot read it."""
+    try:
+        return ctx.git.head(), ctx.git.status_porcelain()
+    except (GitError, AttributeError):
+        return None
+
+
+def _branch_pass_complete(result, deadline, base, before, after):
+    """Whether a `--branch` run may leave a branch-pass record (design D2).
+
+    A complete run exits 0, was given no `--deadline` and no `--base`, left no step not reached
+    and saw a clean tree under the same HEAD before selection and after the last step. `before`
+    and `after` are `(head, porcelain)` tuples, or None when git could not be read.
+    """
+    if deadline is not None or base is not None:
+        return False
+    if exit_code(result.results, result.errors) != 0:
+        return False
+    if any(step.get("status") == "not_reached" for step in result.steps):
+        return False
+    if before is None or after is None or before != after:
+        return False
+    head, porcelain = before
+    return bool(head) and not porcelain.strip()
+
+
+def _write_branch_pass(ctx, base, outcome, before, after):
+    """Write the record of a complete branch run; an incomplete one leaves none behind."""
+    selection = outcome.selection
+    if selection is None or not _branch_pass_complete(
+            outcome, ctx.deadline, base, before, after):
+        return
+    branch_pass.write(ctx.repo, after[0], selection.base, sorted(selection.reasons))
+
+
 def run_gate(gate, base, ctx, table, cmap, use_passes=False):
     """One gate end to end, in the fixed order of design D1/D4/D5/D6/D9/D10.
 
@@ -1646,6 +1691,9 @@ def run_gate(gate, base, ctx, table, cmap, use_passes=False):
     `PASS (remembered)`. A task-gate pass may be recorded; `--branch` never writes, and a manual
     task-gate run never reads. A record is written only when fresh observations after the run
     reproduce the source-side key computed before it.
+
+    A branch run deletes the previous branch-pass record as soon as it holds the run lock and
+    writes a new one only when the run is complete (design D2).
     """
     started = ctx.clock.now()
     outcome = RunOutcome()
@@ -1655,6 +1703,11 @@ def run_gate(gate, base, ctx, table, cmap, use_passes=False):
         outcome.errors.append(CONTENTION)
         return outcome
     try:
+        # Every branch run that holds the lock drops the old proof first; only a complete run
+        # leaves a new one, and a contended run never gets here (design D2).
+        if gate == "branch":
+            branch_pass.delete(ctx.repo)
+        before = _branch_state(ctx) if gate == "branch" else None
         run_id = os.path.basename(os.path.normpath(ctx.run_dir))
         if not cleanup_orphans(ctx, run_id):
             outcome.contended = True
@@ -1686,7 +1739,10 @@ def run_gate(gate, base, ctx, table, cmap, use_passes=False):
         _apply_sdk_warning(ctx, env, planned)
         if not selection_result.files or selection_result.only_unowned:
             # Zero-work outcomes print their own line; no node is ever a pass (design D10).
+            after = _branch_state(ctx) if gate == "branch" else None
             write_last_run(ctx, {}, [], elapsed_s=ctx.clock.now() - started)
+            if gate == "branch":
+                _write_branch_pass(ctx, base, outcome, before, after)
             return outcome
 
         passes = Passes(os.path.join(_verify_dir(ctx), PASSES_POINTER))
@@ -1865,8 +1921,11 @@ def run_gate(gate, base, ctx, table, cmap, use_passes=False):
             for step_id, step_outcome, _rerun in outcome.results[node].failures:
                 outcome.problems.append((node, step_id, step_outcome.kind))
         outcome.steps = step_records
+        after = _branch_state(ctx) if gate == "branch" else None
         write_last_run(ctx, outcome.results, step_records,
                        elapsed_s=ctx.clock.now() - started)
+        if gate == "branch":
+            _write_branch_pass(ctx, base, outcome, before, after)
         return outcome
     finally:
         lock.release()
