@@ -123,7 +123,7 @@ abstract class GitVersionValueSource : ValueSource<List<String>, GitVersionValue
      */
     private fun versionCode(lastVersion: String, revCount: Int, codeFormat: String): Int {
         if (codeFormat.length > 9) {
-            throw GradleException("codeFormat $codeFormat is too long (version codes must be < 2100000000")
+            throw GradleException("codeFormat $codeFormat is too long (version codes must be < 2100000000)")
         }
         // `unknown` has no numeric group, and neither has `untagged`; every part is then zero.
         val parts = versionParts(lastVersion)
@@ -167,6 +167,10 @@ abstract class GitVersionValueSource : ValueSource<List<String>, GitVersionValue
         val result = execOperations.exec {
             commandLine(listOf("git", "-C", repo.absolutePath) + args.toList())
             isIgnoreExitValue = true
+            // A read-only probe must never take git's optional index lock: `git status` would
+            // otherwise refresh and rewrite the index, racing a concurrent `git status`/`git add`
+            // with "Unable to create '…/index.lock': File exists".
+            environment("GIT_OPTIONAL_LOCKS", "0")
             standardOutput = stdout
             errorOutput = ByteArrayOutputStream()
         }
