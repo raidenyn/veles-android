@@ -21,8 +21,8 @@ Both gates select the same nodes: the changed paths against `git merge-base orig
 (override with `--base <sha>`), mapped through `.github/components.json`. A path no node owns
 selects nothing; an unaccounted path is a selection error naming `.github/components.json`.
 `--list` (or `--dry-run`) prints the selection and the plan without running a probe or a command
-(the list-only target resolvers are the exception). The task gate may reuse a remembered pass; the
-branch gate never does.
+(the list-only target resolvers are the exception). The task gate may reuse a remembered pass (in
+hook mode); the branch gate never does.
 
 Exit codes: `1` for a `FAIL` or a timeout, `2` for usage, a selection error, a contended run or an
 unexpected `NOT RUN`, else `0`. A run with no changed path prints
@@ -249,7 +249,7 @@ Hook state and reservations live under `<git-common-dir>/veles-verify/`.
 
 **Contention.** A background run holds `build/verify/lock` for its whole run, so a
 turn-end hook run reports `{"systemMessage":"verification already running; nothing was checked"}`
-and checks nothing; stop again after the branch run finishes. The same contention can happen in
+and checks nothing; stop again after that run finishes. The same contention can happen in
 hook mode when a second launcher starts during the 5-second SIGKILL grace of the first: the first
 launcher's child still holds the lock.
 
@@ -321,7 +321,7 @@ Accepted at the design review; each has a workaround.
    process group (for example a running Gradle) outlives the child until the next run's orphan
    cleanup. Run the verifier again.
 9. A turn-end hook run during a background run reports contention and checks nothing
-   (see "The Stop hooks"). Stop again after the branch run finishes.
+   (see "The Stop hooks"). Stop again after that run finishes.
 10. A SIGTERM that reaches the launcher before it installs its handler (between dispatch and
     `_install_sigterm`) kills the launcher alone and leaves the dispatched child running to its
     deadline, holding the lock. The next run's orphan cleanup reaps it; stop again after it ends.

@@ -4646,7 +4646,8 @@ class _ArgumentParser(argparse.ArgumentParser):
 def make_parser():
     parser = _ArgumentParser(
         prog="verify.py",
-        description="Run the affected nodes' checks (task gate by default; --branch before a push).",
+        description="Run the affected nodes' checks (task gate by default, also the pre-push run; "
+                    "--branch for a full local run).",
     )
     gate = parser.add_mutually_exclusive_group()
     gate.add_argument("--branch", action="store_true",
