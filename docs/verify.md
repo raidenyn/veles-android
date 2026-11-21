@@ -11,10 +11,11 @@ Read `.agents/rules/scripts-verify-commands.md` before editing the table.
 
 - **Task gate** (`python3 -I scripts/verify.py`, the default): runs every selected node's `check`
   commands and, for each `test` command with a related-test strategy, only the tests related to the
-  changed files. It is the fast signal and the gate the `Stop` hooks run.
+  changed files. It is the fast signal, the gate the `Stop` hooks run, and the pre-push run: a
+  complete pass writes the record the push gate checks.
 - **Branch gate** (`python3 -I scripts/verify.py --branch`): runs every selected node's checks and
-  all of its tests. It runs before a push (the pre-push rule); CI runs the same commands (and
-  more) in its own jobs.
+  all of its tests. It is the optional full local run, and its complete pass satisfies the same
+  push gate; CI runs every test in its own jobs.
 
 Both gates select the same nodes: the changed paths against `git merge-base origin/master HEAD`
 (override with `--base <sha>`), mapped through `.github/components.json`. A path no node owns
@@ -159,8 +160,9 @@ Choose `"reuse": false` when you cannot bound a step's inputs; `--branch` and CI
 
 ## The branch pass
 
-`python3 -I scripts/verify.py --branch` writes `<worktree>/build/verify/branch-pass.json` (worktree-local,
-like the remembered passes) only after a **complete** run:
+A complete manual run of either gate (`python3 -I scripts/verify.py` or `--branch`) writes
+`<worktree>/build/verify/branch-pass.json` (worktree-local, like the remembered passes) only after a
+**complete** run:
 
 - exit code 0;
 - no `--deadline` and no `--base` argument;
@@ -171,9 +173,9 @@ like the remembered passes) only after a **complete** run:
 The record is version 1 JSON, `{"version": 1, "head": "<sha>", "base": "<sha>", "nodes": ["<node>",
 ...]}`, and holds no time: freshness is HEAD and base equality, so nothing depends on the clock.
 
-Every `--branch` run deletes an existing record right after it takes the run lock
+Every manual run of either gate deletes an existing record right after it takes the run lock
 (`build/verify/lock`), so a later run that fails cannot leave an old pass in place. A contended run
-that never gets the lock leaves the record alone. The task gate and the hook never write or delete it.
+that never gets the lock leaves the record alone. The `Stop` hook never writes or deletes it.
 
 `scripts/branch_pass.py` owns the record's path, format, writer and check; the verifier and the
 hooked-rules engine both use it. Its check resolves the worktree of a working directory, reads the
@@ -245,7 +247,7 @@ notice is `{"systemMessage":"<text>"}`; a clean pass or a zero-work run prints n
 internal failure fails open: one stderr line, no stdout, exit `0`. `stop_hook_active` is ignored.
 Hook state and reservations live under `<git-common-dir>/veles-verify/`.
 
-**Contention.** A background `--branch` run holds `build/verify/lock` for its whole run, so a
+**Contention.** A background run holds `build/verify/lock` for its whole run, so a
 turn-end hook run reports `{"systemMessage":"verification already running; nothing was checked"}`
 and checks nothing; stop again after the branch run finishes. The same contention can happen in
 hook mode when a second launcher starts during the 5-second SIGKILL grace of the first: the first
@@ -318,7 +320,7 @@ Accepted at the design review; each has a workaround.
 8. After `_stop_child` (SIGTERM, budget expiry, dispose or the Claude Code watchdog) a step's own
    process group (for example a running Gradle) outlives the child until the next run's orphan
    cleanup. Run the verifier again.
-9. A turn-end hook run during a background `--branch` run reports contention and checks nothing
+9. A turn-end hook run during a background run reports contention and checks nothing
    (see "The Stop hooks"). Stop again after the branch run finishes.
 10. A SIGTERM that reaches the launcher before it installs its handler (between dispatch and
     `_install_sigterm`) kills the launcher alone and leaves the dispatched child running to its

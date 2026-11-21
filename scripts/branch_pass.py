@@ -1,7 +1,7 @@
 """The branch-pass record: the path, version-1 format, atomic writer and check in one module.
 
-`scripts/verify.py --branch` writes the record after a complete run; the hooked-rules engine
-(`scripts/agent_rules.py`) checks it before a `git push`. One module owns both sides so they
+A complete manual run of `scripts/verify.py` (either gate) writes the record; the hooked-rules
+engine (`scripts/agent_rules.py`) checks it before a `git push`. One module owns both sides so they
 cannot disagree (design D2). Standard library only, Python 3.8+, imported under `-I`.
 
 This module deliberately imports nothing from `agent_rules`: `agent_rules` imports this module,

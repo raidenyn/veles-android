@@ -97,8 +97,8 @@ This section describes a rule without `requires`; a rule with `requires` follows
   not a security boundary.
 - **Registry.** `PROOF_PREDICATES` in `scripts/agent_rules.py` holds the proofs; today only
   `branch-pass`, bound to `branch_pass.check` in `scripts/branch_pass.py`. It checks the record a
-  complete `python3 -I scripts/verify.py --branch` run writes for HEAD and the merge base with
-  `origin/master` (`docs/verify.md`). Adding a proof is one registry entry, a callable
+  complete manual `python3 -I scripts/verify.py` (or `--branch`) run writes for HEAD and the merge
+  base with `origin/master` (`docs/verify.md`). Adding a proof is one registry entry, a callable
   `(cwd, deadline, now)` with its test; requiring it is a rule edit, with no engine change.
 - **Outcome.** When no segment requires the proofs (every gated segment is exempt), the call passes
   and the rule is not denied for delivery; so does a call whose every proof holds, because the
@@ -111,8 +111,8 @@ This section describes a rule without `requires`; a rule with `requires` follows
   a 1.5-second margin under the hosts' 5-second limit. `branch_pass.check` gives each git call the
   time left; a proof that reaches the deadline denies with "proof timed out".
 - **Rule.** `.agents/hooked-rules/repo-pre-push-checks.md` is the one rule that uses this:
-  `git push` is denied until a complete branch pass exists for HEAD, with ref-deletion pushes
-  exempt.
+  `git push` is denied until a complete pass of either gate exists for HEAD, with ref-deletion
+  pushes exempt.
 
 Its fail-open limits, each accepted:
 
