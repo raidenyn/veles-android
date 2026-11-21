@@ -1455,20 +1455,18 @@ def _utf8_size(text):
     return len(text.encode("utf-8", "surrogatepass"))
 
 
-def _capped(rules, prefix=""):
-    """``(included rules, text)``: rules in name order, each whole, the text at most CONTEXT_CAP bytes.
+def _capped_texts(items, prefix=""):
+    """``(included rules, text)`` from ``[(rule, text)]``, each whole, at most ``CONTEXT_CAP`` bytes.
 
-    Each rule contributes ``rule_text(rule.body)`` (never empty: ``parse_rule`` rejects a blank body),
-    and the texts are joined with one blank line (``RULE_SEPARATOR``). ``prefix`` (the stop gate's
-    engine line) comes first, counts against the cap, and is followed by the same separator. The cap
-    counts the UTF-8 bytes of exactly the text returned. A rule that does not fit is left out and the
-    next one is still tried.
+    Items are taken in rule-name order and their texts joined with one blank line
+    (``RULE_SEPARATOR``). ``prefix`` (the stop gate's engine line) comes first, counts against the
+    cap, and is followed by the same separator. The cap counts the UTF-8 bytes of exactly the text
+    returned. An item that does not fit is left out and the next one is still tried.
     """
     included = []
     parts = []
     size = _utf8_size(prefix)
-    for rule in sorted(rules, key=lambda item: item.name):
-        part = rule_text(rule.body)
+    for rule, part in sorted(items, key=lambda item: item[0].name):
         if not part:
             continue  # unreachable for a parsed rule; a rule with no text is never credited
         separator = RULE_SEPARATOR if parts or prefix else ""
@@ -1482,26 +1480,9 @@ def _capped(rules, prefix=""):
     return included, joined
 
 
-def _capped_texts(items):
-    """``(included rules, text)`` from ``[(rule, text)]``, each whole, at most ``CONTEXT_CAP`` bytes.
-
-    The same byte accounting and separator as ``_capped``; used where a rule's displayed text is its
-    body followed by a gate's message (the proof gate).
-    """
-    included = []
-    parts = []
-    size = 0
-    for rule, part in sorted(items, key=lambda item: item[0].name):
-        if not part:
-            continue
-        separator = RULE_SEPARATOR if parts else ""
-        added = _utf8_size(separator) + _utf8_size(part)
-        if size + added > CONTEXT_CAP:
-            continue
-        included.append(rule)
-        parts.append(part)
-        size += added
-    return included, RULE_SEPARATOR.join(parts)
+def _capped(rules, prefix=""):
+    """``_capped_texts`` over each rule's ``rule_text(rule.body)``, with its prefix handling."""
+    return _capped_texts([(rule, rule_text(rule.body)) for rule in rules], prefix)
 
 
 def _segments(command):

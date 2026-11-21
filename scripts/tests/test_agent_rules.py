@@ -7,7 +7,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from unittest import mock
 
@@ -3177,11 +3176,14 @@ class ProofGateTest(CheckoutFixture):
         payload = self.plain("tool-before", session=session, tool="Bash", command=command)
         return self.call(payload, proofs=proofs, now=self.clock.now)
 
-    def proof_entry(self):
+    def entry_for(self, name):
         for (_, identity), entry in self.entries().items():
-            if identity[0] == "repo-pre-push.md":
+            if identity[0] == name:
                 return entry
         return None
+
+    def proof_entry(self):
+        return self.entry_for("repo-pre-push.md")
 
     def test_proof_gate_denies_repeatedly(self):
         proofs = proof_registry((False, PROOF_MESSAGE))
@@ -3204,8 +3206,11 @@ class ProofGateTest(CheckoutFixture):
         self.assertEqual(code, 0)
         decision = json.loads(out)
         self.assertEqual(decision["decision"], "deny")
-        self.assertIn("Pre-push guide.", decision["text"])
-        self.assertIn("boom", decision["text"])
+        self.assertEqual(
+            decision["text"],
+            "Pre-push guide.\n\nbranch-pass proof failed: ValueError: boom",
+        )
+        self.assertEqual(self.proof_entry()["state"], "delivered")
 
     def test_proof_gate_deadline(self):
         observed = []
@@ -3250,10 +3255,45 @@ class ProofGateTest(CheckoutFixture):
         second, code = self.call(payload)
         self.assertEqual((second, code), ("", 0))
 
+    def test_multiple_failing_proofs_join(self):
+        self.write_rule("repo-merge.md", self.proof_rule_source(
+            gates=(r"\bgh\s+pr\s+merge\b",),
+            requires=("branch-pass", "second-proof"),
+            body="Merge guide.\n",
+        ))
+        proofs = {
+            "branch-pass": lambda cwd, deadline, now: (False, "first failure"),
+            "second-proof": lambda cwd, deadline, now: (False, "second failure"),
+        }
+        def second(cwd, deadline, now):
+            return True, ""
+
+        with mock.patch.dict(agent_rules.PROOF_PREDICATES, {"second-proof": second}):
+            out, code = self.push(command="gh pr merge 1", proofs=proofs)
+        self.assertEqual(code, 0)
+        decision = json.loads(out)
+        self.assertEqual(decision["decision"], "deny")
+        self.assertEqual(
+            decision["text"], "Merge guide.\n\nfirst failure\n\nsecond failure")
+
+    def test_proof_rule_and_legacy_rule_share_a_call(self):
+        self.write_rule("repo-legacy-push.md", "---\n"
+                         'pointer: "Legacy push."\n'
+                         'gates: ["\\\\bgit\\\\b[^;&|\\\\n]*?\\\\spush\\\\b"]\n'
+                         "---\nLegacy push guide.\n")
+        out, code = self.push(proofs=proof_registry((False, PROOF_MESSAGE)))
+        self.assertEqual(code, 0)
+        decision = json.loads(out)
+        self.assertEqual(
+            decision["text"],
+            "Legacy push guide.\n\nPre-push guide.\n\n" + PROOF_MESSAGE,
+        )
+        self.assertEqual(self.entry_for("repo-legacy-push.md")["state"], "pending")
+        self.assertEqual(self.entry_for("repo-pre-push.md")["state"], "delivered")
+
     def test_segments_split_at_shell_operators(self):
         self.assertEqual(
             agent_rules._segments("a;b&c|d\ne"), ["a", "b", "c", "d", "e"])
-
 
 
 class HandleTest(CheckoutFixture):
@@ -3890,7 +3930,12 @@ class RealRepoRuleTest(unittest.TestCase):
                           proofs=proofs, deadline=deadline, now=now)
 
     def deadline(self):
-        return time.monotonic() + agent_rules.PROOF_DEADLINE_SECONDS
+        return agent_rules.PROOF_DEADLINE_SECONDS
+
+    @staticmethod
+    def clock():
+        """A fixed clock: the proof deadline check never depends on real time passing."""
+        return lambda: 0.0
 
     def test_real_rules_load_without_errors(self):
         rules, errors = load_rules(REPO_ROOT)
@@ -3971,7 +4016,7 @@ class RealRepoRuleTest(unittest.TestCase):
             with self.subTest(command=command):
                 decision = self.run_event(
                     bash_before(command, session="exempt-%d" % index),
-                    proofs=proofs, deadline=self.deadline(),
+                    proofs=proofs, deadline=self.deadline(), now=self.clock(),
                 )
                 self.assertEqual(decision.kind, "pass", command)
                 self.assertEqual(decision.text, "")
@@ -3987,6 +4032,8 @@ class RealRepoRuleTest(unittest.TestCase):
             "git push origin feat; echo -d",
             "git push origin feat 2>&1",
             "git push  origin feat # wip",
+            "git push origin feat # -d",
+            "git push origin feat # --delete",
             "GIT_TRACE=1 git push origin feat",
         )
         message = "no branch pass for HEAD abc123"
@@ -3995,6 +4042,7 @@ class RealRepoRuleTest(unittest.TestCase):
                 decision = self.run_event(
                     bash_before(command, session="gated-%d" % index),
                     proofs=proof_registry((False, message)), deadline=self.deadline(),
+                    now=self.clock(),
                 )
                 self.assertEqual(decision.kind, "deny", command)
                 self.assertIn(
@@ -4007,7 +4055,7 @@ class RealRepoRuleTest(unittest.TestCase):
         for _ in range(2):
             decision = self.run_event(
                 bash_before("git push origin feature", session="no-pass"),
-                proofs=proofs, deadline=self.deadline(),
+                proofs=proofs, deadline=self.deadline(), now=self.clock(),
             )
             self.assertEqual(decision.kind, "deny")
             self.assertIn(
@@ -4022,7 +4070,7 @@ class RealRepoRuleTest(unittest.TestCase):
             rule_body(self.rule("repo-pre-push-checks.md").body), decision.text)
         push = self.run_event(
             bash_before("git push origin feature", session="finalize"),
-            proofs=proof_registry((True, "")), deadline=self.deadline(),
+            proofs=proof_registry((True, "")), deadline=self.deadline(), now=self.clock(),
         )
         self.assertEqual(push.kind, "pass")
 
@@ -4034,7 +4082,7 @@ class RealRepoRuleTest(unittest.TestCase):
         head = repo.commit("feat(scripts): a later commit")
         decision = self.run_event(
             bash_before("git push origin feature", session="stale", cwd=str(repo.path)),
-            proofs=agent_rules.PROOF_PREDICATES, deadline=time.monotonic() + 10.0,
+            proofs=agent_rules.PROOF_PREDICATES, deadline=self.deadline(), now=self.clock(),
         )
         self.assertEqual(decision.kind, "deny")
         self.assertIn(passed[:12], decision.text)
