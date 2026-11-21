@@ -483,7 +483,7 @@ val gitleaksTarget: String? = run {
     }
     when {
         arch == null -> null
-        os.startsWith("linux") -> "linux_$arch"
+        os.startsWith("linux") -> if (arch == "x86_64") "linux_x64" else "linux_arm64"
         os.startsWith("mac") -> if (arch == "aarch64") "darwin_arm64" else "darwin_x64"
         os.startsWith("windows") && arch == "x86_64" -> "windows_x64"
         else -> null
