@@ -62,6 +62,27 @@ def task_body(code, name):
     return rest if not following else rest[: following.start() + 1]
 
 
+def task_source(code, name):
+    """Registration plus the body of the task class it instantiates, when it is a typed task.
+
+    `bridgeHostBuild` is an `abstract class HostBuildTask` action, so its cargo command line and
+    staging rules live in the class, not in the registration block. The contract checks read the
+    implementation, so they must see both.
+    """
+    body = task_body(code, name)
+    if body is None:
+        return None
+    typed = re.search(r'tasks\.register<([A-Za-z_]\w*)>\("%s"\)' % re.escape(name), body)
+    if typed is None:
+        return body
+    class_match = re.search(r"(?m)^(?:abstract )?class %s\b" % re.escape(typed.group(1)), code)
+    if class_match is None:
+        return body
+    rest = code[class_match.start():]
+    closing = re.search(r"(?m)^\}", rest)
+    return body + "\n" + (rest[: closing.end()] if closing else rest)
+
+
 # --------------------------------------------------------------------------- checkers
 
 
@@ -82,7 +103,7 @@ def check_gradle(gradle, clean_script, toolchain_toml):
             errors.append("production host section references %r" % forbidden)
     # Every cargo build/lint/test invocation is locked; fmt has no lockfile semantics.
     for name in ("bridgeHostLint", "bridgeHostTest", "bridgeHostBuild"):
-        body = task_body(code, name)
+        body = task_source(code, name)
         if body is None:
             continue
         if "--locked" not in body:
@@ -99,7 +120,7 @@ def check_gradle(gradle, clean_script, toolchain_toml):
     output = re.search(r"val productionHostOutputDir\s*=\s*([^\n]+)", code)
     if not output or "layout.buildDirectory" not in output.group(1) or "native-bridge/host" not in output.group(1):
         errors.append("productionHostOutputDir is not build/native-bridge/host")
-    build = task_body(code, "bridgeHostBuild")
+    build = task_source(code, "bridgeHostBuild")
     if build is not None:
         for need in ('"build"', '"--release"', '"--bin"', '"veles-native-host"'):
             if need not in build:
@@ -589,11 +610,18 @@ class GradleIncremental(unittest.TestCase):
 
     def test_gradle_declares_the_environment_input(self):
         code = strip_kotlin_comments(host_block(read("build.gradle.kts")))
-        helper = code.split("fun Exec.productionHostEnvironment()", 1)[1].split("\n}\n", 1)[0]
+        helper = code.split("fun Exec.productionHostEnvironment(", 1)[1].split("\n}\n", 1)[0]
         self.assertIn('inputs.property("VELES_ALLOWED_ORIGINS", providers.environmentVariable("VELES_ALLOWED_ORIGINS").orElse(""))', helper)
         self.assertIn("target-feature=+crt-static", helper)
-        for task in ("bridgeHostLint", "bridgeHostTest", "bridgeHostBuild"):
-            self.assertIn("productionHostEnvironment()", task_body(code, task), task)
+        for task in ("bridgeHostLint", "bridgeHostTest"):
+            self.assertIn("productionHostEnvironment(isWindows)", task_body(code, task), task)
+        # HostBuildTask is typed: the allowlist and the Windows flag are declared as task
+        # properties, so Gradle keys the up-to-date check without a script-object reference.
+        build = task_source(code, "bridgeHostBuild")
+        self.assertIn("abstract val allowedOrigins: Property<String>", build)
+        self.assertIn("abstract val windows: Property<Boolean>", build)
+        self.assertIn('allowedOrigins.set(providers.environmentVariable("VELES_ALLOWED_ORIGINS").orElse(""))', build)
+        self.assertIn("target-feature=+crt-static", build)
 
 
 class VendorManifest(unittest.TestCase):
