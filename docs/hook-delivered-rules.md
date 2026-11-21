@@ -98,24 +98,25 @@ This section describes a rule without `requires`; a rule with `requires` follows
   complete `python3 -I scripts/verify.py --branch` run writes for HEAD and the merge base with
   `origin/master` (`docs/verify.md`). Adding a proof is one registry entry, a callable
   `(cwd, deadline, now)` with its test; requiring it is a rule edit, with no engine change.
-- **Outcome.** With every proof holding, the call passes and the rule is not denied for delivery:
-  the proof is stronger than delivery. When a proof fails, raises or reaches its deadline, the call
-  is denied with the rule text followed by each failing proof's message, and the rule is marked
+- **Outcome.** When no segment requires the proofs (every gated segment is exempt), the call passes
+  and the rule is not denied for delivery; so does a call whose every proof holds, because the
+  proof is stronger than delivery. When a proof fails, raises or reaches its deadline, the call is
+  denied with the rule text followed by each failing proof's message, and the rule is marked
   delivered in that context, so its moments do not re-deliver. The denial repeats on every matching
   call until the proof holds: there is no deny-once for a proof rule, and a matching pattern does
   not confirm one.
 - **Deadline.** The proofs share a deadline 3.5 seconds after the engine starts handling the event,
   a 1.5-second margin under the hosts' 5-second limit. `branch_pass.check` gives each git call the
   time left; a proof that reaches the deadline denies with "proof timed out".
-- **Read the rule:** `.agents/hooked-rules/repo-pre-push-checks.md` is the one rule that uses this:
+- **Rule.** `.agents/hooked-rules/repo-pre-push-checks.md` is the one rule that uses this:
   `git push` is denied until a complete branch pass exists for HEAD, with ref-deletion pushes
   exempt.
 
 Its fail-open limits, each accepted:
 
 - *Host timeout*: if the host's 5-second limit fires before the proofs answer (for example a slow
-  checkout discovery before they start), the engine is killed and the call passes: a proof that
-  cannot finish is not shown.
+  checkout discovery before they start), the engine is killed and the call passes: the proof's
+  denial is never produced.
 - *Version skew*: Claude Code runs the engine from `$CLAUDE_PROJECT_DIR` and the OpenCode plugin
   from its own checkout, while the rules come from the event's checkout. An old engine that meets a
   rule with `requires` gets a rule parse error and fails open, so the push passes; a new engine with

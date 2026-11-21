@@ -262,7 +262,9 @@ it is not a gate:
 - **macOS and Windows**: Xcode/`DEVELOPER_DIR`, the NSIS, MSVC and Python 3.12 provisioning, the
   release installer builds, and the owner-only signing/notarization steps. No resolver exists for
   them; the `installer` node's `platform` entries are expected skips, and the rest is recorded in
-  the inventory.
+  the inventory. The `codesign --verify`/`-dvvv`/`-d -r-` inspection and the `log show` TCC capture
+  in `.agents/rules/native-bridge-test-app-tcc.md` are macOS-only lines with placeholder paths, so
+  they are not gates either.
 - **Build/-cleaning sequences**: CI's Rust `jni-integration` sequence (`./gradlew clean`,
   `rust/scripts/assert-clean.sh`, the APK/JNI assertions, `npm ci`) would delete `build/verify/`
   (the verifier's own state and lock), so it is not a local gate; `rust/scripts/assert-clean.sh`
@@ -275,19 +277,20 @@ it is not a gate:
   macOS CI runners). `npm ci`, `npm ci --ignore-scripts --prefix verify`, `./gradlew rustInstall`,
   `installCargoDeny`, `./gradlew installGitCliff` and `./gradlew installGitleaks` are setup:
   requirements or the `cargo-deny`/`cargo-cyclonedx` fixes stand for them, and `scriptsTest`
-  depends on the two install tasks. `./gradlew bridgeInstall` is setup too, and running it as a
-  check would rewrite the stat-mode inputs that the scaffold's checks hash, defeating their
-  remembered passes (the `native-bridge.node-modules` requirement's fix installs it once).
-- **Release and packaging**: `assembleRelease`, the extension's `npm run package`, the native
-  product builds and the release-only workflows are products, not gates.
+  depends on the two install tasks. `./gradlew bridgeInstall` is setup too; its stat-mode reason is
+  under "Requirements and fix text".
+- **Release and packaging**: `assembleRelease`, the extension's `npm run package`, `./gradlew
+  rustJni` (the product-input build for the three Android JNI ABIs, which the release pipeline
+  builds), the native product builds and the release-only workflows are products, not gates.
 - **Duplicates and aggregates**: `./gradlew bridgeInstallerSupplyChain` is not an entry: it runs
   the same `verify/verify-supply-chain.sh` as the canonical `supply-chain` entry, which is the one
   entry so no plan runs the script twice.
 - **Examples and callers**: the `commitlint.py --message`, `components.py changed --base <sha>`,
   `last_green.py --pr … --head …` and `project_flow.py --help` lines under `scripts/` are examples
   or CI callers whose arguments the workflow supplies; they validate a message, select nodes or
-  talk to GitHub, not the tree. The verifier's own `python3 -I scripts/verify.py` lines are not
-  entries either: they run the table.
+  talk to GitHub, not the tree. `python3 -I scripts/agent_rules.py pointers --write` is hook-rule
+  maintenance that regenerates the pointer block, not a gate. The verifier's own `python3 -I
+  scripts/verify.py` lines are not entries either: they run the table.
 - `npm run test:connector-browser` is in no node doc and no CI step, so it is outside the inventory.
 
 ## Known limits
@@ -310,15 +313,16 @@ Accepted at the design review; each has a workaround.
 6. A session pruned after 50 newer sessions starts with a fresh allowance, so its block and time
    counters are forgotten. Stop again; the run is checked against the current tree.
 7. A launcher killed with SIGKILL leaves its dispatched child running to its own `--deadline` (at
-   most 1740 seconds) and holding `build/verify/lock` meanwhile; `_stop_child` kills only that
-   child, so a step's own process group (for example a running Gradle) outlives it as well. The
-   next run's orphan cleanup reaps both; wait for the branch run or the hook run to finish, or run
-   `--branch` once it is gone.
-8. A turn-end hook run during a background `--branch` run reports contention and checks nothing
+   most 1740 seconds) and holding `build/verify/lock` all the while. Wait that long (runs meanwhile
+   report contention); the next run then takes the lock and its orphan cleanup reaps the child.
+8. After `_stop_child` (SIGTERM, budget expiry, dispose or the Claude Code watchdog) a step's own
+   process group (for example a running Gradle) outlives the child until the next run's orphan
+   cleanup. Run the verifier again.
+9. A turn-end hook run during a background `--branch` run reports contention and checks nothing
    (see "The Stop hooks"). Stop again after the branch run finishes.
-9. A SIGTERM that reaches the launcher before it installs its handler (between dispatch and
-   `_install_sigterm`) kills the launcher alone and leaves the dispatched child running to its
-   deadline, holding the lock. The next run's orphan cleanup reaps it; stop again after it ends.
+10. A SIGTERM that reaches the launcher before it installs its handler (between dispatch and
+    `_install_sigterm`) kills the launcher alone and leaves the dispatched child running to its
+    deadline, holding the lock. The next run's orphan cleanup reaps it; stop again after it ends.
 
 To sidestep the first four, run `python3 -I scripts/verify.py --branch`, or delete `build/verify/`
 and the generated output (`web-extension/rust-wasm/pkg`, `web-extension/dist`, `build/rust/host-jni`)

@@ -46,7 +46,8 @@ A verifier block is sent as its own `synthetic({resume: true})`; a `systemMessag
 arrives while the verifier slot is busy starts no second run, and the running one still resumes the
 session when it finishes, even if the user sent a new message meanwhile. On budget expiry or plugin
 dispose the plugin sends SIGTERM to the launcher; on SIGTERM the launcher stops its dispatched child
-and exits 0, and after a 5-second grace the plugin sends SIGKILL. No fallback queue was added.
+and exits 0, and if the launcher has not exited the plugin sends SIGKILL after a 5-second grace. An
+expired or disposed run sends no message to the session. No fallback queue was added.
 
 Spike S1 (OpenCode 2.3.2) observed interleaved delivery: a `resume: true` synthetic admitted while a
 user turn runs is not rejected and not parked. OpenCode admits it as a `steer` inbox item and
