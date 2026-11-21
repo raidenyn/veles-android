@@ -31,16 +31,28 @@ class Clock:
 
 
 class RecordingGit:
-    """An injected `run_git`: fixed answers, and every call's working directory and timeout."""
+    """An injected `run_git`: fixed answers, recorded calls, and an optional injected clock.
 
-    def __init__(self, toplevel, head, base):
+    `advance` moves the clock during each call, so the timeout computed before a call differs from
+    the next one's; `failures` maps a call's args tuple to its `(returncode, stdout, stderr)`.
+    """
+
+    def __init__(self, toplevel="", head="", base="", clock=None, advance=0.0, failures=None):
         self.toplevel = toplevel
         self.head = head
         self.base = base
+        self.clock = clock
+        self.advance = advance
+        self.failures = dict(failures or {})
         self.calls = []
 
     def __call__(self, args, cwd, timeout):
         self.calls.append((list(args), cwd, timeout))
+        if self.clock is not None:
+            self.clock.value += self.advance
+        failure = self.failures.get(tuple(args))
+        if failure is not None:
+            return failure
         if args == ["rev-parse", "--show-toplevel"]:
             return 0, self.toplevel + "\n", ""
         if args == ["rev-parse", "HEAD"]:
@@ -66,6 +78,15 @@ class BranchPassTest(unittest.TestCase):
         if run_git is None:
             return branch_pass.check(cwd, deadline, now=self.clock.now)
         return branch_pass.check(cwd, deadline, now=self.clock.now, run_git=run_git)
+
+    def passing_checkout(self):
+        """A fixture whose HEAD is one commit past origin/master, with a matching pass written."""
+        repo = gitfixture.make_repo(self)
+        repo.git("update-ref", "refs/remotes/origin/master", repo.init)
+        head = repo.commit("feat(android): change the app")
+        base = repo.git("merge-base", "origin/master", "HEAD")
+        branch_pass.write(str(repo.path), head, base, NODES)
+        return repo, head, base
 
     def test_write_then_check_passes(self):
         repo = gitfixture.make_repo(self)
@@ -130,6 +151,10 @@ class BranchPassTest(unittest.TestCase):
             ("truncated JSON", '{"version": 1, "head": '),
             ("another version", json.dumps(
                 {"version": 2, "head": head, "base": base, "nodes": NODES})),
+            ("a boolean version", json.dumps(
+                {"version": True, "head": head, "base": base, "nodes": NODES})),
+            ("non-list nodes", json.dumps(
+                {"version": 1, "head": head, "base": base, "nodes": "android"})),
         ]
         for label, text in cases:
             with self.subTest(record=label):
@@ -162,26 +187,73 @@ class BranchPassTest(unittest.TestCase):
         self.assertEqual(stderr, message)
 
     def test_check_deadline(self):
-        repo = gitfixture.make_repo(self)
-        repo.git("update-ref", "refs/remotes/origin/master", repo.init)
-        head = repo.commit("feat(android): change the app")
-        base = repo.git("merge-base", "origin/master", "HEAD")
-        branch_pass.write(str(repo.path), head, base, NODES)
+        repo, head, base = self.passing_checkout()
 
+        # A clock already at the deadline denies without running git.
         expired = RecordingGit(str(repo.path), head, base)
         self.clock.value = 10.0
         self.assertEqual((False, "proof timed out"),
                          self.check(str(repo.path), deadline=5.0, run_git=expired))
         self.assertEqual([], expired.calls)
 
-        recording = RecordingGit(str(repo.path), head, base)
+        # Each call gets the time left at that moment, not one timeout computed at entry.
         self.clock.value = 0.0
+        recording = RecordingGit(str(repo.path), head, base,
+                                 clock=self.clock, advance=1.0)
         self.assertEqual((True, ""),
                          self.check(str(repo.path), deadline=2.5, run_git=recording))
-        self.assertEqual(3, len(recording.calls))
+        self.assertEqual([2.5, 1.5, 0.5],
+                         [timeout for _, _, timeout in recording.calls])
         for args, cwd, timeout in recording.calls:
-            self.assertAlmostEqual(2.5, timeout, msg="git %s" % " ".join(args))
             self.assertEqual(str(repo.path), cwd)
+
+        # A deadline reached between two calls denies before the next call runs.
+        self.clock.value = 0.0
+        stopping = RecordingGit(str(repo.path), head, base,
+                                clock=self.clock, advance=1.0)
+        self.assertEqual((False, "proof timed out"),
+                         self.check(str(repo.path), deadline=1.5, run_git=stopping))
+        self.assertEqual(["rev-parse --show-toplevel", "rev-parse HEAD"],
+                         [" ".join(args) for args, _, _ in stopping.calls])
+        self.assertEqual([1.5, 0.5],
+                         [timeout for _, _, timeout in stopping.calls])
+
+    def test_check_toplevel_git_failure(self):
+        repo = gitfixture.make_repo(self)
+        stderr = "fatal: could not read repository"
+
+        failing = RecordingGit(failures={
+            ("rev-parse", "--show-toplevel"): (128, "", stderr + "\n"),
+        })
+        ok, message = self.check(str(repo.path), run_git=failing)
+        self.assertFalse(ok)
+        self.assertEqual(stderr, message)
+        self.assertEqual(1, len(failing.calls))
+
+        # Only git's own "not a repository" diagnostic means "no branch pass here".
+        not_a_checkout = RecordingGit(failures={
+            ("rev-parse", "--show-toplevel"): (
+                128, "", "fatal: not a git repository (or any parent): .git\n"),
+        })
+        ok, message = self.check(str(repo.path), run_git=not_a_checkout)
+        self.assertFalse(ok)
+        self.assertEqual(
+            "no branch pass in %s: not a git checkout" % str(repo.path), message)
+
+    def test_check_toplevel_timeout_past_deadline(self):
+        repo = gitfixture.make_repo(self)
+        timing_out = RecordingGit(
+            clock=self.clock,
+            advance=1.0,
+            failures={("rev-parse", "--show-toplevel"): (
+                1, "", "git rev-parse --show-toplevel could not run: timed out")},
+        )
+
+        ok, message = self.check(str(repo.path), deadline=0.5, run_git=timing_out)
+
+        self.assertFalse(ok)
+        self.assertEqual("proof timed out", message)
+        self.assertEqual(1, len(timing_out.calls))
 
     def test_check_from_linked_worktree(self):
         repo = gitfixture.make_repo(self)

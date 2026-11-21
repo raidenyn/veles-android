@@ -21,6 +21,20 @@ DEFAULT_GIT_TIMEOUT = 2.0
 TIMED_OUT = "proof timed out"
 RECORD_DIRECTORY = os.path.join("build", "verify")
 RECORD_NAME = "branch-pass.json"
+# Variables that select or relocate the repository; git honours them over `-C`, so a process started
+# from a git hook could otherwise point this module at an unrelated checkout. Kept as a copy of
+# agent_rules' list (this module cannot import it): the rest of the environment, including a
+# fixture's GIT_CONFIG_GLOBAL, reaches git unchanged.
+GIT_SELECTION_VARIABLES = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX",
+)
+# The first stderr line (LC_ALL=C) of a `git rev-parse` run outside a work tree: a deny for "no
+# record here", not a git failure (the same diagnostics `discover_checkout` classifies).
+NON_CHECKOUT_DIAGNOSTICS = (
+    "fatal: not a git repository",
+    "fatal: this operation must be run in a work tree",
+)
 
 
 class RecordError(Exception):
@@ -32,7 +46,7 @@ class _MissingRecord(RecordError):
 
 
 def default_run_git(args, cwd, timeout) -> Tuple[int, str, str]:
-    """Run a read-only git query in `cwd` with the inherited `GIT_*` overrides removed.
+    """Run a read-only git query in `cwd` with the inherited repository-selection variables removed.
 
     Returns `(returncode, stdout, stderr)` as text; a failure to start git or a timeout is a
     non-zero return with the reason in stderr, so callers only ever decide on the tuple
@@ -41,8 +55,9 @@ def default_run_git(args, cwd, timeout) -> Tuple[int, str, str]:
     if timeout is not None and timeout <= 0:
         return 124, "", "git %s timed out" % " ".join(args)
     environment = dict((name, value) for name, value in os.environ.items()
-                       if not name.startswith("GIT_"))
+                       if name not in GIT_SELECTION_VARIABLES)
     environment["LC_ALL"] = "C"
+    environment.pop("LANGUAGE", None)
     try:
         completed = subprocess.run(
             ["git", "-C", cwd] + list(args),
@@ -52,24 +67,41 @@ def default_run_git(args, cwd, timeout) -> Tuple[int, str, str]:
             env=environment,
             timeout=timeout,
         )
-    except (OSError, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
         return 1, "", "git %s could not run: %s" % (" ".join(args), error)
     return (completed.returncode,
             (completed.stdout or b"").decode("utf-8", "replace"),
             (completed.stderr or b"").decode("utf-8", "replace"))
 
 
+def _toplevel(cwd, run_git, timeout):
+    """`(toplevel or None, returncode, stderr)`: git's worktree resolution for `cwd`.
+
+    A caller keeps the code and stderr so a failed lookup is reported as the git failure it is;
+    `record_path` is the one that folds every failure into None.
+    """
+    returncode, stdout, stderr = run_git(["rev-parse", "--show-toplevel"], cwd, timeout)
+    if returncode != 0:
+        return None, returncode, stderr
+    lines = stdout.splitlines()
+    toplevel = lines[0].strip() if lines else ""
+    if not toplevel or not os.path.isabs(toplevel):
+        return None, 0, ""
+    return toplevel, 0, ""
+
+
+def _is_not_a_checkout(stderr):
+    """Whether git's first stderr line says the directory is not a work tree."""
+    lines = (stderr or "").splitlines()
+    first = lines[0] if lines else ""
+    return first.startswith(NON_CHECKOUT_DIAGNOSTICS)
+
+
 def record_path(cwd: str, run_git=default_run_git,
                 timeout: float = DEFAULT_GIT_TIMEOUT) -> Optional[str]:
     """The record path of the worktree holding `cwd`, or None when `cwd` is not a checkout."""
-    returncode, stdout, _ = run_git(["rev-parse", "--show-toplevel"], cwd, timeout)
-    if returncode != 0:
-        return None
-    lines = stdout.splitlines()
-    if not lines:
-        return None
-    toplevel = lines[0].strip()
-    if not toplevel or not os.path.isabs(toplevel):
+    toplevel, _, _ = _toplevel(cwd, run_git, timeout)
+    if toplevel is None:
         return None
     return os.path.join(toplevel, RECORD_DIRECTORY, RECORD_NAME)
 
@@ -132,7 +164,7 @@ def _read(path):
     if not isinstance(document, dict):
         raise RecordError("not a JSON object")
     version = document.get("version")
-    if version != RECORD_VERSION:
+    if type(version) is not int or version != RECORD_VERSION:
         raise RecordError("version %r is not %d" % (version, RECORD_VERSION))
     for key in ("head", "base"):
         value = document.get(key)
@@ -140,20 +172,18 @@ def _read(path):
             raise RecordError("%s is missing" % (key,))
     nodes = document.get("nodes")
     if not isinstance(nodes, list) or not all(isinstance(node, str) for node in nodes):
-        raise RecordError("nodes is missing")
+        raise RecordError("nodes is not a list of strings")
     return document
 
 
 def _timeout(deadline, now):
     """The time left before the predicate deadline for the next git call (design D3)."""
-    if deadline is None:
-        return DEFAULT_GIT_TIMEOUT
     return max(0.0, deadline - now())
 
 
 def _git_failure(args, returncode, stderr, deadline, now):
     """The check's answer for a failed git call: the deadline first, else git's own message."""
-    if deadline is not None and now() >= deadline:
+    if now() >= deadline:
         return False, TIMED_OUT
     text = (stderr or "").strip()
     if not text:
@@ -169,12 +199,18 @@ def check(cwd: str, deadline: float, now=time.monotonic,
     already at the deadline is a deny ("proof timed out") without running git. Never raises for
     a git failure or an unreadable record: both are `(False, message)`.
     """
+    args = ["rev-parse", "--show-toplevel"]
     timeout = _timeout(deadline, now)
     if timeout <= 0.0:
         return False, TIMED_OUT
-    path = record_path(cwd, run_git=run_git, timeout=timeout)
-    if path is None:
-        return False, "no branch pass in %s: not a git checkout" % (cwd,)
+    toplevel, returncode, stderr = _toplevel(cwd, run_git, timeout)
+    if returncode != 0:
+        if _is_not_a_checkout(stderr):
+            return False, "no branch pass in %s: not a git checkout" % (cwd,)
+        return _git_failure(args, returncode, stderr, deadline, now)
+    if toplevel is None:
+        return False, "git %s printed no worktree" % (" ".join(args),)
+    path = os.path.join(toplevel, RECORD_DIRECTORY, RECORD_NAME)
 
     args = ["rev-parse", "HEAD"]
     timeout = _timeout(deadline, now)

@@ -1,5 +1,6 @@
-"""verify.py and its tests stay importable on the repository's Python floor (3.8; check-tooling.yml
-asserts it). No 3.8 interpreter runs here, so these checks read the sources instead."""
+"""verify.py, branch_pass.py and their tests stay importable on the repository's Python floor
+(3.8; check-tooling.yml asserts it). No 3.8 interpreter runs here, so these checks read the
+sources instead."""
 import ast
 import glob
 import os
