@@ -4,18 +4,6 @@ Docs, decisions and the agent-file check; fork `(schema version v5)`. Rule/node:
 `docs/agent-guidance.md`; OpenSpec: `docs/openspec-workflow.md` and `docs/openspec-skills.md`; OpenCode
 needs the `opencode-rules` plugin pinned in `opencode.json`: `docs/opencode-rules.md`.
 
-## Commands
-
-Run from the repository root:
-
-```bash
-python3 docs/checks/check_offline.py --root .
-python3 docs/checks/check_agent_files.py --root .
-python3 docs/checks/check_gate_b_matrix.py
-python3 docs/checks/check_site.py --root .
-python3 -m unittest discover -s docs/checks -p 'test_*.py' -v
-```
-
 The agent-file check prints `severity path: message` per violation, exits non-zero on errors and zero
 with warnings, and never runs `openspec update`.
 

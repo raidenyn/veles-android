@@ -12,6 +12,11 @@ from unittest import mock
 
 SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SCRIPTS)
+sys.path.insert(0, os.path.join(SCRIPTS, "tests"))
+
+import agent_rules  # noqa: E402
+import branch_pass  # noqa: E402
+import gitfixture  # noqa: E402
 
 from agent_rules import (  # noqa: E402
     Decision,
@@ -138,6 +143,37 @@ class ParseRuleTest(unittest.TestCase):
         self.assertEqual(rule.skills, [])
         self.assertEqual(rule.commands, [])
         self.assertEqual(rule.gates, [])
+
+    def test_requires_and_exempt_parse(self):
+        text = rule_text(extra=[
+            'requires: ["branch-pass"]',
+            'exempt: ["\\\\s--delete(?:\\\\s|$)"]',
+        ])
+        rule = parse_rule("x.md", text)
+        self.assertEqual(rule.requires, ("branch-pass",))
+        self.assertEqual([pattern.pattern for pattern in rule.exempt],
+                         ["\\s--delete(?:\\s|$)"])
+
+    def test_unknown_proof_rejected(self):
+        text = rule_text(extra=['requires: ["not-a-proof"]'])
+        with self.assertRaises(RuleError) as caught:
+            parse_rule("x.md", text)
+        self.assertIn("unknown proof predicate", str(caught.exception))
+        self.assertIn("not-a-proof", str(caught.exception))
+
+    def test_requires_without_gates_rejected(self):
+        text = rule_text(lines=['pointer: "p"', SKILLS_LINE, 'requires: ["branch-pass"]'])
+        with self.assertRaises(RuleError) as caught:
+            parse_rule("x.md", text)
+        self.assertIn("requires", str(caught.exception))
+        self.assertIn("gates", str(caught.exception))
+
+    def test_exempt_without_requires_rejected(self):
+        text = rule_text(extra=['exempt: ["x"]'])
+        with self.assertRaises(RuleError) as caught:
+            parse_rule("x.md", text)
+        self.assertIn("exempt", str(caught.exception))
+        self.assertIn("requires", str(caught.exception))
 
     def test_no_trigger(self):
         with self.assertRaises(RuleError) as caught:
@@ -3052,11 +3088,11 @@ class CheckoutFixture(IsolatedGitTest):
         with open(path, "wb") as handle_:
             handle_.write(data if isinstance(data, bytes) else data.encode("utf-8"))
 
-    def call(self, payload, fmt="plain", env=None, store_factory=quick_store):
+    def call(self, payload, fmt="plain", env=None, store_factory=quick_store, **options):
         text = payload if isinstance(payload, str) else json.dumps(payload)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            out, code = handle(text, fmt, env or {}, store_factory)
+            out, code = handle(text, fmt, env or {}, store_factory, **options)
         self.stderr = stderr.getvalue()
         return out, code
 
@@ -3093,6 +3129,172 @@ class CheckoutFixture(IsolatedGitTest):
         }})
         self.assertNotIn("allow", out)
         self.assertNotIn("permissionDecision", out)
+
+
+PUSH_GATE = r"\bgit\b[^;&|\n]*?\spush\b"
+PROOF_MESSAGE = "no branch pass for HEAD abc123"
+
+
+def proof_registry(result=None, error=None, observed=None):
+    """A fake ``PROOF_PREDICATES`` with one ``branch-pass`` entry."""
+    def proof(cwd, deadline, now):
+        if observed is not None:
+            observed.append((cwd, deadline, now))
+        if error is not None:
+            raise error
+        return result
+
+    return {"branch-pass": proof}
+
+
+class FakeClock(object):
+    def __init__(self, value=100.0):
+        self.value = float(value)
+
+    def now(self):
+        return self.value
+
+
+class ProofGateTest(CheckoutFixture):
+    """Rules with ``requires``: a proof gate that denies until the proof holds."""
+
+    def setUp(self):
+        super(ProofGateTest, self).setUp()
+        self.clock = FakeClock()
+        self.write_rule("repo-pre-push.md", self.proof_rule_source())
+
+    def proof_rule_source(self, gates=(PUSH_GATE,), requires=("branch-pass",), exempt=(),
+                          body="Pre-push guide.\n"):
+        lines = ['pointer: "Push gate."', "gates: " + flow(gates)]
+        if requires:
+            lines.append("requires: " + flow(requires))
+        if exempt:
+            lines.append("exempt: " + flow(exempt))
+        return "---\n" + "\n".join(lines) + "\n---\n" + body
+
+    def push(self, command="git push origin feat", proofs=None, session="s1"):
+        payload = self.plain("tool-before", session=session, tool="Bash", command=command)
+        return self.call(payload, proofs=proofs, now=self.clock.now)
+
+    def entry_for(self, name):
+        for (_, identity), entry in self.entries().items():
+            if identity[0] == name:
+                return entry
+        return None
+
+    def proof_entry(self):
+        return self.entry_for("repo-pre-push.md")
+
+    def test_proof_gate_denies_repeatedly(self):
+        proofs = proof_registry((False, PROOF_MESSAGE))
+        for _ in range(2):
+            out, code = self.push(proofs=proofs)
+            self.assertEqual(code, 0)
+            decision = json.loads(out)
+            self.assertEqual(decision["decision"], "deny")
+            self.assertEqual(decision["text"], "Pre-push guide.\n\n" + PROOF_MESSAGE)
+        self.assertEqual(self.proof_entry()["state"], "delivered")
+        self.assertEqual(self.proof_entry()["patterns"], {PUSH_GATE})
+
+    def test_proof_gate_passes_with_proof(self):
+        out, code = self.push(proofs=proof_registry((True, "")))
+        self.assertEqual((out, code), ("", 0))
+        self.assertIsNone(self.proof_entry())
+
+    def test_proof_gate_error_denies(self):
+        out, code = self.push(proofs=proof_registry(error=ValueError("boom")))
+        self.assertEqual(code, 0)
+        decision = json.loads(out)
+        self.assertEqual(decision["decision"], "deny")
+        self.assertEqual(
+            decision["text"],
+            "Pre-push guide.\n\nbranch-pass proof failed: ValueError: boom",
+        )
+        self.assertEqual(self.proof_entry()["state"], "delivered")
+
+    def test_proof_gate_deadline(self):
+        observed = []
+        clock = self.clock
+
+        def proof(cwd, deadline, now):
+            observed.append(deadline)
+            clock.value = deadline + 1.0
+            return True, ""
+
+        out, code = self.push(proofs={"branch-pass": proof})
+        self.assertEqual(code, 0)
+        decision = json.loads(out)
+        self.assertEqual(decision["decision"], "deny")
+        self.assertTrue(decision["text"].endswith("proof timed out"), decision["text"])
+        self.assertEqual(observed, [100.0 + agent_rules.PROOF_DEADLINE_SECONDS])
+
+    def test_other_command_can_require_proof(self):
+        self.write_rule("repo-commit-types.md", "---\n"
+                         'pointer: "Commit."\n'
+                         'gates: ["\\\\bgit\\\\b[^;&|\\\\n]*?\\\\scommit\\\\b"]\n'
+                         "---\nCommit guide.\n")
+        self.write_rule("repo-pull-requests.md", self.proof_rule_source(
+            gates=(PR_CREATE_GATE,), body="Pull request guide.\n"))
+        out, code = self.push(command="gh pr create --fill",
+                              proofs=proof_registry((False, PROOF_MESSAGE)))
+        self.assertEqual(code, 0)
+        decision = json.loads(out)
+        self.assertEqual(decision["decision"], "deny")
+        self.assertIn("Pull request guide.", decision["text"])
+        self.assertIn(PROOF_MESSAGE, decision["text"])
+
+    def test_rules_without_requires_keep_deny_once(self):
+        self.write_rule("repo-commit-types.md", "---\n"
+                         'pointer: "Commit."\n'
+                         'gates: ["\\\\bgit\\\\b[^;&|\\\\n]*?\\\\scommit\\\\b"]\n'
+                         "---\nCommit guide.\n")
+        payload = self.plain("tool-before", tool="Bash", command="git commit -m x")
+        first, code = self.call(payload)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(first)["decision"], "deny")
+        second, code = self.call(payload)
+        self.assertEqual((second, code), ("", 0))
+
+    def test_multiple_failing_proofs_join(self):
+        self.write_rule("repo-merge.md", self.proof_rule_source(
+            gates=(r"\bgh\s+pr\s+merge\b",),
+            requires=("branch-pass", "second-proof"),
+            body="Merge guide.\n",
+        ))
+        proofs = {
+            "branch-pass": lambda cwd, deadline, now: (False, "first failure"),
+            "second-proof": lambda cwd, deadline, now: (False, "second failure"),
+        }
+        # Exists only so `parse_rule` accepts the rule's second `requires` name.
+        def registered_only(cwd, deadline, now):
+            return True, ""
+
+        with mock.patch.dict(agent_rules.PROOF_PREDICATES, {"second-proof": registered_only}):
+            out, code = self.push(command="gh pr merge 1", proofs=proofs)
+        self.assertEqual(code, 0)
+        decision = json.loads(out)
+        self.assertEqual(decision["decision"], "deny")
+        self.assertEqual(
+            decision["text"], "Merge guide.\n\nfirst failure\n\nsecond failure")
+
+    def test_proof_rule_and_legacy_rule_share_a_call(self):
+        self.write_rule("repo-legacy-push.md", "---\n"
+                         'pointer: "Legacy push."\n'
+                         'gates: ["\\\\bgit\\\\b[^;&|\\\\n]*?\\\\spush\\\\b"]\n'
+                         "---\nLegacy push guide.\n")
+        out, code = self.push(proofs=proof_registry((False, PROOF_MESSAGE)))
+        self.assertEqual(code, 0)
+        decision = json.loads(out)
+        self.assertEqual(
+            decision["text"],
+            "Legacy push guide.\n\nPre-push guide.\n\n" + PROOF_MESSAGE,
+        )
+        self.assertEqual(self.entry_for("repo-legacy-push.md")["state"], "pending")
+        self.assertEqual(self.entry_for("repo-pre-push.md")["state"], "delivered")
+
+    def test_segments_split_at_shell_operators(self):
+        self.assertEqual(
+            agent_rules._segments("a;b&c|d\ne"), ["a", "b", "c", "d", "e"])
 
 
 class HandleTest(CheckoutFixture):
@@ -3723,9 +3925,18 @@ class RealRepoRuleTest(unittest.TestCase):
         self.assertIn(name, self.by_name)
         return self.by_name[name]
 
-    def run_event(self, ev):
+    def run_event(self, ev, proofs=None, deadline=None, now=None):
         with self.store.transaction(ev.session) as state:
-            return decide(self.rules, state, context_key(ev), ev)
+            return decide(self.rules, state, context_key(ev), ev,
+                          proofs=proofs, deadline=deadline, now=now)
+
+    def deadline(self):
+        return agent_rules.PROOF_DEADLINE_SECONDS
+
+    @staticmethod
+    def clock():
+        """A fixed clock: the proof deadline check never depends on real time passing."""
+        return lambda: 0.0
 
     def test_real_rules_load_without_errors(self):
         rules, errors = load_rules(REPO_ROOT)
@@ -3775,43 +3986,114 @@ class RealRepoRuleTest(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
-    def test_push_denied_without_delivery(self):
-        # A context that has delivered nothing: the push gate denies with the pre-push rule text.
-        decision = self.run_event(bash_before("git push origin feature"))
-        self.assertEqual(decision.kind, "deny")
-        self.assertEqual(decision.text, rule_body(self.rule("repo-pre-push-checks.md").body))
-        self.assertIn("scripts/components.py changed", decision.text)
-
-    def test_push_after_finalize_passes(self):
-        decision = self.run_event(bash_after("openspec instructions finalize --change demo"))
-        self.assertEqual(decision.kind, "context")
-        self.assertIn(rule_body(self.rule("repo-pre-push-checks.md").body), decision.text)
-        self.assertEqual(self.run_event(bash_before("git push origin feature")).kind, "pass")
-
-    def test_pre_push_rule_denies_push_before_delivery(self):
-        # The real rule's gate denies the first push with its text, then confirms the pending rule.
+    def test_pre_push_rule_declares_the_proof(self):
         rule = self.rule("repo-pre-push-checks.md")
         self.assertEqual(
             [pattern.pattern for pattern in rule.gates],
             ["\\bgit\\b[^;&|\\n]*?\\spush\\b"],
         )
-        decision = self.run_event(bash_before("git push origin feature"))
-        self.assertEqual(decision.kind, "deny")
-        self.assertEqual(decision.text, rule_body(rule.body))
-        self.assertIn("python3 -I scripts/verify.py --branch", decision.text)
-        self.assertEqual(self.run_event(bash_before("git push origin feature")).kind, "pass")
-
-    def test_pre_push_rule_delivered_at_finalize(self):
-        # A successful finalize delivers the real rule, so the push is not denied.
-        rule = self.rule("repo-pre-push-checks.md")
         self.assertEqual(
             [pattern.pattern for pattern in rule.commands],
             ["\\bopenspec\\s+instructions\\s+finalize\\b"],
         )
-        decision = self.run_event(bash_after("openspec instructions finalize --change demo"))
+        self.assertEqual(rule.requires, ("branch-pass",))
+        self.assertEqual(len(rule.exempt), 2)
+        self.assertIn("python3 -I scripts/verify.py --branch", rule.pointer)
+        self.assertIn("background", rule.body)
+        self.assertNotIn("by hand", rule.body)
+
+    def test_push_forms(self):
+        exempt = (
+            "git push origin --delete feat",
+            "git push --delete origin feat",
+            "git push -d origin feat",
+            "git push origin -d feat",
+            "git push origin :feat",
+            "git push origin +:feat",
+            "git push origin :a :b",
+        )
+        proofs = proof_registry((False, "the proof must not run"))
+        for index, command in enumerate(exempt):
+            with self.subTest(command=command):
+                decision = self.run_event(
+                    bash_before(command, session="exempt-%d" % index),
+                    proofs=proofs, deadline=self.deadline(), now=self.clock(),
+                )
+                self.assertEqual(decision.kind, "pass", command)
+                self.assertEqual(decision.text, "")
+
+    def test_push_forms_gated(self):
+        gated = (
+            "git push",
+            "git push origin feat",
+            "git push --tags",
+            "git -C dir push origin x",
+            "git push origin feat :old",
+            "git push origin feat && git branch -d tmp",
+            "git push origin feat; echo -d",
+            "git push origin feat 2>&1",
+            "git push  origin feat # wip",
+            "git push origin feat # -d",
+            "git push origin feat # --delete",
+            "git push # :x",
+            "git push -f # :wip",
+            "GIT_TRACE=1 git push origin feat",
+            "git push origin feat -o -d",
+            "git push origin feat > -d",
+            "echo $(git push origin feat) -d",
+        )
+        message = "no branch pass for HEAD abc123"
+        for index, command in enumerate(gated):
+            with self.subTest(command=command):
+                decision = self.run_event(
+                    bash_before(command, session="gated-%d" % index),
+                    proofs=proof_registry((False, message)), deadline=self.deadline(),
+                    now=self.clock(),
+                )
+                self.assertEqual(decision.kind, "deny", command)
+                self.assertIn(
+                    rule_body(self.rule("repo-pre-push-checks.md").body), decision.text)
+                self.assertIn(message, decision.text)
+
+    def test_push_without_a_pass_is_denied_every_time(self):
+        message = "no branch pass for HEAD abc123"
+        proofs = proof_registry((False, message))
+        for _ in range(2):
+            decision = self.run_event(
+                bash_before("git push origin feature", session="no-pass"),
+                proofs=proofs, deadline=self.deadline(), now=self.clock(),
+            )
+            self.assertEqual(decision.kind, "deny")
+            self.assertIn(
+                rule_body(self.rule("repo-pre-push-checks.md").body), decision.text)
+            self.assertIn(message, decision.text)
+
+    def test_push_during_finalize_with_a_pass_is_not_denied(self):
+        decision = self.run_event(
+            bash_after("openspec instructions finalize --change demo", session="finalize"))
         self.assertEqual(decision.kind, "context")
-        self.assertIn("python3 -I scripts/verify.py --branch", decision.text)
-        self.assertEqual(self.run_event(bash_before("git push origin feature")).kind, "pass")
+        self.assertIn(
+            rule_body(self.rule("repo-pre-push-checks.md").body), decision.text)
+        push = self.run_event(
+            bash_before("git push origin feature", session="finalize"),
+            proofs=proof_registry((True, "")), deadline=self.deadline(), now=self.clock(),
+        )
+        self.assertEqual(push.kind, "pass")
+
+    def test_push_after_a_commit_denies_naming_both_hashes(self):
+        repo = gitfixture.make_repo(self)
+        repo.git("update-ref", "refs/remotes/origin/master", repo.init)
+        passed = repo.commit("feat(scripts): a complete branch pass")
+        branch_pass.write(str(repo.path), passed, repo.init, ["scripts"])
+        head = repo.commit("feat(scripts): a later commit")
+        decision = self.run_event(
+            bash_before("git push origin feature", session="stale", cwd=str(repo.path)),
+            proofs=agent_rules.PROOF_PREDICATES, deadline=self.deadline(), now=self.clock(),
+        )
+        self.assertEqual(decision.kind, "deny")
+        self.assertIn(passed[:12], decision.text)
+        self.assertIn(head[:12], decision.text)
+        self.assertIn("pass is for", decision.text)
 
     def test_gh_pr_create_denied_with_real_device(self):
         # A fresh context, so nothing but this gate has been delivered before the PR is created.
@@ -3845,6 +4127,25 @@ class RealRepoRuleTest(unittest.TestCase):
         self.assertEqual(
             self.rule("repo-superspec-closeout.md").stops, ("superspec-finalize-pending",)
         )
+
+
+class EngineImportTest(unittest.TestCase):
+    def test_engine_imports_branch_pass_under_isolated_python(self):
+        # The hook runs the engine under `python3 -I`, so its own directory is not on `sys.path`;
+        # the module must add it before importing `branch_pass`.
+        script = (
+            "import importlib.util, json, sys\n"
+            "spec = importlib.util.spec_from_file_location('engine', sys.argv[1])\n"
+            "module = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(module)\n"
+            "print(json.dumps(sorted(module.PROOF_PREDICATES)))\n"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-I", "-c", script, CLI],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout.decode("utf-8")), ["branch-pass"])
 
 
 if __name__ == "__main__":

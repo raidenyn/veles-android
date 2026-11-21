@@ -24,6 +24,15 @@ import sys
 import tempfile
 import time
 
+# `docs/checks/check_agent_files.py` loads this module by path and the hook runs it under
+# `python3 -I`, so this file's directory is not on `sys.path`: add it before importing the sibling
+# module `branch_pass` (design D3).
+_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+import branch_pass  # noqa: E402
+
 try:
     import fcntl
 except ImportError:  # Windows
@@ -45,12 +54,19 @@ POINTER_BEGIN = "<!-- hooked-rules:begin -->"
 POINTER_END = "<!-- hooked-rules:end -->"
 
 SCALAR_KEYS = ("pointer",)
-LIST_KEYS = ("skills", "commands", "gates", "stops")
+LIST_KEYS = ("skills", "commands", "gates", "stops", "requires", "exempt")
 RULE_KEYS = SCALAR_KEYS + LIST_KEYS
 
 # The predicates a rule may name under `stops`; the stop gate implements each one.
 FINALIZE_PENDING = "superspec-finalize-pending"
 STOP_PREDICATES = (FINALIZE_PENDING,)
+
+# The proofs a rule may name under `requires`; each runs with the event's cwd, a shared deadline and
+# the engine's clock. `branch_pass` is imported from this engine's own `scripts/` directory.
+PROOF_DEADLINE_SECONDS = 3.5
+PROOF_PREDICATES = {
+    "branch-pass": lambda cwd, deadline, now: branch_pass.check(cwd, deadline, now=now),
+}
 
 FRONTMATTER_KEY_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):(?: (.*))?$")
 FRONTMATTER_ITEM = r'"(?:[^"\\]|\\.)*"'
@@ -66,9 +82,12 @@ class RuleError(Exception):
 
 
 # identity is (file name, sha256 hex of the raw file bytes); skills is a list of strings,
-# commands and gates are lists of compiled regexes, and stops is a tuple of predicate names.
+# commands and gates are lists of compiled regexes, stops and requires are tuples of registry
+# names, exempt is a list of compiled regexes, and body is the rule's text.
 Rule = collections.namedtuple(
-    "Rule", ["name", "identity", "pointer", "skills", "commands", "gates", "stops", "body"]
+    "Rule",
+    ["name", "identity", "pointer", "skills", "commands", "gates", "stops", "requires", "exempt",
+     "body"],
 )
 
 
@@ -201,7 +220,9 @@ def parse_rule(name, text):
 
     The identity hash covers the text as given (the raw file, before newline normalisation). A body
     with no text (empty or only blank lines) is an error: a gate would deny with no reason and a moment
-    would credit a rule it never showed. Every `stops` entry must name one of ``STOP_PREDICATES``.
+    would credit a rule it never showed. Every `stops` entry must name one of ``STOP_PREDICATES`` and
+    every `requires` entry one of ``PROOF_PREDICATES``; `requires` needs a non-empty `gates` and
+    `exempt` a non-empty `requires`.
     """
     values, body, original_body = _split(text)
     pointer = values.get("pointer")
@@ -216,6 +237,15 @@ def parse_rule(name, text):
     for stop in stops:
         if stop not in STOP_PREDICATES:
             raise RuleError("unknown stop predicate %r" % (stop,))
+    requires = tuple(values.get("requires", []))
+    for proof in requires:
+        if proof not in PROOF_PREDICATES:
+            raise RuleError("unknown proof predicate %r" % (proof,))
+    exempt = _regexes("exempt", values.get("exempt", []))
+    if requires and not gates:
+        raise RuleError("`requires` needs a non-empty `gates` list")
+    if exempt and not requires:
+        raise RuleError("`exempt` needs a non-empty `requires` list")
     if not (skills or commands or gates or stops):
         raise RuleError(
             "a rule needs at least one entry in `skills`, `commands`, `gates` or `stops`"
@@ -226,7 +256,7 @@ def parse_rule(name, text):
     if not rule_text(body):
         raise RuleError("the body is empty; a rule needs text to show at its moments and gates")
     digest = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
-    return Rule(name, (name, digest), pointer, skills, commands, gates, stops, body)
+    return Rule(name, (name, digest), pointer, skills, commands, gates, stops, requires, exempt, body)
 
 
 def _read_rule_file(path):
@@ -1425,20 +1455,18 @@ def _utf8_size(text):
     return len(text.encode("utf-8", "surrogatepass"))
 
 
-def _capped(rules, prefix=""):
-    """``(included rules, text)``: rules in name order, each whole, the text at most CONTEXT_CAP bytes.
+def _capped_texts(items, prefix=""):
+    """``(included rules, text)`` from ``[(rule, text)]``, each whole, at most ``CONTEXT_CAP`` bytes.
 
-    Each rule contributes ``rule_text(rule.body)`` (never empty: ``parse_rule`` rejects a blank body),
-    and the texts are joined with one blank line (``RULE_SEPARATOR``). ``prefix`` (the stop gate's
-    engine line) comes first, counts against the cap, and is followed by the same separator. The cap
-    counts the UTF-8 bytes of exactly the text returned. A rule that does not fit is left out and the
-    next one is still tried.
+    Items are taken in rule-name order and their texts joined with one blank line
+    (``RULE_SEPARATOR``). ``prefix`` (the stop gate's engine line) comes first, counts against the
+    cap, and is followed by the same separator. The cap counts the UTF-8 bytes of exactly the text
+    returned. An item that does not fit is left out and the next one is still tried.
     """
     included = []
     parts = []
     size = _utf8_size(prefix)
-    for rule in sorted(rules, key=lambda item: item.name):
-        part = rule_text(rule.body)
+    for rule, part in sorted(items, key=lambda item: item[0].name):
         if not part:
             continue  # unreachable for a parsed rule; a rule with no text is never credited
         separator = RULE_SEPARATOR if parts or prefix else ""
@@ -1450,6 +1478,36 @@ def _capped(rules, prefix=""):
         size += added
     joined = prefix + (RULE_SEPARATOR if prefix and parts else "") + RULE_SEPARATOR.join(parts)
     return included, joined
+
+
+def _capped(rules, prefix=""):
+    """``_capped_texts`` over each rule's ``rule_text(rule.body)``, with its prefix handling."""
+    return _capped_texts([(rule, rule_text(rule.body)) for rule in rules], prefix)
+
+
+def _segments(command):
+    """The shell segments of ``command``: split at ``;``, ``&``, ``|`` and newlines (design D3)."""
+    return re.split(r"[;&|\n]", command)
+
+
+def _proof_failure(name, cwd, proofs, deadline, now):
+    """The failure text of one proof, or None when it holds.
+
+    A proof that raises, returns not-ok, or returns at or after the shared deadline is a failure; a
+    proof cannot be shown by a crash or a timeout, so both deny.
+    """
+    proof = proofs.get(name)
+    if proof is None:
+        return "unknown proof %r" % (name,)
+    try:
+        ok, message = proof(cwd, deadline, now)
+    except Exception as error:  # a raise is a missing proof, never a whole-engine failure
+        return "%s proof failed: %s: %s" % (name, type(error).__name__, error)
+    if now() >= deadline:
+        return "proof timed out"
+    if ok:
+        return None
+    return message or "%s proof failed" % (name,)
 
 
 def _recorded(state, key, rules):
@@ -1795,7 +1853,7 @@ def _stop_gate(rules, state, event, roots):
     return Decision("pass", "", [])
 
 
-def decide(rules, state, key, event, roots=None):
+def decide(rules, state, key, event, roots=None, proofs=None, deadline=None, now=None):
     """The ``Decision`` for ``event`` in context ``key``; records it in ``state`` (one transaction).
 
     Moments (``tool-after``, ``prompt``) add the matched rules as context and mark them delivered, and
@@ -1805,11 +1863,12 @@ def decide(rules, state, key, event, roots=None):
     every trigger the event matched; a different trigger delivers it again, and a pending entry never
     suppresses. Gates (``tool-before`` with a command) deny a call matching a rule not delivered in
     this context, record the denied rules as pending with the matched patterns, and confirm a pending
-    rule when a call matches one of its pending patterns. Only rules included under the cap are
-    recorded. A successful ``openspec`` shell call records its ``--change`` names in the session change
-    set, on the pass path too. ``stop`` runs the stop gate (``_stop_gate``) when ``roots`` holds the
-    ``change_roots`` list; ``compacted`` re-arms and ``void`` removes entries and stop records by write
-    id; both pass.
+    rule when a call matches one of its pending patterns. A gate rule with ``requires`` instead runs
+    its proofs (``proofs``, on the ``now`` clock, against the shared ``deadline``) and denies on every
+    matching call until they hold. Only rules included under the cap are recorded. A successful
+    ``openspec`` shell call records its ``--change`` names in the session change set, on the pass path
+    too. ``stop`` runs the stop gate (``_stop_gate``) when ``roots`` holds the ``change_roots`` list;
+    ``compacted`` re-arms and ``void`` removes entries and stop records by write id; both pass.
     """
     if event.kind == "stop":
         return _stop_gate(rules, state, event, roots)
@@ -1833,7 +1892,7 @@ def decide(rules, state, key, event, roots=None):
             _deliver_moment(state, key, rule, matched[rule.identity])
         return Decision("context", text, _recorded(state, key, included))
     if event.kind == "tool-before":
-        return _gate(rules, state, key, event)
+        return _gate(rules, state, key, event, proofs=proofs, deadline=deadline, now=now)
     if event.kind == "compacted":
         # An identified subagent re-arms only its own key; otherwise the whole session errs toward an
         # extra delivery (a main-context compaction never carries an agent id on either host). A bump
@@ -1859,27 +1918,69 @@ def _void(state, key, write_ids):
     state.stops[:] = [record for record in state.stops if record["write_id"] not in wanted]
 
 
-def _gate(rules, state, key, event):
+def _required_segment(rule, command):
+    """Whether any segment of ``command`` matches a gate of ``rule`` and no exempt pattern."""
+    for segment in _segments(command):
+        if not any(pattern.search(segment) for pattern in rule.gates):
+            continue
+        if any(pattern.search(segment) for pattern in rule.exempt):
+            continue
+        return True
+    return False
+
+
+def _gate(rules, state, key, event, proofs=None, deadline=None, now=None):
+    """The tool-before gate: deny-once delivery, or a repeated deny while a proof does not hold.
+
+    A rule with ``requires`` runs its proofs, with the event's ``cwd`` and one shared ``deadline``,
+    when any shell segment matches a gate and no ``exempt`` pattern. Every proof holding passes the
+    call without a delivery denial; any failure denies with the rule text followed by each failing
+    proof's message and marks the rule delivered, and the denial repeats until the proofs hold. A
+    rule without ``requires`` keeps the deny-once semantics: deny when it is not delivered in this
+    context, record it pending, and let a matching pending pattern confirm it.
+    """
     if event.command is None:
         return Decision("pass", "", [])
+    proofs = PROOF_PREDICATES if proofs is None else proofs
+    if any(rule.requires for rule in rules) and now is None:
+        now = time.monotonic
+    if any(rule.requires for rule in rules) and deadline is None:
+        deadline = now() + PROOF_DEADLINE_SECONDS
     denied = {}
     for rule in rules:
         patterns = set(pattern.pattern for pattern in rule.gates if pattern.search(event.command))
         if not patterns:
             continue
+        if rule.requires:
+            if not _required_segment(rule, event.command):
+                continue
+            failures = [
+                text for text in (
+                    _proof_failure(name, event.cwd, proofs, deadline, now)
+                    for name in rule.requires
+                ) if text is not None
+            ]
+            if failures:
+                body = rule_text(rule.body)
+                denied[rule.name] = (rule, patterns, "delivered",
+                                     body + RULE_SEPARATOR + RULE_SEPARATOR.join(failures))
+            continue
         entry = _live(state, key, rule.identity)
         if entry is None:
-            denied[rule.name] = (rule, patterns)
+            denied[rule.name] = (rule, patterns, "pending", rule_text(rule.body))
         elif entry["state"] == "pending":
             if patterns & entry["patterns"]:
                 state.put(key, rule.identity, "delivered", entry["patterns"])
             else:
-                denied[rule.name] = (rule, patterns | entry["patterns"])
+                denied[rule.name] = (
+                    rule, patterns | entry["patterns"], "pending", rule_text(rule.body))
     if not denied:
         return Decision("pass", "", [])
-    included, text = _capped([rule for rule, _ in denied.values()])
+    included, text = _capped_texts(
+        [(rule, shown) for rule, _, _, shown in denied.values()])
     for rule in included:
-        state.put(key, rule.identity, "pending", denied[rule.name][1])
+        _, patterns, entry_state, _ = denied[rule.name]
+        state.put(key, rule.identity, entry_state, patterns)
     return Decision("deny", text, _recorded(state, key, included))
 
 
@@ -1965,15 +2066,20 @@ def _failure_output(fmt, payload):
     return ""
 
 
-def handle(stdin_text, fmt, env, store_factory):
+def handle(stdin_text, fmt, env, store_factory, now=time.monotonic, proofs=PROOF_PREDICATES):
     """Run one hook event and return ``(stdout text, exit code)``; the exit code is never 2.
 
     The decision is made, rendered and recorded in one ``Store.transaction``; the prune follows a
     transaction that wrote, best effort. Every failure passes with the notice (``_failure_output``) and exit 0. Only the
     test-only ``FAIL_AFTER_WRITE`` switch returns ``("", 1)``, after the state was committed.
+
+    ``now`` and ``proofs`` are the test seams for the proof gate: the predicate deadline is
+    ``PROOF_DEADLINE_SECONDS`` after this call starts handling the event, and every predicate of a
+    ``requires`` rule shares it.
     """
     payload = None
     try:
+        start = now()
         payload = json.loads(stdin_text)
         event = parse_event(fmt, payload)
         checkout = discover_checkout(event.cwd)
@@ -1991,7 +2097,10 @@ def handle(stdin_text, fmt, env, store_factory):
         roots = change_roots(toplevel, common_dir) if event.kind == "stop" else None
         with store.transaction(event.session) as state:
             # Rendering inside the transaction: a decision that cannot be printed is never recorded.
-            output = render(fmt, event, decide(rules, state, context_key(event), event, roots))
+            output = render(fmt, event, decide(
+                rules, state, context_key(event), event, roots,
+                proofs=proofs, deadline=start + PROOF_DEADLINE_SECONDS, now=now,
+            ))
         if state.wrote:
             try:
                 store.prune(event.session)

@@ -13,15 +13,6 @@ never override either. The package is test-only: product code never imports it.
 - `protocol/conformance/` — cross-endpoint conformance scenarios.
 - `protocol/docs/` — the spec itself plus review and disposition records.
 
-## Build & Test
-
-Run from the repository root:
-
-```bash
-# OTP-02 contract: fresh Node crypto evidence plus Kotlin, Rust and both TypeScript consumers
-./gradlew protocolCheck
-```
-
 `protocolCheck` covers the Node contract checks (`protocolContractCheck`), the host-only Rust consumer
 (`protocolRustTest`), both TypeScript consumers (`protocolWebTest` in `web-extension/` and the
 native-bridge consumer), the Android consumer `:app:protocolJvmTest`, and the session loopback. Node
@@ -30,8 +21,6 @@ child JVM loads that test-only cdylib.
 
 ## Rules
 
-Android CI also runs for your changes — `.github/components.json` maps `protocol/` into the `android`
-node — so before pushing read `.agents/rules/android-lint-before-push.md`; a change that reaches the
-Android build must also pass that gate.
+Android CI also runs for these changes.
 
 > **Run your agent from the repository root.** Scoped rules in `.agents/rules/` load only from there; if you started in this folder, read this folder's rule files listed below by hand.

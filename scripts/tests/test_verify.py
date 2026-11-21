@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from dataclasses import replace
+from unittest import mock
 
 TESTS = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(TESTS)
@@ -19,6 +20,7 @@ REPO = os.path.dirname(SCRIPTS)
 sys.path.insert(0, SCRIPTS)
 sys.path.insert(0, TESTS)
 
+import branch_pass  # noqa: E402
 import components  # noqa: E402
 from verify import (  # noqa: E402
     GitError,
@@ -99,6 +101,12 @@ class GateFixture(unittest.TestCase):
         self.clock = FakeClock(0.0)
         self.lines = []
         self.table, self.cmap = real_table()
+        # A branch run writes the branch-pass record through git's worktree root; pin it to the
+        # temporary directory so no test writes into the checkout it runs from.
+        patcher = mock.patch.object(
+            branch_pass, "record_path", return_value=os.path.join(self.tmp, "branch-pass.json"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     # -- the fake machine ---------------------------------------------------------------
 
@@ -520,7 +528,6 @@ class ResolverTest(GateFixture):
                 "kind": "test",
                 "cwd": "web-extension",
                 "run": ["npx", "vitest", "run"],
-                "doc": "scripts/AGENTS.md",
                 "reuse": False,
                 "related": {
                     "strategy": "files-arg",
@@ -541,7 +548,7 @@ class ResolverTest(GateFixture):
         """An earlier node whose check can use up the reserve, then the extension node."""
         repo = os.path.join(self.tmp, "later-fixture")
         os.makedirs(os.path.join(repo, "scripts"))
-        command = {"cwd": ".", "doc": "scripts/AGENTS.md", "reuse": False}
+        command = {"cwd": ".", "reuse": False}
         table = {
             "version": 1,
             "requirements": {},
@@ -556,7 +563,6 @@ class ResolverTest(GateFixture):
                     "kind": "test",
                     "cwd": "web-extension",
                     "run": ["npx", "vitest", "run"],
-                    "doc": "scripts/AGENTS.md",
                     "reuse": False,
                     "related": {
                         "strategy": "files-arg",

@@ -11,6 +11,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 TESTS = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(TESTS)
@@ -18,6 +19,7 @@ REPO = os.path.dirname(SCRIPTS)
 sys.path.insert(0, SCRIPTS)
 sys.path.insert(0, TESTS)
 
+import branch_pass  # noqa: E402
 import components  # noqa: E402
 from verify import (  # noqa: E402
     FingerprintInput,
@@ -79,25 +81,25 @@ def fixture_table():
         },
         "producers": [{
             "id": "rust.wasm", "cwd": ".", "run": ["./gradlew", "rustWasm"],
-            "doc": "scripts/AGENTS.md", "requires": ["java-home"], "inputs": GRADLE_HOME,
+            "requires": ["java-home"], "inputs": GRADLE_HOME,
         }],
         "nodes": {
             "web-extension": {"commands": [
                 {
                     "id": "web-extension.lint", "kind": "check", "cwd": "web-extension",
-                    "run": ["npm", "run", "lint"], "doc": "scripts/AGENTS.md",
+                    "run": ["npm", "run", "lint"],
                     "requires": ["node", "npm", "web-extension.node-modules"],
                     "inputs": NODE_MODULES_STAT,
                 },
                 {
                     "id": "web-extension.typecheck", "kind": "check", "cwd": "web-extension",
-                    "run": ["npm", "run", "typecheck"], "doc": "scripts/AGENTS.md",
+                    "run": ["npm", "run", "typecheck"],
                     "requires": ["node", "npm", "web-extension.node-modules", "rust.wasm"],
                     "inputs": NODE_MODULES_STAT,
                 },
                 {
                     "id": "web-extension.unit", "kind": "test", "cwd": "web-extension",
-                    "run": ["npm", "test"], "doc": "scripts/AGENTS.md",
+                    "run": ["npm", "test"],
                     "requires": ["node", "npm", "web-extension.node-modules", "rust.wasm"],
                     "inputs": NODE_MODULES_STAT,
                     "related": {
@@ -168,6 +170,11 @@ class FingerprintFixture(unittest.TestCase):
         self.clock = FakeClock(0.0)
         self.lines = []
         self.table = self.load_fixture_table()
+        # A branch run writes the branch-pass record through git's worktree root; pin it here.
+        patcher = mock.patch.object(
+            branch_pass, "record_path", return_value=os.path.join(self.tmp, "branch-pass.json"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def load_fixture_table(self):
         root = os.path.join(self.tmp, "table")

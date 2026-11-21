@@ -44,6 +44,7 @@ if SCRIPTS not in sys.path:
     sys.path.insert(0, SCRIPTS)
 
 import agent_rules  # noqa: E402
+import branch_pass  # noqa: E402
 import components  # noqa: E402
 
 TABLE_PATH = os.path.join(SCRIPTS, "verify-commands.json")
@@ -133,7 +134,7 @@ HOOK_RUN_BUDGET_SECONDS = 1740.0
 HOOK_OUTER_SECONDS = 1740.0
 HOOK_KILL_GRACE_SECONDS = 30.0
 EVENT_CAP = 1048576
-HOOK_STATE_VERSION = 1
+HOOK_STATE_VERSION = 2
 HOOK_STATE_POINTER = "hook-state.json"
 MAX_SESSION_SECONDS = 3600.0
 MAX_SESSION_BLOCKS = 5
@@ -216,7 +217,6 @@ class Step:
     kind: str
     cwd: str = "."
     run: List[str] = field(default_factory=list)
-    doc: str = ""
     requires: List[str] = field(default_factory=list)
     inputs: List[dict] = field(default_factory=list)
     reuse: bool = True
@@ -230,7 +230,6 @@ class Step:
 @dataclass(frozen=True)
 class NodeEntry:
     commands: List[Step]
-    excluded: List[dict]
     none: Optional[str] = None
 
 
@@ -342,6 +341,21 @@ class Git:
 
     def merge_base(self, ref):
         return self._read("merge-base", ref, "HEAD").decode("utf-8", "replace").strip()
+
+    def head(self):
+        """The HEAD commit, which a branch pass is bound to (design D2)."""
+        return self._read("rev-parse", "HEAD").decode("utf-8", "replace").strip()
+
+    def status_porcelain(self):
+        """`git status --porcelain -z` as text; empty for a clean tree (design D2's completeness).
+
+        The untracked and submodule modes are explicit: the user's
+        `status.showUntrackedFiles` (or `diff.ignoreSubmodules`) must not hide an untracked file
+        from a branch-pass completeness check.
+        """
+        return self._read("status", "--porcelain", "-z",
+                          "--untracked-files=normal",
+                          "--ignore-submodules=none").decode("utf-8", "surrogateescape")
 
     def commit(self, ref):
         """The full sha `ref` names, when it names a commit (design D3's base check)."""
@@ -1633,6 +1647,42 @@ def _record_pass(node, gate, base, ctx, cmap, node_plan, table, env, resolved, g
     Passes(os.path.join(_verify_dir(ctx), PASSES_POINTER)).put(gate, node, digest)
 
 
+def _branch_state(ctx):
+    """`(HEAD, git status --porcelain)` for the branch pass, or None when git cannot read it."""
+    try:
+        return ctx.git.head(), ctx.git.status_porcelain()
+    except (GitError, AttributeError):
+        return None
+
+
+def _branch_pass_complete(result, deadline, base, before, after):
+    """Whether a `--branch` run may leave a branch-pass record (design D2).
+
+    A complete run exits 0, was given no `--deadline` and no `--base`, left no step not reached
+    and saw a clean tree under the same HEAD before selection and after the last step. `before`
+    and `after` are `(head, porcelain)` tuples, or None when git could not be read.
+    """
+    if deadline is not None or base is not None:
+        return False
+    if exit_code(result.results, result.errors) != 0:
+        return False
+    if any(step.get("status") == "not_reached" for step in result.steps):
+        return False
+    if before is None or after is None or before != after:
+        return False
+    head, porcelain = before
+    return bool(head) and not porcelain.strip()
+
+
+def _write_branch_pass(ctx, base, outcome, before, after):
+    """Write the record of a complete branch run; an incomplete one leaves none behind."""
+    selection = outcome.selection
+    if selection is None or not _branch_pass_complete(
+            outcome, ctx.deadline, base, before, after):
+        return
+    branch_pass.write(ctx.repo, after[0], selection.base, sorted(selection.reasons))
+
+
 def run_gate(gate, base, ctx, table, cmap, use_passes=False):
     """One gate end to end, in the fixed order of design D1/D4/D5/D6/D9/D10.
 
@@ -1646,6 +1696,9 @@ def run_gate(gate, base, ctx, table, cmap, use_passes=False):
     `PASS (remembered)`. A task-gate pass may be recorded; `--branch` never writes, and a manual
     task-gate run never reads. A record is written only when fresh observations after the run
     reproduce the source-side key computed before it.
+
+    A branch run deletes the previous branch-pass record as soon as it holds the run lock and
+    writes a new one only when the run is complete (design D2).
     """
     started = ctx.clock.now()
     outcome = RunOutcome()
@@ -1655,6 +1708,11 @@ def run_gate(gate, base, ctx, table, cmap, use_passes=False):
         outcome.errors.append(CONTENTION)
         return outcome
     try:
+        # Every branch run that holds the lock drops the old proof first; only a complete run
+        # leaves a new one, and a contended run never gets here (design D2).
+        if gate == "branch":
+            branch_pass.delete(ctx.repo)
+        before = _branch_state(ctx) if gate == "branch" else None
         run_id = os.path.basename(os.path.normpath(ctx.run_dir))
         if not cleanup_orphans(ctx, run_id):
             outcome.contended = True
@@ -1686,7 +1744,10 @@ def run_gate(gate, base, ctx, table, cmap, use_passes=False):
         _apply_sdk_warning(ctx, env, planned)
         if not selection_result.files or selection_result.only_unowned:
             # Zero-work outcomes print their own line; no node is ever a pass (design D10).
+            after = _branch_state(ctx) if gate == "branch" else None
             write_last_run(ctx, {}, [], elapsed_s=ctx.clock.now() - started)
+            if gate == "branch":
+                _write_branch_pass(ctx, base, outcome, before, after)
             return outcome
 
         passes = Passes(os.path.join(_verify_dir(ctx), PASSES_POINTER))
@@ -1865,8 +1926,11 @@ def run_gate(gate, base, ctx, table, cmap, use_passes=False):
             for step_id, step_outcome, _rerun in outcome.results[node].failures:
                 outcome.problems.append((node, step_id, step_outcome.kind))
         outcome.steps = step_records
+        after = _branch_state(ctx) if gate == "branch" else None
         write_last_run(ctx, outcome.results, step_records,
                        elapsed_s=ctx.clock.now() - started)
+        if gate == "branch":
+            _write_branch_pass(ctx, base, outcome, before, after)
         return outcome
     finally:
         lock.release()
@@ -2137,7 +2201,7 @@ def _check_reusable_tools(step, requirements):
 
 
 def _load_step(record, step_id, kind, requirements, repo, where, producer=False):
-    allowed = ["id", "kind", "cwd", "run", "doc", "requires", "inputs", "reuse",
+    allowed = ["id", "kind", "cwd", "run", "requires", "inputs", "reuse",
                "env_exit", "env_patterns", "ci"]
     if producer:
         allowed.remove("kind")
@@ -2150,7 +2214,6 @@ def _load_step(record, step_id, kind, requirements, repo, where, producer=False)
         _fail(where, "run must be a non-empty list of strings")
     _check_placeholders(run, where)
     cwd = _repo_relative(record.get("cwd", "."), where + " cwd", repo)
-    doc = _expect_str(record.get("doc"), where + " doc")
     requires = _string_list(record.get("requires", []), where + " requires")
     inputs = _load_inputs(record, where, repo)
     reuse = record.get("reuse", True)
@@ -2188,7 +2251,6 @@ def _load_step(record, step_id, kind, requirements, repo, where, producer=False)
         kind="producer" if producer else kind,
         cwd=cwd,
         run=run,
-        doc=doc,
         requires=requires,
         inputs=[] if inputs is None else inputs,
         reuse=reuse,
@@ -2200,20 +2262,6 @@ def _load_step(record, step_id, kind, requirements, repo, where, producer=False)
     )
     _check_reusable_tools(step, requirements)
     return step
-
-
-def _load_excluded(raw, repo, where):
-    excluded = []
-    for entry in _expect_list(raw, where + " excluded"):
-        entry_where = where + " excluded"
-        _expect_dict(entry, entry_where)
-        _known_fields(entry, ("doc", "cwd", "line", "why"), entry_where)
-        doc = _expect_str(entry.get("doc"), entry_where + " doc")
-        line = _expect_str(entry.get("line"), entry_where + " line")
-        why = _expect_str(entry.get("why"), entry_where + " why")
-        cwd = _repo_relative(entry.get("cwd", "."), entry_where + " cwd", repo)
-        excluded.append({"doc": doc, "cwd": cwd, "line": line, "why": why})
-    return excluded
 
 
 def _load_nodes(raw, requirements, repo, cmap, seen):
@@ -2235,7 +2283,7 @@ def _load_nodes(raw, requirements, repo, cmap, seen):
         record = raw[name]
         where = "node %r" % name
         _expect_dict(record, where)
-        _known_fields(record, ("commands", "excluded", "none"), where)
+        _known_fields(record, ("commands", "none"), where)
         commands = []
         for entry in _expect_list(record.get("commands", []), where + " commands"):
             _expect_dict(entry, where + " command")
@@ -2249,14 +2297,13 @@ def _load_nodes(raw, requirements, repo, cmap, seen):
                 _fail(command_where, "unknown kind %r" % (kind,))
             commands.append(_load_step(entry, step_id, kind, requirements, repo,
                                        command_where, producer=False))
-        excluded = _load_excluded(record.get("excluded", []), repo, where)
         none = record.get("none")
         if commands:
             if none is not None:
                 _fail(where, "'none' is only allowed when commands is empty")
         else:
             _expect_str(none, where + " none")
-        nodes[name] = NodeEntry(commands=commands, excluded=excluded, none=none)
+        nodes[name] = NodeEntry(commands=commands, none=none)
     return nodes
 
 
@@ -3958,9 +4005,10 @@ class _LockView:
 
 
 class HookState:
-    """`<git-common-dir>/veles-verify/hook-state.json`, version 1, under its own lock (D12).
+    """`<git-common-dir>/veles-verify/hook-state.json`, version 2, under its own lock (D12).
 
-    One document is shared by every worktree, keyed by session id. `admit` expires stale
+    One document is shared by every worktree, keyed `<host>:<session id>` (design D4), so a
+    Claude and an OpenCode session id never collide. `admit` expires stale
     reservations, checks the session's remaining time and block slots and reserves a run's
     budget and one slot atomically; `settle` removes the reservation, charges the measured time
     and applies the outcome table. Every read that cannot complete starts from an empty state,
@@ -4234,9 +4282,13 @@ def _report_deadline(report_fd, admission):
         _close_fd(report_fd)
 
 
-def gate(event, deadline, report_fd, ctx):
-    """The gate owner: admission, the reported deadline, the task gate and settlement (D11/D12)."""
-    session_id = event["session_id"]
+def gate(event, deadline, report_fd, ctx, host):
+    """The gate owner: admission, the reported deadline, the task gate and settlement (D11/D12).
+
+    The hook state keys the session `<host>:<session id>` (design D4), so an OpenCode and a
+    Claude session id never share counters; the event itself is left unchanged.
+    """
+    session_id = "%s:%s" % (host, event["session_id"])
     started = ctx.clock.now()
     state = HookState(ctx.common_dir, ctx.clock, wait=ctx.wait, deadline=deadline)
     try:
@@ -4367,6 +4419,31 @@ def _stop_child(child):
         pass
 
 
+class _Terminated(Exception):
+    """The launcher's SIGTERM handler raises this instead of doing blocking work (design D4).
+
+    A handler that called `_stop_child` would run `Popen.wait()` while `_watch`'s `poll()` may
+    hold Popen's non-reentrant waitpid lock (the handler runs between bytecodes, inside `poll`),
+    and block forever. Raising unwinds `poll()` and releases the lock; `launcher` then stops the
+    child outside signal context.
+    """
+
+
+def _install_sigterm():
+    """Install the launcher's SIGTERM handler and return it (design D4).
+
+    The dispatched child runs in its own session, so killing the launcher alone never reaches
+    it: the handler raises `_Terminated`, which unwinds `_watch` (and any `poll()` it interrupted)
+    so `launcher` can call `_stop_child` outside signal context and return 0. It is installed
+    only in the launcher, never in the `--dispatched` gate.
+    """
+    def handler(_signum, _frame):
+        raise _Terminated()
+
+    signal.signal(signal.SIGTERM, handler)
+    return handler
+
+
 def _watch(child, report_fd, event_bytes, ctx, outer):
     """Relay the child's stdout and write the event to it without ever blocking (D11).
 
@@ -4452,7 +4529,7 @@ def _watch(child, report_fd, event_bytes, ctx, outer):
             _close_handle(stdout_handle)
 
 
-def launcher(event_bytes, ctx, spawn):
+def launcher(event_bytes, ctx, spawn, host):
     """The watchdog (design D11): dispatch the active checkout's verifier, relay, enforce time.
 
     Always returns 0 and never writes to stdout itself. A separate clone, another repository, a
@@ -4461,7 +4538,8 @@ def launcher(event_bytes, ctx, spawn):
 
     The launcher's own checkout is the one holding this script (`REPO`, the parent of `SCRIPTS`),
     never the process cwd (design D11.3): run from outside any checkout, the hook still compares
-    against the checkout it was installed in.
+    against the checkout it was installed in. The host (`claude` or `opencode`) is passed to the
+    dispatched child unchanged, and SIGTERM stops that child before the launcher returns (D4).
     """
     event = read_event(io.BytesIO(event_bytes))
     if event is None:
@@ -4479,7 +4557,7 @@ def launcher(event_bytes, ctx, spawn):
         if not ctx.fs.exists(script):
             return 0
         read_fd, write_fd = os.pipe()
-        argv = [sys.executable, "-I", script, "--hook", "claude", "--dispatched",
+        argv = [sys.executable, "-I", script, "--hook", host, "--dispatched",
                 "--deadline", str(outer), "--report-fd", str(write_fd)]
         try:
             child = spawn(argv, cwd=target_repo, start_new_session=True,
@@ -4491,13 +4569,21 @@ def launcher(event_bytes, ctx, spawn):
             raise
         # The child owns the write end now; our copy must go or the pipe never sees EOF.
         _close_fd(write_fd)
+        previous = signal.getsignal(signal.SIGTERM)
         try:
+            _install_sigterm()
             _watch(child, read_fd, event_bytes, ctx, outer)
+        except _Terminated:
+            # SIGTERM: stop the child here, outside signal context, and return 0 without a
+            # stderr line. Unwinding _watch also stops waiting on a pipe a descendant may hold.
+            _stop_child(child)
         except Exception:
             # A launcher failure still fails open, but this child is ours alone: stop it.
             _stop_child(child)
             raise
         finally:
+            signal.signal(signal.SIGTERM,
+                          previous if previous is not None else signal.SIG_DFL)
             _close_fd(read_fd)
     except Exception as error:
         _stderr(_hook_error(error))
@@ -4525,10 +4611,10 @@ def _hook_mode(args, ctx):
             deadline = args.deadline if args.deadline is not None else ctx.deadline
             if deadline is None:
                 deadline = ctx.clock.now() + HOOK_OUTER_SECONDS
-            answer = gate(event, deadline, args.report_fd, ctx)
+            answer = gate(event, deadline, args.report_fd, ctx, args.hook)
             _emit_answer(answer)
             return 0
-        return launcher(raw, ctx, subprocess.Popen)
+        return launcher(raw, ctx, subprocess.Popen, args.hook)
     except Exception as error:
         _stderr(_hook_error(error))
         return 0
@@ -4554,8 +4640,8 @@ def make_parser():
     gate = parser.add_mutually_exclusive_group()
     gate.add_argument("--branch", action="store_true",
                       help="run every selected node's checks and all of its tests")
-    gate.add_argument("--hook", choices=("claude",),
-                      help="run as the Claude Code Stop hook")
+    gate.add_argument("--hook", choices=("claude", "opencode"),
+                      help="run as the host's Stop hook (Claude Code or OpenCode)")
     parser.add_argument("--list", "--dry-run", dest="list_only", action="store_true",
                         help="print the selection and the plan without running it")
     parser.add_argument("--base", metavar="SHA", help="diff against this commit instead of origin/master's merge base")

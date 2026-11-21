@@ -58,6 +58,12 @@ def _load_engine():
 ENGINE = _load_engine()
 with open(ENGINE_PATH, "r", encoding="utf-8", newline="") as _handle:
     ENGINE_TEXT = _handle.read()
+# The engine imports its sibling `branch_pass` from its own directory, so every fixture checkout
+# carries both files.
+BRANCH_PASS_FILE = "scripts/branch_pass.py"
+with open(os.path.join(os.path.dirname(ENGINE_PATH), "branch_pass.py"),
+          "r", encoding="utf-8", newline="") as _handle:
+    BRANCH_PASS_TEXT = _handle.read()
 
 # The brief's literals, repeated here so a wrong constant cannot satisfy its own fixture.
 EXPECTED_NOTICE_ROOT = (
@@ -436,8 +442,8 @@ def default_overrides():
 
 
 FIXTURE_NODES = {"docs": {"paths": ["docs/"]}}
-# The smallest table the drift check accepts: one node, one documented command whose doc is
-# that node's AGENTS.md, named in the component map so the node sets agree.
+# The smallest table the check accepts: one node, one command, named in the component map so
+# the node sets agree.
 FIXTURE_TABLE = {
     "version": 1,
     "requirements": {},
@@ -450,12 +456,10 @@ FIXTURE_TABLE = {
                     "kind": "check",
                     "cwd": ".",
                     "run": ["python3", "docs/checks/check_offline.py", "--root", "."],
-                    "doc": "docs/AGENTS.md",
                     "requires": [],
                     "inputs": [],
                 }
             ],
-            "excluded": [],
         }
     },
 }
@@ -531,6 +535,7 @@ def clean_files(skills=None):
         ".agents/skills/.openspec-target": "claude\n",
         LOCAL_PLUGIN_INDEX: "export default {}\n",
         ENGINE_FILE: ENGINE_TEXT,
+        BRANCH_PASS_FILE: BRANCH_PASS_TEXT,
         "scripts/verify-commands.json": json.dumps(FIXTURE_TABLE, indent=2) + "\n",
     }
     for name, text in fixture_hooked_rules().items():
@@ -540,9 +545,7 @@ def clean_files(skills=None):
     for path in EXPECTED_NODE_FILES:
         node = path[: -len("/AGENTS.md")]
         files[path] = nested_text(node)
-    files["docs/AGENTS.md"] = nested_text(
-        "docs", commands=["python3 docs/checks/check_offline.py --root ."]
-    )
+    files["docs/AGENTS.md"] = nested_text("docs")
     files["docs/openspec-skills.md"] = "\n".join(skill_section(skills)) + "\n"
     files["docs/agent-guidance.md"] = "# Agent-file guidance\n\nThe 40-line policy.\n"
     files["docs/openspec-workflow.md"] = "# OpenSpec workflow\n\nThe update procedure.\n"
@@ -1391,6 +1394,41 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assertIn("superspec-finalize-pending", findings[0].message)
         self.assertIn("not-a-predicate", findings[0].message)
         self.assertEqual(check_stop_predicates(root), findings)
+
+    def test_hooked_requires_and_exempt_parse(self):
+        text = hooked_rule_text(lines=[
+            'gates: ["\\\\bgit\\\\b[^;&|\\\\n]*?\\\\spush\\\\b"]',
+            'requires: ["branch-pass"]',
+            'exempt: ["\\\\s--delete(?:\\\\s|$)"]',
+        ])
+        self.assertEqual(self.hooked_findings(text), [])
+
+    def test_hooked_unknown_proof_rejected(self):
+        text = hooked_rule_text(lines=[
+            'gates: ["\\\\bgit\\\\b"]',
+            'requires: ["not-a-proof"]',
+        ])
+        self.assert_single(self.hooked_findings(text), HOOKED_PATH, "unknown proof predicate")
+
+    def test_hooked_requires_without_gates_rejected(self):
+        text = hooked_rule_text(lines=[
+            'skills: ["opsx:apply"]',
+            'requires: ["branch-pass"]',
+        ])
+        self.assert_single(self.hooked_findings(text), HOOKED_PATH, "`requires` needs a non-empty")
+
+    def test_hooked_exempt_without_requires_rejected(self):
+        text = hooked_rule_text(lines=[
+            'gates: ["\\\\bgit\\\\b"]',
+            'exempt: ["x"]',
+        ])
+        self.assert_single(self.hooked_findings(text), HOOKED_PATH, "`exempt` needs a non-empty")
+
+    def test_hooked_fixture_carries_the_imported_branch_pass(self):
+        # `scripts/agent_rules.py` imports its sibling `branch_pass`; the engine is loaded by path,
+        # so every fixture checkout must carry both files or the fixture engine cannot import.
+        self.assertEqual(clean_files()[BRANCH_PASS_FILE], BRANCH_PASS_TEXT)
+        self.assertEqual(sorted(ENGINE.PROOF_PREDICATES), ["branch-pass"])
 
     def hooked_body(self, size):
         """The fixture rule with a body of exactly ``size`` UTF-8 bytes (a multi-byte character included)."""

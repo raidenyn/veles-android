@@ -10,10 +10,6 @@ the crate README (`native-bridge/installer/README.md`) holds the layout and the 
 Run from the repository root:
 
 ```bash
-# Checks (run on Linux, Windows and macOS CI)
-./gradlew bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest
-./gradlew bridgeInstallerScriptsTest          # Python suites incl. test_build_contract.py (not on Windows)
-
 # UNSIGNED input producers (Windows/macOS only)
 ./gradlew bridgeInstallerUnsigned             # PRODUCTION channel; needs a tracked, approved release-<platform>.json
 ./gradlew bridgeInstallerPackageFixture       # FIXTURE channel from the tracked fixture-<platform>.json

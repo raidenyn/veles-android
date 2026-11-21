@@ -1,5 +1,6 @@
-"""verify.py and its tests stay importable on the repository's Python floor (3.8; check-tooling.yml
-asserts it). No 3.8 interpreter runs here, so these checks read the sources instead."""
+"""verify.py, branch_pass.py and their tests stay importable on the repository's Python floor
+(3.8; check-tooling.yml asserts it). No 3.8 interpreter runs here, so these checks read the
+sources instead."""
 import ast
 import glob
 import os
@@ -8,7 +9,9 @@ import unittest
 
 TESTS = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(TESTS)
-SOURCES = sorted([os.path.join(SCRIPTS, "verify.py")]
+SOURCES = sorted([os.path.join(SCRIPTS, "verify.py"),
+                  os.path.join(SCRIPTS, "branch_pass.py"),
+                  os.path.join(TESTS, "test_branch_pass.py")]
                  + glob.glob(os.path.join(TESTS, "*verify*.py")))
 # Builtins that became subscriptable (PEP 585) only in 3.9.
 BUILTIN_GENERICS = {"tuple", "list", "dict", "set", "frozenset", "type"}

@@ -15,9 +15,13 @@ import plugin, {
   KILL_ATTEMPTS,
   MAX_STDOUT_BYTES,
   NOTICE,
+  VERIFY_BUDGET_MS,
+  VERIFY_KILL_GRACE_MS,
+  VERIFY_PATH,
   createHandlers,
   createPlugin,
   runEngine,
+  runVerifier,
 } from "./index.js"
 
 const DIR = "/work/repo"
@@ -1502,13 +1506,15 @@ const STREAM_SIGNAL = new AbortController().signal
  * Handlers over the fake host and a fake engine, for the turn-end tests: `script` answers every engine run,
  * so a script that answers by call order counts the spawns itself (the event is parsed only after spawn).
  */
-function turnEnd({ script, sessions, syntheticError, syntheticNever, env = {} } = {}) {
+function turnEnd({ script, sessions, syntheticError, syntheticNever, env = {}, verifier } = {}) {
   const timers = fakeTimers()
   const spawn = fakeSpawn(script ?? { code: 0, stdout: "" })
   const ctx = fakeCtx({ sessions, syntheticError, syntheticNever })
   const handlers = createHandlers(ctx, {
     engine: (event, options) =>
       runEngine(event, { spawn, setTimer: timers.setTimer, clearTimer: timers.clearTimer, ...options }),
+    // The verifier slot starts at every root turn end; a pass fake keeps these engine tests to one spawn.
+    verifier: verifier ?? (async () => ({ kind: "pass", text: "" })),
     env,
     sleep: async () => {},
     setTimer: timers.setTimer,
@@ -1683,6 +1689,283 @@ test("turn end: a second success after the first budget ended sends stop", async
   await flush()
   assert.deepEqual(spawn.events().map((event) => event.event), ["stop", "stop"])
   assert.deepEqual(ctx.synthetics.map((message) => [message.text, message.resume]), [["SECOND", true]])
+})
+
+// ---- the verifier slot (verify.py --hook opencode) ----------------------------------------------------------
+
+/** Whether a fake spawn call is the verifier rather than the engine. */
+const isVerify = (call) => call.args[2] === "--hook"
+const blockJson = (reason) => JSON.stringify({ decision: "block", reason })
+const noticeJson = (text) => JSON.stringify({ systemMessage: text })
+/** Script answers each call by argv: the verifier gets `stdout`, the engine prints nothing. */
+const verifyPrints = (stdout) => (call) => (isVerify(call) ? { code: 0, stdout } : { code: 0, stdout: "" })
+
+/** Script: the verifier child never finishes, the engine prints nothing. */
+const hangingVerifier = (call) => (isVerify(call) ? { hang: true } : { code: 0, stdout: "" })
+
+/**
+ * The one live SIGKILL grace timer. The engine's and the lookup's 5 s budgets share the same duration, so
+ * this asserts they are already cleared rather than picking the first timer that happens to be 5000 ms.
+ */
+function liveGrace(timers) {
+  const grace = timers.live().filter((timer) => timer.ms === VERIFY_KILL_GRACE_MS)
+  assert.equal(grace.length, 1, "exactly one live SIGKILL grace timer")
+  return grace[0]
+}
+
+test("verifier: a block resumes with resume:true", async () => {
+  const { ctx, spawn } = await boot({
+    events: [succeeded("ses_a")],
+    script: verifyPrints(blockJson("VERIFY: fix the lint error")),
+  })
+  assert.equal(await settled(spawn.called(2)), true, "the engine stop and the verifier both ran")
+  await flush()
+  assert.deepEqual(
+    ctx.synthetics.map((message) => [message.sessionID, message.text, message.resume]),
+    [["ses_a", "VERIFY: fix the lint error", true]],
+  )
+  assert.match(ctx.synthetics[0].id, /^msg_[0-9a-zA-Z_]+$/)
+})
+
+test("verifier: a systemMessage is sent with resume:false", async () => {
+  const { ctx, spawn } = await boot({
+    events: [succeeded("ses_a")],
+    script: verifyPrints(noticeJson("VERIFY: the branch pass is stale")),
+  })
+  assert.equal(await settled(spawn.called(2)), true)
+  await flush()
+  assert.deepEqual(
+    ctx.synthetics.map((message) => [message.sessionID, message.text, message.resume]),
+    [["ses_a", "VERIFY: the branch pass is stale", false]],
+  )
+})
+
+test("verifier: empty, malformed or oversized output sends nothing", async () => {
+  const outputs = [
+    "",
+    "not json",
+    "[]",
+    "null",
+    '"text"',
+    " ",
+    '{"decision":"block"}',
+    '{"decision":"block","reason":""}',
+    '{"reason":"x"}',
+    '{"decision":"allow","reason":"x"}',
+    '{"decision":"block","reason":"x","extra":1}',
+    '{"decision":"block","reason":5}',
+    '{"systemMessage":""}',
+    '{"systemMessage":" "}',
+    '{"systemMessage":5}',
+    '{"systemMessage":{"text":"x"}}',
+    '{"systemMessage":"x","decision":"block","reason":"y"}',
+    Buffer.alloc(MAX_STDOUT_BYTES + 1, 0x20),
+  ]
+  for (const stdout of outputs) {
+    const { ctx, spawn } = await boot({ events: [succeeded("ses_a")], script: verifyPrints(stdout) })
+    assert.equal(await settled(spawn.called(2)), true, "both slots ran")
+    await flush()
+    assert.deepEqual(ctx.synthetics, [], JSON.stringify(String(stdout)).slice(0, 120))
+  }
+})
+
+test("verifier: truncated JSON is ignored", async () => {
+  const { ctx, spawn } = await boot({
+    events: [succeeded("ses_a")],
+    script: verifyPrints('{"decision":"block","reason":"FIX'),
+  })
+  assert.equal(await settled(spawn.called(2)), true)
+  await flush()
+  assert.deepEqual(ctx.synthetics, [])
+  assert.equal(spawn.calls.filter(isVerify).length, 1, "the verifier still ran and was ignored")
+})
+
+test("verifier: budget expiry sends SIGTERM, then SIGKILL after 5000 ms, and sends nothing", async () => {
+  const { ctx, spawn, timers } = await boot({
+    events: [succeeded("ses_a")],
+    script: hangingVerifier,
+  })
+  assert.equal(await settled(spawn.called(2)), true)
+  await flush()
+  const verifier = spawn.calls.find(isVerify).child
+  const budget = timers.timers.find((timer) => timer.ms === VERIFY_BUDGET_MS && !timer.cleared && !timer.fired)
+  assert.ok(budget, "the verifier has its own budget timer")
+  budget.fn()
+  await flush()
+  assert.deepEqual(verifier.signals, ["SIGTERM"], "the launcher is stopped first")
+  assert.deepEqual(ctx.synthetics, [], "an expired run sends nothing")
+  const grace = liveGrace(timers)
+  grace.fn()
+  await flush()
+  assert.deepEqual(verifier.signals, ["SIGTERM", "SIGKILL"])
+  assert.deepEqual(ctx.synthetics, [])
+})
+
+test("verifier: dispose stops a running verifier", async () => {
+  const { ctx, spawn, timers, dispose } = await boot({
+    events: [succeeded("ses_a")],
+    script: hangingVerifier,
+  })
+  assert.equal(await settled(spawn.called(2)), true)
+  await flush()
+  const verifier = spawn.calls.find(isVerify).child
+  const disposing = dispose()
+  await flush()
+  assert.deepEqual(verifier.signals, ["SIGTERM"], "the launcher is stopped first")
+  assert.equal(await settled(disposing), true, "the disposer stays bounded and resolves")
+  assert.deepEqual(ctx.synthetics, [], "a disposed run sends nothing")
+  liveGrace(timers).fn()
+  await flush()
+  assert.deepEqual(verifier.signals, ["SIGTERM", "SIGKILL"], "dispose keeps the SIGKILL grace too")
+  assert.deepEqual(ctx.synthetics, [])
+})
+
+test("verifier: a turn end while one runs still sends the engine stop and starts no second verifier", async () => {
+  let release
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  const streams = [
+    async function* (signal) {
+      yield succeeded("ses_a")
+      await gate
+      yield succeeded("ses_a")
+      yield* quietStream(signal)
+    },
+  ]
+  const { ctx, spawn } = await boot({ streams, script: hangingVerifier })
+  assert.equal(await settled(spawn.called(2)), true, "the first turn end: engine stop and verifier")
+  await flush()
+  release()
+  assert.equal(await settled(spawn.called(3)), true, "the second turn end still sends the engine stop")
+  await flush()
+  assert.equal(spawn.calls.filter(isVerify).length, 1, "no second verifier run")
+  assert.equal(spawn.calls.filter((call) => !isVerify(call)).length, 2, "both engine stops were sent")
+  assert.deepEqual(ctx.synthetics, [], "the second turn end starts nothing of its own")
+  // The first, still in-flight run finishes and must resume the session with its block.
+  const verifier = spawn.calls.find(isVerify).child
+  verifier.stdout.emit("data", Buffer.from(blockJson("VERIFY TEXT")))
+  verifier.emit("close", 0, null)
+  await flush()
+  assert.deepEqual(
+    ctx.synthetics.map((message) => [message.text, message.resume]),
+    [["VERIFY TEXT", true]],
+    "the in-flight run's block is still delivered once",
+  )
+  assert.equal(spawn.calls.filter(isVerify).length, 1, "and it is still the only verifier run")
+})
+
+test("verifier: a lookup that never answers is bounded and frees the slot for a later turn end", async () => {
+  let verifications = 0
+  const { ctx, spawn, timers, handlers } = turnEnd({
+    verifier: async () => {
+      verifications += 1
+      return { kind: "pass", text: "" }
+    },
+  })
+  ctx.session.get = () => new Promise(() => {}) // the host never answers either turn-end lookup
+  await handlers.onEvent(succeeded("ses_a"), STREAM_SIGNAL)
+  await flush()
+  timers.fire() // every 5 s handler budget expires: the engine stop and the verifier lookup give up
+  await flush()
+  assert.equal(verifications, 0, "nothing was verified while the lookup hung")
+  ctx.session.get = async ({ sessionID }) => ({ id: sessionID }) // the host answers again
+  await handlers.onEvent(succeeded("ses_a"), STREAM_SIGNAL)
+  await flush()
+  assert.equal(verifications, 1, "the later turn end starts a verifier once the slot is free")
+  assert.equal(spawn.calls.length, 1, "and the later engine stop still runs")
+})
+
+test("verifier: engine and verifier blocks are two separate resumes", async () => {
+  const { ctx, spawn } = await boot({
+    events: [succeeded("ses_a")],
+    script: (call) =>
+      isVerify(call) ? { hang: true } : answer("block", "STOP TEXT", []),
+  })
+  assert.equal(await settled(spawn.called(2)), true)
+  await flush()
+  assert.deepEqual(
+    ctx.synthetics.map((message) => [message.text, message.resume]),
+    [["STOP TEXT", true]],
+    "the engine's resume is sent within its own budget",
+  )
+  const verifier = spawn.calls.find(isVerify).child
+  verifier.stdout.emit("data", Buffer.from(blockJson("VERIFY TEXT")))
+  verifier.emit("close", 0, null)
+  await flush()
+  assert.deepEqual(
+    ctx.synthetics.map((message) => [message.text, message.resume]),
+    [
+      ["STOP TEXT", true],
+      ["VERIFY TEXT", true],
+    ],
+    "the verifier's resume is sent separately when its run ends",
+  )
+  assert.notEqual(ctx.synthetics[0].id, ctx.synthetics[1].id, "two distinct messages")
+})
+
+test("verifier: child sessions and interrupted or failed executions start nothing", async () => {
+  let verifications = 0
+  const sessions = { ses_child: { id: "ses_child", parentID: "ses_root" }, ses_root: { id: "ses_root" } }
+  const { ctx, spawn, handlers } = turnEnd({
+    sessions,
+    verifier: async () => {
+      verifications += 1
+      return { kind: "pass", text: "" }
+    },
+  })
+  await handlers.onEvent(interrupted("ses_a"), STREAM_SIGNAL)
+  await handlers.onEvent(failed("ses_a"), STREAM_SIGNAL)
+  await handlers.onEvent(succeeded("ses_child"), STREAM_SIGNAL)
+  await flush()
+  assert.equal(verifications, 0)
+  assert.equal(spawn.calls.length, 0)
+  assert.deepEqual(ctx.synthetics, [])
+})
+
+test("verifier: runVerifier sends {session_id, cwd} on stdin to python3 -I <VERIFY_PATH> --hook opencode", async () => {
+  const timers = fakeTimers()
+  const spawn = fakeSpawn({ code: 0, stdout: "" })
+  const result = await runVerifier(
+    { session_id: "ses_a", cwd: DIR },
+    { spawn, setTimer: timers.setTimer, clearTimer: timers.clearTimer },
+  )
+  assert.deepEqual(result, { kind: "pass", text: "" })
+  const [call] = spawn.calls
+  assert.equal(call.command, "python3")
+  assert.deepEqual(call.args, ["-I", VERIFY_PATH, "--hook", "opencode"])
+  assert.equal(call.options.cwd, DIR)
+  assert.deepEqual(call.event, { session_id: "ses_a", cwd: DIR })
+  assert.equal(VERIFY_BUDGET_MS, 1800000)
+  assert.equal(VERIFY_KILL_GRACE_MS, 5000)
+  assert.equal(timers.timers.length, 1)
+  assert.equal(timers.timers[0].ms, VERIFY_BUDGET_MS)
+  assert.equal(timers.timers[0].cleared, true, "the budget timer is cleared when the child exits")
+})
+
+test("the verifier path is resolved from the plugin directory, not from the cwd", () => {
+  const expected = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "verify.py")
+  assert.equal(VERIFY_PATH, expected)
+  assert.ok(fs.existsSync(VERIFY_PATH))
+})
+
+test("verifier: a missing python or a spawn throw is a silent pass", async () => {
+  for (const script of [
+    { throws: new Error("boom") },
+    { error: Object.assign(new Error("spawn python3 ENOENT"), { code: "ENOENT" }) },
+  ]) {
+    const timers = fakeTimers()
+    const spawn = fakeSpawn(script)
+    const result = await runVerifier(
+      { session_id: "ses_a", cwd: DIR },
+      { spawn, setTimer: timers.setTimer, clearTimer: timers.clearTimer },
+    )
+    assert.deepEqual(result, { kind: "pass", text: "" })
+    assert.ok(
+      timers.timers.every((timer) => timer.cleared),
+      "a spawn that throws creates no live timer",
+    )
+  }
 })
 
 // ---- the session's own checkout ------------------------------------------------------------------------------

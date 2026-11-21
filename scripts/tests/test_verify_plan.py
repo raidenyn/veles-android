@@ -24,18 +24,17 @@ from verifyfake import FakeFs, FakeGit, FakeRunner, make_context  # noqa: E402
 
 BASE = "a" * 40
 ZERO = "0" * 40
-DOC = "scripts/AGENTS.md"
 DEVICE_NOTE = "NOT RUN (device test; real-device rule)"
 
 
 def command(step_id, kind="check", run=("run-step",), **extra):
-    entry = {"id": step_id, "kind": kind, "run": list(run), "doc": DOC, "reuse": False}
+    entry = {"id": step_id, "kind": kind, "run": list(run), "reuse": False}
     entry.update(extra)
     return entry
 
 
 def producer(step_id, run, **extra):
-    entry = {"id": step_id, "cwd": ".", "run": list(run), "doc": DOC, "reuse": False}
+    entry = {"id": step_id, "cwd": ".", "run": list(run), "reuse": False}
     entry.update(extra)
     return entry
 
