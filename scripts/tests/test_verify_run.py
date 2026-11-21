@@ -816,8 +816,30 @@ class BranchPassRunTest(BranchFixture):
         self.assertEqual(document["nodes"], [])
         self.assertEqual((document["head"], document["base"]), (HEAD, BASE))
 
-    def test_branch_incomplete_no_record(self):
-        # Spec "Incomplete run": every incompleteness fact leaves no record, even one that existed.
+    def test_task_complete_writes_record(self):
+        # Spec "Complete run": the manual task gate writes the same record `--branch` writes.
+        expected = {"version": 1, "head": HEAD, "base": BASE, "nodes": ["web-extension"]}
+        self.assertEqual(main([], self.context(git=self.git())), 0)
+        self.assertEqual(read_json(self.record_path), expected)
+        # A second run through `run_gate` replaces an older record as well.
+        self.seed_record()
+        context = self.context(git=self.git())
+        outcome = run_gate("task", None, context, self.table, self.cmap)
+        self.assertEqual(exit_code(outcome.results, outcome.errors), 0)
+        self.assertEqual(read_json(self.record_path), expected)
+
+    def test_task_nothing_changed_writes_empty_nodes(self):
+        # A nothing-changed manual task run is still complete, with an empty node list.
+        context = self.context(git=self.git(diff=()))
+        outcome = run_gate("task", None, context, self.table, self.cmap)
+        self.assertEqual(exit_code(outcome.results, outcome.errors), 0)
+        document = read_json(self.record_path)
+        self.assertEqual(document["nodes"], [])
+        self.assertEqual((document["head"], document["base"]), (HEAD, BASE))
+
+    def _incomplete_cases(self):
+        # The one incompleteness fact each case carries, built fresh so a subtest cannot leak
+        # its mutated git or clock into the next one.
         def reached_reserve(clock):
             def on_call(argv):
                 if argv == ("npm", "run", "lint"):
@@ -863,12 +885,15 @@ class BranchPassRunTest(BranchFixture):
                  git=rewritten, runner=MutatingRunner(on_call=head_changed(rewritten))),
               None), 0),
         ]
-        for name, build, expected in cases:
-            with self.subTest(case=name):
+        return cases
+
+    def _assert_incomplete_leaves_no_record(self, gate):
+        for name, build, expected in self._incomplete_cases():
+            with self.subTest(gate=gate, case=name):
                 self.clock.value = 0.0
                 self.seed_record()
                 context, base = build()
-                outcome = run_gate("branch", base, context, self.table, self.cmap)
+                outcome = run_gate(gate, base, context, self.table, self.cmap)
                 self.assertEqual(exit_code(outcome.results, outcome.errors), expected)
                 self.assertFalse(os.path.exists(self.record_path), name)
                 if name == "not_reached":
@@ -876,6 +901,14 @@ class BranchPassRunTest(BranchFixture):
                     self.assertTrue(outcome.incomplete)
                     self.assertFalse(verify._branch_pass_complete(
                         outcome, None, None, (HEAD, ""), (HEAD, "")))
+
+    def test_branch_incomplete_no_record(self):
+        # Spec "Incomplete run": every incompleteness fact leaves no record, even one that existed.
+        self._assert_incomplete_leaves_no_record("branch")
+
+    def test_task_incomplete_no_record(self):
+        # Spec "Incomplete run" and "Failing task-gate run drops an old pass": the task gate too.
+        self._assert_incomplete_leaves_no_record("task")
 
     def test_branch_contended_keeps_record(self):
         # Spec "Contended run keeps a pass": no lock, no delete, exit 2.
@@ -889,25 +922,72 @@ class BranchPassRunTest(BranchFixture):
         self.assertEqual(exit_code(outcome.results, outcome.errors), 2)
         self.assertEqual(self.record_bytes(), content)
 
-    def test_task_gate_never_touches_record(self):
-        # Spec: the task gate and the hook never write or delete the branch-pass record.
+    def test_task_contended_keeps_record(self):
+        # Spec "Contended run keeps a pass": no lock, no delete, exit 2, for the task gate too.
         content = self.seed_record()
+        holder = RunLock(os.path.join(self.verify_dir, "lock"))
+        self.assertTrue(holder.try_acquire())
+        self.addCleanup(holder.release)
         context = self.context(git=self.git())
-        self.assertEqual(main([], context), 0)
+        outcome = run_gate("task", None, context, self.table, self.cmap)
+        self.assertTrue(outcome.contended)
+        self.assertEqual(exit_code(outcome.results, outcome.errors), 2)
         self.assertEqual(self.record_bytes(), content)
-        # The hook's gate is the task gate with remembered passes; a failing step makes it block,
-        # which proves the gate ran before the record is compared again.
-        context = self.context(git=self.git(), runner=FakeRunner(script={
-            ("npm", "run", "lint"): Outcome("fail", code=1)}))
+
+    def test_task_list_keeps_record(self):
+        # `--list` plans only: a listing never writes or deletes the record.
+        content = self.seed_record()
+        self.assertEqual(main(["--list"], self.context(git=self.git())), 0)
+        self.assertEqual(self.record_bytes(), content)
+
+    def test_hook_never_touches_record(self):
+        # Spec "Hook run leaves the record alone": the hook's task gate never writes or deletes.
+        content = self.seed_record()
         event = json.dumps({"session_id": "session-1", "cwd": self.repo}).encode("utf-8")
+        # A failing step makes the hook block, which proves the gate really ran.
+        failing = FakeRunner(script={("npm", "run", "lint"): Outcome("fail", code=1)})
         out = io.StringIO()
         with mock.patch("sys.stdin", Stdin(event)), \
                 contextlib.redirect_stdout(out), \
                 contextlib.redirect_stderr(io.StringIO()):
-            code = main(["--hook", "claude", "--dispatched", "--deadline", "10000"], context)
+            code = main(["--hook", "claude", "--dispatched", "--deadline", "10000"],
+                        self.context(git=self.git(), runner=failing))
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out.getvalue())["decision"], "block")
         self.assertEqual(self.record_bytes(), content)
+        # A passing hook run emits nothing, and its runner calls prove the gate ran again.
+        runner = FakeRunner()
+        out = io.StringIO()
+        with mock.patch("sys.stdin", Stdin(event)), \
+                contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = main(["--hook", "claude", "--dispatched", "--deadline", "10000"],
+                        self.context(git=self.git(), runner=runner))
+        self.assertEqual(code, 0)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn(("npm", "run", "lint"),
+                      [tuple(call["argv"]) for call in runner.calls])
+        self.assertEqual(self.record_bytes(), content)
+
+    def test_task_branch_only_note_writes_record(self):
+        # Spec "Task-gate pass with skipped tests": a test with no `related` strategy is a
+        # branch-only note, not a failure, so the complete task run still writes the record.
+        table = fixture_table()
+        table["nodes"]["web-extension"]["commands"].append({
+            "kind": "test", "id": "web-extension.integration", "cwd": "web-extension",
+            "reuse": False, "run": ["npm", "run", "integration"]})
+        table_path = os.path.join(self.repo, "scripts", "verify-commands.json")
+        write_json(table_path, table)
+        loaded = load_table(table_path, self.cmap)
+        self.seed_record()
+        context = self.context(git=self.git())
+        outcome = run_gate("task", None, context, loaded, self.cmap)
+        self.assertEqual(exit_code(outcome.results, outcome.errors), 0)
+        self.assertIn(verify.BRANCH_ONLY_NOTE % "web-extension.integration",
+                      outcome.results["web-extension"].notes)
+        self.assertEqual(read_json(self.record_path),
+                         {"version": 1, "head": HEAD, "base": BASE,
+                          "nodes": ["web-extension"]})
 
 
 if __name__ == "__main__":

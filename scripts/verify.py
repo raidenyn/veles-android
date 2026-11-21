@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""verify: run the affected nodes' commands, the task gate by default and `--branch` before a push.
+"""verify: run the affected nodes' commands, the task gate by default and `--branch` for a full local run.
 
 Standard library only, Python 3.8 compatible, run as `python3 -I scripts/verify.py`. The node
 commands live in `scripts/verify-commands.json` (design D2); this module loads and validates that
@@ -1655,8 +1655,17 @@ def _branch_state(ctx):
         return None
 
 
+def _writes_push_pass(gate, use_passes):
+    """Whether this run may delete and write the branch-pass record (design D1).
+
+    A manual run of either gate writes it; the Stop hook is the only `use_passes=True` caller,
+    so it never touches the record.
+    """
+    return gate == "branch" or (gate == "task" and not use_passes)
+
+
 def _branch_pass_complete(result, deadline, base, before, after):
-    """Whether a `--branch` run may leave a branch-pass record (design D2).
+    """Whether a manual run may leave a branch-pass record (design D1/D2).
 
     A complete run exits 0, was given no `--deadline` and no `--base`, left no step not reached
     and saw a clean tree under the same HEAD before selection and after the last step. `before`
@@ -1697,8 +1706,9 @@ def run_gate(gate, base, ctx, table, cmap, use_passes=False):
     task-gate run never reads. A record is written only when fresh observations after the run
     reproduce the source-side key computed before it.
 
-    A branch run deletes the previous branch-pass record as soon as it holds the run lock and
-    writes a new one only when the run is complete (design D2).
+    A manual run of either gate deletes the previous branch-pass record as soon as it holds the
+    run lock and writes a new one only when the run is complete; the hook never touches it
+    (design D1/D2).
     """
     started = ctx.clock.now()
     outcome = RunOutcome()
@@ -1708,11 +1718,12 @@ def run_gate(gate, base, ctx, table, cmap, use_passes=False):
         outcome.errors.append(CONTENTION)
         return outcome
     try:
-        # Every branch run that holds the lock drops the old proof first; only a complete run
-        # leaves a new one, and a contended run never gets here (design D2).
-        if gate == "branch":
+        writes_push_pass = _writes_push_pass(gate, use_passes)
+        # Every manual run that holds the lock drops the old proof first; only a complete run
+        # leaves a new one, and a contended run never gets here (design D1/D2).
+        if writes_push_pass:
             branch_pass.delete(ctx.repo)
-        before = _branch_state(ctx) if gate == "branch" else None
+        before = _branch_state(ctx) if writes_push_pass else None
         run_id = os.path.basename(os.path.normpath(ctx.run_dir))
         if not cleanup_orphans(ctx, run_id):
             outcome.contended = True
@@ -1744,9 +1755,9 @@ def run_gate(gate, base, ctx, table, cmap, use_passes=False):
         _apply_sdk_warning(ctx, env, planned)
         if not selection_result.files or selection_result.only_unowned:
             # Zero-work outcomes print their own line; no node is ever a pass (design D10).
-            after = _branch_state(ctx) if gate == "branch" else None
+            after = _branch_state(ctx) if writes_push_pass else None
             write_last_run(ctx, {}, [], elapsed_s=ctx.clock.now() - started)
-            if gate == "branch":
+            if writes_push_pass:
                 _write_branch_pass(ctx, base, outcome, before, after)
             return outcome
 
@@ -1926,10 +1937,10 @@ def run_gate(gate, base, ctx, table, cmap, use_passes=False):
             for step_id, step_outcome, _rerun in outcome.results[node].failures:
                 outcome.problems.append((node, step_id, step_outcome.kind))
         outcome.steps = step_records
-        after = _branch_state(ctx) if gate == "branch" else None
+        after = _branch_state(ctx) if writes_push_pass else None
         write_last_run(ctx, outcome.results, step_records,
                        elapsed_s=ctx.clock.now() - started)
-        if gate == "branch":
+        if writes_push_pass:
             _write_branch_pass(ctx, base, outcome, before, after)
         return outcome
     finally:
