@@ -134,7 +134,7 @@ HOOK_RUN_BUDGET_SECONDS = 1740.0
 HOOK_OUTER_SECONDS = 1740.0
 HOOK_KILL_GRACE_SECONDS = 30.0
 EVENT_CAP = 1048576
-HOOK_STATE_VERSION = 1
+HOOK_STATE_VERSION = 2
 HOOK_STATE_POINTER = "hook-state.json"
 MAX_SESSION_SECONDS = 3600.0
 MAX_SESSION_BLOCKS = 5
@@ -4017,9 +4017,10 @@ class _LockView:
 
 
 class HookState:
-    """`<git-common-dir>/veles-verify/hook-state.json`, version 1, under its own lock (D12).
+    """`<git-common-dir>/veles-verify/hook-state.json`, version 2, under its own lock (D12).
 
-    One document is shared by every worktree, keyed by session id. `admit` expires stale
+    One document is shared by every worktree, keyed `<host>:<session id>` (design D4), so a
+    Claude and an OpenCode session id never collide. `admit` expires stale
     reservations, checks the session's remaining time and block slots and reserves a run's
     budget and one slot atomically; `settle` removes the reservation, charges the measured time
     and applies the outcome table. Every read that cannot complete starts from an empty state,
@@ -4293,9 +4294,13 @@ def _report_deadline(report_fd, admission):
         _close_fd(report_fd)
 
 
-def gate(event, deadline, report_fd, ctx):
-    """The gate owner: admission, the reported deadline, the task gate and settlement (D11/D12)."""
-    session_id = event["session_id"]
+def gate(event, deadline, report_fd, ctx, host):
+    """The gate owner: admission, the reported deadline, the task gate and settlement (D11/D12).
+
+    The hook state keys the session `<host>:<session id>` (design D4), so an OpenCode and a
+    Claude session id never share counters; the event itself is left unchanged.
+    """
+    session_id = "%s:%s" % (host, event["session_id"])
     started = ctx.clock.now()
     state = HookState(ctx.common_dir, ctx.clock, wait=ctx.wait, deadline=deadline)
     try:
@@ -4426,6 +4431,20 @@ def _stop_child(child):
         pass
 
 
+def _install_sigterm(child):
+    """Install the launcher's SIGTERM handler and return it (design D4).
+
+    The dispatched child runs in its own session, so killing the launcher alone never reaches
+    it: the handler stops it with `_stop_child`, and `_watch` then sees the dead child and lets
+    `launcher` return 0. It is installed only in the launcher, never in the `--dispatched` gate.
+    """
+    def handler(_signum, _frame):
+        _stop_child(child)
+
+    signal.signal(signal.SIGTERM, handler)
+    return handler
+
+
 def _watch(child, report_fd, event_bytes, ctx, outer):
     """Relay the child's stdout and write the event to it without ever blocking (D11).
 
@@ -4511,7 +4530,7 @@ def _watch(child, report_fd, event_bytes, ctx, outer):
             _close_handle(stdout_handle)
 
 
-def launcher(event_bytes, ctx, spawn):
+def launcher(event_bytes, ctx, spawn, host):
     """The watchdog (design D11): dispatch the active checkout's verifier, relay, enforce time.
 
     Always returns 0 and never writes to stdout itself. A separate clone, another repository, a
@@ -4520,7 +4539,8 @@ def launcher(event_bytes, ctx, spawn):
 
     The launcher's own checkout is the one holding this script (`REPO`, the parent of `SCRIPTS`),
     never the process cwd (design D11.3): run from outside any checkout, the hook still compares
-    against the checkout it was installed in.
+    against the checkout it was installed in. The host (`claude` or `opencode`) is passed to the
+    dispatched child unchanged, and SIGTERM stops that child before the launcher returns (D4).
     """
     event = read_event(io.BytesIO(event_bytes))
     if event is None:
@@ -4538,7 +4558,7 @@ def launcher(event_bytes, ctx, spawn):
         if not ctx.fs.exists(script):
             return 0
         read_fd, write_fd = os.pipe()
-        argv = [sys.executable, "-I", script, "--hook", "claude", "--dispatched",
+        argv = [sys.executable, "-I", script, "--hook", host, "--dispatched",
                 "--deadline", str(outer), "--report-fd", str(write_fd)]
         try:
             child = spawn(argv, cwd=target_repo, start_new_session=True,
@@ -4550,13 +4570,16 @@ def launcher(event_bytes, ctx, spawn):
             raise
         # The child owns the write end now; our copy must go or the pipe never sees EOF.
         _close_fd(write_fd)
+        previous = signal.getsignal(signal.SIGTERM)
         try:
+            _install_sigterm(child)
             _watch(child, read_fd, event_bytes, ctx, outer)
         except Exception:
             # A launcher failure still fails open, but this child is ours alone: stop it.
             _stop_child(child)
             raise
         finally:
+            signal.signal(signal.SIGTERM, previous)
             _close_fd(read_fd)
     except Exception as error:
         _stderr(_hook_error(error))
@@ -4584,10 +4607,10 @@ def _hook_mode(args, ctx):
             deadline = args.deadline if args.deadline is not None else ctx.deadline
             if deadline is None:
                 deadline = ctx.clock.now() + HOOK_OUTER_SECONDS
-            answer = gate(event, deadline, args.report_fd, ctx)
+            answer = gate(event, deadline, args.report_fd, ctx, args.hook)
             _emit_answer(answer)
             return 0
-        return launcher(raw, ctx, subprocess.Popen)
+        return launcher(raw, ctx, subprocess.Popen, args.hook)
     except Exception as error:
         _stderr(_hook_error(error))
         return 0
@@ -4613,8 +4636,8 @@ def make_parser():
     gate = parser.add_mutually_exclusive_group()
     gate.add_argument("--branch", action="store_true",
                       help="run every selected node's checks and all of its tests")
-    gate.add_argument("--hook", choices=("claude",),
-                      help="run as the Claude Code Stop hook")
+    gate.add_argument("--hook", choices=("claude", "opencode"),
+                      help="run as the host's Stop hook (Claude Code or OpenCode)")
     parser.add_argument("--list", "--dry-run", dest="list_only", action="store_true",
                         help="print the selection and the plan without running it")
     parser.add_argument("--base", metavar="SHA", help="diff against this commit instead of origin/master's merge base")

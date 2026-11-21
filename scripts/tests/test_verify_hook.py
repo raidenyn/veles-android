@@ -1,9 +1,10 @@
-"""The Claude Code Stop hook: dispatch, watchdog, admission, bounds and output (design D11/D12).
+"""The Stop hook for Claude Code and OpenCode: dispatch, watchdog, admission, bounds and
+output (design D11/D12, D4).
 
 Every case injects the clock, wait, git reader, runner, filesystem and the launcher's process
 spawner; the launcher's fake child uses real pipes but no process, so the selector loop, the
 non-blocking event write and the kill times are exercised without sleeping or reading the wall
-clock (`.agents/rules/repo-no-time-based-tests.md`).
+clock (`.agents/rules/repo-no-time-based-tests.md`). The SIGTERM handler is invoked directly.
 """
 from __future__ import annotations
 
@@ -74,8 +75,10 @@ def session_doc(blocks=0, spent_s=0.0, reserved=None, repeat=None, synopsis=None
     }
 
 
-def write_state(common_dir, sessions):
-    write_json(state_path(common_dir), {"v": 1, "sessions": sessions})
+def write_state(common_dir, sessions, version=None):
+    write_json(state_path(common_dir),
+               {"v": verify.HOOK_STATE_VERSION if version is None else version,
+                "sessions": sessions})
 
 
 def read_sessions(common_dir):
@@ -121,6 +124,13 @@ class EventTest(unittest.TestCase):
 
     def test_a_non_object_is_none(self):
         self.assertIsNone(verify.read_event(io.BytesIO(b"[]")))
+
+
+class HookCliTest(unittest.TestCase):
+    def test_hook_accepts_opencode(self):
+        args = verify.make_parser().parse_args(["--hook", "opencode"])
+        self.assertEqual(args.hook, "opencode")
+        self.assertEqual(verify.make_parser().parse_args(["--hook", "claude"]).hook, "claude")
 
 
 class FakeChild:
@@ -308,12 +318,12 @@ class LauncherFixture(unittest.TestCase):
         self.addCleanup(child.close)
         return child
 
-    def run_launcher(self, event=None):
+    def run_launcher(self, event=None, host="claude"):
         data = json.dumps(event or {"session_id": SESSION, "cwd": self.repo}).encode()
         out = io.StringIO()
         err = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = verify.launcher(data, self.context(), self.spawn)
+            code = verify.launcher(data, self.context(), self.spawn, host)
         self.stderr = err.getvalue()
         return code, out.getvalue()
 
@@ -345,6 +355,54 @@ class LauncherTest(LauncherFixture):
         self.assertEqual(child.kwargs["pass_fds"], (child.report_value,))
         self.assertEqual(child.argv[3:5], ["--hook", "claude"])
 
+    def test_launcher_passes_host_to_child(self):
+        self.files[self.script] = b""
+        self.checkout(self.repo, self.repo)
+        code, out = self.run_launcher(host="opencode")
+        self.assertEqual((code, out), (0, ""))
+        child = self.children[0]
+        self.assertEqual(child.argv[3:5], ["--hook", "opencode"])
+
+    def test_launcher_sigterm_stops_child(self):
+        # D4: SIGTERM stops the dispatched child (it runs in its own session, so killing the
+        # launcher alone never reaches it) and the launcher returns 0. The installed handler is
+        # invoked directly from the child's poll; no signal is sent.
+        self.files[self.script] = b""
+        self.checkout(self.repo, self.repo)
+        installed = []
+        fired = []
+        original = verify._install_sigterm
+
+        def install(child):
+            handler = original(child)
+            installed.append(handler)
+            return handler
+
+        def spawn(argv, **kwargs):
+            child = self.spawn(argv, **kwargs)
+            poll = child.poll
+
+            def polling():
+                result = poll()
+                if installed and not fired:
+                    fired.append(True)
+                    installed[0](signal.SIGTERM, None)
+                return result
+
+            child.poll = polling
+            return child
+
+        data = json.dumps({"session_id": SESSION, "cwd": self.repo}).encode()
+        out = io.StringIO()
+        with mock.patch.object(verify, "_install_sigterm", install), \
+                contextlib.redirect_stdout(out):
+            code = verify.launcher(data, self.context(), spawn, "opencode")
+        self.assertEqual((code, out.getvalue()), (0, ""))
+        child = self.children[0]
+        self.assertTrue(fired)
+        self.assertTrue(child.killed)
+        self.assertTrue(child.reaped)
+
     def test_linked_worktree_runs_its_verifier(self):
         self.files[self.worktree_script] = b""
         self.checkout(self.repo, self.repo)
@@ -366,7 +424,7 @@ class LauncherTest(LauncherFixture):
         data = json.dumps({"session_id": SESSION, "cwd": self.repo}).encode()
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = verify.launcher(data, context, self.spawn)
+            code = verify.launcher(data, context, self.spawn, "claude")
         self.assertEqual((code, out.getvalue(), err.getvalue()), (0, "", ""))
         self.assertEqual(len(self.children), 1)
         child = self.children[0]
@@ -515,7 +573,7 @@ class LauncherTest(LauncherFixture):
         self.assertEqual(len(data), EVENT_CAP)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = verify.launcher(data, self.context(), self.spawn)
+            code = verify.launcher(data, self.context(), self.spawn, "claude")
         child = self.children[0]
         self.assertEqual((code, out.getvalue()), (0, ""))
         self.assertTrue(child.killed)
@@ -627,6 +685,22 @@ class AdmissionTest(StateFixture):
         self.assertTrue(admission.ok)
         self.assertEqual(self.sessions()[SESSION]["spent_s"], 0.0)
         self.assertEqual(len(self.sessions()[SESSION]["reserved"]), 2)
+
+
+class StateVersionTest(StateFixture):
+    def test_state_v1_reads_empty(self):
+        # A document from hook state version 1 is not trusted: the session starts fresh.
+        key = "claude:" + SESSION
+        write_state(self.common, {key: session_doc(blocks=5, spent_s=100.0,
+                                                   synopsis="old")}, version=1)
+        admission = self.state().admit(key, 100000.0)
+        self.assertTrue(admission.ok)
+        document = read_json(state_path(self.common))
+        self.assertEqual(document["v"], verify.HOOK_STATE_VERSION)
+        session = document["sessions"][key]
+        self.assertEqual(session["blocks"], 0)
+        self.assertEqual(session["spent_s"], 0.0)
+        self.assertIsNone(session["synopsis"])
 
 
 class SettlementTest(StateFixture):
@@ -850,6 +924,12 @@ class GateFixture(unittest.TestCase):
     def sessions(self):
         return read_sessions(self.common)
 
+    def session_key(self, host="claude"):
+        return "%s:%s" % (host, SESSION)
+
+    def session(self, host="claude"):
+        return self.sessions().get(self.session_key(host))
+
     def last_run(self):
         return read_json(os.path.join(self.verify_dir, "last-run.json"))
 
@@ -937,7 +1017,7 @@ class HookEndToEndTest(GateFixture):
             self.command("web-extension.first", ["first"]),
             self.command("web-extension.after", ["after"]),
         ])
-        write_state(self.common, {SESSION: session_doc(
+        write_state(self.common, {self.session_key(): session_doc(
             blocks=2, spent_s=10.0, repeat={"id": ["x"], "n": 2}, synopsis="kept")})
 
         def on_call(clock, argv, outcome, cutoff, log_path):
@@ -952,7 +1032,7 @@ class HookEndToEndTest(GateFixture):
         document = json.loads(out)
         self.assertIn("systemMessage", document)
         self.assertIn("web-extension.after not reached", document["systemMessage"])
-        session = self.sessions()[SESSION]
+        session = self.session()
         self.assertEqual(session["blocks"], 2)
         self.assertEqual(session["repeat"], {"id": ["x"], "n": 2})
         self.assertEqual(session["synopsis"], "kept")
@@ -969,7 +1049,7 @@ class HookEndToEndTest(GateFixture):
                                             requires=["node"])], ["web-extension/"]),
         }, requirements={"node": {"kind": "path", "path": "node-tree",
                                   "fix": "install Node 22"}})
-        write_state(self.common, {SESSION: session_doc(
+        write_state(self.common, {self.session_key(): session_doc(
             blocks=2, spent_s=10.0, repeat={"id": ["x"], "n": 2}, synopsis="kept")})
         self.extra_files[os.path.join(self.repo, "aaa", "file.txt")] = b""
 
@@ -1001,7 +1081,7 @@ class HookEndToEndTest(GateFixture):
         statuses = dict((step["id"], step["status"]) for step in self.last_run()["steps"])
         self.assertEqual(statuses["aaa.slow"], "ok")
         self.assertEqual(statuses["web-extension.lint"], "not_reached")
-        session = self.sessions()[SESSION]
+        session = self.session()
         self.assertEqual(session["blocks"], 2)
         self.assertEqual(session["repeat"], {"id": ["x"], "n": 2})
         self.assertEqual(session["synopsis"], "kept")
@@ -1092,7 +1172,7 @@ class HookEndToEndTest(GateFixture):
                          {"systemMessage": "verification already running; nothing was checked"})
         self.assertFalse(os.path.exists(os.path.join(self.verify_dir, "passes.json")))
         self.assertIsNone(read_json(os.path.join(self.verify_dir, "last-run.json")))
-        session = self.sessions()[SESSION]
+        session = self.session()
         self.assertEqual(session["spent_s"], 0.0)
         self.assertEqual(session["reserved"], [])
 
@@ -1162,11 +1242,11 @@ class HookOutputTest(GateFixture):
     def test_all_remembered_stop_silent(self):
         # Spec "Unchanged node is skipped": every selected node remembered is a silent clean pass.
         remembered = verify.NodeResult("PASS (remembered)")
-        write_state(self.common, {SESSION: session_doc(
+        write_state(self.common, {self.session_key(): session_doc(
             blocks=2, spent_s=100.0, repeat={"id": ["x"], "n": 2}, synopsis="old")})
         code, out, _err = self.run_with(self.outcome({"web-extension": remembered}))
         self.assertEqual((code, out), (0, ""))
-        session = self.sessions()[SESSION]
+        session = self.session()
         self.assertEqual(session["blocks"], 0)
         self.assertEqual(session["spent_s"], 0.0)
         self.assertEqual(session["repeat"], {"id": None, "n": 0})
@@ -1191,7 +1271,7 @@ class HookOutputTest(GateFixture):
         outcome = self.outcome({"android": stopped, "web-extension": remembered},
                                incomplete=True)
         outcome.steps = [{"id": "android.lint", "status": "not_reached"}]
-        write_state(self.common, {SESSION: session_doc(blocks=2, spent_s=10.0)})
+        write_state(self.common, {self.session_key(): session_doc(blocks=2, spent_s=10.0)})
         with mock.patch.object(verify, "run_gate") as run_gate:
             run_gate.side_effect = lambda *args, **kwargs: (
                 self.clock.advance(4.0), outcome)[1]
@@ -1200,13 +1280,13 @@ class HookOutputTest(GateFixture):
         notice = json.loads(out)["systemMessage"]
         self.assertIn("web-extension: PASS (remembered)", notice)
         self.assertIn("android.lint not reached", notice)
-        session = self.sessions()[SESSION]
+        session = self.session()
         self.assertEqual(session["blocks"], 2)
         self.assertEqual(session["spent_s"], 14.0)
 
     def test_repeat_bound_notice_lists_remembered(self):
         identity = ("android", "android.lint", "fail")
-        write_state(self.common, {SESSION: session_doc(
+        write_state(self.common, {self.session_key(): session_doc(
             blocks=3, spent_s=20.0, repeat={"id": list(identity), "n": 3},
             synopsis="verify: still red\n\nandroid.lint: FAIL")})
         remembered = verify.NodeResult("PASS (remembered)")
@@ -1220,10 +1300,10 @@ class HookOutputTest(GateFixture):
         notice = document["systemMessage"]
         self.assertIn("web-extension: PASS (remembered)", notice)
         self.assertIn("attempt 4 of 3", notice)
-        self.assertEqual(self.sessions()[SESSION]["blocks"], 3)
+        self.assertEqual(self.session()["blocks"], 3)
 
     def test_limit_at_admission_does_not_run(self):
-        write_state(self.common, {SESSION: session_doc(blocks=5, synopsis="still red")})
+        write_state(self.common, {self.session_key(): session_doc(blocks=5, synopsis="still red")})
         with mock.patch.object(verify, "run_gate") as run_gate:
             code, out, _err = self.call_hook(self.ctx)
         self.assertEqual(code, 0)
@@ -1231,14 +1311,33 @@ class HookOutputTest(GateFixture):
         self.assertIn("still red", json.loads(out)["systemMessage"])
 
     def test_nothing_changed_silent_and_charged(self):
-        write_state(self.common, {SESSION: session_doc(blocks=2, spent_s=10.0,
-                                                       synopsis="old")})
+        write_state(self.common, {self.session_key(): session_doc(blocks=2, spent_s=10.0,
+                                                                  synopsis="old")})
         empty = verify.Selection(base=BASE, files=[], reasons={})
         code, out, _err = self.run_with(self.outcome({}, selection=empty))
         self.assertEqual((code, out), (0, ""))
-        session = self.sessions()[SESSION]
+        session = self.session()
         self.assertEqual(session["blocks"], 2)
         self.assertEqual(session["synopsis"], "old")
+
+    def test_state_keys_by_host(self):
+        # D4: the same session id under two hosts is two sessions, keyed `<host>:<session id>`.
+        failed = verify.NodeResult("FAIL", None, [], [
+            ("web-extension.lint", verify.Outcome("fail", code=1), "cd . && npm run lint")])
+        blocked = self.outcome({"web-extension": failed},
+                               problems=[("web-extension", "web-extension.lint", "fail")])
+        with mock.patch.object(verify, "run_gate", return_value=blocked):
+            code, out, _err = self.call_hook(self.ctx)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["decision"], "block")
+        with mock.patch.object(verify, "run_gate", return_value=self.outcome({})):
+            code, out, _err = self.call_hook(
+                self.ctx, ["--hook", "opencode", "--dispatched", "--deadline", "10000"])
+        self.assertEqual((code, out), (0, ""))
+        sessions = self.sessions()
+        self.assertEqual(sorted(sessions), ["claude:" + SESSION, "opencode:" + SESSION])
+        self.assertEqual(sessions["claude:" + SESSION]["blocks"], 1)
+        self.assertEqual(sessions["opencode:" + SESSION]["blocks"], 0)
 
 
 if __name__ == "__main__":
