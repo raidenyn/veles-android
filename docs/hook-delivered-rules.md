@@ -16,9 +16,15 @@ OpenCode runs it from the local plugin `scripts/opencode-hooked-rules/`.
   - `commands`: Python regexes (`re.search`) for a workflow command that succeeded;
   - `gates`: Python regexes for a shell command about to run;
   - `stops`: predicate names from the engine's registry, today only
-    `"superspec-finalize-pending"`; any other name is an error.
+    `"superspec-finalize-pending"`; any other name is an error;
+  - `requires`: proof names from the engine's registry, today only `"branch-pass"`; valid only with
+    a non-empty `gates`, and an unknown name is an error;
+  - `exempt`: Python regexes for gated command segments that need no proof; valid only with a
+    non-empty `requires`.
 - An omitted list is empty, but a rule needs at least one entry in `skills`, `commands`, `gates` or
-  `stops`. Duplicate keys, unknown keys, `[]` and invalid regexes are errors.
+  `stops`. Neither `requires` nor `exempt` is a trigger list, and `requires` without `gates` or
+  `exempt` without `requires` is an error. Duplicate keys, unknown keys, `[]` and invalid regexes
+  are errors.
 - The body is at most 4,096 UTF-8 bytes and must hold text: an empty or blank body is an error.
 - The rule is a regular file of at most 64 KiB; a symlink is an error.
 - A gate regex runs against the raw command text, so it also matches words inside a quoted string.
@@ -65,6 +71,9 @@ stale block. Each rule adds one line to the root, which is capped at 40 lines; s
 
 ## Gates and pending entries
 
+This section describes a rule without `requires`; a rule with `requires` follows
+[Proof-requiring gates](#proof-requiring-gates) instead.
+
 - A gated command whose rule this context has not received is denied once, with the rule text as the
   reason, and the rule is recorded as pending with the matched pattern.
 - Read the text and re-run the command: a re-run matching a pending pattern confirms the rule and
@@ -75,6 +84,49 @@ stale block. Each rule adds one line to the root, which is capped at 40 lines; s
   the second); a moment plus a gate in one parallel batch passed the gate on both hosts in the final
   verification (the moment was processed first on Claude Code; OpenCode had denied it in an earlier
   observation, so the order of the two hooks is not guaranteed).
+
+## Proof-requiring gates
+
+- **Segments.** For a rule with `requires`, the engine splits the call string at `;`, `&`, `|` and
+  newlines — the same boundary the gate regexes stop at — and matches `gates` and `exempt` per
+  segment. The proofs are required when any segment matches a gate and no `exempt` pattern. So
+  `git push origin feat && git branch -d tmp` is not exempt (the `-d` is in another segment), and a
+  deletion push such as `git push origin --delete feat` is. Commands reached through variables,
+  aliases, scripts or quoted operators stay out of scope, as for the other gates.
+- **Registry.** `PROOF_PREDICATES` in `scripts/agent_rules.py` holds the proofs; today only
+  `branch-pass`, bound to `branch_pass.check` in `scripts/branch_pass.py`. It checks the record a
+  complete `python3 -I scripts/verify.py --branch` run writes for HEAD and the merge base with
+  `origin/master` (`docs/verify.md`). Adding a proof is one registry entry, a callable
+  `(cwd, deadline, now)` with its test; requiring it is a rule edit, with no engine change.
+- **Outcome.** With every proof holding, the call passes and the rule is not denied for delivery:
+  the proof is stronger than delivery. When a proof fails, raises or reaches its deadline, the call
+  is denied with the rule text followed by each failing proof's message, and the rule is marked
+  delivered in that context, so its moments do not re-deliver. The denial repeats on every matching
+  call until the proof holds: there is no deny-once for a proof rule, and a matching pattern does
+  not confirm one.
+- **Deadline.** The proofs share a deadline 3.5 seconds after the engine starts handling the event,
+  a 1.5-second margin under the hosts' 5-second limit. `branch_pass.check` gives each git call the
+  time left; a proof that reaches the deadline denies with "proof timed out".
+- **Read the rule:** `.agents/hooked-rules/repo-pre-push-checks.md` is the one rule that uses this:
+  `git push` is denied until a complete branch pass exists for HEAD, with ref-deletion pushes
+  exempt.
+
+Its fail-open limits, each accepted:
+
+- *Host timeout*: if the host's 5-second limit fires before the proofs answer (for example a slow
+  checkout discovery before they start), the engine is killed and the call passes: a proof that
+  cannot finish is not shown.
+- *Version skew*: Claude Code runs the engine from `$CLAUDE_PROJECT_DIR` and the OpenCode plugin
+  from its own checkout, while the rules come from the event's checkout. An old engine that meets a
+  rule with `requires` gets a rule parse error and fails open, so the push passes; a new engine with
+  an old rule keeps deny-once delivery and requires no proof.
+- *Plain-terminal pushes*: there is no git `pre-push` hook, so only an agent's `execute.before` gate
+  is checked; a push from a plain terminal is not gated.
+- *Coarse matcher*: the gate regex matches `git`, anything up to a shell operator, then `push`, so a
+  command string that merely mentions those words is gated too — a commit message containing
+  `git push`, `git stash push`, or a quoted read-only command. A branch pass lets it through; when
+  the message itself contains the literal command, use `git commit -F <file>`, and for a stash use
+  `git stash` without the `push` argument.
 
 ## Stop gate
 
