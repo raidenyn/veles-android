@@ -139,7 +139,6 @@ jobs:
     if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' }}
     uses: ./.github/workflows/build-supply-chain.yml
     with:
-      commit-sha: ${{ github.sha }}
       artifact-name: supply-chain-reports
 
   build-android:
@@ -253,7 +252,6 @@ jobs:
     if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.plan.outputs.web-extension == 'RELEASE' }}
     uses: ./.github/workflows/build-web-extension.yml
     with:
-      commit-sha: ${{ github.sha }}
       artifact-name: web-extension
       version: ${{ needs.plan.outputs.web-extension-version }}
 

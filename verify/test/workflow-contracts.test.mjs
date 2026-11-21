@@ -274,9 +274,15 @@ function assertNoSecretRunInterpolation(source, name) {
   }
 }
 
-function assertReusableWorkflow(source, name) {
+function assertReusableWorkflow(source, name, { sourceCommit = true } = {}) {
   assert.match(source, /workflow_call:/, `${name} must be reusable`);
-  assert.match(source, /commit-sha:[\s\S]*?required:\s*true/, `${name} must require the source commit`);
+  if (sourceCommit) {
+    assert.match(source, /commit-sha:[\s\S]*?required:\s*true/, `${name} must require the source commit`);
+  } else {
+    // These build the commit of the workflow run itself: an input-supplied ref is what
+    // CodeQL reports as a privileged checkout of untrusted code (actions/cache-poisoning).
+    assert.doesNotMatch(source, /commit-sha:/, `${name} must not take a caller-supplied commit`);
+  }
   assert.match(source, /artifact-name:[\s\S]*?required:\s*true/, `${name} must require an artifact name`);
   const lines = source.split('\n');
   const permissions = lines.flatMap((line, index) => {
@@ -348,14 +354,14 @@ test('Android workflow builds one release variant and stages its APK, mapping, a
 
 test('web extension workflow packages the extension after its ordinary checks', async () => {
   const source = await workflow('build-web-extension.yml');
-  assertReusableWorkflow(source, 'build-web-extension.yml');
+  assertReusableWorkflow(source, 'build-web-extension.yml', { sourceCommit: false });
   assert.match(source, /actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38[\s\S]*?node-version:\s*['"]26\.8\.1['"]/, 'Web workflow must use Node 26.8.1');
   assert.match(source, /npm ci --ignore-scripts/, 'Web workflow must disable install scripts');
   assert.match(source, /npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:bundle && npm run package/, 'Web workflow must retain its format/lint/typecheck/test/bundle checks and package');
   assert.match(source, /version:\s*\n\s*required:\s*false\s*\n\s*type:\s*string\s*\n\s*default:\s*''/, 'Web workflow must take an optional string version input defaulting to empty');
   assert.match(source, /npm run package\n\s*working-directory: web-extension\n\s*env:\n\s*VELES_EXTENSION_VERSION:\s*\$\{\{ inputs\.version \}\}/, 'Web workflow must map the version input to VELES_EXTENSION_VERSION via env');
   assert.doesNotMatch(source, /run:[^\n]*inputs\.version/, 'Web workflow must not interpolate the version input into a shell command');
-  assert.match(source, /actions\/checkout@[0-9a-f]{40}[^\n]*\n\s*with:\n\s*ref:[^\n]*\n\s*fetch-depth:\s*0/, 'Web workflow must fetch full history so git describe sees component tags');
+  assert.match(source, /actions\/checkout@[0-9a-f]{40}[^\n]*\n\s*with:\n\s*fetch-depth:\s*0/, 'Web workflow must fetch full history so git describe sees component tags');
   assert.doesNotMatch(source, /verify\/verify-web\.sh/, 'Web workflow must not run the reference verifier automatically');
   assert.match(source, /artifact-name:[\s\S]*?default:\s*web-extension/, 'Web artifact name must default to the neutral web-extension');
   assertExactUploadPaths(source, 'build-web-extension.yml', [
@@ -432,7 +438,7 @@ test('Rust workflow packages rust-jni-wasm without a reference rebuild', async (
 
 test('supply-chain workflow enforces reports before uploading exactly six SBOMs', async () => {
   const source = await workflow('build-supply-chain.yml');
-  assertReusableWorkflow(source, 'build-supply-chain.yml');
+  assertReusableWorkflow(source, 'build-supply-chain.yml', { sourceCommit: false });
   assert.match(source, /actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38[\s\S]*?node-version:\s*['"]26\.8\.1['"]/, 'Supply-chain workflow must use Node 26.8.1');
   // A workflow callable with an arbitrary commit SHA must not read a cache that
   // unprivileged runs can write (CodeQL actions/cache-poisoning).
@@ -1878,7 +1884,11 @@ function assertPublishReleaseCaller(source) {
     for (const key of jobs[job]) {
       assert.ok(['uses', 'with', 'needs', 'if'].includes(key), `${job} must contain only caller fields; found "${key}"`);
     }
-    assert.match(block, /^      commit-sha: \$\{\{ github\.sha \}\}$/m, `${job} must build this run's master commit`);
+    if (['build-supply-chain.yml', 'build-web-extension.yml'].includes(PUBLISH_CALLERS[job])) {
+      assert.doesNotMatch(block, /^      commit-sha:/m, `${job} must build the run's own commit`);
+    } else {
+      assert.match(block, /^      commit-sha: \$\{\{ github\.sha \}\}$/m, `${job} must build this run's master commit`);
+    }
     assert.doesNotMatch(block, /github\.event\.pull_request|github\.head_ref|^    secrets:/m, `${job} must not accept another source or secrets`);
     assert.equal((source.match(new RegExp(`uses: \\./\\.github/workflows/${escapeRegexp(PUBLISH_CALLERS[job])}`, 'g')) ?? []).length, 1, `${name} must build ${PUBLISH_CALLERS[job]} exactly once`);
   }
@@ -2857,7 +2867,11 @@ function assertReleaseBuildCaller(source) {
     assert.match(block, new RegExp(`^      artifact-name: ${escapeRegexp(artifact)}$`, 'm'), `${job} must pass the neutral artifact name ${artifact}`);
     assert.doesNotMatch(block, /^      (?:version|version-tag):/m, `${job} must not inject a release version`);
     const condition = normalizedCondition(block);
-    if (label) {
+    if (['build-supply-chain.yml', 'build-web-extension.yml'].includes(file)) {
+      // The run's own commit is checked out: an input-supplied ref is a privileged
+      // checkout of untrusted code (CodeQL actions/cache-poisoning).
+      assert.doesNotMatch(block, /^      commit-sha:/m, `${job} must build the run's own commit`);
+    } else if (label) {
       assert.equal(condition, labelOrChangeCondition(job, label), `${job} must build by the ${label} label on PRs or by change on master`);
       assert.match(block, /^      commit-sha: \$\{\{ github\.event_name == 'pull_request' && github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}$/m, `${job} must build the PR head or the pushed commit`);
     } else {

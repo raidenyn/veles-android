@@ -158,7 +158,6 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.supply-chain == 'true' }}
     uses: ./.github/workflows/build-supply-chain.yml
     with:
-      commit-sha: ${{ github.sha }}
       artifact-name: supply-chain-reports
 
   tooling:

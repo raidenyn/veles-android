@@ -88,7 +88,6 @@ jobs:
       )
     uses: ./.github/workflows/build-web-extension.yml
     with:
-      commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       artifact-name: web-extension
 
   rust:
