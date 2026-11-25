@@ -17,6 +17,6 @@
 
 ## 4. Live runs
 
-- [ ] 4.1 OpenCode: a failing edit, a tick while a check fails, a blocked turn end, a passing then a no-change turn end.
-- [ ] 4.2 Claude Code: the same sequence.
-- [ ] 4.3 Hook-time totals and no-change turn-end timings, before and after; a push of this branch.
+- [x] 4.1 OpenCode: a failing edit, a tick while a check fails, a blocked turn end, a passing then a no-change turn end.
+- [x] 4.2 Claude Code: the same sequence.
+- [x] 4.3 Hook-time totals and no-change turn-end timings, before and after; a push of this branch.

@@ -6,9 +6,10 @@ Run the affected-node verifier at the end of an agent turn, in the active checko
 ## Requirements
 
 ### Requirement: The hook runs the active checkout's verifier
-The Claude Code `Stop` hook command `python3 -I "$CLAUDE_PROJECT_DIR/scripts/verify.py" --hook claude || true`
-and its OpenCode counterpart `python3 -I <plugin checkout>/scripts/verify.py --hook opencode`, run by the
-OpenCode plugin, SHALL act only as a launcher and watchdog. It MUST read the event from stdin, resolve the checkout of the event's
+`python3 -I scripts/verify.py --hook claude` and `--hook opencode` SHALL act only as a launcher and watchdog. Neither
+host wires them: turn-end verification runs from the agent harness verify gate, whose command
+`python3 -I scripts/verify_gate.py` execs the plain task gate at a ticked task and at every turn end and lints the one
+edited file after an edit. The `--hook` mode stays until the hooked-rules engine moves to the hook runtime. It MUST read the event from stdin, resolve the checkout of the event's
 `cwd` with `agent_rules.discover_checkout` semantics and `realpath`, and treat it as a checkout of this repository
 only when its git common directory equals the launcher's. It MUST then run the task gate in a child process started
 from that checkout's own `scripts/verify.py` with the same `--hook` host, so the code, component map, table, state and logs are always the
@@ -176,43 +177,3 @@ behaviour changed.
 #### Scenario: Acceptance recorded
 - **WHEN** the pull request is opened
 - **THEN** its description lists each acceptance run, what it ran on, and the measured times
-
-### Requirement: OpenCode turn-end verification
-The OpenCode plugin (`scripts/opencode-hooked-rules/`) SHALL, at a root session's `session.execution.succeeded`,
-start the verifier hook `python3 -I <plugin checkout>/scripts/verify.py --hook opencode`, with
-`{"session_id": <session id>, "cwd": <session directory>}` on stdin and a budget of 1,800,000 ms, in a per-session
-slot separate from the engine's `stop` call. The engine's `stop` handling MUST stay as the `hooked-rule-delivery`
-Host adapters requirement defines it, at every turn end, whether or not a verifier run is in flight. A verifier
-block MUST be sent as its own synthetic prompt with `resume: true`; a verifier `systemMessage` as a synthetic
-message with `resume: false`; empty, malformed or oversized output MUST be ignored. While a session's verifier run
-is in flight, a later turn end MUST start no second run, and the in-flight run MUST still resume the session when it
-finishes, even if the user sent a new message meanwhile. A child session's turn end and an `interrupted` or `failed`
-execution MUST start no run. On budget expiry or plugin dispose the plugin MUST send SIGTERM to the launcher and,
-after a 5-second grace, SIGKILL; on SIGTERM the launcher MUST stop its dispatched child and exit 0. Before the plugin
-change ships, a spike on a real OpenCode session MUST record what a `resume: true` synthetic prompt does while the
-session is busy with a new request; if OpenCode rejects it, the plugin MUST keep the block and send it once at the
-session's next turn end, and `docs/opencode-rules.md` MUST state the observed behaviour.
-
-#### Scenario: Verifier blocks
-- **WHEN** a fake verifier child prints a block and the engine passes
-- **THEN** the plugin sends one `resume: true` synthetic prompt holding the verifier text
-
-#### Scenario: Engine and verifier both block
-- **WHEN** the engine blocks at a turn end and the verifier later blocks too
-- **THEN** the engine's resume is sent within its 5-second budget, and the verifier's is sent separately when its run ends
-
-#### Scenario: Notice
-- **WHEN** the verifier prints a `systemMessage`
-- **THEN** the plugin sends a `resume: false` synthetic message with that text
-
-#### Scenario: Budget expiry and dispose
-- **WHEN** the verifier launcher outlives the budget, or the plugin is disposed while it runs
-- **THEN** the plugin sends SIGTERM, then SIGKILL after the grace, and sends no message; a Python test shows the launcher stops its dispatched child on SIGTERM
-
-#### Scenario: Turn end while the verifier runs
-- **WHEN** the user sends a new message while the verifier runs, and a second turn end arrives before it finishes
-- **THEN** the second turn end sends the engine's `stop` event but starts no verifier run, and the first run still resumes the session with its block
-
-#### Scenario: Tested without an OpenCode turn
-- **WHEN** the plugin's unit tests run
-- **THEN** they drive these scenarios through the injected engine, spawn and timer seams, with no sleep and no OpenCode process
