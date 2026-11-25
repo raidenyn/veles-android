@@ -174,8 +174,8 @@ Its fail-open limits, each accepted:
   Code's `Stop` has no `void`. OpenCode sends its `void` when the synthetic prompt fails, so there the
   same phase can remind again.
 - **Claude Code wiring:** the engine runs from the `Stop` hook in `.claude/settings.json`, with the
-  same command and 5-second timeout as the other hooks. `SubagentStop` is never wired, so a subagent's
-  turn end is not a stop moment.
+  same command and 5-second timeout as the other hooks. `SubagentStop` holds only the agent harness
+  hook runtime entry, never the engine, so a subagent's turn end is not a stop moment.
 - **OpenCode:** the plugin sends `stop` for a root session's `session.execution.succeeded` only; a
   child session, `session.execution.failed` and `session.execution.interrupted` are not stop moments.
   The event name is that of the verified OpenCode 2.3.2 and may change in a later version. A `block`

@@ -1,6 +1,7 @@
 name: check-tooling
 
-# Tooling node of the CI component tree (ci.yml -> `tooling / unit-tests`): the workflow contracts (Node) and
+# Tooling node of the CI component tree (ci.yml -> `tooling / unit-tests`): the workflow contracts (Node), the
+# agent harness tools' `check` (the copied files against their lock, and `.agents/harness.json`), and
 # the scripts/ tests (commit validator, component map, release planner) against the pinned git-cliff. The
 # Python build-contract suites are owned by `native-host / build-contract` and `installer / scripts-tests`;
 # any workflow edit is a global path, so those nodes run too.
@@ -40,6 +41,10 @@ jobs:
         run: node --test scripts/check-mac-comparisons.test.mjs
       - name: Test the OpenCode hooked-rules plugin
         run: node --test scripts/opencode-hooked-rules/index.test.mjs
+      - name: Check the agent harness hook runtime copy and settings
+        run: node .agents/harness/hook-runtime/cli.mjs check
+      - name: Check the agent harness verify gate copy and settings
+        run: node .agents/harness/verify-gate/cli.mjs check
       - name: Assert system Python version
         run: python3 --version && python3 -c 'import sys; assert sys.version_info >= (3, 8), sys.version'
       - run: ./gradlew scriptsTest

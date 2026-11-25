@@ -32,29 +32,12 @@ agent-file check rejects an unpinned or unbounded entry.
   still starts; scoped rules are simply not delivered, and the root `AGENTS.md` pointer plus each node's
   listed rule files keep them discoverable. This degraded state is supported, not a repository error.
 
-## The verify hook
+## The verify gate
 
-At a root session's turn end (`session.execution.succeeded`), the plugin starts
-`python3 -I <plugin checkout>/scripts/verify.py --hook opencode` with
-`{"session_id": <session id>, "cwd": <session directory>}` on stdin and a budget of 1,800,000 ms. The
-verifier runs in its own per-session slot, independent of the engine's `stop` call: the engine's stop
-gate keeps its 5-second budget and its own resume, at every turn end, and neither waits for the
-other. The engine stop is unchanged.
-
-A verifier block is sent as its own `synthetic({resume: true})`; a `systemMessage` as a
-`synthetic({resume: false})`; empty, malformed or oversized output is ignored. A turn end that
-arrives while the verifier slot is busy starts no second run, and the running one still resumes the
-session when it finishes, even if the user sent a new message meanwhile. On budget expiry or plugin
-dispose the plugin sends SIGTERM to the launcher; on SIGTERM the launcher stops its dispatched child
-and exits 0, and if the launcher has not exited the plugin sends SIGKILL after a 5-second grace. An
-expired or disposed run sends no message to the session. No fallback queue was added.
-
-Spike S1 (OpenCode 2.3.2) observed interleaved delivery: a `resume: true` synthetic admitted while a
-user turn runs is not rejected and not parked. OpenCode admits it as a `steer` inbox item and
-delivers it at the next step boundary of that execution, which then starts another step. In the runs
-where it landed before the turn's final step, the model answered the block instead of the user's
-request; when it landed during the final step, the user's answer was produced first and the turn
-was extended. That is the owner's accepted trade-off; the block is not lost.
+The plugin runs no verifier. The turn-end verify runs from the agent harness hook runtime's own
+plugin, `./.agents/harness/hook-runtime/opencode` in `opencode.json`, which loads the verify gate; see
+"The verify gate" in `docs/verify.md`. Restart OpenCode after updating either tool: it loads plugins
+and handlers once per process.
 
 ## Untrusted checkouts
 
