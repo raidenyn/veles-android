@@ -35,6 +35,9 @@ SHELLS = {"sh": "sh", "dash": "sh", "bash": "bash", "zsh": "zsh"}
 NPM_PACKAGES = ("web-extension/", "native-bridge/")
 NPM_EXCLUDED = ("native-bridge/host/", "native-bridge/installer/")
 NPM_SUFFIXES = (".ts", ".tsx", ".js", ".mjs", ".cjs")
+JS_SUFFIXES = (".js", ".mjs", ".cjs")
+# Every suffix a single-file check lints without a package linter.
+EDIT_SUFFIXES = (".py", ".json", ".sh", ".rs") + JS_SUFFIXES
 
 
 def _syntax(compile_one):
@@ -56,6 +59,17 @@ def _python(path):
 def _json(path):
     with open(path, "rb") as handle:
         json.loads(handle.read().decode("utf-8-sig"))  # a UTF-8 BOM is valid JSON input
+
+
+IN_PROCESS_CHECKS = {".py": _syntax(_python), ".json": _syntax(_json)}
+
+
+def edit_globs():
+    """The `verify-gate.editFiles` globs matching every kind `edit_checks` lints."""
+    globs = ["**/*" + suffix for suffix in EDIT_SUFFIXES]
+    for package in NPM_PACKAGES:
+        globs.extend(package + "**/*" + suffix for suffix in NPM_SUFFIXES if suffix not in EDIT_SUFFIXES)
+    return globs
 
 
 def shell_of(path):
@@ -98,23 +112,22 @@ def edit_checks(rel):
     commands, in_process = [], []
     if vendored(rel):
         return commands, in_process
+    suffix = os.path.splitext(rel)[1]
     package = _npm_package(rel)
-    if package and rel.endswith(NPM_SUFFIXES):
+    if package and suffix in NPM_SUFFIXES:
         bin_dir = os.path.join(REPO, package, "node_modules", ".bin")
         inner = rel[len(package):]
         for tool, args in (("eslint", [inner]), ("prettier", ["--check", inner])):
             commands.append((os.path.join(REPO, package), [os.path.join(bin_dir, tool)] + args))
-    elif rel.endswith((".js", ".mjs", ".cjs")):
+    elif suffix in JS_SUFFIXES:
         commands.append((REPO, ["node", "--check", rel]))
-    elif rel.endswith(".py"):
-        in_process.append(_syntax(_python))
-    elif rel.endswith(".json"):
-        in_process.append(_syntax(_json))
-    elif rel.endswith(".sh"):
+    elif suffix in IN_PROCESS_CHECKS:
+        in_process.append(IN_PROCESS_CHECKS[suffix])
+    elif suffix == ".sh":
         shell = shell_of(os.path.join(REPO, rel))
         if shell is not None:
             commands.append((REPO, [shell, "-n", rel]))
-    elif rel.endswith(".rs"):
+    elif suffix == ".rs":
         commands.append((REPO, ["rustfmt", "--check", "--edition", "2024", rel]))
     return commands, in_process
 
@@ -126,6 +139,7 @@ def lint(rel):
         return 0  # a deleted or renamed file has nothing to lint
     commands, in_process = edit_checks(rel)
     status = 0
+    notes = []
     for check in in_process:
         for line in check(path):
             print(line)
@@ -133,15 +147,19 @@ def lint(rel):
     for cwd, argv in commands:
         if os.path.isabs(argv[0]) and not os.path.exists(argv[0]):
             # Dependencies not installed: the edit lint cannot run, the task gate reports it.
-            print("verify_gate: %s is missing; skipped the edit lint of %s" % (argv[0], rel), file=sys.stderr)
+            notes.append("verify_gate: %s is missing; skipped the edit lint of %s" % (argv[0], rel))
             continue
         try:
             result = subprocess.run(argv, cwd=cwd)
         except OSError as error:
-            print("verify_gate: cannot run %s: %s" % (argv[0], error), file=sys.stderr)
+            notes.append("verify_gate: cannot run %s: %s" % (argv[0], error))
             continue
         if result.returncode != 0:
             status = 1
+    if status:
+        # A pass prints nothing, because the gate adds a passing edit's output to the model.
+        for note in notes:
+            print(note, file=sys.stderr)
     return status
 
 

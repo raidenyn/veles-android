@@ -226,14 +226,23 @@ event after the hooked-rules engine entry, and `opencode.json` loads
 `./.agents/harness/hook-runtime/opencode` next to `scripts/opencode-hooked-rules`. Both are copied
 tools: never edit them; update them with the skills' `update`, and CI runs both tools' `check`.
 
+The hook runtime follows a Claude Code session that moves into another worktree of the same
+repository: the event uses that worktree's own copy of the tools and `.agents/harness.json`. A turn
+end there therefore runs that worktree's `scripts/verify_gate.py` and can block. A separate clone,
+another repository, or a linked worktree without the copied runtime is left alone, as before.
+
 Its one command, `verify-gate.command` in `.agents/harness.json`, is
 `python3 -I scripts/verify_gate.py`:
 
-- **A file edit** (`VERIFY_TRIGGER=edit`) lints `VERIFY_FILE` alone: Python and JSON syntax, `-n` of
-  the shell its shebang names (`sh`, `bash` or `zsh`; another interpreter is skipped), `node --check`,
-  `rustfmt --check`, and the package's own `eslint` and `prettier --check` under `web-extension/` and
-  `native-bridge/` (skipped when its `node_modules` is missing). Kotlin, Markdown, `vendor/` trees and
-  other files have no single-file lint; the next full run covers them.
+- **A file edit** (`VERIFY_TRIGGER=edit`) runs only when the edited file matches
+  `verify-gate.editFiles`: Python and JSON syntax, `-n` of the shell its shebang names (`sh`, `bash`
+  or `zsh`; another interpreter is skipped), `node --check`, `rustfmt --check`, and the package's own
+  `eslint` and `prettier --check` under `web-extension/` and `native-bridge/` (skipped when its
+  `node_modules` is missing). An edit of Kotlin, Markdown or any other file in no glob starts no
+  verify process; the next full run covers it. The globs list the kinds `edit_checks` lints, and
+  `scripts/tests/test_verify_gate.py` fails when the two drift apart. A passing edit prints nothing:
+  the skip note for a missing package linter appears only on a failure, because the gate now adds a
+  passing edit's output to the model.
 - **A ticked task** in `openspec/changes/*/tasks.md` and **every turn end** run the task gate of
   `scripts/verify.py` in the same process. With uncommitted changes the run reads the remembered passes,
   as `--hook` mode does, so a node whose inputs are unchanged since it passed is `PASS (remembered)`; it
@@ -361,5 +370,5 @@ Accepted at the design review; each has a workaround.
     deadline, holding the lock. The next run's orphan cleanup reaps it; stop again after it ends.
 
 To sidestep the first four, run `python3 -I scripts/verify.py --branch`, or delete `build/verify/`
-and the generated output (`web-extension/rust-wasm/pkg`, `web-extension/dist`, `build/rust/host-jni`)
-and re-run.
+ and the generated output (`web-extension/rust-wasm/pkg`, `web-extension/dist`, `build/rust/host-jni`)
+ and re-run.

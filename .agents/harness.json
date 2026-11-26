@@ -4,6 +4,19 @@
     "command": ["python3", "-I", "scripts/verify_gate.py"],
     "base": "origin/master",
     "taskFiles": ["openspec/changes/*/tasks.md"],
+    "editFiles": [
+      "**/*.py",
+      "**/*.json",
+      "**/*.sh",
+      "**/*.rs",
+      "**/*.js",
+      "**/*.mjs",
+      "**/*.cjs",
+      "web-extension/**/*.ts",
+      "web-extension/**/*.tsx",
+      "native-bridge/**/*.ts",
+      "native-bridge/**/*.tsx"
+    ],
     "timeoutSeconds": 1740
   }
 }
