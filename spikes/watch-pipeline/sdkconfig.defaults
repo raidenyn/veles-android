@@ -1,0 +1,20 @@
+# Rust std needs more stack than C defaults; serde_json + BLE in the main task.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
+CONFIG_FREERTOS_IDLE_TASK_STACKSIZE=4096
+CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=4096
+
+# T-Watch-S3: 16 MB flash; one large app partition is plenty for the spike.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
+# Console (logs + test-hook commands) on the built-in USB-Serial/JTAG, the
+# interface the home PC's rfc2217 bridge exposes to the VPS.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# BLE central via NimBLE (esp32-nimble), as the Veles RFC's Appendix A sketches.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_BLE_ENABLED=y
+CONFIG_BT_BLUEDROID_ENABLED=n
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=7000
