@@ -2,8 +2,15 @@
 """The verify gate's one command (`verify-gate.command` in `.agents/harness.json`).
 
 The gate (`.agents/harness/verify-gate/`) sets VERIFY_TRIGGER. On `edit` this lints the one file in
-VERIFY_FILE, where it is a lintable file; every other trigger (`task`, `turn-end`, a run by hand) execs
-the task gate, `python3 -I scripts/verify.py`, which also writes the record the push gate checks.
+VERIFY_FILE, where it is a lintable file. Every other trigger (`task`, `turn-end`, a run by hand) runs
+the task gate of `scripts/verify.py` in this process:
+
+- with uncommitted changes it reads the remembered passes, as the earlier turn-end hook did, so a node
+  whose inputs are unchanged since it passed is `PASS (remembered)`;
+- on a clean tree it is the plain manual run, which never reads them and writes the branch pass the
+  push gate checks;
+- while another run holds `build/verify/lock` it waits for that run, then runs (its records make the
+  remembered run cheap), instead of failing.
 
 Stdlib only; Python 3.8 compatible. See docs/verify.md, "The verify gate".
 """
@@ -13,7 +20,13 @@ import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VERIFY = os.path.join(REPO, "scripts", "verify.py")
+SCRIPTS = os.path.join(REPO, "scripts")
+HARNESS_JSON = os.path.join(REPO, ".agents", "harness.json")
+# How long a run waits for a contended lock: the gate's own timeout less this margin, so the wait
+# ends (and reports the contention) before the gate kills the command.
+WAIT_MARGIN_SECONDS = 60
+DEFAULT_TIMEOUT_SECONDS = 900  # the gate's default `timeoutSeconds`
+POLL_SECONDS = 2
 # npm packages whose own eslint and prettier check their files.
 NPM_PACKAGES = ("web-extension/", "native-bridge/")
 NPM_EXCLUDED = ("native-bridge/host/", "native-bridge/installer/")
@@ -100,14 +113,81 @@ def lint(rel):
     return status
 
 
+def tree_clean(repo):
+    """True when `git status --porcelain` is empty: nothing a branch pass would reject."""
+    result = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=normal"],
+        cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0 and not result.stdout.strip()
+
+
+def wait_limit_seconds(path=HARNESS_JSON):
+    """The gate's `timeoutSeconds` less `WAIT_MARGIN_SECONDS`; never negative."""
+    try:
+        with open(path) as handle:
+            timeout = json.load(handle)["verify-gate"].get("timeoutSeconds", DEFAULT_TIMEOUT_SECONDS)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        timeout = DEFAULT_TIMEOUT_SECONDS
+    if not isinstance(timeout, (int, float)) or isinstance(timeout, bool):
+        timeout = DEFAULT_TIMEOUT_SECONDS
+    return max(0, timeout - WAIT_MARGIN_SECONDS)
+
+
+def full_run(verify, ctx, use_passes, wait_limit):
+    """The task gate, as `verify.main` runs it, with `use_passes` and a wait on contention.
+
+    Returns the exit code `verify.py` would: 0, 1 for a `FAIL` or timeout, 2 for a selection error,
+    an unexpected `NOT RUN` or a contention that outlasted `wait_limit`.
+    """
+    try:
+        cmap = verify.components.load_map(os.path.join(ctx.repo, ".github", "components.json"))
+        table = verify.load_table(os.path.join(ctx.repo, "scripts", "verify-commands.json"), cmap)
+    except (verify.TableError, OSError, ValueError) as error:
+        ctx.log("verify: %s" % error)
+        return 2
+    waited_until = ctx.clock.now() + wait_limit
+    while True:
+        result = verify.run_gate("task", None, ctx, table, cmap, use_passes=use_passes)
+        if not result.contended:
+            break
+        if ctx.clock.now() >= waited_until:
+            for error in result.errors:
+                ctx.log("verify: %s" % error)
+            return 2
+        ctx.wait.sleep(POLL_SECONDS)
+    if result.errors:
+        for line in verify.render(result.results, result.errors).splitlines():
+            ctx.log(line)
+        return verify.exit_code(result.results, result.errors)
+    selection = result.selection
+    if selection is not None and not selection.files:
+        ctx.log("verify: nothing changed against %s" % selection.base)
+        return 0
+    if selection is not None and selection.only_unowned:
+        ctx.log("verify: only unowned paths changed (%s)" % ", ".join(selection.files))
+        return 0
+    for line in verify.render(result.results, result.errors).splitlines():
+        ctx.log(line)
+    return verify.exit_code(result.results, result.errors)
+
+
+def load_verify():
+    if SCRIPTS not in sys.path:
+        sys.path.insert(0, SCRIPTS)
+    import verify  # noqa: E402  (scripts/verify.py)
+
+    return verify
+
+
 def main(env=None):
     env = os.environ if env is None else env
     if env.get("VERIFY_TRIGGER") == "edit":
         rel = env.get("VERIFY_FILE", "")
         return lint(rel) if rel else 0
-    sys.stdout.flush()
-    os.execv(sys.executable, [sys.executable, "-I", VERIFY])
-    return 2  # not reached
+    verify = load_verify()
+    ctx = verify.real_context()
+    return full_run(verify, ctx, use_passes=not tree_clean(ctx.repo), wait_limit=wait_limit_seconds())
 
 
 if __name__ == "__main__":
