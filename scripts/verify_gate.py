@@ -6,11 +6,12 @@ VERIFY_FILE, where it is a lintable file. Every other trigger (`task`, `turn-end
 the task gate of `scripts/verify.py` in this process:
 
 - with uncommitted changes it reads the remembered passes, as the earlier turn-end hook did, so a node
-  whose inputs are unchanged since it passed is `PASS (remembered)`;
-- on a clean tree it is the plain manual run, which never reads them and writes the branch pass the
-  push gate checks;
-- while another run holds `build/verify/lock` it waits for that run, then runs (its records make the
-  remembered run cheap), instead of failing.
+  whose inputs are unchanged since it passed is `PASS (remembered)`, under a deadline that stops it
+  cleanly before the gate's timeout;
+- on a clean tree it passes at once when the branch pass already proves HEAD; otherwise it is the plain
+  manual run, which never reads remembered passes and writes the branch pass the push gate checks;
+- while another run holds `build/verify/lock` it waits for that run, for at most half of its budget,
+  then runs (the other run's records make that cheap), instead of failing.
 
 Stdlib only; Python 3.8 compatible. See docs/verify.md, "The verify gate".
 """
@@ -18,15 +19,18 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(REPO, "scripts")
 HARNESS_JSON = os.path.join(REPO, ".agents", "harness.json")
-# How long a run waits for a contended lock: the gate's own timeout less this margin, so the wait
-# ends (and reports the contention) before the gate kills the command.
+# The run's budget is the gate's `timeoutSeconds` less this margin, so it ends before the gate kills
+# the command. At most half of the budget goes to waiting for a held lock; the rest is the run's.
 WAIT_MARGIN_SECONDS = 60
 DEFAULT_TIMEOUT_SECONDS = 900  # the gate's default `timeoutSeconds`
 POLL_SECONDS = 2
+PROOF_CHECK_SECONDS = 30  # git budget for reading an existing branch pass
+SHELLS = {"sh": "sh", "dash": "sh", "bash": "bash", "zsh": "zsh"}
 # npm packages whose own eslint and prettier check their files.
 NPM_PACKAGES = ("web-extension/", "native-bridge/")
 NPM_EXCLUDED = ("native-bridge/host/", "native-bridge/installer/")
@@ -51,7 +55,31 @@ def _python(path):
 
 def _json(path):
     with open(path, "rb") as handle:
-        json.loads(handle.read().decode("utf-8"))
+        json.loads(handle.read().decode("utf-8-sig"))  # a UTF-8 BOM is valid JSON input
+
+
+def shell_of(path):
+    """The shell whose `-n` checks this script: from its shebang, `sh` without one, None if unknown."""
+    try:
+        with open(path, "rb") as handle:
+            first = handle.readline().decode("utf-8", "replace").strip()
+    except OSError:
+        return None
+    if not first.startswith("#!"):
+        return "sh"
+    words = first[2:].split()
+    if not words:
+        return "sh"
+    name = os.path.basename(words[0])
+    if name == "env":
+        rest = [word for word in words[1:] if not word.startswith("-")]
+        name = os.path.basename(rest[0]) if rest else ""
+    return SHELLS.get(name)
+
+
+def vendored(rel):
+    """Third-party code copied into the tree: it follows its own formatting, so it is not linted."""
+    return rel.startswith("vendor/") or "/vendor/" in rel
 
 
 def _npm_package(rel):
@@ -68,6 +96,8 @@ def edit_checks(rel):
     check (Kotlin, Markdown, ...) gets neither; the task gate at a ticked task or turn end covers it.
     """
     commands, in_process = [], []
+    if vendored(rel):
+        return commands, in_process
     package = _npm_package(rel)
     if package and rel.endswith(NPM_SUFFIXES):
         bin_dir = os.path.join(REPO, package, "node_modules", ".bin")
@@ -81,7 +111,9 @@ def edit_checks(rel):
     elif rel.endswith(".json"):
         in_process.append(_syntax(_json))
     elif rel.endswith(".sh"):
-        commands.append((REPO, ["sh", "-n", rel]))
+        shell = shell_of(os.path.join(REPO, rel))
+        if shell is not None:
+            commands.append((REPO, [shell, "-n", rel]))
     elif rel.endswith(".rs"):
         commands.append((REPO, ["rustfmt", "--check", "--edition", "2024", rel]))
     return commands, in_process
@@ -114,31 +146,46 @@ def lint(rel):
 
 
 def tree_clean(repo):
-    """True when `git status --porcelain` is empty: nothing a branch pass would reject."""
+    """True when `git status --porcelain` is empty, as `verify.py` reads it for the branch pass."""
     result = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=normal"],
+        ["git", "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=none"],
         cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
     )
     return result.returncode == 0 and not result.stdout.strip()
 
 
-def wait_limit_seconds(path=HARNESS_JSON):
-    """The gate's `timeoutSeconds` less `WAIT_MARGIN_SECONDS`; never negative."""
+def gate_timeout_seconds(path=HARNESS_JSON):
+    """The gate's `timeoutSeconds` from `.agents/harness.json`, else the gate's default."""
     try:
         with open(path) as handle:
             timeout = json.load(handle)["verify-gate"].get("timeoutSeconds", DEFAULT_TIMEOUT_SECONDS)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         timeout = DEFAULT_TIMEOUT_SECONDS
-    if not isinstance(timeout, (int, float)) or isinstance(timeout, bool):
+    if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
         timeout = DEFAULT_TIMEOUT_SECONDS
-    return max(0, timeout - WAIT_MARGIN_SECONDS)
+    return timeout
 
 
-def full_run(verify, ctx, use_passes, wait_limit):
-    """The task gate, as `verify.main` runs it, with `use_passes` and a wait on contention.
+def proof_covers_head(verify, repo):
+    """True when a branch pass already proves HEAD; only meaningful on a clean tree."""
+    try:
+        ok, _message = verify.branch_pass.check(repo, time.monotonic() + PROOF_CHECK_SECONDS)
+    except Exception:  # an unreadable record is no proof; the run decides
+        return False
+    return ok
+
+
+def full_run(verify, ctx, timeout, clean=tree_clean):
+    """The task gate, as `verify.main` runs it, with remembered passes and a wait on contention.
+
+    Each attempt reads the tree again. On a clean tree an existing branch pass for HEAD is enough
+    (a fresh run would delete it first); otherwise it is the plain run, which writes one. With
+    uncommitted changes it reads the remembered passes, under a deadline that stops it cleanly
+    before the gate's timeout. A held run lock is waited for, for at most half of the budget; an
+    orphan that cannot be stopped is not waited for.
 
     Returns the exit code `verify.py` would: 0, 1 for a `FAIL` or timeout, 2 for a selection error,
-    an unexpected `NOT RUN` or a contention that outlasted `wait_limit`.
+    an unexpected `NOT RUN`, a contention or a run its deadline cut short.
     """
     try:
         cmap = verify.components.load_map(os.path.join(ctx.repo, ".github", "components.json"))
@@ -146,16 +193,26 @@ def full_run(verify, ctx, use_passes, wait_limit):
     except (verify.TableError, OSError, ValueError) as error:
         ctx.log("verify: %s" % error)
         return 2
-    waited_until = ctx.clock.now() + wait_limit
+    budget = max(0, timeout - WAIT_MARGIN_SECONDS)
+    started = ctx.clock.now()
+    wait_until = started + budget / 2.0
     while True:
-        result = verify.run_gate("task", None, ctx, table, cmap, use_passes=use_passes)
-        if not result.contended:
+        dirty = not clean(ctx.repo)
+        if not dirty and proof_covers_head(verify, ctx.repo):
+            ctx.log("verify: the branch pass already covers HEAD on this clean tree; nothing to run")
+            return 0
+        # The plain run must have no deadline, or it writes no branch pass; the gate's timeout
+        # bounds it. The remembered run writes none anyway, so it gets one and stops cleanly.
+        ctx.deadline = started + budget if dirty else None
+        result = verify.run_gate("task", None, ctx, table, cmap, use_passes=dirty)
+        held = result.contended and verify.CONTENTION in result.errors
+        if not held or ctx.clock.now() >= wait_until:
             break
-        if ctx.clock.now() >= waited_until:
-            for error in result.errors:
-                ctx.log("verify: %s" % error)
-            return 2
         ctx.wait.sleep(POLL_SECONDS)
+    if result.contended:
+        for error in result.errors:
+            ctx.log("verify: %s" % error)
+        return 2
     if result.errors:
         for line in verify.render(result.results, result.errors).splitlines():
             ctx.log(line)
@@ -169,7 +226,13 @@ def full_run(verify, ctx, use_passes, wait_limit):
         return 0
     for line in verify.render(result.results, result.errors).splitlines():
         ctx.log(line)
-    return verify.exit_code(result.results, result.errors)
+    code = verify.exit_code(result.results, result.errors)
+    if code == 0 and result.incomplete:
+        # `verify.py` counts steps its deadline left unrun as no problem; the gate would record that
+        # as a full pass, so it is a failure here.
+        ctx.log("verify: the task gate stopped at its deadline before every step ran; run it again")
+        return 2
+    return code
 
 
 def load_verify():
@@ -186,8 +249,7 @@ def main(env=None):
         rel = env.get("VERIFY_FILE", "")
         return lint(rel) if rel else 0
     verify = load_verify()
-    ctx = verify.real_context()
-    return full_run(verify, ctx, use_passes=not tree_clean(ctx.repo), wait_limit=wait_limit_seconds())
+    return full_run(verify, verify.real_context(), gate_timeout_seconds())
 
 
 if __name__ == "__main__":

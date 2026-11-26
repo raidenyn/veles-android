@@ -229,18 +229,24 @@ tools: never edit them; update them with the skills' `update`, and CI runs both 
 Its one command, `verify-gate.command` in `.agents/harness.json`, is
 `python3 -I scripts/verify_gate.py`:
 
-- **A file edit** (`VERIFY_TRIGGER=edit`) lints `VERIFY_FILE` alone: Python and JSON syntax,
-  `sh -n`, `node --check`, `rustfmt --check`, and the package's own `eslint` and `prettier --check`
-  under `web-extension/` and `native-bridge/` (skipped when its `node_modules` is missing). Kotlin,
-  Markdown and other files have no single-file lint; the next full run covers them.
+- **A file edit** (`VERIFY_TRIGGER=edit`) lints `VERIFY_FILE` alone: Python and JSON syntax, `-n` of
+  the shell its shebang names (`sh`, `bash` or `zsh`; another interpreter is skipped), `node --check`,
+  `rustfmt --check`, and the package's own `eslint` and `prettier --check` under `web-extension/` and
+  `native-bridge/` (skipped when its `node_modules` is missing). Kotlin, Markdown, `vendor/` trees and
+  other files have no single-file lint; the next full run covers them.
 - **A ticked task** in `openspec/changes/*/tasks.md` and **every turn end** run the task gate of
   `scripts/verify.py` in the same process. With uncommitted changes the run reads the remembered passes,
-  as `--hook` mode does, so a node whose inputs are unchanged since it passed is `PASS (remembered)`. On
-  a clean tree it is the plain manual run: it never reads them and writes the branch pass.
+  as `--hook` mode does, so a node whose inputs are unchanged since it passed is `PASS (remembered)`; it
+  runs under a deadline of the gate's `timeoutSeconds` less 60, and a run that deadline cuts short is a
+  failure, never a pass. On a clean tree a branch pass that already proves HEAD is enough, so nothing
+  runs; otherwise it is the plain manual run, which never reads remembered passes, has no deadline and
+  writes the branch pass. A selection or config error blocks the turn end, where `--hook` mode let it
+  through.
 - **Contention.** A run that finds `build/verify/lock` held (for example by a background
-  `python3 -I scripts/verify.py` before a push) waits for it, polling every 2 seconds for up to the
-  gate's `timeoutSeconds` less 60, and then runs; the other run's records keep that run short. Only a
-  wait past that limit fails, with `verify: verification already running`.
+  `python3 -I scripts/verify.py` before a push) waits for it, polling every 2 seconds for at most half
+  of that budget, and reads the tree again before it runs: the other run's records keep that run short,
+  and its branch pass ends it at once. A wait past half the budget fails with `verify: verification
+  already running`. An orphaned process group that cannot be stopped fails at once, as in `verify.py`.
 
 A failure is added to the edit's tool result, or blocks the turn end at most three times for the same
 failure; a turn end with nothing changed since the last full pass runs nothing. Run the same full run by

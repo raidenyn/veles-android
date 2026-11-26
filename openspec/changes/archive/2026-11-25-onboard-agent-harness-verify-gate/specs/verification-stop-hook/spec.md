@@ -4,8 +4,9 @@
 `python3 -I scripts/verify.py --hook claude` and `--hook opencode` SHALL act only as a launcher and watchdog. Neither
 host wires them: turn-end verification runs from the agent harness verify gate, whose command
 `python3 -I scripts/verify_gate.py` runs the task gate at a ticked task and at every turn end, reading remembered passes
-when the tree has uncommitted changes and as the plain manual run on a clean tree, waits for a held run lock instead
-of failing, and lints the one edited file after an edit. The `--hook` mode stays until the hooked-rules engine moves to the hook runtime. It MUST read the event from stdin, resolve the checkout of the event's
+under a deadline when the tree has uncommitted changes, and on a clean tree passing on an existing branch pass for HEAD
+or else running as the plain manual run; it waits for a held run lock instead of failing, and lints the one edited
+file after an edit. The `--hook` mode stays until the hooked-rules engine moves to the hook runtime. It MUST read the event from stdin, resolve the checkout of the event's
 `cwd` with `agent_rules.discover_checkout` semantics and `realpath`, and treat it as a checkout of this repository
 only when its git common directory equals the launcher's. It MUST then run the task gate in a child process started
 from that checkout's own `scripts/verify.py` with the same `--hook` host, so the code, component map, table, state and logs are always the

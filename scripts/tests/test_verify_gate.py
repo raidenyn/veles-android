@@ -35,10 +35,13 @@ class EditChecks(unittest.TestCase):
 
     def test_other_kinds(self):
         self.assertEqual(self.argvs("scripts/x.mjs"), ([["node", "--check", "scripts/x.mjs"]], 0))
-        self.assertEqual(self.argvs("a/b.sh"), ([["sh", "-n", "a/b.sh"]], 0))
         self.assertEqual(self.argvs("rust/a.rs"), ([["rustfmt", "--check", "--edition", "2024", "rust/a.rs"]], 0))
         self.assertEqual(self.argvs("scripts/x.py"), ([], 1))
         self.assertEqual(self.argvs("docs.json"), ([], 1))
+
+    def test_vendored_code_is_not_linted(self):
+        for rel in ("native-bridge/host/vendor/bluest/src/lib.rs", "vendor/a.py", "x/vendor/b.sh"):
+            self.assertEqual(self.argvs(rel), ([], 0), rel)
 
     def test_files_without_a_single_file_lint(self):
         for rel in ("android/app/src/main/A.kt", "docs/verify.md", "build.gradle.kts"):
@@ -99,48 +102,102 @@ class Lint(unittest.TestCase):
         run.assert_called_once_with(["sh", "-n", "a.sh"], cwd=self.repo)
 
 
+class Shells(unittest.TestCase):
+    def setUp(self):
+        self.repo = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.repo)
+        patcher = mock.patch.object(verify_gate, "REPO", self.repo)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def shell(self, first_line):
+        path = os.path.join(self.repo, "s.sh")
+        with open(path, "w") as handle:
+            handle.write(first_line + "echo\n")
+        return verify_gate.shell_of(path)
+
+    def test_the_shebang_picks_the_shell(self):
+        cases = {
+            "": "sh",
+            "#!/bin/sh\n": "sh",
+            "#!/bin/dash\n": "sh",
+            "#!/bin/bash\n": "bash",
+            "#!/usr/bin/env bash\n": "bash",
+            "#!/usr/bin/env -S bash -e\n": "bash",
+            "#!/bin/zsh\n": "zsh",
+            "#!/usr/bin/python3\n": None,
+            "#!\n": "sh",
+        }
+        for first_line, expected in cases.items():
+            self.assertEqual(self.shell(first_line), expected, first_line)
+
+    def test_a_bash_script_is_checked_by_bash(self):
+        self.shell("#!/usr/bin/env bash\n")
+        commands, _ = verify_gate.edit_checks("s.sh")
+        self.assertEqual([argv for _, argv in commands], [["bash", "-n", "s.sh"]])
+
+    def test_an_unknown_interpreter_is_skipped(self):
+        self.shell("#!/usr/bin/python3\n")
+        self.assertEqual(verify_gate.edit_checks("s.sh"), ([], []))
+
+    def test_real_bash_syntax_passes_under_bash(self):
+        path = os.path.join(self.repo, "b.sh")
+        with open(path, "w") as handle:
+            handle.write("#!/usr/bin/env bash\nif [[ -n x ]]; then a=(1 2); echo ${a[@]}; fi\n")
+        self.assertEqual(verify_gate.lint("b.sh"), 0)
+
+    def test_a_json_file_with_a_bom_passes(self):
+        with open(os.path.join(self.repo, "a.json"), "wb") as handle:
+            handle.write(b"\xef\xbb\xbf{}")
+        self.assertEqual(verify_gate.lint("a.json"), 0)
+
+
 class Main(unittest.TestCase):
     def test_edit_lints_the_file(self):
         with mock.patch.object(verify_gate, "lint", return_value=1) as lint:
             self.assertEqual(verify_gate.main({"VERIFY_TRIGGER": "edit", "VERIFY_FILE": "a.py"}), 1)
         lint.assert_called_once_with("a.py")
 
-    def test_other_triggers_run_the_task_gate_with_passes_only_on_a_dirty_tree(self):
+    def test_other_triggers_run_the_task_gate(self):
         fake = mock.Mock()
-        fake.real_context.return_value = mock.Mock(repo="/r")
         for env in ({"VERIFY_TRIGGER": "task"}, {"VERIFY_TRIGGER": "turn-end"}, {}):
-            for clean in (True, False):
-                with mock.patch.object(verify_gate, "load_verify", return_value=fake), \
-                        mock.patch.object(verify_gate, "tree_clean", return_value=clean), \
-                        mock.patch.object(verify_gate, "wait_limit_seconds", return_value=7), \
-                        mock.patch.object(verify_gate, "full_run", return_value=0) as run:
-                    self.assertEqual(verify_gate.main(env), 0)
-                run.assert_called_once_with(fake, fake.real_context.return_value,
-                                            use_passes=not clean, wait_limit=7)
+            with mock.patch.object(verify_gate, "load_verify", return_value=fake), \
+                    mock.patch.object(verify_gate, "gate_timeout_seconds", return_value=7), \
+                    mock.patch.object(verify_gate, "full_run", return_value=0) as run:
+                self.assertEqual(verify_gate.main(env), 0)
+            run.assert_called_once_with(fake, fake.real_context.return_value, 7)
 
 
 class Outcome:
-    def __init__(self, contended=False, errors=(), selection=None):
+    def __init__(self, contended=False, errors=(), selection=None, incomplete=False):
         self.contended = contended
         self.errors = list(errors)
         self.results = {}
         self.selection = selection
+        self.incomplete = incomplete
+
+
+CONTENDED = "verification already running"
+ORPHANS = "a previous verification's process group could not be stopped"
 
 
 class FakeVerify:
     """`run_gate` answers from a list of outcomes; the rest is what `full_run` reads."""
 
     TableError = ValueError
+    CONTENTION = CONTENDED
 
-    def __init__(self, outcomes, code=0):
+    def __init__(self, outcomes, code=0, proof=False):
         self.outcomes = list(outcomes)
         self.calls = []
         self.code = code
         self.components = mock.Mock()
         self.load_table = mock.Mock(return_value="table")
+        self.branch_pass = mock.Mock()
+        self.branch_pass.check.return_value = (proof, "message")
 
     def run_gate(self, gate, base, ctx, table, cmap, use_passes=False):
-        self.calls.append((gate, base, use_passes))
+        self.calls.append((gate, base, use_passes, ctx.deadline))
         return self.outcomes.pop(0)
 
     def render(self, results, errors):
@@ -155,8 +212,9 @@ class Ctx:
 
     def __init__(self):
         self.repo = "/r"
-        self.now = 0.0
+        self.now = 1000.0
         self.lines = []
+        self.deadline = None
         self.clock = mock.Mock(now=lambda: self.now)
         self.wait = mock.Mock(sleep=self.sleep)
         self.log = self.lines.append
@@ -166,35 +224,84 @@ class Ctx:
 
 
 class FullRun(unittest.TestCase):
-    def test_runs_the_task_gate_with_the_requested_passes(self):
-        for use_passes in (True, False):
-            fake, ctx = FakeVerify([Outcome()], code=1), Ctx()
-            self.assertEqual(verify_gate.full_run(fake, ctx, use_passes, wait_limit=10), 1)
-            self.assertEqual(fake.calls, [("task", None, use_passes)])
-            self.assertEqual(ctx.lines, ["node: PASS"])
+    def run_full(self, fake, ctx, timeout=160, clean=lambda repo: False):
+        return verify_gate.full_run(fake, ctx, timeout, clean=clean)
 
-    def test_contention_waits_for_the_lock_then_runs(self):
-        fake, ctx = FakeVerify([Outcome(contended=True), Outcome(contended=True), Outcome()]), Ctx()
-        self.assertEqual(verify_gate.full_run(fake, ctx, True, wait_limit=10), 0)
+    def test_a_dirty_tree_reads_passes_under_a_deadline(self):
+        fake, ctx = FakeVerify([Outcome()], code=1), Ctx()
+        self.assertEqual(self.run_full(fake, ctx), 1)
+        budget = 160 - verify_gate.WAIT_MARGIN_SECONDS
+        self.assertEqual(fake.calls, [("task", None, True, 1000.0 + budget)])
+        self.assertEqual(ctx.lines, ["node: PASS"])
+        fake.branch_pass.check.assert_not_called()
+
+    def test_a_clean_tree_is_the_plain_run_with_no_deadline(self):
+        fake, ctx = FakeVerify([Outcome()]), Ctx()
+        self.assertEqual(self.run_full(fake, ctx, clean=lambda repo: True), 0)
+        self.assertEqual(fake.calls, [("task", None, False, None)])
+
+    def test_a_clean_tree_already_proven_runs_nothing(self):
+        fake, ctx = FakeVerify([], proof=True), Ctx()
+        self.assertEqual(self.run_full(fake, ctx, clean=lambda repo: True), 0)
+        self.assertEqual(fake.calls, [])
+        self.assertIn("already covers HEAD", ctx.lines[0])
+
+    def test_a_proof_check_that_raises_is_no_proof(self):
+        fake, ctx = FakeVerify([Outcome()]), Ctx()
+        fake.branch_pass.check.side_effect = RuntimeError("boom")
+        self.assertEqual(self.run_full(fake, ctx, clean=lambda repo: True), 0)
+        self.assertEqual(len(fake.calls), 1)
+
+    def test_a_held_lock_is_waited_for_then_runs(self):
+        busy = Outcome(contended=True, errors=[CONTENDED])
+        fake, ctx = FakeVerify([busy, busy, Outcome()]), Ctx()
+        self.assertEqual(self.run_full(fake, ctx), 0)
         self.assertEqual(len(fake.calls), 3)
-        self.assertEqual(ctx.now, 2 * verify_gate.POLL_SECONDS)
+        self.assertEqual(ctx.now, 1000.0 + 2 * verify_gate.POLL_SECONDS)
 
-    def test_contention_past_the_wait_limit_fails_and_says_so(self):
-        busy = [Outcome(contended=True, errors=["verification already running"]) for _ in range(10)]
+    def test_the_tree_is_read_again_after_the_wait(self):
+        # The waited-for run was a manual run on the now clean tree, and it wrote the proof.
+        states = iter([False, True])
+        busy = Outcome(contended=True, errors=[CONTENDED])
+        fake, ctx = FakeVerify([busy], proof=True), Ctx()
+        self.assertEqual(self.run_full(fake, ctx, clean=lambda repo: next(states)), 0)
+        self.assertEqual(len(fake.calls), 1)
+        self.assertIn("already covers HEAD", ctx.lines[-1])
+
+    def test_the_wait_takes_at_most_half_of_the_budget(self):
+        busy = [Outcome(contended=True, errors=[CONTENDED]) for _ in range(100)]
         fake, ctx = FakeVerify(busy), Ctx()
-        self.assertEqual(verify_gate.full_run(fake, ctx, True, wait_limit=3), 2)
-        self.assertEqual(ctx.lines, ["verify: verification already running"])
-        self.assertLessEqual(ctx.now, 3 + verify_gate.POLL_SECONDS)
+        self.assertEqual(self.run_full(fake, ctx, timeout=160), 2)
+        half = (160 - verify_gate.WAIT_MARGIN_SECONDS) / 2.0
+        self.assertLessEqual(ctx.now - 1000.0, half + verify_gate.POLL_SECONDS)
+        self.assertGreaterEqual(ctx.now - 1000.0, half)
+        self.assertEqual(ctx.lines, ["verify: " + CONTENDED])
+
+    def test_an_orphan_that_cannot_be_stopped_is_not_waited_for(self):
+        fake, ctx = FakeVerify([Outcome(contended=True, errors=[ORPHANS])]), Ctx()
+        self.assertEqual(self.run_full(fake, ctx), 2)
+        self.assertEqual(len(fake.calls), 1)
+        self.assertEqual(ctx.now, 1000.0)
+        self.assertEqual(ctx.lines, ["verify: " + ORPHANS])
+
+    def test_a_run_cut_short_by_its_deadline_fails(self):
+        fake, ctx = FakeVerify([Outcome(incomplete=True)]), Ctx()
+        self.assertEqual(self.run_full(fake, ctx), 2)
+        self.assertIn("stopped at its deadline", ctx.lines[-1])
+
+    def test_a_failure_wins_over_an_incomplete_run(self):
+        fake, ctx = FakeVerify([Outcome(incomplete=True)], code=1), Ctx()
+        self.assertEqual(self.run_full(fake, ctx), 1)
 
     def test_nothing_changed_passes_with_its_line(self):
         fake, ctx = FakeVerify([Outcome(selection=mock.Mock(files=[], base="abc"))]), Ctx()
-        self.assertEqual(verify_gate.full_run(fake, ctx, True, wait_limit=10), 0)
+        self.assertEqual(self.run_full(fake, ctx), 0)
         self.assertEqual(ctx.lines, ["verify: nothing changed against abc"])
 
     def test_an_invalid_table_fails(self):
         fake, ctx = FakeVerify([]), Ctx()
         fake.load_table.side_effect = ValueError("bad table")
-        self.assertEqual(verify_gate.full_run(fake, ctx, True, wait_limit=10), 2)
+        self.assertEqual(self.run_full(fake, ctx), 2)
         self.assertEqual(ctx.lines, ["verify: bad table"])
 
 
@@ -206,15 +313,15 @@ class Settings(unittest.TestCase):
         handle.close()
         return handle.name
 
-    def test_wait_limit_is_the_gate_timeout_less_the_margin(self):
-        path = self.write('{"verify-gate": {"timeoutSeconds": 1740}}')
-        self.assertEqual(verify_gate.wait_limit_seconds(path), 1740 - verify_gate.WAIT_MARGIN_SECONDS)
+    def test_the_gate_timeout_is_read(self):
+        self.assertEqual(verify_gate.gate_timeout_seconds(self.write('{"verify-gate": {"timeoutSeconds": 1740}}')), 1740)
 
-    def test_wait_limit_falls_back_to_the_gate_default(self):
-        expected = verify_gate.DEFAULT_TIMEOUT_SECONDS - verify_gate.WAIT_MARGIN_SECONDS
-        for text in ('{"verify-gate": {}}', "{bad", '{"verify-gate": {"timeoutSeconds": "x"}}'):
-            self.assertEqual(verify_gate.wait_limit_seconds(self.write(text)), expected, text)
-        self.assertEqual(verify_gate.wait_limit_seconds("/nonexistent/harness.json"), expected)
+    def test_the_gate_timeout_falls_back_to_the_gate_default(self):
+        expected = verify_gate.DEFAULT_TIMEOUT_SECONDS
+        for text in ('{"verify-gate": {}}', "{bad", '{"verify-gate": {"timeoutSeconds": "x"}}',
+                     '{"verify-gate": {"timeoutSeconds": 0}}'):
+            self.assertEqual(verify_gate.gate_timeout_seconds(self.write(text)), expected, text)
+        self.assertEqual(verify_gate.gate_timeout_seconds("/nonexistent/harness.json"), expected)
 
     def test_tree_clean_reads_git_status(self):
         repo = tempfile.mkdtemp()
@@ -229,10 +336,14 @@ class Settings(unittest.TestCase):
 class RealModule(unittest.TestCase):
     def test_the_real_verify_module_has_what_full_run_uses(self):
         verify = verify_gate.load_verify()
-        for name in ("run_gate", "render", "exit_code", "load_table", "real_context", "TableError"):
+        for name in ("run_gate", "render", "exit_code", "load_table", "real_context", "TableError",
+                     "CONTENTION", "ORPHAN_CONTENTION"):
             self.assertTrue(hasattr(verify, name), name)
         self.assertTrue(hasattr(verify.components, "load_map"))
+        self.assertTrue(hasattr(verify.branch_pass, "check"))
         self.assertIn("use_passes", verify.run_gate.__code__.co_varnames)
+        self.assertIn("incomplete", verify.RunOutcome.__dataclass_fields__)
+        self.assertNotEqual(verify.CONTENTION, verify.ORPHAN_CONTENTION)
 
 
 if __name__ == "__main__":
