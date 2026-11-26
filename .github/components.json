@@ -384,7 +384,9 @@
       ],
       "ci-paths": [
         "verify/check-root-aliases.sh",
-        "native-bridge/installer/scripts/test_build_contract.py"
+        "native-bridge/installer/scripts/test_build_contract.py",
+        ".agents/harness/",
+        ".agents/harness.json"
       ],
       "jobs": [
         "unit-tests"

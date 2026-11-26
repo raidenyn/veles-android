@@ -14,6 +14,15 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.agents/harness/hook-runtime/claude.mjs\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -24,6 +33,15 @@
             "type": "command",
             "command": "python3 -I \"$CLAUDE_PROJECT_DIR/scripts/agent_rules.py\" hook --format claude",
             "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.agents/harness/hook-runtime/claude.mjs\"",
+            "timeout": 1800
           }
         ]
       }
@@ -37,6 +55,15 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.agents/harness/hook-runtime/claude.mjs\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PreCompact": [
@@ -48,6 +75,15 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.agents/harness/hook-runtime/claude.mjs\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Stop": [
@@ -57,11 +93,48 @@
             "type": "command",
             "command": "python3 -I \"$CLAUDE_PROJECT_DIR/scripts/agent_rules.py\" hook --format claude",
             "timeout": 5
-          },
+          }
+        ]
+      },
+      {
+        "hooks": [
           {
             "type": "command",
-            "command": "python3 -I \"$CLAUDE_PROJECT_DIR/scripts/verify.py\" --hook claude || true",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.agents/harness/hook-runtime/claude.mjs\"",
             "timeout": 1800
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.agents/harness/hook-runtime/claude.mjs\"",
+            "timeout": 1800
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.agents/harness/hook-runtime/claude.mjs\"",
+            "timeout": 1800
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.agents/harness/hook-runtime/claude.mjs\"",
+            "timeout": 10
           }
         ]
       }

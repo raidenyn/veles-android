@@ -76,7 +76,7 @@ Run `python3 -I scripts/verify.py` (the task gate: the affected nodes' checks an
 before finishing a task and before pushing; a complete run writes the record the push gate checks.
 `python3 -I scripts/verify.py --branch` (all tests of the affected nodes) is the optional full local
 run, and CI runs every test. `docs/verify.md` explains the command table, requirements, generated
-outputs and the Claude Code `Stop` hook.
+outputs and the verify gate that runs it from the Claude Code and OpenCode hooks.
 
 - **Start at the repository root.** Scoped rules are delivered only when the agent is started at the
   root; started inside a node folder you get that folder's `AGENTS.md` (Claude Code also loads the

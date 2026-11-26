@@ -2,8 +2,8 @@
 
 `scripts/verify.py` runs the checks and tests of the nodes a change affects, then reports one line
 per selected node. The commands, their requirements and their related-test rules live in
-`scripts/verify-commands.json`; this page is the reference for that table and for the `Stop` hooks
-that run the verifier in Claude Code and OpenCode.
+`scripts/verify-commands.json`; this page is the reference for that table and for the verify gate
+that runs the verifier from the Claude Code and OpenCode hooks.
 
 Read `.agents/rules/scripts-verify-commands.md` before editing the table.
 
@@ -11,7 +11,7 @@ Read `.agents/rules/scripts-verify-commands.md` before editing the table.
 
 - **Task gate** (`python3 -I scripts/verify.py`, the default): runs every selected node's `check`
   commands and, for each `test` command with a related-test strategy, only the tests related to the
-  changed files. It is the fast signal, the gate the `Stop` hooks run, and the pre-push run: a
+  changed files. It is the fast signal, the gate the verify gate runs, and the pre-push run: a
   complete pass writes the record the push gate checks.
 - **Branch gate** (`python3 -I scripts/verify.py --branch`): runs every selected node's checks and
   all of its tests. It is the optional full local run, and its complete pass satisfies the same
@@ -148,7 +148,8 @@ is a `platform` entry with the honest `ci` value `"none (no CI job; a local fixt
 
 ## Remembered passes
 
-Only the `Stop` hooks reuse a pass, and only for the task gate. The key is a sha256 over the plan,
+Only `--hook` mode and the verify gate's run on a tree with uncommitted changes reuse a pass, and only
+for the task gate. The key is a sha256 over the plan,
 the node entry, the effective environment (build-affecting variables and every resolved tool's path
 and version), the affected tracked and changed files, the declared input trees, and each consumed
 generated output. The source side is computed before and after the run; a record is written only
@@ -175,7 +176,7 @@ The record is version 1 JSON, `{"version": 1, "head": "<sha>", "base": "<sha>", 
 
 Every manual run of either gate deletes an existing record right after it takes the run lock
 (`build/verify/lock`), so a later run that fails cannot leave an old pass in place. A contended run
-that never gets the lock leaves the record alone. The `Stop` hook never writes or deletes it.
+that never gets the lock leaves the record alone. `--hook` mode never writes or deletes it.
 
 `scripts/branch_pass.py` owns the record's path, format, writer and check; the verifier and the
 hooked-rules engine both use it. Its check resolves the worktree of a working directory, reads the
@@ -216,17 +217,50 @@ with `path_prepend` then `$JAVA_HOME/bin`. A difference between `android/local.p
 `sdk.dir` and the effective SDK is reported by `config show` and under the `android` node; the
 verifier never writes `local.properties`.
 
-## The Stop hooks
+## The verify gate
 
-`.claude/settings.json` runs the `Stop` entry's second command,
-`python3 -I "$CLAUDE_PROJECT_DIR/scripts/verify.py" --hook claude || true` (timeout 1800), after the
-hooked-rules engine command. The OpenCode plugin (`scripts/opencode-hooked-rules/`) runs
-`python3 -I <plugin checkout>/scripts/verify.py --hook opencode` at a root session's turn end, in a
-slot separate from the engine's stop call (see `docs/opencode-rules.md`). The agent-file check
-accepts exactly the Claude Code pair and rejects a missing verify command, the wrong order, a third
-command or another timeout.
+The agent harness verify gate (`.agents/harness/verify-gate/`, skill `agent-harness-verify-gate`) runs
+from the agent harness hook runtime (`.agents/harness/hook-runtime/`, skill
+`agent-harness-hook-runtime`) on both hosts: `.claude/settings.json` holds one runtime entry per
+event after the hooked-rules engine entry, and `opencode.json` loads
+`./.agents/harness/hook-runtime/opencode` next to `scripts/opencode-hooked-rules`. Both are copied
+tools: never edit them; update them with the skills' `update`, and CI runs both tools' `check`.
 
-Both hosts use the same contract. The event on stdin is the same JSON object (`session_id`, `cwd`);
+Its one command, `verify-gate.command` in `.agents/harness.json`, is
+`python3 -I scripts/verify_gate.py`:
+
+- **A file edit** (`VERIFY_TRIGGER=edit`) lints `VERIFY_FILE` alone: Python and JSON syntax, `-n` of
+  the shell its shebang names (`sh`, `bash` or `zsh`; another interpreter is skipped), `node --check`,
+  `rustfmt --check`, and the package's own `eslint` and `prettier --check` under `web-extension/` and
+  `native-bridge/` (skipped when its `node_modules` is missing). Kotlin, Markdown, `vendor/` trees and
+  other files have no single-file lint; the next full run covers them.
+- **A ticked task** in `openspec/changes/*/tasks.md` and **every turn end** run the task gate of
+  `scripts/verify.py` in the same process. With uncommitted changes the run reads the remembered passes,
+  as `--hook` mode does, so a node whose inputs are unchanged since it passed is `PASS (remembered)`; it
+  runs under a deadline of the gate's `timeoutSeconds` less 60, and a run that deadline cuts short is a
+  failure, never a pass. On a clean tree a branch pass that already proves HEAD is enough, so nothing
+  runs; otherwise it is the plain manual run, which never reads remembered passes, has no deadline and
+  writes the branch pass. A selection or config error blocks the turn end, where `--hook` mode let it
+  through.
+- **Contention.** A run that finds `build/verify/lock` held (for example by a background
+  `python3 -I scripts/verify.py` before a push) waits for it, polling every 2 seconds for at most half
+  of that budget, and reads the tree again before it runs: the other run's records keep that run short,
+  and its branch pass ends it at once. A wait past half the budget fails with `verify: verification
+  already running`. An orphaned process group that cannot be stopped fails at once, as in `verify.py`.
+  A plain run that starts after a long wait has no deadline of its own (one would stop it writing the
+  branch pass), so the gate's timeout can cut it short; run `python3 -I scripts/verify.py` by hand then.
+
+A failure is added to the edit's tool result, or blocks the turn end at most three times for the same
+failure; a turn end with nothing changed since the last full pass runs nothing. Run the same full run by
+hand with `node .agents/harness/verify-gate/cli.mjs run`, and see the skill for the messages, the
+limits and `AGENT_HARNESS_TRACE=1` timings. The no-change shortcut does not run the command, so after a
+commit run `python3 -I scripts/verify.py` before a push (the pre-push rule says the same). The
+agent-file check accepts exactly this wiring and no second command on the engine's `Stop` entry.
+
+### `--hook` mode
+
+`python3 -I scripts/verify.py --hook claude|opencode` is the earlier turn-end hook. Nothing wires it
+now; it stays until the hooked-rules engine moves to the hook runtime. Both hosts use the same contract. The event on stdin is the same JSON object (`session_id`, `cwd`);
 the output is the same, the hook always exits `0` and every internal failure fails open. Hook state
 keys each session as `<host>:<session_id>`, so an OpenCode and a Claude session id never collide,
 and `HOOK_STATE_VERSION` is 2; a state document of another version loads empty, so an old record
@@ -248,7 +282,7 @@ internal failure fails open: one stderr line, no stdout, exit `0`. `stop_hook_ac
 Hook state and reservations live under `<git-common-dir>/veles-verify/`.
 
 **Contention.** A background run holds `build/verify/lock` for its whole run, so a
-turn-end hook run reports `{"systemMessage":"verification already running; nothing was checked"}`
+`--hook` run reports `{"systemMessage":"verification already running; nothing was checked"}`
 and checks nothing; stop again after that run finishes. The same contention can happen in
 hook mode when a second launcher starts during the 5-second SIGKILL grace of the first: the first
 launcher's child still holds the lock.
@@ -320,8 +354,8 @@ Accepted at the design review; each has a workaround.
 8. After `_stop_child` (SIGTERM, budget expiry, dispose or the Claude Code watchdog) a step's own
    process group (for example a running Gradle) outlives the child until the next run's orphan
    cleanup. Run the verifier again.
-9. A turn-end hook run during a background run reports contention and checks nothing
-   (see "The Stop hooks"). Stop again after that run finishes.
+9. A `--hook` run during a background run reports contention and checks nothing
+   (see "`--hook` mode"). Stop again after that run finishes.
 10. A SIGTERM that reaches the launcher before it installs its handler (between dispatch and
     `_install_sigterm`) kills the launcher alone and leaves the dispatched child running to its
     deadline, holding the lock. The next run's orphan cleanup reaps it; stop again after it ends.

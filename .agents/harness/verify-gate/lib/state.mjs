@@ -1,0 +1,158 @@
+// Generated from src/shared/lib/state.mts by scripts/build.mts. Do not edit.
+import { execFileSync } from 'node:child_process';
+import {
+  linkSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join } from 'node:path';
+
+const LOCK_RE = /^gate\.lock\.(\d+)$/;
+const PRUNE_AGE_MS = 3600 * 1000;
+let tmpCounter = 0;
+
+export function gitDir(repoRoot) {
+  return execFileSync('git', ['rev-parse', '--absolute-git-dir'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+export function toolStateDir(repoRoot, tool) {
+  return join(gitDir(repoRoot), 'agent-harness', tool);
+}
+
+const clean = (id) => {
+  const s = String(id ?? '').replace(/[^A-Za-z0-9._-]/g, '_');
+  return s === '' || /^\.+$/.test(s) ? `_${s}` : s;
+};
+
+export function rootSessionStateDir({ repoRoot, tool, host, sessionId }) {
+  const dir = join(toolStateDir(repoRoot, tool), 'sessions', `${clean(host)}-${clean(sessionId)}`);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+export function sessionStateDir({ repoRoot, tool, host, sessionId, agentId }) {
+  const dir = join(rootSessionStateDir({ repoRoot, tool, host, sessionId }), clean(agentId ?? 'main'));
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function tmpName(dir) {
+  return join(dir, `.tmp-${process.pid}-${Date.now()}-${tmpCounter++}`);
+}
+
+export function writeJsonAtomic(path, value) {
+  const tmp = tmpName(dirname(path));
+  writeFileSync(tmp, JSON.stringify(value));
+  try {
+    renameSync(tmp, path);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {}
+    throw err;
+  }
+}
+
+function listLocks(dir) {
+  return readdirSync(dir)
+    .map((f) => LOCK_RE.exec(f))
+    .filter(Boolean)
+    .map((m) => Number(m[1]))
+    .sort((a, b) => a - b);
+}
+
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code !== 'ESRCH';
+  }
+}
+
+function readLock(path) {
+  try {
+    const v = JSON.parse(readFileSync(path, 'utf8'));
+    return v && typeof v === 'object' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function isFree(path) {
+  let body;
+  try {
+    body = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    return err.code === 'ENOENT' || err instanceof SyntaxError;
+  }
+  if (!body || typeof body !== 'object') return true;
+  return body.released === true || !pidAlive(body.pid);
+}
+
+function prune(dir, own) {
+  const now = Date.now();
+  const all = listLocks(dir);
+  const highest = all[all.length - 1];
+  for (const n of all) {
+    if (n >= own || n === highest) continue;
+    const file = join(dir, `gate.lock.${n}`);
+    try {
+      if (now - statSync(file).mtimeMs > PRUNE_AGE_MS) unlinkSync(file);
+    } catch {}
+  }
+}
+
+export function updateGateLock(handle, fields) {
+  const current = readLock(handle.path) ?? {};
+  writeJsonAtomic(handle.path, { ...current, ...fields });
+}
+
+export function acquireGateLock(dir, { beforeLink } = {}) {
+  mkdirSync(dir, { recursive: true });
+  const all = listLocks(dir);
+  const h = all.length ? all[all.length - 1] : 0;
+  if (h > 0 && !isFree(join(dir, `gate.lock.${h}`))) return null;
+  if (beforeLink) beforeLink();
+
+  const mine = h + 1;
+  const path = join(dir, `gate.lock.${mine}`);
+  const tmp = tmpName(dir);
+  writeFileSync(tmp, JSON.stringify({ pid: process.pid, at: Date.now(), pgids: [] }));
+  try {
+    linkSync(tmp, path);
+  } catch (err) {
+    if (err.code === 'EEXIST') return null;
+    throw err;
+  } finally {
+    try {
+      unlinkSync(tmp);
+    } catch {}
+  }
+
+  const after = listLocks(dir);
+  if (after[after.length - 1] !== mine) {
+    updateGateLock({ path }, { released: true });
+    return null;
+  }
+  prune(dir, mine);
+  return {
+    path,
+    release() {
+      updateGateLock({ path }, { released: true });
+    },
+    update(fields) {
+      updateGateLock({ path }, fields);
+    },
+  };
+}

@@ -20,14 +20,7 @@ export const FAIL_INJECTION_VARIABLE = "VELES_AGENT_RULES_FAIL_INJECTION"
 export const HANDLER_BUDGET_MS = 5000 // one bound for a whole hook call: lookups, engine runs, injection, voids
 export const MAX_STDOUT_BYTES = 1024 * 1024 // engine output above this is a failure
 
-// The verifier slot (verify.py --hook opencode): resolved from this file like ENGINE_PATH, never from the
-// session directory, so the active checkout's launcher and watchdog are always the plugin's own.
-export const VERIFY_PATH = fileURLToPath(new URL("../verify.py", import.meta.url))
-export const VERIFY_BUDGET_MS = 1800000 // one verifier run: the task gate's own deadline plus its margin
-export const VERIFY_KILL_GRACE_MS = 5000 // between SIGTERM and SIGKILL on the launcher
-
 const PASS = Object.freeze({ decision: "pass", text: "", entries: Object.freeze([]) })
-const VERIFIER_PASS = Object.freeze({ kind: "pass", text: "" })
 const MAX_PARENT_DEPTH = 16
 const BACKOFF_START_MS = 1000
 const BACKOFF_CAP_MS = 30000
@@ -201,163 +194,6 @@ export function runEngine(
   })
 }
 
-/**
- * The verifier hook's answer: `{kind: "block", text}` for `{"decision":"block","reason":string}`,
- * `{kind: "notice", text}` for `{"systemMessage":string}`, else the empty pass. Empty, whitespace-only,
- * malformed, non-object and unknown-shaped output is a pass: the verifier is fail-open, and a block or
- * notice must carry the text the session is shown, so one with empty or blank text is ignored.
- */
-function decodeVerifier(bytes) {
-  if (bytes.length === 0) return VERIFIER_PASS
-  let text
-  try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes)
-  } catch {
-    return VERIFIER_PASS
-  }
-  let value
-  try {
-    value = JSON.parse(text)
-  } catch {
-    return VERIFIER_PASS // a truncated or malformed document is ignored
-  }
-  if (!isPlainObject(value)) return VERIFIER_PASS
-  if (hasExactKeys(value, ["decision", "reason"])) {
-    if (value.decision !== "block" || !isString(value.reason) || value.reason.trim() === "") {
-      return VERIFIER_PASS
-    }
-    return { kind: "block", text: value.reason }
-  }
-  if (hasExactKeys(value, ["systemMessage"])) {
-    if (!isString(value.systemMessage) || value.systemMessage.trim() === "") return VERIFIER_PASS
-    return { kind: "notice", text: value.systemMessage }
-  }
-  return VERIFIER_PASS
-}
-
-/**
- * Run the verifier hook once at a turn end: `python3 -I <plugin checkout>/scripts/verify.py --hook opencode`
- * with `{session_id, cwd}` on stdin. Resolves with `{kind: "block"|"notice"|"pass", text}` and never rejects.
- *
- * Empty, malformed, non-object or oversized stdout is the empty pass. When `signal` aborts or the budget
- * expires the launcher gets SIGTERM (its own handler stops the dispatched child, design D4), a SIGKILL
- * follows after `graceMs` unless the child exited first, and the run passes with no message: an expired or
- * disposed run is not a verification result, so nothing is sent.
- *
- * `spawn`, `setTimer` and `clearTimer` are injectable so tests drive it without a clock or a real child.
- */
-export function runVerifier(
-  event,
-  {
-    spawn = nodeSpawn,
-    setTimer = setTimeout,
-    clearTimer = clearTimeout,
-    signal = null,
-    budgetMs = VERIFY_BUDGET_MS,
-    graceMs = VERIFY_KILL_GRACE_MS,
-    maxStdoutBytes = MAX_STDOUT_BYTES,
-  } = {},
-) {
-  return new Promise((resolve) => {
-    if (signal && signal.aborted) return resolve(VERIFIER_PASS) // the plugin is already disposing
-    let settled = false
-    let child
-    let exited = false
-    let budgetTimer
-    let graceTimer
-    const stopGrace = () => {
-      if (graceTimer !== undefined) clearTimer(graceTimer)
-      graceTimer = undefined
-    }
-    const finish = (value) => {
-      if (settled) return
-      settled = true
-      if (budgetTimer !== undefined) clearTimer(budgetTimer)
-      if (signal) signal.removeEventListener("abort", onAbort)
-      resolve(value)
-    }
-    // SIGKILL only when SIGTERM did not end the launcher within the grace.
-    const killAfterGrace = () => {
-      graceTimer = undefined
-      if (exited) return
-      try {
-        child.kill("SIGKILL")
-      } catch {
-        // the child is already gone
-      }
-    }
-    // Budget expiry, abort, or a broken stdin: no message, stop the launcher, and arm the grace.
-    const stop = () => {
-      if (settled) return
-      finish(VERIFIER_PASS)
-      if (!child || exited) return
-      try {
-        child.kill("SIGTERM")
-      } catch {
-        // a child that is already gone needs no signal
-      }
-      graceTimer = setTimer(killAfterGrace, graceMs)
-      if (graceTimer && typeof graceTimer.unref === "function") graceTimer.unref()
-    }
-    function onAbort() {
-      stop()
-    }
-    try {
-      child = spawn("python3", ["-I", VERIFY_PATH, "--hook", "opencode"], {
-        cwd: event.cwd,
-        stdio: ["pipe", "pipe", "ignore"],
-        windowsHide: true,
-      })
-    } catch {
-      finish(VERIFIER_PASS)
-      return
-    }
-    budgetTimer = setTimer(stop, budgetMs)
-    if (budgetTimer && typeof budgetTimer.unref === "function") budgetTimer.unref()
-    if (signal) signal.addEventListener("abort", onAbort, { once: true })
-    const chunks = []
-    let size = 0
-    let oversized = false
-    if (child.stdout) {
-      child.stdout.on("data", (chunk) => {
-        if (settled || oversized) return
-        const bytes = Buffer.from(chunk)
-        size += bytes.length
-        if (size > maxStdoutBytes) {
-          oversized = true // stop storing: an oversized document is ignored, whatever it holds
-          chunks.length = 0
-          return
-        }
-        chunks.push(bytes)
-      })
-    }
-    child.on("error", () => {
-      exited = true
-      stopGrace()
-      finish(VERIFIER_PASS)
-    })
-    child.on("exit", () => {
-      exited = true
-      stopGrace() // the launcher ended within the grace: no SIGKILL
-    })
-    child.on("close", (code) => {
-      exited = true
-      stopGrace()
-      if (settled) return
-      if (code !== 0 || oversized) return finish(VERIFIER_PASS)
-      finish(decodeVerifier(Buffer.concat(chunks)))
-    })
-    try {
-      if (!child.stdin) return stop()
-      // A failed write means the hook never saw the event: stop it and pass silently.
-      child.stdin.on("error", stop)
-      child.stdin.end(JSON.stringify(event))
-    } catch {
-      stop()
-    }
-  })
-}
-
 let counter = 0
 /** A unique `msg_` id without a clock: a module counter plus random hex. */
 function messageId() {
@@ -429,7 +265,6 @@ export function createHandlers(
   ctx,
   {
     engine = runEngine,
-    verifier = runVerifier,
     env = process.env,
     sleep = abortableSleep,
     setTimer = setTimeout,
@@ -441,8 +276,6 @@ export function createHandlers(
   const contexts = new Map() // session id -> {key, cwd}, only for verified chains
   const compactions = new Map() // session id -> the promise of its observed, unfinished compaction
   const stopsInFlight = new Set() // session ids whose turn end is still being handled
-  const verifiesInFlight = new Map() // session id -> {controller, promise}: the separate verifier slot
-  let closed = false // set by dispose: no verifier starts or resumes after it
 
   const budget = (parent) => startBudget(budgetMs, setTimer, clearTimer, parent)
 
@@ -680,100 +513,12 @@ export function createHandlers(
   }
 
   /**
-   * One verifier run for one turn end, in its own per-session slot (design D5). The verified cwd and the
-   * root check come from `resolveSession`: a child session's turn end verifies nothing. A block resumes the
-   * session with the verifier text, a notice is a message that starts no run, and a pass sends nothing; a
-   * failed synthetic prompt is caught, so the watcher and the slot are never held by the host. Nothing is
-   * sent after dispose or after the watcher aborted.
-   *
-   * The lookup runs inside one handler budget (`HANDLER_BUDGET_MS`): a host record that never answers must
-   * not hold this session's slot, or every later turn end of it would silently skip verification.
-   */
-  async function verifyTurn(sessionID, signal) {
-    const bound = budget(signal)
-    let resolved
-    try {
-      resolved = await lookup(sessionID, bound)
-    } finally {
-      bound.end()
-    }
-    if (signal.aborted || closed || resolved === null) return
-    if (resolved.key.agent !== undefined) return // a child session's turn end starts no verifier
-    const response = await verifier({ session_id: sessionID, cwd: resolved.cwd }, { signal })
-    if (signal.aborted || closed) return
-    if (!isPlainObject(response) || !isString(response.text) || response.text === "") return
-    // Each result is its own synthetic prompt; the host's answer is not awaited, so a resume that never
-    // settles cannot keep this session's verifier slot busy.
-    const resume = response.kind === "block" ? true : response.kind === "notice" ? false : null
-    if (resume === null) return
-    const message = { sessionID, id: messageId(), text: response.text, resume }
-    invoke(() => ctx.session.synthetic(message)).catch(() => {
-      // a failed resume or notice never reports and never holds the stream
-    })
-  }
-
-  /**
-   * Claim a session's verifier slot and start one run, unless one is already in flight (a later turn end
-   * starts no second run). The slot is released when the run settles, never by a timer, so a resume that
-   * never settles does not keep it: the run's own budget bounds the launcher, not the slot. An expired or
-   * disposed run frees the slot as soon as it resolves, while the launcher may still be inside its SIGKILL
-   * grace; a turn end in that window starts a second launcher, whose run reports the old one's lock as
-   * contention (harmless, and documented in `docs/verify.md`).
-   */
-  function startVerifier(sessionID, signal) {
-    if (closed || verifiesInFlight.has(sessionID) || (signal && signal.aborted)) return
-    const controller = new AbortController()
-    const slot = { controller, promise: null }
-    verifiesInFlight.set(sessionID, slot)
-    const abort = () => controller.abort()
-    if (signal) signal.addEventListener("abort", abort, { once: true })
-    slot.promise = verifyTurn(sessionID, controller.signal)
-      .catch(() => {
-        // a verifier run never reports and never holds the stream
-      })
-      .finally(() => {
-        if (signal) signal.removeEventListener("abort", abort)
-        if (verifiesInFlight.get(sessionID) === slot) verifiesInFlight.delete(sessionID)
-      })
-  }
-
-  /**
-   * Stop every in-flight verifier (design D5): the abort sends SIGTERM to each launcher, which stops its
-   * dispatched child, and arms the SIGKILL grace; nothing more is sent or started. Resolves as soon as the
-   * runs settle, bounded so a lookup or host call that ignores the abort cannot hold the disposer.
-   */
-  async function dispose() {
-    closed = true
-    const pending = []
-    for (const slot of verifiesInFlight.values()) {
-      try {
-        slot.controller.abort()
-      } catch {
-        // an aborted controller is already stopped
-      }
-      if (slot.promise) pending.push(slot.promise)
-    }
-    if (pending.length === 0) return
-    await new Promise((resolve) => {
-      const bound = setTimer(resolve, DISPOSE_BOUND_MS)
-      if (bound && typeof bound.unref === "function") bound.unref()
-      Promise.all(pending.map((promise) => Promise.resolve(promise).catch(() => {}))).then(() => {
-        clearTimer(bound)
-        resolve()
-      })
-    })
-  }
-
-  /**
    * Handle one host event. A `session.execution.succeeded` is a turn end: its work starts detached, one
    * call in flight per session, each bounded by its own budget, so the event stream is never held.
    * `session.execution.interrupted` and `session.execution.failed` are not turn ends and are ignored, as
    * is every other event except a compaction. A `session.compaction.started` is registered at once as
    * pending for its session, so a gate or moment of that session (or of a child of it) that arrives
    * meanwhile waits for it.
-   *
-   * The engine stop and the verifier run are two independent slots: a busy engine stop never suppresses
-   * the verifier, and a long verifier run never suppresses a later turn end's engine stop.
    */
   function onEvent(event, signal) {
     if (!event || (signal && signal.aborted)) return Promise.resolve()
@@ -786,7 +531,6 @@ export function createHandlers(
           // a detached stop call never reports and never holds the stream
         })
       }
-      startVerifier(sessionID, signal)
       return Promise.resolve()
     }
     if (event.type !== "session.compaction.started") return Promise.resolve()
@@ -832,7 +576,7 @@ export function createHandlers(
     }
   }
 
-  return { keyOf, before, after, prompt, onEvent, watch, dispose }
+  return { keyOf, before, after, prompt, onEvent, watch }
 }
 
 /** Resolves after `ms`, or as soon as `signal` aborts. */
@@ -851,8 +595,8 @@ function abortableSleep(ms, signal) {
 
 /**
  * The plugin object; the options are the injectable seams (`spawn`, timers, `env`, `sleep`) the tests use.
- * `setup` returns an async disposer, like `opencode-rules`: it aborts the event stream, stops an in-flight
- * verifier, disposes the hook registrations and then waits for the watcher, each step bounded.
+ * `setup` returns an async disposer, like `opencode-rules`: it aborts the event stream, disposes the hook
+ * registrations and then waits for the watcher, each step bounded.
  */
 export function createPlugin({
   spawn,
@@ -872,7 +616,6 @@ export function createPlugin({
     async setup(ctx) {
       const handlers = createHandlers(ctx, {
         engine: (event, options) => runEngine(event, { ...runtime, ...options }),
-        verifier: (event, options) => runVerifier(event, { ...runtime, ...options }),
         env,
         sleep,
         setTimer: timers.set,
@@ -885,10 +628,9 @@ export function createPlugin({
       const controller = new AbortController()
       const watcher = handlers.watch(controller.signal)
       return async () => {
-        // First stop the stream, then release the hooks (never dependent on the loop), stop a verifier
-        // still running, and only then wait for the loop, and only up to a bound: a `next()` that ignores
-        // the signal must not hold the disposer. The abort also ends an in-flight compaction at once and
-        // keeps it from sending late, and it aborts every verifier slot with the same signal.
+        // First stop the stream, then release the hooks (never dependent on the loop), and only then wait
+        // for the loop, and only up to a bound: a `next()` that ignores the signal must not hold the
+        // disposer. The abort also ends an in-flight compaction at once and keeps it from sending late.
         controller.abort()
         for (const registration of registrations.reverse()) {
           try {
@@ -896,11 +638,6 @@ export function createPlugin({
           } catch {
             // a registration that cannot be disposed is already gone
           }
-        }
-        try {
-          await handlers.dispose() // bounded inside; a verifier run resolves at once on the abort
-        } catch {
-          // a verifier slot that cannot be stopped is already gone
         }
         await new Promise((resolve) => {
           const bound = timers.set(resolve, disposeBoundMs)

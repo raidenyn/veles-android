@@ -66,6 +66,10 @@ PLUGIN_OPTION_DIRS = "additionalRuleDirectories"
 # The one local plugin entry (a directory path string, per the hooked-rule-delivery spike) and its file.
 LOCAL_PLUGIN = "./scripts/opencode-hooked-rules"
 LOCAL_PLUGIN_INDEX = "scripts/opencode-hooked-rules/index.js"
+# The agent harness hook runtime's OpenCode plugin, which runs the verify gate.
+RUNTIME_PLUGIN = "./.agents/harness/hook-runtime/opencode"
+RUNTIME_PLUGIN_INDEX = ".agents/harness/hook-runtime/opencode/index.mjs"
+LOCAL_PLUGINS = ((LOCAL_PLUGIN, LOCAL_PLUGIN_INDEX), (RUNTIME_PLUGIN, RUNTIME_PLUGIN_INDEX))
 
 CODEOWNERS = ".github/CODEOWNERS"
 CODEOWNER_PATTERNS = (
@@ -102,14 +106,27 @@ CODEOWNER_SAMPLE_PATHS = (
 )
 
 # The Claude Code hooks that deliver the hooked rules: event -> expected matcher (None: no
-# `matcher` key). Each event has exactly one entry; every event but `Stop` holds exactly one
-# command, and `Stop` holds exactly the engine command then the verify command (design D11).
-# Any other key on a command (`async`, `onFailure`, `if`, `shell`, ...) or on an entry could
-# change how or whether the hook runs, so only these keys are allowed.
+# `matcher` key). Each of these events holds the engine entry, with exactly one command, then the
+# agent harness hook runtime's entry. Any other key on a command (`async`, `onFailure`, `if`,
+# `shell`, ...) or on an entry could change how or whether the hook runs, so only these keys are
+# allowed.
 CLAUDE_HOOK_COMMAND = 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/agent_rules.py" hook --format claude'
 CLAUDE_HOOK_TIMEOUT = 5
-CLAUDE_VERIFY_COMMAND = 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/verify.py" --hook claude || true'
-CLAUDE_VERIFY_TIMEOUT = 1800
+# The agent harness hook runtime (`.agents/harness/hook-runtime/`, installed by the
+# `agent-harness-hook-runtime` skill) runs the verify gate. Its entry has no matcher and one
+# command; the timeouts are the ones its `install` writes. The events it alone hooks hold only it.
+RUNTIME_COMMAND = 'node "$CLAUDE_PROJECT_DIR/.agents/harness/hook-runtime/claude.mjs"'
+RUNTIME_FILE = ".agents/harness/hook-runtime/claude.mjs"
+RUNTIME_HOOKS = (
+    ("PreToolUse", 10),
+    ("PostToolUse", 1800),
+    ("PostToolUseFailure", 1800),
+    ("UserPromptSubmit", 10),
+    ("Stop", 1800),
+    ("SubagentStop", 1800),
+    ("PreCompact", 10),
+    ("SessionStart", 10),
+)
 CLAUDE_HOOK_COMMAND_KEYS = ("type", "command", "timeout")
 CLAUDE_HOOK_ENTRY_KEYS = ("matcher", "hooks")
 CLAUDE_HOOKS = (
@@ -1526,10 +1543,11 @@ def _check_pinned_plugin(plugin):
 
 
 def check_opencode(root):
-    """Check `opencode.json`: only `$schema`/`plugins`, and exactly two plugin entries.
+    """Check `opencode.json`: only `$schema`/`plugins`, and exactly three plugin entries.
 
-    The allow-list is the pinned `opencode-rules` object (with the rule directory) and the local
-    hooked-rules plugin as the string `LOCAL_PLUGIN`, whose directory must hold an `index.js`.
+    The allow-list is the pinned `opencode-rules` object (with the rule directory), the local
+    hooked-rules plugin as the string `LOCAL_PLUGIN`, whose directory must hold an `index.js`, and
+    the hook runtime plugin as the string `RUNTIME_PLUGIN`, whose directory must hold an `index.mjs`.
     """
     text = _read_text(root, OPENCODE_JSON)
     if text is None:
@@ -1555,19 +1573,20 @@ def check_opencode(root):
     if not isinstance(plugins, list):
         findings.append(Finding("error", OPENCODE_JSON, "has no `plugins` list"))
         return findings
-    if len(plugins) != 2:
+    if len(plugins) != 3:
         findings.append(
             Finding(
                 "error",
                 OPENCODE_JSON,
-                "declares %d plugins; exactly two entries are required: the `%s` object and "
-                "the local `%s` string" % (len(plugins), PLUGIN_NAME, LOCAL_PLUGIN),
+                "declares %d plugins; exactly three entries are required: the `%s` object and "
+                "the local `%s` and `%s` strings"
+                % (len(plugins), PLUGIN_NAME, LOCAL_PLUGIN, RUNTIME_PLUGIN),
             )
         )
         return findings
 
     objects = [plugin for plugin in plugins if isinstance(plugin, dict)]
-    local_count = 0
+    local_names = [name for name, _ in LOCAL_PLUGINS]
     for plugin in plugins:
         if isinstance(plugin, dict):
             continue
@@ -1575,16 +1594,14 @@ def check_opencode(root):
             findings.append(
                 Finding("error", OPENCODE_JSON, "plugin entry must be a JSON string or object")
             )
-        elif plugin != LOCAL_PLUGIN:
+        elif plugin not in local_names:
             findings.append(
                 Finding(
                     "error",
                     OPENCODE_JSON,
-                    "plugin string `%s` is not `%s`" % (plugin, LOCAL_PLUGIN),
+                    "plugin string `%s` is not `%s` or `%s`" % (plugin, LOCAL_PLUGIN, RUNTIME_PLUGIN),
                 )
             )
-        else:
-            local_count += 1
     if objects:
         findings.extend(_check_pinned_plugin(objects[0]))
     else:
@@ -1597,26 +1614,27 @@ def check_opencode(root):
                 "has a second `%s` entry; only one object entry is allowed" % PLUGIN_NAME,
             )
         )
-    if local_count > 1:
-        findings.append(
-            Finding(
-                "error",
-                OPENCODE_JSON,
-                "local plugin `%s` is declared %d times; declare it once" % (LOCAL_PLUGIN, local_count),
+    for name, index in LOCAL_PLUGINS:
+        count = plugins.count(name)
+        if count > 1:
+            findings.append(
+                Finding(
+                    "error",
+                    OPENCODE_JSON,
+                    "local plugin `%s` is declared %d times; declare it once" % (name, count),
+                )
             )
-        )
-    elif local_count == 0:
-        findings.append(
-            Finding("error", OPENCODE_JSON, "has no local plugin `%s`" % LOCAL_PLUGIN)
-        )
-    if local_count and not os.path.isfile(os.path.join(root, *LOCAL_PLUGIN_INDEX.split("/"))):
-        findings.append(
-            Finding(
-                "error",
-                OPENCODE_JSON,
-                "local plugin `%s` has no `index.js` (expected `%s`)" % (LOCAL_PLUGIN, LOCAL_PLUGIN_INDEX),
+        elif count == 0:
+            findings.append(Finding("error", OPENCODE_JSON, "has no local plugin `%s`" % name))
+        if count and not os.path.isfile(os.path.join(root, *index.split("/"))):
+            findings.append(
+                Finding(
+                    "error",
+                    OPENCODE_JSON,
+                    "local plugin `%s` has no `%s` (expected `%s`)"
+                    % (name, index.rsplit("/", 1)[1], index),
+                )
             )
-        )
     return findings
 
 
@@ -1749,103 +1767,45 @@ def _strict_object(pairs):
     return dict(pairs)
 
 
-def _hook_command_findings(event, command, expected, expected_timeout, verify=False):
+def _hook_command_findings(event, command, expected, expected_timeout, what):
     """Findings for one hook command: its type, exact text, timeout and key set."""
 
     def error(message):
-        return [Finding("error", SETTINGS_JSON, "hook %s %s" % (event, message))]
+        return [Finding("error", SETTINGS_JSON, " ".join(filter(None, ("hook", event, what, message))))]
 
     if not isinstance(command, dict):
-        return error("%s must be an object" % ("verify command" if verify else "command"))
+        return error("command must be an object")
     findings = []
     if command.get("type") != "command":
-        prefix = "verify command " if verify else ""
-        findings.extend(
-            error("has %stype %r; expected 'command'" % (prefix, command.get("type")))
-        )
+        findings.extend(error("has type %r; expected 'command'" % (command.get("type"),)))
     if command.get("command") != expected:
-        if verify:
-            findings.extend(
-                error(
-                    "has verify command %r; expected %r"
-                    % (command.get("command"), expected)
-                )
-            )
-        else:
-            findings.extend(
-                error("has command %r; expected %r" % (command.get("command"), expected))
-            )
+        findings.extend(error("has command %r; expected %r" % (command.get("command"), expected)))
     timeout = command.get("timeout")
-    if verify:
-        if "timeout" not in command:
-            findings.extend(error("has verify command no timeout; expected %d" % expected_timeout))
-        elif (
-            not isinstance(timeout, int)
-            or isinstance(timeout, bool)
-            or timeout != expected_timeout
-        ):
-            findings.extend(
-                error(
-                    "has verify command timeout %r; expected %d" % (timeout, expected_timeout)
-                )
-            )
-    else:
-        if "timeout" not in command:
-            findings.extend(error("has no timeout; expected %d" % expected_timeout))
-        elif (
-            not isinstance(timeout, int)
-            or isinstance(timeout, bool)
-            or timeout != expected_timeout
-        ):
-            findings.extend(error("has timeout %r; expected %d" % (timeout, expected_timeout)))
-    prefix = "verify command " if verify else ""
+    if "timeout" not in command:
+        findings.extend(error("has no timeout; expected %d" % expected_timeout))
+    elif not isinstance(timeout, int) or isinstance(timeout, bool) or timeout != expected_timeout:
+        findings.extend(error("has timeout %r; expected %d" % (timeout, expected_timeout)))
     for key in sorted(set(command) - set(CLAUDE_HOOK_COMMAND_KEYS)):
         findings.extend(
             error(
-                "has %sunexpected key `%s`; only `type`, `command` and `timeout` are allowed"
-                % (prefix, ascii(key)[1:-1])
+                "has unexpected key `%s`; only `type`, `command` and `timeout` are allowed"
+                % ascii(key)[1:-1]
             )
         )
     return findings
 
 
-def _hook_findings(event, expected_matcher, entries):
-    """Findings for one event's entry list in `.claude/settings.json`.
-
-    Every event holds one entry; `Stop` holds the engine command followed by the verify command,
-    every other event only the engine command.
-    """
+def _entry_findings(event, entry, expected_matcher, command, timeout, what):
+    """Findings for one matcher group: its matcher, exactly one command and its key set."""
 
     def error(message):
-        return [Finding("error", SETTINGS_JSON, "hook %s %s" % (event, message))]
+        return [Finding("error", SETTINGS_JSON, " ".join(filter(None, ("hook", event, what, message))))]
 
-    verify = event == "Stop"
-    expected_commands = (
-        (
-            (CLAUDE_HOOK_COMMAND, CLAUDE_HOOK_TIMEOUT),
-            (CLAUDE_VERIFY_COMMAND, CLAUDE_VERIFY_TIMEOUT),
-        )
-        if verify
-        else ((CLAUDE_HOOK_COMMAND, CLAUDE_HOOK_TIMEOUT),)
-    )
-    expected_shape = (
-        "exactly two commands: the engine command then the verify command"
-        if verify
-        else "exactly one command"
-    )
-    if not isinstance(entries, list) or not entries:
-        return error("must be a non-empty list holding exactly one entry")
-    if len(entries) != 1:
-        return error(
-            "has %d entries; expected exactly one entry with %s" % (len(entries), expected_shape)
-        )
-    entry = entries[0]
     if not isinstance(entry, dict):
         return error("entry must be an object")
     commands = entry.get("hooks")
-    if not isinstance(commands, list) or len(commands) != len(expected_commands):
-        return error("must hold %s in its entry" % expected_shape)
-
+    if not isinstance(commands, list) or len(commands) != 1:
+        return error("must hold exactly one command in its entry")
     findings = []
     if expected_matcher is None:
         if "matcher" in entry:
@@ -1856,16 +1816,7 @@ def _hook_findings(event, expected_matcher, entries):
         findings.extend(
             error("has matcher %r; expected %r" % (entry.get("matcher"), expected_matcher))
         )
-    for index, (expected_command, expected_timeout) in enumerate(expected_commands):
-        findings.extend(
-            _hook_command_findings(
-                event,
-                commands[index],
-                expected_command,
-                expected_timeout,
-                verify=verify and index == 1,
-            )
-        )
+    findings.extend(_hook_command_findings(event, commands[0], command, timeout, what))
     for key in sorted(set(entry) - set(CLAUDE_HOOK_ENTRY_KEYS)):
         findings.extend(
             error("entry has unexpected key `%s`; only `matcher` and `hooks` are allowed" % ascii(key)[1:-1])
@@ -1873,16 +1824,45 @@ def _hook_findings(event, expected_matcher, entries):
     return findings
 
 
-def check_claude_hooks(root):
-    """Check that `.claude/settings.json` wires the hooked-rule engine into Claude Code.
+def _hook_findings(event, engine_matcher, runtime_timeout, entries):
+    """Findings for one event's entry list in `.claude/settings.json`.
 
-    Each of the five events has exactly one entry: every event but `Stop` holds exactly one
-    command, the engine's `hook` subcommand; `Stop` holds the engine command and then the verify
-    command. Each command has the expected text, the expected matcher (or none) and its fixed
-    timeout (5 seconds, 1800 for the verify command), and no other key on the entry or the command.
-    `disableAllHooks` must not be set to a true value, and the engine the hooks run must exist.
-    Whether the engine may ever answer `allow` is a property of the engine, tested there, not here.
-    A repository with these hooks and no hooked rule is valid: the engine passes silently.
+    An event of `CLAUDE_HOOKS` holds the engine entry then the hook runtime entry; an event only the
+    runtime hooks holds the runtime entry alone.
+    """
+    expected = []
+    if engine_matcher is not False:
+        expected.append(("", engine_matcher, CLAUDE_HOOK_COMMAND, CLAUDE_HOOK_TIMEOUT))
+    expected.append(("runtime", None, RUNTIME_COMMAND, runtime_timeout))
+    shape = " then ".join("the %s entry" % (what or "engine") for what, _, _, _ in expected)
+    if not isinstance(entries, list) or len(entries) != len(expected):
+        count = len(entries) if isinstance(entries, list) else "no"
+        return [
+            Finding(
+                "error",
+                SETTINGS_JSON,
+                "hook %s has %s entries; expected exactly %d: %s"
+                % (event, count, len(expected), shape),
+            )
+        ]
+    findings = []
+    for entry, (what, matcher, command, timeout) in zip(entries, expected):
+        findings.extend(_entry_findings(event, entry, matcher, command, timeout, what))
+    return findings
+
+
+def check_claude_hooks(root):
+    """Check that `.claude/settings.json` wires the hooked-rule engine and the hook runtime.
+
+    Each of the five engine events holds two entries: the engine entry, with exactly one command,
+    the engine's `hook` subcommand, its matcher (or none) and a 5-second timeout; then the agent
+    harness hook runtime entry, with no matcher, exactly one command and the timeout its `install`
+    writes. The three events only the runtime hooks (`PostToolUseFailure`, `SubagentStop`,
+    `SessionStart`) hold the runtime entry alone, so the engine never runs at a subagent stop. No
+    other key is allowed on an entry or a command. `disableAllHooks` must not be set to a true
+    value, and the engine and the runtime the hooks run must exist. Whether the engine may ever
+    answer `allow` is a property of the engine, tested there, not here. A repository with these
+    hooks and no hooked rule is valid: the engine passes silently.
     """
     if os.path.islink(os.path.join(root, SETTINGS_JSON)):
         return []  # `check_links` reports the symlink; a dangling target is not a second error
@@ -1919,16 +1899,6 @@ def check_claude_hooks(root):
     hooks = data.get("hooks")
     if not isinstance(hooks, dict):
         return findings + [Finding("error", SETTINGS_JSON, "has no `hooks` block")]
-    # A subagent's stop is not a delivery moment: the engine's stop gate runs in the main context
-    # only, so wiring `SubagentStop` could only double-run it.
-    if "SubagentStop" in hooks:
-        findings.append(
-            Finding(
-                "error",
-                SETTINGS_JSON,
-                "hooks SubagentStop; a subagent stop is not a delivery moment and must not be wired",
-            )
-        )
     if any(event in hooks for event, _ in CLAUDE_HOOKS) and not os.path.isfile(
         os.path.join(root, *ENGINE_FILE.split("/"))
     ):
@@ -1939,11 +1909,26 @@ def check_claude_hooks(root):
                 "is missing; the Claude Code hooks in `%s` run it" % SETTINGS_JSON,
             )
         )
-    for event, matcher in CLAUDE_HOOKS:
+    if any(event in hooks for event, _ in RUNTIME_HOOKS) and not os.path.isfile(
+        os.path.join(root, *RUNTIME_FILE.split("/"))
+    ):
+        findings.append(
+            Finding(
+                "error",
+                RUNTIME_FILE,
+                "is missing; the Claude Code hooks in `%s` run it" % SETTINGS_JSON,
+            )
+        )
+    # A subagent's stop is not a delivery moment: the engine's stop gate runs in the main context
+    # only, so `SubagentStop` holds the runtime entry alone (the verify gate checks subagents).
+    engine_matchers = dict(CLAUDE_HOOKS)
+    for event, runtime_timeout in RUNTIME_HOOKS:
         if event not in hooks:
             findings.append(Finding("error", SETTINGS_JSON, "hook %s is missing" % event))
             continue
-        findings.extend(_hook_findings(event, matcher, hooks[event]))
+        findings.extend(
+            _hook_findings(event, engine_matchers.get(event, False), runtime_timeout, hooks[event])
+        )
     return findings
 
 

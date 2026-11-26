@@ -15,6 +15,7 @@ python3 -I scripts/commitlint.py --message "feat(app): add thing"   # --file PAT
 python3 -I scripts/components.py changed --base <sha>
 python3 -I scripts/verify.py              # task gate: affected nodes' checks and related tests; before a push
 python3 -I scripts/verify.py --branch     # optional full local run: all of affected nodes' tests
+node .agents/harness/verify-gate/cli.mjs run   # the verify gate's full run: python3 -I scripts/verify_gate.py
 python3 -I scripts/last_green.py --pr <n> --head <sha> --head-repo <owner/name> --head-ref <ref>
 python3 -I scripts/project_flow.py --help   # check, sync, next, start, followup
 ```

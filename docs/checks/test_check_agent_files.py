@@ -178,10 +178,22 @@ EXPECTED_CODEOWNER_PATTERNS = (
     "/scripts/opencode-hooked-rules/",
 )
 HOOK_COMMAND = 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/agent_rules.py" hook --format claude'
-# The verify hook that `Stop` holds after the engine command: design D11 fixes both texts and
-# timeouts, so they are repeated here rather than imported from the module under test.
-VERIFY_COMMAND = 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/verify.py" --hook claude || true'
-VERIFY_TIMEOUT = 1800
+# The agent harness hook runtime's command and the timeouts its `install` writes, repeated here
+# rather than imported from the module under test. Each engine event holds its entry second; the
+# events only the runtime hooks hold it alone.
+RUNTIME_COMMAND = 'node "$CLAUDE_PROJECT_DIR/.agents/harness/hook-runtime/claude.mjs"'
+RUNTIME_FILE = ".agents/harness/hook-runtime/claude.mjs"
+RUNTIME_TIMEOUTS = {
+    "PreToolUse": 10,
+    "PostToolUse": 1800,
+    "PostToolUseFailure": 1800,
+    "UserPromptSubmit": 10,
+    "Stop": 1800,
+    "SubagentStop": 1800,
+    "PreCompact": 10,
+    "SessionStart": 10,
+}
+RUNTIME_ONLY_HOOKS = ("PostToolUseFailure", "SubagentStop", "SessionStart")
 # (event, matcher) per hook; a matcher of None means the entry carries no `matcher` key.
 EXPECTED_HOOKS = (
     ("PreToolUse", "Bash"),
@@ -193,6 +205,8 @@ EXPECTED_HOOKS = (
 OPENCODE_PACKAGE = "opencode-rules@>=2.0.0 <3"
 LOCAL_PLUGIN = "./scripts/opencode-hooked-rules"
 LOCAL_PLUGIN_INDEX = "scripts/opencode-hooked-rules/index.js"
+RUNTIME_PLUGIN = "./.agents/harness/hook-runtime/opencode"
+RUNTIME_PLUGIN_INDEX = ".agents/harness/hook-runtime/opencode/index.mjs"
 # The three always-on `repo-*` rules the root AGENTS.md lists, once the five workflow rules moved
 # to `.agents/hooked-rules/`.
 EXPECTED_REPO_RULES = (
@@ -336,6 +350,7 @@ def opencode_text(
         plugins = [
             {"package": package, "options": {"additionalRuleDirectories": list(directories)}},
             LOCAL_PLUGIN,
+            RUNTIME_PLUGIN,
         ]
     data = {"$schema": "https://opencode.ai/config.json", "plugins": plugins}
     if extra:
@@ -355,7 +370,8 @@ def hooks_block(drop=None, matchers=None, commands=None, timeouts=None):
 
     ``drop`` names events to omit; ``matchers`` and ``commands`` replace a value; ``timeouts``
     replaces the timeout, and a value of ``False`` omits the key. The overrides apply to the
-    event's first command, so `Stop` keeps its verify command second.
+    engine entry; each engine event keeps the hook runtime entry second, and the events only the
+    runtime hooks hold that entry alone.
     """
     block = {}
     for event, matcher in EXPECTED_HOOKS:
@@ -367,15 +383,24 @@ def hooks_block(drop=None, matchers=None, commands=None, timeouts=None):
         if timeout is not False:
             command["timeout"] = timeout
         hooks = [command]
-        if event == "Stop":
-            hooks.append(
-                {"type": "command", "command": VERIFY_COMMAND, "timeout": VERIFY_TIMEOUT}
-            )
         entry = {"hooks": hooks}
         if matcher is not None:
             entry = {"matcher": matcher, "hooks": hooks}
-        block[event] = [entry]
+        block[event] = [entry, runtime_entry(event)]
+    for event in RUNTIME_ONLY_HOOKS:
+        if drop is not None and event == drop:
+            continue
+        block[event] = [runtime_entry(event)]
     return block
+
+
+def runtime_entry(event):
+    """The hook runtime's matcher group for one event."""
+    return {
+        "hooks": [
+            {"type": "command", "command": RUNTIME_COMMAND, "timeout": RUNTIME_TIMEOUTS[event]}
+        ]
+    }
 
 
 def settings_text(hooks=None, extra=None):
@@ -534,6 +559,8 @@ def clean_files(skills=None):
         ".claude/settings.json": settings_text(),
         ".agents/skills/.openspec-target": "claude\n",
         LOCAL_PLUGIN_INDEX: "export default {}\n",
+        RUNTIME_FILE: "// the hook runtime\n",
+        RUNTIME_PLUGIN_INDEX: "export default {}\n",
         ENGINE_FILE: ENGINE_TEXT,
         BRANCH_PASS_FILE: BRANCH_PASS_TEXT,
         "scripts/verify-commands.json": json.dumps(FIXTURE_TABLE, indent=2) + "\n",
@@ -691,8 +718,9 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assertEqual(getattr(check_module, "AGENTS_LINE_MAX", None), 40)
         self.assertEqual(tuple(check_module.ALWAYS_ON_REPO_RULES), EXPECTED_REPO_RULES)
         self.assertEqual(tuple(check_module.CLAUDE_HOOKS), EXPECTED_HOOKS)
-        self.assertEqual(getattr(check_module, "CLAUDE_VERIFY_COMMAND", None), VERIFY_COMMAND)
-        self.assertEqual(getattr(check_module, "CLAUDE_VERIFY_TIMEOUT", None), VERIFY_TIMEOUT)
+        self.assertEqual(getattr(check_module, "RUNTIME_COMMAND", None), RUNTIME_COMMAND)
+        self.assertEqual(dict(check_module.RUNTIME_HOOKS), RUNTIME_TIMEOUTS)
+        self.assertFalse(hasattr(check_module, "CLAUDE_VERIFY_COMMAND"))
         self.assertEqual(tuple(check_module.BUDGET_COMMANDS), EXPECTED_BUDGET_COMMANDS)
         self.assertEqual(
             dict(check_module.MOVED_RULES),
@@ -2149,73 +2177,90 @@ class AgentFileCheckTest(unittest.TestCase):
         self.assert_finding(findings, "error", ".claude/settings.json", "hook Stop is missing")
         self.assertEqual(len(findings), 1, findings)
 
-    def test_stop_holds_verify_hook(self):
-        # The otherwise valid fixture passes, and the two Stop commands are the fixed pair.
+    def test_every_engine_event_holds_the_engine_then_the_runtime(self):
         files = clean_files()
-        stop = json.loads(files[".claude/settings.json"])["hooks"]["Stop"]
-        self.assertEqual(
-            [command["command"] for command in stop[0]["hooks"]], [HOOK_COMMAND, VERIFY_COMMAND]
-        )
-        self.assertEqual(
-            [command["timeout"] for command in stop[0]["hooks"]], [5, VERIFY_TIMEOUT]
-        )
+        hooks = json.loads(files[".claude/settings.json"])["hooks"]
+        for event, _ in EXPECTED_HOOKS:
+            self.assertEqual(
+                [[command["command"] for command in entry["hooks"]] for entry in hooks[event]],
+                [[HOOK_COMMAND], [RUNTIME_COMMAND]],
+            )
+        for event in RUNTIME_ONLY_HOOKS:
+            self.assertEqual(hooks[event], [runtime_entry(event)])
         self.assertEqual(check_claude_hooks(self.repo(files)), [])
         self.assertEqual(check_repo(self.repo(files)), [])
 
-    def test_stop_without_verify(self):
+    def test_stop_rejects_the_old_verify_command(self):
+        # The turn-end verify runs from the hook runtime now, never as a second engine command.
         block = hooks_block()
-        block["Stop"][0]["hooks"].pop()
+        block["Stop"][0]["hooks"].append(
+            {
+                "type": "command",
+                "command": 'python3 -I "$CLAUDE_PROJECT_DIR/scripts/verify.py" --hook claude || true',
+                "timeout": 1800,
+            }
+        )
         files = clean_files()
         files[".claude/settings.json"] = settings_text(block)
         findings = check_repo(self.repo(files))
         self.assert_finding(
-            findings,
-            "error",
-            ".claude/settings.json",
-            "hook Stop must hold exactly two commands",
+            findings, "error", ".claude/settings.json", "hook Stop must hold exactly one command"
         )
         self.assertEqual(len(findings), 1, findings)
 
-    def test_stop_verify_first(self):
+    def test_runtime_entry_first_fails(self):
         block = hooks_block()
-        block["Stop"][0]["hooks"].reverse()
+        block["Stop"].reverse()
         files = clean_files()
         files[".claude/settings.json"] = settings_text(block)
         findings = check_repo(self.repo(files))
         self.assert_finding(findings, "error", ".claude/settings.json", "hook Stop has command")
         self.assert_finding(
-            findings, "error", ".claude/settings.json", "expected %r" % VERIFY_COMMAND
+            findings, "error", ".claude/settings.json", "hook Stop runtime has command"
         )
-        self.assertEqual(len(findings), 4, findings)
 
-    def test_stop_third_command(self):
+    def test_runtime_wrong_timeout(self):
         block = hooks_block()
-        block["Stop"][0]["hooks"].append({"type": "command", "command": "true", "timeout": 5})
+        block["Stop"][1]["hooks"][0]["timeout"] = 5
         files = clean_files()
         files[".claude/settings.json"] = settings_text(block)
         findings = check_repo(self.repo(files))
         self.assert_finding(
-            findings,
-            "error",
-            ".claude/settings.json",
-            "hook Stop must hold exactly two commands",
+            findings, "error", ".claude/settings.json", "hook Stop runtime has timeout 5; expected 1800"
         )
         self.assertEqual(len(findings), 1, findings)
 
-    def test_stop_wrong_timeout(self):
-        block = hooks_block()
-        block["Stop"][0]["hooks"][1]["timeout"] = 5
+    def test_runtime_entry_missing_fails(self):
+        for event in [event for event, _ in EXPECTED_HOOKS] + list(RUNTIME_ONLY_HOOKS):
+            with self.subTest(event=event):
+                block = hooks_block()
+                block[event].pop()
+                files = clean_files()
+                files[".claude/settings.json"] = settings_text(block)
+                findings = check_repo(self.repo(files))
+                self.assert_finding(findings, "error", ".claude/settings.json", "hook %s has" % event)
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_runtime_only_hook_missing(self):
+        for event in RUNTIME_ONLY_HOOKS:
+            with self.subTest(event=event):
+                files = clean_files()
+                files[".claude/settings.json"] = settings_text(hooks_block(drop=event))
+                findings = check_repo(self.repo(files))
+                self.assert_finding(
+                    findings, "error", ".claude/settings.json", "hook %s is missing" % event
+                )
+                self.assertEqual(len(findings), 1, findings)
+
+    def test_runtime_missing_fails(self):
         files = clean_files()
-        files[".claude/settings.json"] = settings_text(block)
+        del files[RUNTIME_FILE]
         findings = check_repo(self.repo(files))
-        self.assert_finding(findings, "error", ".claude/settings.json", "hook Stop has verify command timeout")
-        self.assert_finding(findings, "error", ".claude/settings.json", "expected 1800")
+        self.assert_finding(findings, "error", RUNTIME_FILE, "is missing")
         self.assertEqual(len(findings), 1, findings)
 
     def test_other_event_second_command(self):
         for event, _ in EXPECTED_HOOKS:
-            if event == "Stop":
-                continue
             with self.subTest(event=event):
                 block = hooks_block()
                 block[event][0]["hooks"].append(
@@ -2232,20 +2277,18 @@ class AgentFileCheckTest(unittest.TestCase):
                 )
                 self.assertEqual(len(findings), 1, findings)
 
-    def test_subagent_stop_rejected(self):
-        # A subagent stop is not a delivery moment; wiring it would run the stop gate twice.
+    def test_subagent_stop_rejects_the_engine(self):
+        # A subagent stop is not a delivery moment; the engine there would run the stop gate twice.
         block = hooks_block()
-        block["SubagentStop"] = [
-            {
-                "hooks": [
-                    {"type": "command", "command": HOOK_COMMAND, "timeout": 5}
-                ]
-            }
-        ]
+        block["SubagentStop"].insert(
+            0, {"hooks": [{"type": "command", "command": HOOK_COMMAND, "timeout": 5}]}
+        )
         files = clean_files()
         files[".claude/settings.json"] = settings_text(block)
         findings = check_repo(self.repo(files))
-        self.assert_finding(findings, "error", ".claude/settings.json", "SubagentStop")
+        self.assert_finding(
+            findings, "error", ".claude/settings.json", "hook SubagentStop has 2 entries; expected exactly 1"
+        )
         self.assertEqual(len(findings), 1, findings)
 
     def test_hooks_settings_unreadable_or_without_hooks_fail(self):
@@ -2269,7 +2312,7 @@ class AgentFileCheckTest(unittest.TestCase):
 
     def test_hooks_extra_entry_fails(self):
         for event, matcher in EXPECTED_HOOKS:
-            with self.subTest(event=event, kind="second entry"):
+            with self.subTest(event=event, kind="third entry"):
                 block = hooks_block()
                 extra = {"hooks": [{"type": "command", "command": "true", "timeout": 5}]}
                 block[event].append(extra)
@@ -2277,7 +2320,7 @@ class AgentFileCheckTest(unittest.TestCase):
                 files[".claude/settings.json"] = settings_text(block)
                 findings = check_repo(self.repo(files))
                 self.assert_finding(findings, "error", ".claude/settings.json", "hook %s " % event)
-                self.assert_finding(findings, "error", ".claude/settings.json", "exactly one")
+                self.assert_finding(findings, "error", ".claude/settings.json", "expected exactly 2")
                 self.assertEqual(len(findings), 1, findings)
             with self.subTest(event=event, kind="second command"):
                 block = hooks_block()
@@ -2286,12 +2329,7 @@ class AgentFileCheckTest(unittest.TestCase):
                 files[".claude/settings.json"] = settings_text(block)
                 findings = check_repo(self.repo(files))
                 self.assert_finding(findings, "error", ".claude/settings.json", "hook %s " % event)
-                self.assert_finding(
-                    findings,
-                    "error",
-                    ".claude/settings.json",
-                    "exactly two" if event == "Stop" else "exactly one",
-                )
+                self.assert_finding(findings, "error", ".claude/settings.json", "exactly one")
                 self.assertEqual(len(findings), 1, findings)
 
     def test_hooks_malformed_entry_fails(self):
@@ -2420,12 +2458,10 @@ class AgentFileCheckTest(unittest.TestCase):
         block = hooks_block()
         for event, matcher in EXPECTED_HOOKS:
             self.assertEqual(sorted(block[event][0]["hooks"][0]), ["command", "timeout", "type"])
-            if event == "Stop":
-                self.assertEqual(
-                    sorted(block[event][0]["hooks"][1]), ["command", "timeout", "type"]
-                )
+            self.assertEqual(sorted(block[event][1]["hooks"][0]), ["command", "timeout", "type"])
             expected = ["hooks", "matcher"] if matcher is not None else ["hooks"]
             self.assertEqual(sorted(block[event][0]), expected)
+            self.assertEqual(sorted(block[event][1]), ["hooks"])
         self.assertEqual(check_claude_hooks(self.repo()), [])
 
     def test_disable_all_hooks_truthy_fails(self):
@@ -2479,10 +2515,10 @@ class AgentFileCheckTest(unittest.TestCase):
             "options": {"additionalRuleDirectories": [".agents/rules"]},
         }
 
-    def test_opencode_two_entries_ok(self):
+    def test_opencode_three_entries_ok(self):
         for plugins in (
-            [self.pinned_entry(), LOCAL_PLUGIN],
-            [LOCAL_PLUGIN, self.pinned_entry()],
+            [self.pinned_entry(), LOCAL_PLUGIN, RUNTIME_PLUGIN],
+            [RUNTIME_PLUGIN, LOCAL_PLUGIN, self.pinned_entry()],
         ):
             with self.subTest(plugins=plugins):
                 files = clean_files()
@@ -2492,20 +2528,20 @@ class AgentFileCheckTest(unittest.TestCase):
     def test_opencode_third_plugin(self):
         files = clean_files()
         files["opencode.json"] = opencode_text(
-            plugins=[self.pinned_entry(), LOCAL_PLUGIN, "./scripts/other-plugin"]
+            plugins=[self.pinned_entry(), LOCAL_PLUGIN, RUNTIME_PLUGIN, "./scripts/other-plugin"]
         )
         findings = check_repo(self.repo(files))
-        self.assert_finding(findings, "error", "opencode.json", "exactly two")
+        self.assert_finding(findings, "error", "opencode.json", "exactly three")
         self.assertEqual(len(findings), 1, findings)
 
     def test_opencode_second_plugin_fails(self):
         # A second `opencode-rules` entry, the local entry twice and a lone entry all fail.
         cases = (
-            ([self.pinned_entry(), self.pinned_entry()], "`opencode-rules` entry"),
-            ([self.pinned_entry(), LOCAL_PLUGIN, LOCAL_PLUGIN], "exactly two"),
-            ([LOCAL_PLUGIN, LOCAL_PLUGIN], "`opencode-rules` entry"),
-            ([self.pinned_entry()], "exactly two"),
-            ([], "exactly two"),
+            ([self.pinned_entry(), self.pinned_entry(), RUNTIME_PLUGIN], "`opencode-rules` entry"),
+            ([self.pinned_entry(), LOCAL_PLUGIN, LOCAL_PLUGIN], "has no local plugin `%s`" % RUNTIME_PLUGIN),
+            ([LOCAL_PLUGIN, LOCAL_PLUGIN, RUNTIME_PLUGIN], "`opencode-rules` entry"),
+            ([self.pinned_entry(), LOCAL_PLUGIN], "exactly three"),
+            ([], "exactly three"),
         )
         for plugins, fragment in cases:
             with self.subTest(plugins=plugins):
@@ -2516,13 +2552,15 @@ class AgentFileCheckTest(unittest.TestCase):
 
     def test_opencode_duplicate_local_entry(self):
         files = clean_files()
-        files["opencode.json"] = opencode_text(plugins=[LOCAL_PLUGIN, LOCAL_PLUGIN])
+        files["opencode.json"] = opencode_text(plugins=[LOCAL_PLUGIN, LOCAL_PLUGIN, RUNTIME_PLUGIN])
         findings = check_repo(self.repo(files))
         self.assert_finding(findings, "error", "opencode.json", "local plugin `%s` is declared 2 times" % LOCAL_PLUGIN)
 
     def test_opencode_missing_local_entry(self):
         files = clean_files()
-        files["opencode.json"] = opencode_text(plugins=[self.pinned_entry(), self.pinned_entry()])
+        files["opencode.json"] = opencode_text(
+            plugins=[self.pinned_entry(), self.pinned_entry(), RUNTIME_PLUGIN]
+        )
         findings = check_repo(self.repo(files))
         self.assert_finding(
             findings, "error", "opencode.json", "has no local plugin `%s`" % LOCAL_PLUGIN
@@ -2539,17 +2577,20 @@ class AgentFileCheckTest(unittest.TestCase):
         ):
             with self.subTest(entry=wrong):
                 files = clean_files()
-                files["opencode.json"] = opencode_text(plugins=[self.pinned_entry(), wrong])
+                files["opencode.json"] = opencode_text(plugins=[self.pinned_entry(), wrong, RUNTIME_PLUGIN])
                 findings = check_repo(self.repo(files))
                 self.assert_finding(
-                    findings, "error", "opencode.json", "plugin string `%s` is not `%s`" % (wrong, LOCAL_PLUGIN)
+                    findings,
+                    "error",
+                    "opencode.json",
+                    "plugin string `%s` is not `%s` or `%s`" % (wrong, LOCAL_PLUGIN, RUNTIME_PLUGIN),
                 )
 
     def test_opencode_other_entry_types(self):
         for wrong in (7, None, ["x"], {"package": "other-plugin@1.0.0"}):
             with self.subTest(entry=wrong):
                 files = clean_files()
-                files["opencode.json"] = opencode_text(plugins=[self.pinned_entry(), wrong])
+                files["opencode.json"] = opencode_text(plugins=[self.pinned_entry(), wrong, RUNTIME_PLUGIN])
                 findings = check_repo(self.repo(files))
                 self.assertTrue(findings)
                 self.assertTrue(all(f.path == "opencode.json" for f in findings), findings)
@@ -2560,6 +2601,15 @@ class AgentFileCheckTest(unittest.TestCase):
         findings = check_repo(self.repo(files))
         self.assert_finding(
             findings, "error", "opencode.json", "local plugin `%s` has no `index.js`" % LOCAL_PLUGIN
+        )
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_opencode_runtime_plugin_missing_index(self):
+        files = clean_files()
+        del files[RUNTIME_PLUGIN_INDEX]
+        findings = check_repo(self.repo(files))
+        self.assert_finding(
+            findings, "error", "opencode.json", "local plugin `%s` has no `index.mjs`" % RUNTIME_PLUGIN
         )
         self.assertEqual(len(findings), 1, findings)
 

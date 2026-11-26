@@ -1,0 +1,9 @@
+{
+  "hook-runtime": {},
+  "verify-gate": {
+    "command": ["python3", "-I", "scripts/verify_gate.py"],
+    "base": "origin/master",
+    "taskFiles": ["openspec/changes/*/tasks.md"],
+    "timeoutSeconds": 1740
+  }
+}
