@@ -247,6 +247,8 @@ Its one command, `verify-gate.command` in `.agents/harness.json`, is
   of that budget, and reads the tree again before it runs: the other run's records keep that run short,
   and its branch pass ends it at once. A wait past half the budget fails with `verify: verification
   already running`. An orphaned process group that cannot be stopped fails at once, as in `verify.py`.
+  A plain run that starts after a long wait has no deadline of its own (one would stop it writing the
+  branch pass), so the gate's timeout can cut it short; run `python3 -I scripts/verify.py` by hand then.
 
 A failure is added to the edit's tool result, or blocks the turn end at most three times for the same
 failure; a turn end with nothing changed since the last full pass runs nothing. Run the same full run by
