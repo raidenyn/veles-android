@@ -148,7 +148,8 @@ is a `platform` entry with the honest `ci` value `"none (no CI job; a local fixt
 
 ## Remembered passes
 
-Only `--hook` mode reuses a pass, and only for the task gate. The key is a sha256 over the plan,
+Only `--hook` mode and the verify gate's run on a tree with uncommitted changes reuse a pass, and only
+for the task gate. The key is a sha256 over the plan,
 the node entry, the effective environment (build-affecting variables and every resolved tool's path
 and version), the affected tracked and changed files, the declared input trees, and each consumed
 generated output. The source side is computed before and after the run; a record is written only
@@ -232,8 +233,14 @@ Its one command, `verify-gate.command` in `.agents/harness.json`, is
   `sh -n`, `node --check`, `rustfmt --check`, and the package's own `eslint` and `prettier --check`
   under `web-extension/` and `native-bridge/` (skipped when its `node_modules` is missing). Kotlin,
   Markdown and other files have no single-file lint; the next full run covers them.
-- **A ticked task** in `openspec/changes/*/tasks.md` and **every turn end** exec the plain task gate,
-  `python3 -I scripts/verify.py`. A run on a clean tree writes the branch pass like any manual run.
+- **A ticked task** in `openspec/changes/*/tasks.md` and **every turn end** run the task gate of
+  `scripts/verify.py` in the same process. With uncommitted changes the run reads the remembered passes,
+  as `--hook` mode does, so a node whose inputs are unchanged since it passed is `PASS (remembered)`. On
+  a clean tree it is the plain manual run: it never reads them and writes the branch pass.
+- **Contention.** A run that finds `build/verify/lock` held (for example by a background
+  `python3 -I scripts/verify.py` before a push) waits for it, polling every 2 seconds for up to the
+  gate's `timeoutSeconds` less 60, and then runs; the other run's records keep that run short. Only a
+  wait past that limit fails, with `verify: verification already running`.
 
 A failure is added to the edit's tool result, or blocks the turn end at most three times for the same
 failure; a turn end with nothing changed since the last full pass runs nothing. Run the same full run by

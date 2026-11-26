@@ -6,7 +6,7 @@
 
 ## 2. The command
 
-- [x] 2.1 Add `scripts/verify_gate.py` (edit lint; task and turn end exec the task gate) and its tests.
+- [x] 2.1 Add `scripts/verify_gate.py` (edit lint; task and turn end run the task gate, with remembered passes on a dirty tree and a wait on contention) and its tests.
 
 ## 3. Wiring checks
 

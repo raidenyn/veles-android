@@ -25,7 +25,9 @@ the RFC are the design.
 
 **The command**
 - `scripts/verify_gate.py`: on `edit` it lints the edited file where a fast single-file lint exists; on `task` and
-  `turn-end` it execs the plain task gate `python3 -I scripts/verify.py`, which still writes the branch pass.
+  `turn-end` it runs the task gate of `scripts/verify.py` in process: with remembered passes on a tree with
+  uncommitted changes (as the earlier turn-end hook did), as the plain run that writes the branch pass on a clean
+  tree, and waiting for a held run lock instead of failing.
 
 **Checks and CI**
 - The agent-file check accepts exactly the new wiring. The tooling CI job runs both tools' `check`, and
