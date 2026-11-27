@@ -3,7 +3,8 @@
 // stdin, dispatches it to the installed handlers and prints the host's hook JSON. It exits 0 on
 // every path: a hook never blocks the host on its own failure.
 import { spawn as spawnChild } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { capabilityNotice, HOST_CAPABILITIES } from './lib/capabilities.mjs';
 import { CLAUDE_EVENTS, HOST, toEvent, toOutput } from './lib/claude-adapter.mjs';
@@ -41,9 +42,8 @@ export function defaultSpawn(argv, { cwd, env, timeoutMs } = {}) {
   });
 }
 
-// CLAUDE_PROJECT_DIR, else the top level of the git checkout around payload.cwd, else that folder.
-async function findRepoRoot(payload, { cwd, env, spawn }) {
-  if (env.CLAUDE_PROJECT_DIR) return env.CLAUDE_PROJECT_DIR;
+// Without CLAUDE_PROJECT_DIR: the top level of the git checkout around payload.cwd, else that folder.
+async function findRepoRoot(payload, { cwd, spawn }) {
   const start = typeof payload?.cwd === 'string' && payload.cwd ? payload.cwd : cwd;
   try {
     const r = await spawn(['git', 'rev-parse', '--show-toplevel'], { cwd: start, timeoutMs: GIT_TIMEOUT_MS });
@@ -51,6 +51,60 @@ async function findRepoRoot(payload, { cwd, env, spawn }) {
     if (top) return top;
   } catch {}
   return start;
+}
+
+// `git rev-parse --show-toplevel --git-common-dir` in dir, as real paths. No --path-format: older git
+// echoes an unknown option and exits 0. The common dir prints relative in a main checkout.
+async function gitDirs(dir, spawn) {
+  let r;
+  try {
+    r = await spawn(['git', 'rev-parse', '--show-toplevel', '--git-common-dir'], {
+      cwd: dir,
+      timeoutMs: GIT_TIMEOUT_MS,
+    });
+  } catch {
+    return { ok: false, exited: false };
+  }
+  if (r.signal || r.code === null) return { ok: false, exited: false };
+  if (r.code !== 0) return { ok: false, exited: true };
+  const lines = r.stdout.split('\n').filter((l) => l !== '');
+  if (lines.length !== 2) return { ok: false, exited: false };
+  try {
+    return {
+      ok: true,
+      top: realpathSync(resolve(dir, lines[0])),
+      common: realpathSync(resolve(dir, lines[1])),
+    };
+  } catch {
+    return { ok: false, exited: false };
+  }
+}
+
+// The checkout this event belongs to (design D1): CLAUDE_PROJECT_DIR as given while the agent is in
+// that checkout, the top level of payload.cwd when it is another worktree of the same repository,
+// and `skip` when cwd is outside any checkout or in another repository. Whenever git cannot answer,
+// CLAUDE_PROJECT_DIR is kept. Both git calls run in parallel, each bounded at GIT_TIMEOUT_MS.
+async function resolveCheckout(payload, { cwd, env, spawn }) {
+  const project = env.CLAUDE_PROJECT_DIR;
+  if (!project) return { root: await findRepoRoot(payload, { cwd, spawn }) };
+  const at = typeof payload?.cwd === 'string' && payload.cwd ? payload.cwd : '';
+  if (!at || at === project) return { root: project };
+  const [here, home] = await Promise.all([gitDirs(at, spawn), gitDirs(project, spawn)]);
+  if (!home.ok) return { root: project };
+  if (!here.ok) return here.exited ? { skip: true } : { root: project };
+  if (here.common !== home.common) return { skip: true };
+  return here.top === home.top ? { root: project } : { root: spelledAs(at, here.top) };
+}
+
+// The ancestor of `at` whose real path is `top`, so a worktree reached through a symlink keeps the
+// agent's spelling (edit paths are made repo-relative by string); `top` when none matches.
+function spelledAs(at, top) {
+  for (let dir = resolve(at); ; dir = dirname(dir)) {
+    try {
+      if (realpathSync(dir) === top) return dir;
+    } catch {}
+    if (dirname(dir) === dir) return top;
+  }
 }
 
 // Resolves once fn() settles or the deadline passes, whichever is first; never rejects.
@@ -86,7 +140,10 @@ export async function main({
   spawn = defaultSpawn,
   now = Date.now,
   capabilities = HOST_CAPABILITIES,
+  resolved = false,
 } = {}) {
+  // Keep this the first now() call: a delegating entry passes a clock whose first reading is the
+  // moment it received the event.
   const start = now();
   const empty = { text: '', ack: null, release: null, cleanupDeadline: start };
   const payload = parse(String(stdin ?? ''));
@@ -97,10 +154,36 @@ export async function main({
   let merged;
   let type = 'event';
   try {
-    const repoRoot = await findRepoRoot(payload, { cwd, env, spawn });
+    const found =
+      resolved && env.CLAUDE_PROJECT_DIR
+        ? { root: env.CLAUDE_PROJECT_DIR }
+        : await resolveCheckout(payload, { cwd, env, spawn });
+    if ('skip' in found) return empty;
+    const repoRoot = found.root;
     const mapped = toEvent(payload, repoRoot);
     if (!mapped) return empty;
     type = mapped.event.type;
+    if (env.CLAUDE_PROJECT_DIR && repoRoot !== env.CLAUDE_PROJECT_DIR) {
+      // Another worktree of the same repository: its own copy handles the event (design D2).
+      const entry = join(repoRoot, '.agents', 'harness', 'hook-runtime', 'claude.mjs');
+      if (!existsSync(entry)) return empty;
+      const mod = await import(pathToFileURL(entry).href);
+      if (typeof mod.main !== 'function') throw new Error(`${entry} exports no main`);
+      let first = true;
+      const startClock = () => {
+        if (!first) return now();
+        first = false;
+        return start;
+      };
+      return await mod.main({
+        stdin,
+        cwd,
+        env: { ...env, CLAUDE_PROJECT_DIR: repoRoot },
+        spawn,
+        now: startClock,
+        resolved: true,
+      });
+    }
     const { handlers, problems } = await loadHandlers(repoRoot);
     const handlersLoadedAt = now();
     const runtime = createRuntime({ repoRoot, host: HOST, handlers, problems, now });

@@ -1,12 +1,13 @@
 """The verify gate's command: an edit lints one file, every other trigger execs the task gate."""
 import io
+import json
 import subprocess
 import os
 import shutil
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 TESTS = os.path.dirname(os.path.abspath(__file__))
@@ -48,6 +49,33 @@ class EditChecks(unittest.TestCase):
             self.assertEqual(self.argvs(rel), ([], 0), rel)
 
 
+class EditFilesConfig(unittest.TestCase):
+    """`verify-gate.editFiles` and the kinds `edit_checks` lints must not drift apart."""
+
+    def globs(self):
+        path = os.path.join(os.path.dirname(SCRIPTS), ".agents", "harness.json")
+        with open(path) as handle:
+            return json.load(handle)["verify-gate"]["editFiles"]
+
+    def test_the_configured_globs_match_the_edit_checks(self):
+        self.assertEqual(self.globs(), verify_gate.edit_globs())
+
+    def test_only_the_glob_kinds_reach_a_lint(self):
+        repo = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, repo)
+        for glob in self.globs():
+            rel = glob.replace("**/", "src/").replace("*", "x")
+            path = os.path.join(repo, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as handle:
+                handle.write("#!/bin/sh\n")
+        with mock.patch.object(verify_gate, "REPO", repo):
+            for glob in self.globs():
+                rel = glob.replace("**/", "src/").replace("*", "x")
+                with self.subTest(glob=glob):
+                    self.assertTrue(any(verify_gate.edit_checks(rel)), rel)
+
+
 class Lint(unittest.TestCase):
     def setUp(self):
         self.repo = tempfile.mkdtemp()
@@ -63,10 +91,10 @@ class Lint(unittest.TestCase):
             handle.write(text)
 
     def lint(self, rel):
-        out = io.StringIO()
-        with redirect_stdout(out):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
             status = verify_gate.lint(rel)
-        return status, out.getvalue()
+        return status, out.getvalue() + err.getvalue()
 
     def test_python_syntax_error_fails_and_names_the_file(self):
         self.write("scripts/bad.py", "x = (\n")
@@ -89,10 +117,10 @@ class Lint(unittest.TestCase):
         self.assertEqual(self.lint("docs/gone.py"), (0, ""))
         self.assertEqual(self.lint("docs/a.md"), (0, ""))
 
-    def test_missing_package_linter_is_skipped(self):
+    def test_missing_package_linter_is_skipped_silently(self):
         self.write("web-extension/src/a.ts", "export {}\n")
         with mock.patch.object(verify_gate.subprocess, "run") as run:
-            self.assertEqual(self.lint("web-extension/src/a.ts")[0], 0)
+            self.assertEqual(self.lint("web-extension/src/a.ts"), (0, ""))
         run.assert_not_called()
 
     def test_failing_command_fails(self):
